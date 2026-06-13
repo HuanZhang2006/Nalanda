@@ -1,0 +1,75 @@
+/* ============================================================
+   Nalanda mobile — phone-shell layout (reuses nalanda.css tokens)
+   ============================================================ */
+.m-stage{ min-height:100vh; background:
+   radial-gradient(120% 80% at 50% -10%, color-mix(in srgb,var(--accent) 14%, var(--bg)), var(--bg) 60%);
+   display:grid; place-items:center; padding:0; }
+.m-app{ width:100%; max-width:440px; height:100vh; background:var(--bg); position:relative;
+   display:flex; flex-direction:column; overflow:hidden; }
+@media(min-width:480px){ .m-app{ height:min(900px,96vh); border-radius:38px; box-shadow:var(--shadow-lg); border:1px solid var(--border); } }
+
+/* top app bar */
+.m-top{ flex:none; display:flex; align-items:center; gap:12px; padding:16px 18px 12px; background:var(--bg);
+   border-bottom:1px solid transparent; position:relative; z-index:3; }
+.m-top.bordered{ border-bottom-color:var(--border); }
+.m-top h1{ font-size:22px; letter-spacing:-.02em; }
+.m-top .sub{ font-size:12px; color:var(--ink-faint); }
+.m-back{ width:34px;height:34px;border-radius:10px;border:1px solid var(--border);background:var(--card);display:grid;place-items:center;color:var(--ink); }
+
+.m-scroll{ flex:1; overflow-y:auto; padding:4px 18px 120px; -webkit-overflow-scrolling:touch; }
+.m-scroll::-webkit-scrollbar{ width:0; }
+
+/* bottom tab bar */
+.m-tabs{ position:absolute; left:0; right:0; bottom:0; height:78px; display:flex; align-items:flex-start;
+   padding:10px 10px 0; background: color-mix(in srgb,var(--bg) 86%, transparent);
+   backdrop-filter:blur(18px); border-top:1px solid var(--border); z-index:5; }
+.m-tab{ flex:1; display:flex; flex-direction:column; align-items:center; gap:3px; border:0; background:transparent;
+   color:var(--ink-faint); font-size:10.5px; font-weight:600; padding-top:6px; }
+.m-tab svg{ width:23px; height:23px; }
+.m-tab.active{ color:var(--accent); }
+.m-fab{ flex:none; width:56px; margin:-22px 6px 0; }
+.m-fab button{ width:56px;height:56px;border-radius:18px;border:0;background:linear-gradient(135deg,var(--accent-2),var(--accent));
+   color:var(--on-accent);display:grid;place-items:center;box-shadow:0 8px 20px color-mix(in srgb,var(--accent) 45%, transparent); }
+.m-fab svg{ width:26px;height:26px; }
+
+/* hero */
+.m-hero{ border-radius:20px; padding:20px; margin-top:8px; position:relative; overflow:hidden;
+   background: radial-gradient(120% 130% at 90% -10%, var(--accent-tint-2), transparent 55%), linear-gradient(180deg,var(--card),var(--card-2));
+   border:1px solid var(--border); }
+.m-hero h2{ font-size:21px; line-height:1.18; max-width:16ch; }
+
+.m-stat{ flex:1; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:13px; }
+.m-stat .n{ font-family:var(--font-serif); font-size:21px; font-weight:600; white-space:nowrap; }
+.m-stat .l{ font-size:11px; color:var(--ink-faint); }
+
+.m-card{ background:var(--card); border:1px solid var(--border); border-radius:16px; overflow:hidden; }
+.m-row{ display:flex; align-items:center; gap:13px; padding:14px 15px; border-bottom:1px solid var(--border-soft); }
+.m-row:last-child{ border-bottom:0; }
+
+.m-ncard-top{ height:84px; display:flex; align-items:flex-end; padding:12px; position:relative; }
+
+/* segmented control */
+.m-seg{ display:flex; gap:3px; background:var(--shade-2); border-radius:11px; padding:3px; margin:4px 0 16px; }
+.m-seg button{ flex:1; border:0; background:transparent; color:var(--ink-soft); font-weight:600; font-size:12px; padding:8px 4px; border-radius:8px; }
+.m-seg button.active{ background:var(--card); color:var(--accent); box-shadow:var(--shadow-sm); }
+
+.m-opt{ display:flex; align-items:center; gap:11px; padding:13px; border:1px solid var(--border); border-radius:12px; margin-top:9px; font-size:13.5px; background:var(--card); }
+.m-opt .mk{ width:22px;height:22px;border-radius:50%;border:1.5px solid var(--border-strong);flex:none;display:grid;place-items:center;font-size:11px;font-weight:700;color:var(--ink-faint); }
+.m-opt.correct{ border-color:var(--good); background:color-mix(in srgb,var(--good) 12%,var(--card)); }
+.m-opt.correct .mk{ background:var(--good); border-color:var(--good); color:#fff; }
+.m-opt.wrong{ border-color:var(--pink); background:color-mix(in srgb,var(--pink) 12%,var(--card)); }
+.m-opt.wrong .mk{ background:var(--pink); border-color:var(--pink); color:#fff; }
+
+.m-gen{ display:flex; gap:13px; align-items:center; padding:15px; border:1px solid var(--border); border-radius:14px; background:var(--card); margin-bottom:10px; }
+.m-gen.sel{ border-color:var(--accent); background:var(--accent-tint); }
+.m-gen .ic{ width:42px;height:42px;border-radius:12px;flex:none;display:grid;place-items:center;background:var(--accent-tint);color:var(--accent); }
+.m-gen .ic svg{ width:21px;height:21px; }
+
+.m-graph{ position:relative; height:300px; border:1px solid var(--border); border-radius:16px; overflow:hidden;
+   background: radial-gradient(circle at 50% 45%, var(--accent-tint), transparent 60%), var(--card); }
+.m-gnode{ position:absolute; transform:translate(-50%,-50%); background:var(--card); border:1px solid var(--border-strong);
+   border-radius:9px; padding:6px 9px; font-size:10.5px; font-weight:600; white-space:nowrap; box-shadow:var(--shadow-sm); }
+.m-gnode.root{ background:var(--accent); color:var(--on-accent); border-color:transparent; }
+
+.m-fade{ animation: mfade .28s cubic-bezier(.2,.7,.3,1); }
+@keyframes mfade{ from{ transform:translateY(8px);} }
