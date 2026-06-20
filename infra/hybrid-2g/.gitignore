@@ -1,0 +1,4 @@
+# 真实密钥与构建产物不入库
+.env
+web-dist/*
+!web-dist/.gitkeep

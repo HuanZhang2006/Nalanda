@@ -1,0 +1,23 @@
+# Caddy —— 统一入口 + 自动 HTTPS（Let's Encrypt）
+# 仅本文件对外暴露 80/443；api / ai / redis 都在内网。
+# 前置：DOMAIN 已解析到本机公网 IP，且 80/443 已放行。
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$DOMAIN} {
+	encode zstd gzip
+
+	# 后端 API（含 Stripe Webhook：POST {$DOMAIN}/api/payments/webhook）
+	handle /api/* {
+		reverse_proxy api:3000
+	}
+
+	# 其余全部走前端 SPA；History 路由回退到 index.html
+	handle {
+		root * /srv/web
+		try_files {path} /index.html
+		file_server
+	}
+}
