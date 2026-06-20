@@ -71,11 +71,32 @@ python3 -m http.server 8000
 # 根路径会自动跳转到 Showcase
 ```
 
+## 本地开发（应用骨架）
+
+仓库已搭好 pnpm + Turborepo monorepo（`apps/` + `packages/`）。需要 Node ≥ 20 与 pnpm 9。
+
+```bash
+pnpm install                       # 安装依赖
+pnpm build                         # 构建 types / api / web
+pnpm --filter @nalanda/web dev     # 前端开发服务器
+pnpm --filter @nalanda/api start   # 后端；GET /api/health 自检
+```
+
+- `apps/web` — React + Vite（前端）｜ `apps/api` — NestJS（`/api/*`）
+- `apps/ai` — Python FastAPI AI 微服务（`uvicorn app.main:app`）
+- `packages/ui` — 设计令牌（从原型抽取）｜ `packages/types` — 共享类型
+
+部署见 [`infra/hybrid-2g/`](infra/hybrid-2g/README.md)。
+
 ## 技术栈
 
-- **原型**：原生 HTML / CSS / JavaScript；展示画布与调参面板使用 React 18 + Babel Standalone（CDN）
-- **样式**：CSS 自定义属性驱动的设计令牌系统，支持明暗主题与实时调参
-- 生产实现技术栈待定（原型为像素级设计稿，可按目标平台用 React / Vue / 原生等重建）
+- **前端 / 桌面 / 移动**：React + TypeScript（Vite）｜ Electron ｜ React Native（预留）
+- **后端**：NestJS（核心）+ Python FastAPI（AI 微服务，基于 ExamPass-Assistant 路径）
+- **数据 / 鉴权 / 存储 / 实时**：Supabase（PostgreSQL + pgvector）｜ 队列 Redis + BullMQ
+- **AI**：Anthropic Claude ｜ **支付**：Stripe
+- **原型**：原生 HTML / CSS / JS（`app/`），设计令牌已抽入 `packages/ui`
+
+完整架构与路线图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
 
 ## License
 

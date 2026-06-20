@@ -1,0 +1,7 @@
+**/node_modules
+**/dist
+**/.turbo
+.git
+.env
+**/.env
+infra/hybrid-2g/web-dist

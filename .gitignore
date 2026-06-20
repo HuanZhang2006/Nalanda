@@ -1,0 +1,18 @@
+# dependencies / build
+node_modules/
+dist/
+.turbo/
+
+# env & secrets
+.env
+.env.local
+.env.*.local
+
+# python
+__pycache__/
+*.pyc
+.venv/
+
+# misc
+*.log
+.DS_Store

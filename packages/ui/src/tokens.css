@@ -1,0 +1,102 @@
+/* ============================================================
+   Nalanda 设计令牌 —— 从原型 app/nalanda.css 抽取的基础层
+   Warm editorial · 衬线标题 + 无衬线正文 · 明暗双主题
+   组件层后续在此包内逐步补充。
+   ============================================================ */
+
+:root {
+  --font-serif: "Newsreader", Georgia, "Times New Roman", serif;
+  --font-sans: "Public Sans", system-ui, -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+
+  /* 密度（compact 时缩小） */
+  --u: 1;   /* 间距倍率 */
+  --fs: 1;  /* 字号倍率 */
+
+  /* 强调色（可被 Tweaks 覆盖） */
+  --accent: #9c6a39;
+  --accent-2: #b6814d;
+  --on-accent: #fffdf8;
+}
+
+/* ---------- 浅色（默认） ---------- */
+:root,
+[data-theme="light"] {
+  --bg: #f1ece2;
+  --surface: #f7f3ec;
+  --card: #fffdf8;
+  --card-2: #faf6ee;
+  --ink: #2b2722;
+  --ink-soft: #6c655a;
+  --ink-faint: #9a9183;
+  --border: #e4ddcf;
+  --border-soft: #ece5d8;
+  --border-strong: #d6cdba;
+  --accent-tint: color-mix(in srgb, var(--accent) 12%, var(--card));
+  --accent-tint-2: color-mix(in srgb, var(--accent) 18%, var(--card));
+  --accent-line: color-mix(in srgb, var(--accent) 32%, var(--border));
+  --shadow-sm: 0 1px 2px rgba(43, 39, 34, .05), 0 1px 3px rgba(43, 39, 34, .04);
+  --shadow-md: 0 2px 6px rgba(43, 39, 34, .06), 0 8px 24px rgba(43, 39, 34, .07);
+  --shadow-lg: 0 8px 24px rgba(43, 39, 34, .10), 0 24px 60px rgba(43, 39, 34, .12);
+  --good: #4f7d52;
+  --warn: #b07a2b;
+  --info: #4a6c8f;
+  --pink: #a85c6b;
+  --shade: rgba(43, 39, 34, .04);
+  --shade-2: rgba(43, 39, 34, .07);
+}
+
+/* ---------- 深色 ---------- */
+[data-theme="dark"] {
+  --bg: #1a1813;
+  --surface: #211e18;
+  --card: #27231b;
+  --card-2: #2d281f;
+  --ink: #ece5d7;
+  --ink-soft: #a79d8c;
+  --ink-faint: #7b7263;
+  --border: #36312a;
+  --border-soft: #2f2a23;
+  --border-strong: #453f35;
+  --accent: #c69257;
+  --accent-2: #d8a868;
+  --on-accent: #241c10;
+  --accent-tint: color-mix(in srgb, var(--accent) 16%, var(--card));
+  --accent-tint-2: color-mix(in srgb, var(--accent) 24%, var(--card));
+  --accent-line: color-mix(in srgb, var(--accent) 38%, var(--border));
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, .3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, .32), 0 12px 32px rgba(0, 0, 0, .34);
+  --shadow-lg: 0 12px 36px rgba(0, 0, 0, .45), 0 32px 70px rgba(0, 0, 0, .5);
+  --good: #79a87c;
+  --warn: #d6a44e;
+  --info: #7ca0c4;
+  --pink: #cf8c9b;
+  --shade: rgba(255, 255, 255, .035);
+  --shade-2: rgba(255, 255, 255, .06);
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: calc(14px * var(--fs));
+  line-height: 1.55;
+  color: var(--ink);
+  background: var(--bg);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+h1, h2, h3, h4, h5 {
+  font-family: var(--font-serif);
+  font-weight: 560;
+  margin: 0;
+  line-height: 1.15;
+  letter-spacing: -.01em;
+  color: var(--ink);
+}
+
+p { margin: 0; }
+a { color: inherit; text-decoration: none; }
+::selection { background: var(--accent-tint-2); }

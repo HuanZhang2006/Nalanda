@@ -1,0 +1,9 @@
+{
+  "name": "@nalanda/ui",
+  "version": "0.0.0",
+  "private": true,
+  "exports": {
+    "./tokens.css": "./src/tokens.css"
+  },
+  "files": ["src"]
+}
