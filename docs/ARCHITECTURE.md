@@ -32,7 +32,7 @@ UI 基于已落库的高保真原型（`app/` 目录，warm-editorial 风格、�
 | 支付 | Stripe（Checkout + Connect + Webhook） | 法币支付 + 创作者分成打款 |
 | AI 模型 | Anthropic Claude API | 多智能体结构化生成 + 多模态解析 |
 | 文档/AI 实现路径 | 基于 [ExamPass-Assistant](https://github.com/WUBING2023/ExamPass-Assistant) | 复用其解析管线与多智能体 skills（见第 8 节，注意授权） |
-| 部署 | Vercel（Web）+ Railway（NestJS/Python/Redis）+ Supabase | PaaS 起步 |
+| 部署 | Vercel（Web）+ Railway（NestJS/Python/Redis）+ Supabase | PaaS 起步；自托管 / 2G 混合变体见 §12.3 |
 | 代码组织 | pnpm + Turborepo monorepo | 端到端类型安全 |
 | i18n | **界面与 AI 生成均中英双语** | react-i18next + 生成请求带语言参数 |
 
@@ -276,6 +276,46 @@ ExamPass-Assistant 以 **CC BY-NC 4.0（署名-非商业）** 发布。Nalanda �
 - **测试**：Vitest/Jest（前后端单测）、pytest（AI 服务）、Playwright（E2E）、AI 输出 JSON schema 契约测试、Stripe CLI 跑 Webhook 测试。
 - **可观测性**：Sentry（前后端）、结构化日志、Bull Board（队列面板）、Stripe Dashboard。
 - **安全**：RLS + JWT 验签、文件签名 URL、接口限流、输入校验、社区/市场内容审核（Claude moderation）、上传可选杀毒扫描。
+
+### 12.3 部署方案（三种变体）
+
+三条路按「省心 ↔ 省钱 / 数据自有」排列。**应用代码完全一致**，差别只在「在哪跑、谁运维」：
+
+| 变体 | 数据底座（DB/Auth/存储/实时） | 你的代码（NestJS/Python/Redis/前端） | 外部服务 | 内存需求 | 适用 |
+|---|---|---|---|---|---|
+| A 全托管（默认起步） | Supabase 云 | Vercel + Railway | Stripe · Claude | — | 最快上线、0 运维 |
+| **B 混合（推荐：自有小服务器，含 2G）** | **Supabase 云免费档** | **自有服务器 Docker 自托管** | Stripe · Claude | **~2G 够用** | 早期 / 单人 / 小流量、省钱 |
+| C 全自托管 | 自托管整套 Supabase（Docker Compose） | 自有服务器 Docker 自托管 | Stripe · Claude | **4–8G** | 数据完全自有、运维全包 |
+
+> Stripe、Claude 三种变体都走外部联网调用，无法自托管（除非把 Claude 换成自购 GPU 上的开源模型，不推荐）。
+
+**变体 B — 2G 混合方案（推荐给自有小服务器）**
+
+把最吃内存的 Supabase 全家桶留在云端免费档（0 占用本机内存），2G 服务器只用 Docker 跑自己的代码。应用代码与「全托管」版一致、Supabase SDK 不变，将来升级或迁回托管几乎无缝。
+
+拓扑：
+
+```
+你的服务器（2G · Docker Compose）
+  Caddy（统一入口 + 自动 HTTPS）
+    ├─ 前端静态文件（React 构建产物）
+    ├─ NestJS 后端
+    ├─ Python AI 微服务
+    └─ Redis（BullMQ 队列）
+            │  联网调用
+            ▼
+  Supabase 云（PostgreSQL + pgvector · Auth · Storage · Realtime）
+  Stripe（支付）     Claude API（生成 + 向量化）
+```
+
+2G 内存预算（粗算）：OS 200–400M · NestJS 150–300M · Python 200–300M · Redis 50–100M · Caddy 20–50M ≈ 落在 2G 内（数据库不占本机）。建议开 swap 兜底。
+
+约束（2G 必守）：
+- AI 全走 Claude API（含向量化），**不要在本机跑本地大模型 / 向量模型**。
+- 解析超大 PDF/PPT 内存会瞬时飙高 → 限制上传大小、把解析也放队列串行处理，避免并发打爆。
+- 仅适合早期 / 小流量；流量上来升 4–8G（→ 变体 C）或迁回全托管（→ 变体 A）。
+
+变体 B 需准备：一台 2G Linux 服务器 + 域名 + 装好 Docker；一个 Supabase 云项目（免费档）；Claude、Stripe 账号密钥。
 
 ---
 
