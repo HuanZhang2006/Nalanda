@@ -1,0 +1,2 @@
+# 前端构建产物（apps/web 的 dist）放在此目录，由 Caddy 静态托管。
+# 在 CI 或本地构建后，把 dist/* 拷到这里。该目录内容不入库（见 ../.gitignore）。

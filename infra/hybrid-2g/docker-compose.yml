@@ -1,0 +1,80 @@
+# Nalanda — 2G 混合部署（架构文档 §12.3 变体 B）
+# 本机自托管：Caddy（入口+HTTPS） + NestJS + Python AI + Redis
+# 前端为「预构建静态文件」（在 CI/本地构建后放进 ./web-dist）
+# 外部服务（不在本文件内，联网调用）：Supabase 云 / Stripe / Claude
+#
+# 内存上限按 2G 机器设定：caddy128 + api400 + ai512 + redis160 ≈ 1.2G，留给系统/峰值约 0.8G。
+# 强烈建议先开 swap（见 README）。
+
+name: nalanda
+
+services:
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file: .env
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./web-dist:/srv/web:ro          # apps/web 的构建产物（dist）
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+    mem_limit: 128m
+    mem_reservation: 64m
+
+  api:                                  # NestJS 核心后端
+    build:
+      context: ../..                    # monorepo 根（pnpm workspace）
+      dockerfile: infra/hybrid-2g/api.Dockerfile
+    # 生产推荐改为 CI 构建好的镜像，省去在 2G 机器上构建：
+    # image: ghcr.io/<your-org>/nalanda-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      REDIS_URL: redis://redis:6379
+      AI_SERVICE_URL: http://ai:8000
+    depends_on:
+      - redis
+      - ai
+    expose:
+      - "3000"                          # 仅内网可见，不对外发布端口
+    mem_limit: 400m
+    mem_reservation: 256m
+
+  ai:                                   # Python FastAPI AI 微服务（内部专用）
+    build:
+      context: ../../apps/ai
+      dockerfile: ../../infra/hybrid-2g/ai.Dockerfile
+    # image: ghcr.io/<your-org>/nalanda-ai:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "8000"
+    depends_on:
+      - redis
+    expose:
+      - "8000"                          # 只有 NestJS 调用，不对外
+    mem_limit: 512m
+    mem_reservation: 320m
+
+  redis:                                # BullMQ 队列 / 缓存
+    image: redis:7-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "100mb", "--maxmemory-policy", "noeviction"]
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    mem_limit: 160m
+    mem_reservation: 96m
+
+volumes:
+  caddy_data:
+  caddy_config:
+  redis_data:
