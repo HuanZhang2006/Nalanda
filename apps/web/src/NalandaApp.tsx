@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import type { User } from "@supabase/supabase-js";
 // @ts-ignore — ported vanilla module
 import { mountNalanda } from "./legacy/app";
+import { supabase } from "./lib/supabase";
 
 // 挂载移植自原型的完整应用（壳 + 全部视图），用真实登录用户 + 退出回调参数化
 export function NalandaApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
@@ -12,7 +13,8 @@ export function NalandaApp({ user, onSignOut }: { user: User; onSignOut: () => v
   useEffect(() => {
     if (!ref.current) return;
     const cleanup = mountNalanda(ref.current, {
-      user: { email: user.email },
+      user: { id: user.id, email: user.email },
+      supabase,
       onSignOut: () => signOutRef.current(),
     });
     return cleanup;

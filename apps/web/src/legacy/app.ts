@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { DB } from "./data";
 import { ICON } from "./icons";
+import { initMaterials, mountMaterials } from "./materials";
 
 const VIEWS: any = {};
 let _root: any = null;
@@ -128,6 +129,7 @@ function go(route, params){
   c.scrollTop = 0;
   c.innerHTML = `<div class="view-enter">${VIEWS[route] ? VIEWS[route]() : VIEWS.home()}</div>`;
   if(route==="note" || route==="create"){ requestAnimationFrame(drawEdges); }
+  if(route==="materials"){ requestAnimationFrame(()=>{ const el=document.getElementById("mat-root"); if(el) mountMaterials(el); }); }
 }
 
 /* ---------- click delegation ---------- */
@@ -230,6 +232,7 @@ export function mountNalanda(container, opts){
     DB.user.handle = "@" + nm;
     DB.user.initials = nm.slice(0, 2).toUpperCase();
   }
+  initMaterials(_opts.supabase, _opts.user, toast);
   initTheme();
   renderShell();
   go("home");
@@ -923,3 +926,5 @@ VIEWS.feedback = function(){
     </div>
   </div>`;
 };
+
+VIEWS.materials = () => '<div id="mat-root"></div>';
