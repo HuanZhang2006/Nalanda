@@ -2,6 +2,7 @@
 // 真后端的 Materials 模块：课程 + 资料的增删改查 + 文件上传 + 软件内多格式预览（Supabase 直连，RLS 保护）。
 // 渲染进 legacy 应用提供的 #mat-root 容器，自管状态与事件。
 import { ICON } from "./icons";
+import { marked } from "marked";
 
 let sb = null;
 let USER = null;
@@ -14,7 +15,7 @@ let uploading = false;
 
 const FT = { pdf: "pdf", ppt: "ppt", pptx: "ppt", doc: "doc", docx: "doc", md: "md", markdown: "md", html: "html", htm: "html", txt: "txt" };
 const IMG = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
-const TEXTY = ["txt", "md", "markdown", "csv", "json", "log", "xml", "yml", "yaml", "tex"];
+const TEXTY = ["txt", "csv", "json", "log", "xml", "yml", "yaml", "tex"];
 const OFFICE = ["ppt", "pptx", "doc", "docx", "xls", "xlsx"];
 
 const extOf = (n) => (n.split(".").pop() || "bin").toLowerCase();
@@ -35,6 +36,7 @@ function fmtDate(s) {
 }
 function previewKind(ext) {
   if (ext === "pdf") return "pdf";
+  if (ext === "md" || ext === "markdown") return "markdown";
   if (IMG.includes(ext)) return "image";
   if (ext === "html" || ext === "htm") return "html";
   if (TEXTY.includes(ext)) return "text";
@@ -73,6 +75,28 @@ async function load() {
 }
 
 const courseById = (id) => state.courses.find((c) => c.id === id);
+
+/* ---------- 应用内确认弹窗（替代浏览器原生 confirm） ---------- */
+function confirmDialog({ title, message, confirmText = "删除", danger = true }) {
+  return new Promise((resolve) => {
+    const scrim = document.createElement("div");
+    scrim.className = "scrim";
+    scrim.innerHTML = `<div class="modal"><div class="modal-pad">
+      <h2 class="serif" style="font-size:19px;margin-bottom:10px">${esc(title)}</h2>
+      <p class="muted" style="font-size:13.5px;line-height:1.55;margin-bottom:20px">${esc(message)}</p>
+      <div class="row gap-8" style="justify-content:flex-end">
+        <button class="btn" data-cf="no">取消</button>
+        <button class="btn ${danger ? "" : "btn-primary"}" data-cf="yes"
+          style="${danger ? "background:var(--pink);color:#fff;border-color:transparent" : ""}">${esc(confirmText)}</button>
+      </div>
+    </div></div>`;
+    document.body.appendChild(scrim);
+    const done = (v) => { scrim.remove(); resolve(v); };
+    scrim.addEventListener("click", (e) => { if (e.target === scrim) done(false); });
+    scrim.querySelector('[data-cf="no"]').onclick = () => done(false);
+    scrim.querySelector('[data-cf="yes"]').onclick = () => done(true);
+  });
+}
 
 function render() {
   if (!rootEl) return;
@@ -236,7 +260,12 @@ function courseModal(existing) {
 async function deleteCourse(id) {
   const c = courseById(id); if (!c) return;
   const mats = state.materials.filter((m) => m.course_id === id);
-  if (!window.confirm(`删除课程「${c.code || c.name}」？将同时删除其下 ${mats.length} 份资料，且不可撤销。`)) return;
+  const okToGo = await confirmDialog({
+    title: "删除课程",
+    message: `将删除课程「${c.code || c.name}」及其下 ${mats.length} 份资料，且不可撤销。`,
+    confirmText: "删除课程",
+  });
+  if (!okToGo) return;
   toastFn("删除中…");
   try {
     const paths = mats.map((m) => m.storage_path).filter(Boolean);
@@ -294,7 +323,8 @@ async function doUpload(files) {
 
 async function delMaterial(id) {
   const m = state.materials.find((x) => x.id === id); if (!m) return;
-  if (!window.confirm(`删除「${m.name}」？此操作不可撤销。`)) return;
+  const okToGo = await confirmDialog({ title: "删除资料", message: `删除「${m.name}」？此操作不可撤销。`, confirmText: "删除" });
+  if (!okToGo) return;
   try {
     await sb.storage.from("materials").remove([m.storage_path]);
     const { error } = await sb.from("materials").delete().eq("id", id);
@@ -334,6 +364,7 @@ async function previewMaterial(id) {
         <b style="font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(m.name)}</b>
       </div>
       <div class="row gap-8">
+        <span id="pv-tools" class="row gap-8"></span>
         <button class="btn btn-sm" data-pv="download">${ICON("download")}<span>下载</span></button>
         <button class="icon-btn" data-pv="close">${ICON("close")}</button>
       </div>
@@ -341,15 +372,18 @@ async function previewMaterial(id) {
     <div id="pv-body" style="flex:1;min-height:0;background:var(--bg);position:relative"></div>
   </div>`;
   document.body.appendChild(scrim);
-  const close = () => scrim.remove();
+  const close = () => { scrim.remove(); document.removeEventListener("keydown", onKey); };
+  const onKey = (e) => { if (e.key === "Escape") close(); };
   scrim.addEventListener("click", (e) => { if (e.target === scrim) close(); });
   scrim.querySelector('[data-pv="close"]').onclick = close;
   scrim.querySelector('[data-pv="download"]').onclick = () => downloadMaterial(id);
-  document.addEventListener("keydown", function esc1(e) { if (e.key === "Escape") { close(); document.removeEventListener("keydown", esc1); } });
+  document.addEventListener("keydown", onKey);
 
   const body = scrim.querySelector("#pv-body");
+  const tools = scrim.querySelector("#pv-tools");
   const fill = "position:absolute;inset:0;width:100%;height:100%;border:0";
   const center = "position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:var(--ink-soft)";
+  const preStyle = "position:absolute;inset:0;overflow:auto;margin:0;padding:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:13px;color:var(--ink);background:var(--card)";
 
   if (kind === "pdf") {
     body.innerHTML = `<iframe src="${url}" style="${fill}"></iframe>`;
@@ -357,16 +391,33 @@ async function previewMaterial(id) {
     body.innerHTML = `<div style="${center}"><img src="${url}" style="max-width:100%;max-height:100%;object-fit:contain"/></div>`;
   } else if (kind === "html") {
     body.innerHTML = `<iframe src="${url}" sandbox="" style="${fill};background:#fff"></iframe>`;
+  } else if (kind === "markdown") {
+    body.innerHTML = `<div style="${center}"><span class="spin"></span></div>`;
+    let txt = "";
+    try { txt = await (await fetch(url)).text(); }
+    catch { body.innerHTML = `<div style="${center}">无法加载内容，请下载查看。</div>`; return; }
+    let mode = "rendered";
+    const mdCss = "body{font:15px/1.7 -apple-system,system-ui,sans-serif;color:#222;background:#fff;padding:28px;max-width:820px;margin:0 auto}pre{background:#f4f4f4;padding:12px;border-radius:8px;overflow:auto}code{background:#f0f0f0;padding:2px 5px;border-radius:4px;font-family:ui-monospace,monospace}pre code{background:none;padding:0}h1,h2,h3{line-height:1.3}img{max-width:100%}table{border-collapse:collapse}td,th{border:1px solid #ddd;padding:6px 10px}blockquote{border-left:3px solid #ccc;margin:0 0 1em;padding-left:14px;color:#555}a{color:#9c6a39}";
+    const draw = () => {
+      if (mode === "rendered") {
+        const doc = `<!doctype html><meta charset="utf-8"><style>${mdCss}</style>${marked.parse(txt)}`;
+        body.innerHTML = `<iframe sandbox="" style="${fill};background:#fff" srcdoc="${esc(doc)}"></iframe>`;
+      } else {
+        body.innerHTML = `<pre style="${preStyle}">${esc(txt)}</pre>`;
+      }
+      tools.innerHTML = `<button class="btn btn-sm" data-md="t">${mode === "rendered" ? "查看源码" : "查看渲染"}</button>`;
+      tools.querySelector('[data-md="t"]').onclick = () => { mode = mode === "rendered" ? "source" : "rendered"; draw(); };
+    };
+    draw();
   } else if (kind === "text") {
     body.innerHTML = `<div style="${center}"><span class="spin"></span></div>`;
     try {
       const txt = await (await fetch(url)).text();
-      body.innerHTML = `<pre style="position:absolute;inset:0;overflow:auto;margin:0;padding:18px;white-space:pre-wrap;word-break:break-word;font-family:var(--font-mono);font-size:13px;color:var(--ink);background:var(--card)">${esc(txt.slice(0, 200000))}</pre>`;
+      body.innerHTML = `<pre style="${preStyle}">${esc(txt.slice(0, 200000))}</pre>`;
     } catch {
       body.innerHTML = `<div style="${center}">无法加载文本内容，请下载查看。</div>`;
     }
   } else if (kind === "office") {
-    // PPT/Word/Excel 浏览器无法原生预览；默认不外发，点按钮才用 Microsoft 在线预览
     body.innerHTML = `<div style="${center}">
       <div>
         <div style="font-weight:600;color:var(--ink);margin-bottom:6px">${esc(ext.toUpperCase())} 文件</div>
