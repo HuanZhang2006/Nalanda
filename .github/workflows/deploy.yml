@@ -1,0 +1,76 @@
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      # 前端静态产物（Supabase 公钥在构建时注入）
+      - name: Build web
+        run: pnpm --filter @nalanda/web build
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
+
+      # 在 runner 上构建后端镜像（不占服务器内存），再 save 成 tar 传过去
+      - name: Build API image
+        run: docker build -f infra/hybrid-2g/api.Dockerfile -t nalanda-api:latest .
+
+      - name: Package artifacts
+        run: |
+          docker save nalanda-api:latest | gzip > nalanda-api.tar.gz
+          tar -C apps/web/dist -czf web.tgz .
+
+      - name: Setup SSH
+        run: |
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      - name: Upload artifacts
+        run: |
+          scp -i ~/.ssh/id_ed25519 nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
+            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/nalanda/"
+
+      - name: Deploy on server
+        run: |
+          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" 'bash -se' <<'REMOTE'
+          set -e
+          cd /opt/nalanda
+          gunzip -c nalanda-api.tar.gz | docker load
+          rm -f nalanda-api.tar.gz
+          # 替换前端静态文件
+          rm -rf web && mkdir web && tar -C web -xzf web.tgz && rm web.tgz
+          # 启动/更新后端
+          docker compose up -d
+          # 自检
+          ok=
+          for i in $(seq 1 20); do
+            if curl -fsS http://127.0.0.1:8411/api/health >/dev/null; then ok=1; echo "api health ok"; break; fi
+            sleep 2
+          done
+          docker image prune -f >/dev/null 2>&1 || true
+          [ -n "$ok" ] || { echo "API health check failed"; docker compose logs --tail=40 api; exit 1; }
+          REMOTE
