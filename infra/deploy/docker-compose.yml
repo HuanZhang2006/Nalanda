@@ -1,0 +1,17 @@
+# 服务器端运行用（部署到 /opt/nalanda/docker-compose.yml，由 CI 同步）
+# 仅跑后端 api；前端是静态文件由宿主机 nginx 托管；redis/ai 暂未启用。
+# api 仅绑定 127.0.0.1:8411，对外由 nginx 反代 nalanda.online → /api。
+
+name: nalanda
+
+services:
+  api:
+    image: nalanda-api:latest
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      PORT: "3000"
+    ports:
+      - "127.0.0.1:8411:3000"
+    mem_limit: 256m
+    mem_reservation: 128m
