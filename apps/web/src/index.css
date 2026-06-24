@@ -1,8 +1,4 @@
-body {
-  margin: 0;
+/* 全局基线（明暗主题、排版、组件）由 @nalanda/ui/nalanda.css 提供 */
+#root {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: var(--bg);
-  color: var(--ink);
 }
