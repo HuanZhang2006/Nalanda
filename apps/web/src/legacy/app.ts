@@ -2,6 +2,9 @@
 import { DB } from "./data";
 import { ICON } from "./icons";
 import { initMaterials, mountMaterials } from "./materials";
+import { initNotifications, openNotifications, refreshNotifBadge } from "./notifications";
+import { initFeedback, mountFeedback } from "./feedback";
+import { initProfile, mountProfile, syncShellUser } from "./profile";
 
 const VIEWS: any = {};
 let _root: any = null;
@@ -91,7 +94,7 @@ function renderShell(){
         <div class="topbar-spacer"></div>
         <button class="btn btn-primary btn-sm" data-go="create">${ICON("sparkles")}<span>Create</span></button>
         <button class="icon-btn" id="themeBtn">${ICON("moon")}</button>
-        <button class="icon-btn">${ICON("bell")}</button>
+        <button class="icon-btn" id="bellBtn" data-act="notifications" title="通知" style="position:relative">${ICON("bell")}<span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:15px;height:15px;padding:0 4px;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:10px;font-weight:700;line-height:15px;text-align:center">0</span></button>
         <button class="icon-btn" data-act="signOut" title="退出登录">${ICON("logout")}</button>
         <div class="avatar" style="background:${DB.user.color};width:34px;height:34px" data-go="profile">${DB.user.initials}</div>
       </header>
@@ -130,6 +133,8 @@ function go(route, params){
   c.innerHTML = `<div class="view-enter">${VIEWS[route] ? VIEWS[route]() : VIEWS.home()}</div>`;
   if(route==="note" || route==="create"){ requestAnimationFrame(drawEdges); }
   if(route==="materials"){ requestAnimationFrame(()=>{ const el=document.getElementById("mat-root"); if(el) mountMaterials(el); }); }
+  if(route==="feedback"){ requestAnimationFrame(()=>{ const el=document.getElementById("fb-root"); if(el) mountFeedback(el); }); }
+  if(route==="profile"){ requestAnimationFrame(()=>{ const el=document.getElementById("profile-root"); if(el) mountProfile(el); }); }
 }
 
 /* ---------- click delegation ---------- */
@@ -174,6 +179,7 @@ const ACTIONS = {
   toast(t){ toast(t.dataset.msg || "Done","check"); },
   toggleTask(t){ t.classList.toggle("done"); },
   signOut(){ if(_opts && _opts.onSignOut) _opts.onSignOut(); },
+  notifications(){ openNotifications(); },
 };
 
 /* ---------- modal + toast ---------- */
@@ -233,9 +239,14 @@ export function mountNalanda(container, opts){
     DB.user.initials = nm.slice(0, 2).toUpperCase();
   }
   initMaterials(_opts.supabase, _opts.user, toast);
+  initNotifications(_opts.supabase, _opts.user, toast);
+  initFeedback(_opts.supabase, _opts.user, toast);
+  initProfile(_opts.supabase, _opts.user, toast);
   initTheme();
   renderShell();
   go("home");
+  refreshNotifBadge();
+  syncShellUser();
   return () => {
     try { if (_root) _root.innerHTML = ""; } catch (e) {}
     if (_onResize) window.removeEventListener("resize", _onResize);
@@ -928,3 +939,5 @@ VIEWS.feedback = function(){
 };
 
 VIEWS.materials = () => '<div id="mat-root"></div>';
+VIEWS.feedback = () => '<div id="fb-root"></div>';
+VIEWS.profile = () => '<div id="profile-root"></div>';
