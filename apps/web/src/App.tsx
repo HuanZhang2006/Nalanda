@@ -1,29 +1,28 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
-import { authedFetch } from "./lib/api";
+import { NalandaApp } from "./NalandaApp";
 
 export function App() {
   const [session, setSession] = useState<Session | null>(null);
-  const [me, setMe] = useState("");
+  const [ready, setReady] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
 
   useEffect(() => {
-    if (!supabaseConfigured) return;
-    supabase!.auth.getSession().then(({ data }) => setSession(data.session));
+    if (!supabaseConfigured) return setReady(true);
+    supabase!.auth.getSession().then(({ data }) => {
+      setSession(data.session);
+      setReady(true);
+    });
     const { data: sub } = supabase!.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  useEffect(() => {
-    if (!session) return setMe("");
-    authedFetch("/api/me")
-      .then((r) => r.json())
-      .then((d) => setMe(JSON.stringify(d.user, null, 2)))
-      .catch(() => setMe("（/api/me 请求失败）"));
-  }, [session]);
+  const signOut = useCallback(() => {
+    supabase!.auth.signOut();
+  }, []);
 
   async function signUp() {
     setMsg("注册中…");
@@ -42,24 +41,24 @@ export function App() {
     setMsg(error ? "登录失败：" + error.message : "");
   }
 
+  // 已登录 → 完整应用
+  if (session) return <NalandaApp user={session.user} onSignOut={signOut} />;
+
+  // 未登录 → 居中的登录页
   return (
-    <main style={wrap}>
-      <div style={brand}>Nalanda</div>
-      <p style={{ color: "var(--ink-soft)", marginTop: 4 }}>Learn · Create · Share</p>
+    <main style={center}>
+      <div style={{ textAlign: "center" }}>
+        <div style={brand}>Nalanda</div>
+        <p style={{ color: "var(--ink-soft)", marginTop: 4 }}>Learn · Create · Share</p>
+      </div>
 
       {!supabaseConfigured ? (
         <p style={notice}>
           未配置 Supabase：在 <code>apps/web/.env.local</code> 设置 VITE_SUPABASE_URL 与
           VITE_SUPABASE_ANON_KEY 后重启。
         </p>
-      ) : session ? (
-        <div style={card}>
-          <div style={{ fontWeight: 600 }}>已登录：{session.user.email}</div>
-          <pre style={pre}>{me}</pre>
-          <button style={btn} onClick={() => supabase!.auth.signOut()}>
-            退出登录
-          </button>
-        </div>
+      ) : !ready ? (
+        <p style={{ color: "var(--ink-faint)" }}>加载中…</p>
       ) : (
         <div style={card}>
           <input style={input} placeholder="邮箱" value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -75,12 +74,15 @@ export function App() {
   );
 }
 
-const wrap: CSSProperties = { textAlign: "center", fontFamily: "var(--font-sans)", padding: 24 };
+const center: CSSProperties = {
+  minHeight: "100vh", display: "flex", flexDirection: "column",
+  alignItems: "center", justifyContent: "center", gap: 22,
+  fontFamily: "var(--font-sans)", padding: 24,
+};
 const brand: CSSProperties = { fontFamily: "var(--font-serif)", fontSize: 52, fontWeight: 600, letterSpacing: "-.02em" };
 const card: CSSProperties = {
-  marginTop: 22, display: "flex", flexDirection: "column", gap: 10, width: 300,
-  padding: 20, background: "var(--card)", border: "1px solid var(--border)",
-  borderRadius: 16, boxShadow: "var(--shadow-sm)", textAlign: "left",
+  display: "flex", flexDirection: "column", gap: 10, width: 300, padding: 20,
+  background: "var(--card)", border: "1px solid var(--border)", borderRadius: 16, boxShadow: "var(--shadow-sm)",
 };
 const input: CSSProperties = {
   padding: "9px 12px", borderRadius: 10, border: "1px solid var(--border-strong)",
@@ -91,8 +93,4 @@ const btn: CSSProperties = {
   background: "var(--accent)", color: "var(--on-accent)", fontWeight: 600, cursor: "pointer",
 };
 const btnGhost: CSSProperties = { background: "transparent", color: "var(--ink)", border: "1px solid var(--border-strong)" };
-const pre: CSSProperties = {
-  margin: 0, padding: 12, background: "var(--card-2)", borderRadius: 10,
-  fontFamily: "var(--font-mono)", fontSize: 12, color: "var(--ink-soft)", whiteSpace: "pre-wrap",
-};
-const notice: CSSProperties = { marginTop: 22, maxWidth: 360, fontSize: 13, color: "var(--ink-soft)" };
+const notice: CSSProperties = { maxWidth: 360, fontSize: 13, color: "var(--ink-soft)", textAlign: "center" };
