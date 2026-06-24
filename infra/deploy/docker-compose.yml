@@ -11,6 +11,9 @@ services:
     env_file: .env
     environment:
       PORT: "3000"
+    dns:                         # 宿主机用 systemd-resolved(127.0.0.53)，容器内解析不到，显式指定
+      - 1.1.1.1
+      - 8.8.8.8
     ports:
       - "127.0.0.1:8411:3000"
     mem_limit: 256m
