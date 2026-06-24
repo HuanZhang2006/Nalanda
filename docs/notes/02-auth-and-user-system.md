@@ -1,0 +1,111 @@
+# 02 · 用户系统与认证
+
+> 目标：用户能注册 / 登录 / 退出（真实后端），后端能信任登录态，每个用户有自己的资料档案且只能访问自己的数据。
+
+## 1. 技术方案总览
+
+- **身份与令牌**：Supabase Auth（GoTrue）。负责注册、登录、签发 JWT、会话刷新。
+- **令牌验证**：NestJS 用项目的 **JWKS**（非对称 ES256 公钥）验证 Supabase 签发的访问令牌。
+- **用户资料**：PostgreSQL `public.profiles` 表，与 `auth.users` 一一对应；注册时触发器自动建档；RLS 保证「只能读/改自己」。
+- **注册策略**：自建 `POST /api/auth/register`，用 service_role 直接创建「已确认」账号，绕开不可靠的确认邮件（详见第 6 节）。
+
+```
+浏览器 (supabase-js) ──登录──> Supabase 签发 ES256 JWT（存 localStorage）
+   │ 调 /api/* 带 Authorization: Bearer <jwt>
+   ▼
+NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = {id,email,role}
+   │
+   └─ /api/me 返回身份；其余受保护接口可用 @CurrentUser 取用户
+```
+
+## 2. 数据层：profiles + RLS + 触发器
+
+迁移文件：`supabase/migrations/20260620000001_profiles.sql`
+
+- 表 `public.profiles`：`id uuid PK → auth.users(id) ON DELETE CASCADE`，外加 `username/email/university/major/year/language/credits/level/level_name/vip_until/created_at/updated_at`。
+- **RLS**（数据库层强制，绕不过去）：
+  - `profiles_select_own`：`auth.uid() = id` 才能 select。
+  - `profiles_update_own`：`auth.uid() = id` 才能 update（`using` + `with check`）。
+- **注册自动建档**：函数 `handle_new_user()`（`security definer`）在 `auth.users` 插入后，向 `profiles` 插一行（`username` 取邮箱 `@` 前缀）；触发器 `on_auth_user_created`。
+- **维护 `updated_at`**：`touch_updated_at()` + before-update 触发器。
+
+> 逻辑要点：业务表用 `auth.uid()`（来自已验证 JWT 的 sub）做 RLS 隔离；service_role 走后端、绕过 RLS，仅用于管理操作（如建用户）。
+
+## 3. 后端：验签守卫 + 接口
+
+文件：`apps/api/src/auth/supabase.guard.ts`、`current-user.decorator.ts`、`me/me.controller.ts`、`auth/auth.controller.ts`
+
+### SupabaseAuthGuard（验签）
+- 从 `Authorization: Bearer` 取令牌。
+- **首选 JWKS**：`createRemoteJWKSet(<SUPABASE_URL>/auth/v1/.well-known/jwks.json)`，`jwtVerify(token, jwks, { issuer, audience:"authenticated" })`，支持 ES256/RS256。
+- **回退 HS256**：若 JWKS 验不过且配了 `SUPABASE_JWT_SECRET`，用密钥验 HS256（兼容旧项目）。
+- **要求 `sub`**：无 `sub` 一律 401（anon/service_role 这类无 sub 的 key 不会被当成用户）。
+- 通过后写入 `req.user = { id: sub, email, role }`。
+
+### 接口
+- `GET /api/me`（`@UseGuards(SupabaseAuthGuard)`）：返回当前用户，用于「证明后端信任登录态」。
+- `POST /api/auth/register`：见第 6 节。
+
+> **关键认知**：本项目 Supabase 用**非对称密钥（ES256）**签发用户令牌（令牌头 `alg:ES256, kid:...`）。最初守卫只做 HS256 + JWT secret，导致真实用户令牌验不过、`/api/me` 401。改用 JWKS 后通过。教训：先看令牌头的 `alg` 再决定验签方式。
+
+## 4. 前端：客户端 + 带令牌请求 + 登录界面
+
+文件：`apps/web/src/lib/supabase.ts`、`lib/api.ts`、`App.tsx`、`NalandaApp.tsx`
+
+- `lib/supabase.ts`：用 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`（构建期注入）创建客户端；未配置时为 `null` 并在界面提示，不崩。
+- `lib/api.ts`：`authedFetch(path)` 取当前 session 的 `access_token`，加 `Authorization: Bearer` 调后端。
+- `App.tsx`（鉴权门 + 登录页）：
+  - `onAuthStateChange` 订阅会话；有 session → 渲染 `<NalandaApp>`，否则渲染登录页。
+  - 登录页：**登录/注册分段切换**、邮箱**trim+小写规范化**、实时校验（邮箱格式 + 密码≥6）、密码显示/隐藏、loading/错误红框、主题切换。
+  - 注册：先 `POST /api/auth/register`，成功后 `signInWithPassword` **自动登录**；错误码映射明确文案。
+  - 登录：`signInWithPassword`（规范化邮箱）。
+
+## 5. 端到端令牌流程（逻辑）
+
+1. 用户在登录页提交 → `supabase.auth.signInWithPassword({email,password})`。
+2. Supabase 校验 → 返回 session（含 ES256 `access_token`），supabase-js 存 localStorage 并广播 `onAuthStateChange`。
+3. 前端进入应用；任何 `/api/*` 请求经 `authedFetch` 带上 Bearer。
+4. NestJS `SupabaseAuthGuard` 用项目 JWKS 验签 → `req.user`。
+5. `/api/me` 回显身份；业务接口可据 `req.user.id` + RLS 取数据。
+6. 退出：`supabase.auth.signOut()` 清会话 → `onAuthStateChange` → 回到登录页。
+
+## 6. 邮箱确认问题与「自建注册」
+
+**现象**：注册后登录报 `Invalid login credentials`；同邮箱可重复「注册成功」；收不到验证码。
+
+**根因**：项目 `mailer_autoconfirm=false`（邮箱确认开启），但 Supabase 默认邮件不可靠/被限流：
+- 网页注册建的是「未确认」账号 → 未确认不让登录。
+- Supabase **防枚举**：对已存在邮箱返回「假成功」→ 看起来能重复注册。
+- 它发的是确认**链接**不是验证码，且默认邮件发不出、Site URL 也没配。
+
+**解决**：自建 `POST /api/auth/register`（`apps/api/src/auth/auth.controller.ts`）
+- 校验邮箱格式、密码≥6（否则 400 `INVALID_EMAIL`/`WEAK_PASSWORD`）。
+- 用 **service_role** 调 `POST <URL>/auth/v1/admin/users`，`{ email, password, email_confirm:true }` → 直接创建**已确认**账号。
+- 重复邮箱 → `409 EMAIL_TAKEN`（前端提示「该邮箱已注册」，杜绝假成功）。
+- 前端注册成功后立即 `signInWithPassword` → 进入应用。
+
+**权衡**：当前**不做邮箱验证**（任意邮箱可注册）。这是 MVP 取舍，保证可用。将来要真验证：接可发信的 SMTP（如 Resend）+ 配 Site URL（`https://nalanda.online`）+ 打开邮箱确认即可。
+
+## 7. 配置与密钥（谁用哪把）
+
+| 变量 | 用处 | 机密 |
+|---|---|---|
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | 前端（构建期注入，公开无碍） | 否 |
+| `SUPABASE_URL` | 后端 JWKS / admin 基址 | 否 |
+| `SUPABASE_JWT_SECRET` | 后端 HS256 回退验签 | 是 |
+| `SUPABASE_SERVICE_ROLE_KEY` | 后端 admin 建用户（绕 RLS） | **绝密** |
+
+- 前端密钥经 GitHub Secrets 在 CI 构建期注入；后端密钥只存服务器 `/opt/nalanda/.env`（不入库、不进 CI 日志）。
+- **service_role 切勿进前端**：它能绕过所有 RLS 读写整库。
+
+## 8. 验证（线上实测）
+
+- 注册新邮箱 → 200（建已确认账号）；重复注册 → 409；坏邮箱/弱密码 → 400。
+- 新账号注册后**立即登录**成功；真实 ES256 令牌打 `https://nalanda.online/api/me` → 200 返回 `{id,email,role:authenticated}`；无/伪造令牌 → 401。
+- 注册触发器：新用户在 `profiles` 自动建行（RLS 下本人可见）。
+
+## 9. 后续 TODO
+
+- `/api/me` 由「回显 JWT claims」升级为「用 service_role 读 `profiles` 返回完整档案」。
+- 角色/权限（user/creator/admin）守卫；成长系统（credits/等级/徽章）写入 `profiles` 与账本表。
+- 真邮箱验证（SMTP）、OAuth、找回密码。
