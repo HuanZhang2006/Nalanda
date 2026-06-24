@@ -4,6 +4,22 @@
 
 **Nalanda** 是一款多平台 AI 学习辅助工具，专为大学生设计。一键将 PPT、Word、PDF 课件转化为结构化学习资产，从预习到期末一站式覆盖。
 
+> 🌐 在线体验：**https://nalanda.online** （注册即用）
+
+---
+
+## 实现状态
+
+| 模块 | 状态 |
+|---|---|
+| 注册 / 登录 / 退出 | ✅ **真后端**：Supabase Auth + JWKS 验签 + 自建注册接口 |
+| 资料库 Materials | ✅ **真后端**：按课程上传 / 预览 / 下载 / 删除、新建/重命名/删除课程；文件存 Supabase Storage、按用户 RLS 隔离；PDF / 图片 / 文本 / Markdown（渲染↔源码切换）软件内预览，Office 走在线查看器 |
+| 生产部署 + CI/CD | ✅ **已上线** `nalanda.online`：push 到 `main` 自动构建并部署 |
+| AI 笔记与创作 · 市场 · 社区 · 学习计划 · 成长 · 反馈 | 🟡 前端原型 + 假数据，后端待接 |
+| 桌面端（Electron）· 移动端（RN） | ⬜ 未开始（monorepo 已预留位置） |
+
+✅ 真后端　🟡 仅前端原型（mock）　⬜ 未开始　｜　各部分实现细节与踩坑见 [`docs/notes/`](docs/notes/)
+
 ---
 
 ## 核心功能（AI 笔记与创作）
@@ -21,7 +37,7 @@
 
 围绕核心创作流，Nalanda 还提供完整的学习生态：
 
-- **资料库（Materials）** — 按课程上传、预览、下载 PDF / PPT / Word / Markdown / HTML / TXT，作为 AI 生成的输入
+- **资料库（Materials）** ✅ 已接真后端 — 按课程上传、预览、下载、删除，文件存 Supabase Storage、RLS 隔离，作为 AI 生成的输入
 - **笔记市场（Note Market）** — 买卖、分享考试向笔记，购买后直接进入个人笔记库，创作者赚取积分
 - **社区（Community）** — 发帖、分享学习经验、提问、评论、收藏，按课程与学校筛选
 - **个人成长（Profile & Growth）** — 积分、等级、徽章、创作者收益统计
@@ -83,20 +99,27 @@ pnpm --filter @nalanda/api start   # 后端；GET /api/health 自检
 ```
 
 - `apps/web` — React + Vite（前端）｜ `apps/api` — NestJS（`/api/*`）
-- `apps/ai` — Python FastAPI AI 微服务（`uvicorn app.main:app`）
+- `apps/ai` — Python FastAPI AI 微服务（`uvicorn app.main:app`，骨架）
 - `packages/ui` — 设计令牌（从原型抽取）｜ `packages/types` — 共享类型
 
-部署见 [`infra/hybrid-2g/`](infra/hybrid-2g/README.md)。
+> 登录与 Materials 需要 Supabase：复制 `apps/web/.env.example` → `.env.local`、`apps/api/.env.example` → `.env` 填上你的 Supabase 密钥；数据库迁移用 `node scripts/db-push.mjs`（见 [`supabase/`](supabase/)）。
+
+部署见 [`infra/deploy/`](infra/deploy/README.md)（生产 · nginx 版）与 [`infra/hybrid-2g/`](infra/hybrid-2g/README.md)（通用 2G 版）。
 
 ## 技术栈
 
-- **前端 / 桌面 / 移动**：React + TypeScript（Vite）｜ Electron ｜ React Native（预留）
-- **后端**：NestJS（核心）+ Python FastAPI（AI 微服务，基于 ExamPass-Assistant 路径）
-- **数据 / 鉴权 / 存储 / 实时**：Supabase（PostgreSQL + pgvector）｜ 队列 Redis + BullMQ
-- **AI**：Anthropic Claude ｜ **支付**：Stripe
-- **原型**：原生 HTML / CSS / JS（`app/`），设计令牌已抽入 `packages/ui`
+**已接入（生产运行中）**
+- 前端：React + TypeScript（Vite），移植自原型 → `apps/web`
+- 后端：NestJS（注册 / 验签 / 健康检查）→ `apps/api`
+- 数据 / 鉴权 / 存储：Supabase（PostgreSQL + 行级安全 RLS、Auth、Storage）
+- 部署：服务器 nginx + Docker + GitHub Actions（`nalanda.online`）
 
-完整架构与路线图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)。
+**规划中**
+- AI：Anthropic Claude + Python FastAPI 微服务（基于 ExamPass-Assistant 路径）｜ 检索 pgvector
+- 队列 Redis + BullMQ ｜ 支付 Stripe ｜ 桌面 Electron ｜ 移动 React Native
+- 原型：原生 HTML / CSS / JS（`app/`），设计令牌已抽入 `packages/ui`
+
+完整架构与路线图见 [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md)；分模块实现笔记见 [`docs/notes/`](docs/notes/)。
 
 ## License
 
