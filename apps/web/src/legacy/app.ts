@@ -5,6 +5,7 @@ import { initMaterials, mountMaterials } from "./materials";
 import { initNotifications, openNotifications, refreshNotifBadge } from "./notifications";
 import { initFeedback, mountFeedback } from "./feedback";
 import { initProfile, mountProfile, syncShellUser } from "./profile";
+import { initCommunity, mountCommunity, mountPost } from "./community";
 
 const VIEWS: any = {};
 let _root: any = null;
@@ -135,6 +136,8 @@ function go(route, params){
   if(route==="materials"){ requestAnimationFrame(()=>{ const el=document.getElementById("mat-root"); if(el) mountMaterials(el); }); }
   if(route==="feedback"){ requestAnimationFrame(()=>{ const el=document.getElementById("fb-root"); if(el) mountFeedback(el); }); }
   if(route==="profile"){ requestAnimationFrame(()=>{ const el=document.getElementById("profile-root"); if(el) mountProfile(el); }); }
+  if(route==="community"){ requestAnimationFrame(()=>{ const el=document.getElementById("comm-root"); if(el) mountCommunity(el); }); }
+  if(route==="post"){ requestAnimationFrame(()=>{ const el=document.getElementById("post-root"); if(el) mountPost(el, S.postId); }); }
 }
 
 /* ---------- click delegation ---------- */
@@ -242,6 +245,7 @@ export function mountNalanda(container, opts){
   initNotifications(_opts.supabase, _opts.user, toast);
   initFeedback(_opts.supabase, _opts.user, toast);
   initProfile(_opts.supabase, _opts.user, toast);
+  initCommunity(_opts.supabase, _opts.user, toast);
   initTheme();
   renderShell();
   go("home");
@@ -941,3 +945,5 @@ VIEWS.feedback = function(){
 VIEWS.materials = () => '<div id="mat-root"></div>';
 VIEWS.feedback = () => '<div id="fb-root"></div>';
 VIEWS.profile = () => '<div id="profile-root"></div>';
+VIEWS.community = () => '<div id="comm-root"></div>';
+VIEWS.post = () => '<div id="post-root"></div>';
