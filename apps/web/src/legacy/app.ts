@@ -6,6 +6,7 @@ import { initNotifications, openNotifications, refreshNotifBadge } from "./notif
 import { initFeedback, mountFeedback } from "./feedback";
 import { initProfile, mountProfile, syncShellUser } from "./profile";
 import { initCommunity, mountCommunity, mountPost } from "./community";
+import { initSchedule, mountSchedule } from "./schedule";
 
 const VIEWS: any = {};
 let _root: any = null;
@@ -138,6 +139,7 @@ function go(route, params){
   if(route==="profile"){ requestAnimationFrame(()=>{ const el=document.getElementById("profile-root"); if(el) mountProfile(el); }); }
   if(route==="community"){ requestAnimationFrame(()=>{ const el=document.getElementById("comm-root"); if(el) mountCommunity(el); }); }
   if(route==="post"){ requestAnimationFrame(()=>{ const el=document.getElementById("post-root"); if(el) mountPost(el, S.postId); }); }
+  if(route==="schedule"){ requestAnimationFrame(()=>{ const el=document.getElementById("sched-root"); if(el) mountSchedule(el); }); }
 }
 
 /* ---------- click delegation ---------- */
@@ -246,6 +248,7 @@ export function mountNalanda(container, opts){
   initFeedback(_opts.supabase, _opts.user, toast);
   initProfile(_opts.supabase, _opts.user, toast);
   initCommunity(_opts.supabase, _opts.user, toast);
+  initSchedule(_opts.supabase, _opts.user, toast);
   initTheme();
   renderShell();
   go("home");
@@ -947,3 +950,4 @@ VIEWS.feedback = () => '<div id="fb-root"></div>';
 VIEWS.profile = () => '<div id="profile-root"></div>';
 VIEWS.community = () => '<div id="comm-root"></div>';
 VIEWS.post = () => '<div id="post-root"></div>';
+VIEWS.schedule = () => '<div id="sched-root"></div>';
