@@ -1,38 +1,119 @@
-# 10 · 学习计划 Schedule（真后端 + 跨模块联动）
+# 10 · 学习计划 Schedule · 详解
 
-> 目标：今天/本周/全部三视图的任务管理 + 目标倒计时；完成任务接入积分/连续学习；任务关联课程与资料（联动 Materials）；从课程一键智能填充。
+> 文件：`supabase/migrations/20260625000007_schedule.sql`、`apps/web/src/legacy/schedule.ts`。依赖 0006 的 `_add_points / _notify`。
 
-## 1. 数据层（迁移 0007）
-- `study_goals(title, exam_date, course_id?)` — owner-only RLS。
-- `study_tasks(title, due_date, done, done_at, course_id?, material_id?, goal_id?)` — owner-only；**写入校验关联归属**：`course_id/material_id/goal_id` 若非空必须属于本人（`with check ... exists(...)`，沿用 [06](06-materials.md) 0003 的「外键≠权限」教训）。
-- `profiles.streak/streak_date`（连续学习天数 + 最近计入日）。
+---
 
-## 2. 完成任务的联动（触发器 `_on_task_done`，迁移 0007）
-`done` 由 false→true 时（`after update of done`，`security definer`）：
-- **+5 积分**（调 0006 的 `_add_points`，顺带可能升级）。
-- **连续学习 streak**：`streak_date = 今天` 不重复计；`= 昨天` 则 +1；否则重置为 1。
-- **里程碑通知**：streak 命中 3/7/14/30/100 天，`_notify()` 发一条祝贺通知。
+## 一、数据模型
 
-## 3. 前端（`legacy/schedule.ts`，路由 `#sched-root`）
-- **三视图**：今天（逾期 + 今日）/ 本周（今天起 7 天网格，每列可加任务）/ 全部（按日期分组）。
-- **任务 CRUD**：标题、日期、关联课程（选自我的 courses）、关联资料（按所选课程过滤 materials）；勾选完成 / 取消；编辑 / 删除。
-- **目标倒计时**：新建考试/DDL，顶部 chip 显示 `D-x`。
-- **统计**：本周完成数/总数、连续学习天数、逾期数。
-- **智能填充** `autoplan()`：取我的课程（≤6 门）生成「复习 {课程}」任务，按天铺到本周（落地原型「Re-plan」，纯启发式，无需 AI）。
+### study_goals（目标/考试）
+`id, user_id(默认 auth.uid()), title, exam_date date, course_id(可空,→courses on delete set null), created_at`。owner-only RLS。
 
-## 4. 跨模块联动一览
-| 联动 | 实现 |
+### study_tasks（任务）
+`id, user_id, title, due_date date(默认 current_date), done bool, done_at, course_id?, material_id?, goal_id?, created_at`。
+- **三个可空外键**让任务能挂到 课程 / 资料 / 目标——这是和 Materials 的联动基础。
+- `on delete set null`：删了课程/资料，任务还在，只是断开关联（不级联删任务）。
+
+### profiles 增列
+`streak int`（连续学习天数）、`streak_date date`（最近计入连续的那天）。
+
+### RLS（带「关联归属校验」）
+```sql
+create policy study_tasks_own ... for all to authenticated
+  using (user_id = auth.uid())
+  with check (
+    user_id = auth.uid()
+    and (course_id   is null or exists(select 1 from courses     c where c.id=course_id   and c.user_id=auth.uid()))
+    and (material_id is null or exists(select 1 from materials   m where m.id=material_id and m.user_id=auth.uid()))
+    and (goal_id     is null or exists(select 1 from study_goals g where g.id=goal_id     and g.user_id=auth.uid()))
+  );
+```
+**为什么**：owner-only 只保证「任务是我的」，但外键不保证「我引用的课程也是我的」。不加这层，理论上能把任务挂到别人的课程 id 上（脏数据）。这是 [06 Materials](06-materials.md) 0003 那条教训的复用——**外键 ≠ 权限**。e2e 里「B 不能挂 A 的课程」验证此点。
+
+---
+
+## 二、完成任务触发器（0007 `_on_task_done`，`security definer`）
+
+`after update of done on study_tasks`：仅当 `done` 由 false→true 时执行（取消勾选不回滚）：
+```
+if new.done and not coalesce(old.done,false) then
+  perform _add_points(new.user_id, 5);              -- 1) +5 积分（顺带可能升级，见 0006）
+  select streak, streak_date into s, sd from profiles where id=new.user_id;
+  if sd = today          then ns := s;              -- 2) 今天已计过 → streak 不变
+  elsif sd = today - 1   then ns := s + 1;          --    昨天计过 → +1（连续）
+  else                        ns := 1; end if;      --    断了/首次 → 重置为 1
+  update profiles set streak=ns, streak_date=today where id=new.user_id;
+  if ns in (3,7,14,30,100) and sd is distinct from today then
+    perform _notify(new.user_id, 'streak', '🔥 连续学习 N 天', '...');   -- 3) 里程碑通知
+  end if;
+end if;
+```
+要点：
+- **幂等防刷**：`streak_date=today` 时再完成任务不重复 +streak（但仍 +5 分——可按需改）。
+- `is distinct from` 处理 NULL（首次 streak_date 为空）。
+- definer：要改 profiles.points/streak + 写 notifications，普通用户对自己 profiles 有 update 权，但 points/streak 不该客户端可写，统一走触发器更稳。
+
+---
+
+## 三、前端（`schedule.ts`）
+
+### 状态 + 日期工具
+```
+state = { loading, error, tab:'today'|'week'|'all', tasks, goals, courses, materials, streak };
+dstr(d) → 'YYYY-MM-DD'（本地时区，避免 UTC 偏移）；todayStr()；addDays(d,n)；WK[周几]。
+```
+> 日期都用本地 `YYYY-MM-DD` 字符串比较（`due_date` 是 date 类型），不碰时间/时区，避免「今天的任务跑到昨天」。
+
+### 生命周期
+`mountSchedule(el)` → `render()`（骨架）→ `load()`。
+
+**load()** — 一次并发拉 5 样：任务（`due_date >= 今天-14`，只取近期+未来）、目标、课程、资料、我的 streak。一把填进 state 再 render。
+
+**stats()** — 纯前端计算：本周窗口 = `[今天, 今天+6]`；`wkTotal/wkDone`；`overdue` = 未完成且 `due_date < 今天`。
+
+### 视图（body() 按 tab 分支）
+- **今天**：`逾期`（`!done && due<today`）区 + `今天`（`due==today`）区；空态。
+- **本周**：7 列网格，列 = 今天起 7 天；每列放 `due_date==该天` 的任务（紧凑 `.task` 样式，点一下即切换完成），底部「+」按该天日期加任务。
+- **全部**：未完成或未来的任务，按 `due_date` 分组渲染。
+
+**taskRow(t)** — 复选钮（`data-sc="toggle"`，完成则绿勾+删除线）+ 标题 + 课程 chip + 资料 chip（`matChip`）+ 逾期标。课程/资料 chip 带 `data-go="materials"`——点了由壳路由跳到 Materials（联动）。
+
+**goalsBar()** — 每个目标算 `D-x = exam_date - 今天`，≤7 天高亮；带「✕」删除。
+
+### 事件 + 动作
+```
+wire(): 给 [data-sc] 绑 onclick（preventDefault + stopPropagation + handle）
+handle: settab / toggle / edit / del / addtask(带 data-date) / addgoal / delgoal / autoplan
+```
+- **toggleTask(id)**：`update study_tasks set done=!done, done_at` → `await load()`（刷新 streak/积分/统计）→ `syncShellUser()`（刷新左下角侧栏积分，跨模块调 [08](08-notifications-feedback-profile.md) 的导出函数）。完成时 toast「完成 +5 积分」。
+- **taskModal(existing, presetDate)**：新建/编辑同一弹窗。日期默认 `presetDate`（本周列点「+」带过来）或今天。课程下拉来自我的 courses；**资料下拉随所选课程联动**（`drawMats()` 在 course `onchange` 时按 `course_id` 过滤 materials）。`saving` 锁防重复。
+- **goalModal()**：标题 + 日期 → insert study_goals。
+- **autoplan()**（智能填充）：取我的课程（≤6）生成 `复习 {课程}` 任务，`due_date` 用 `addDays(今天, i)` 铺到本周，带 `course_id`；一次性 `insert(rows)`。落地原型的「Re-plan」——纯启发式、不依赖 AI，但真的写库。
+
+### 一次完成任务的完整数据流
+```
+点复选钮(data-sc=toggle) → handle("toggle") → toggleTask
+  → update study_tasks.done=true
+  → 触发器 _on_task_done：+5 分、streak 计算、可能里程碑通知、可能升级
+  → await load() 重新拉（streak/统计为权威值）→ render()
+  → syncShellUser() 刷新侧栏「Lv x · 名 · 积分」
+```
+
+---
+
+## 四、跨模块联动一览
+| 联动 | 实现位置 |
 |---|---|
-| 完成 → 积分/等级 | 触发器 +5 分；调 `_add_points` 重算等级（[08](08-notifications-feedback-profile.md)） |
-| 完成 → 连续学习 + 通知 | streak 计算 + 里程碑 `_notify`（通知模块展示） |
-| 任务 ↔ 课程/资料 | 选自 Materials 的课程/资料；任务上的 chip `data-go="materials"` 跳转 |
-| 智能填充 ← 课程 | 读 courses 生成复习任务 |
-| 完成 → 侧栏积分刷新 | `toggleTask` 后调 `syncShellUser()`（[08](08-notifications-feedback-profile.md)） |
+| 完成 → 积分/等级 | 触发器 `_add_points`（[08](08-notifications-feedback-profile.md) 的积分体系） |
+| 完成 → 连续学习 + 里程碑通知 | 触发器 streak + `_notify`（通知模块展示） |
+| 任务 ↔ 课程/资料 | taskModal 选自 Materials；chip `data-go="materials"` 跳转 |
+| 智能填充 ← 课程 | autoplan 读 courses 生成任务 |
+| 完成 → 侧栏积分即时刷新 | toggleTask 调 `syncShellUser()` |
 
-## 5. 验证
-后端 e2e：完成任务 +5 分、streak=1、同日不重复计、RLS 隔离、关联课程归属校验被拦；jsdom 冒烟：三视图、目标倒计时、任务课程/资料链接、本周 7 列、加任务弹窗、勾选完成。
+## 五、验证
+后端 e2e：完成 +5 分、streak=1、同日不重复计、RLS 隔离、关联课程归属校验被拦；jsdom 冒烟：三视图、目标倒计时、任务课程/资料链接、本周 7 列、加任务弹窗、勾选完成。
 
-## 6. 待办 / 可扩展
-- **到期提醒**需服务端定时（Supabase cron / pg_cron）；当前是进应用时在界面高亮逾期/今日，不自动推送。
-- Home 首页接「今日待办 + streak」即可把计划串到首屏（Home 仍为 mock）。
-- AI 联动：任务「从资料生成笔记」直达 AI 笔记生成（待 AI 模块）。
+## 六、待扩展
+- **到期提醒**需服务端定时（Supabase `pg_cron`）；现在是进应用时界面高亮逾期/今日，不主动推送。
+- 取消完成是否回滚积分/streak（目前不回滚，防刷分简单）。
+- Home 首页接「今日待办 + streak」串到首屏。
