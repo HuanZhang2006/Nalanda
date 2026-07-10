@@ -1,5 +1,10 @@
 # 09 · 社区（真后端 · 全社交功能）· 详解
 
+> **文档定位**
+> - **内容**：记录社区表/RLS/触发器、前端状态、互动流程和已知取舍。
+> - **作用**：作为当前社区实现的函数级复盘和后续治理改造入口。
+> - **何时更新**：帖子字段、RLS、积分、媒体、审核、前端交互或测试覆盖变化时。
+
 > 目标：能照着复盘/重写。逐表讲数据与 RLS、逐触发器讲服务端逻辑、逐函数讲前端逻辑与数据流。
 > 文件：`supabase/migrations/20260625000005_community.sql`（结构）、`...0006_points_tags_notify.sql`（积分/通知/标签/媒体）、`apps/web/src/legacy/community.ts`（前端）。
 
@@ -60,7 +65,7 @@ update posts set like_count = greatest(0, like_count + d) where id = pid;  -- �
 select username, university, major into new.author_name, new.author_university, new.author_major
 from profiles where id = auth.uid();
 ```
-**无视客户端传的 author_*，强制用 profiles 里的真值**——所以前端就算传 `author_name:"HACKER"` 也会被覆盖。这就是 e2e 里「anti-spoof」那条。
+INSERT 时会无视客户端传的 author_*，强制用 profiles 真值。但 UPDATE policy 当前允许作者更新整行，因此作者仍可在插入后篡改快照、计数、时间和 `repost_of`；“防伪造”尚未覆盖更新路径。
 
 ### 3) 转发计数（0005 `_bump_repost`）
 `after insert/delete on posts`：若 `repost_of` 非空，给原帖 `repost_count ±1`。
@@ -158,9 +163,10 @@ DB 触发器：likes_cnt 改 like_count(权威值)；_on_like 给点赞者 +1 �
 
 ## 五、坑 / 取舍
 - **公共读 vs owner-only**：社区第一次用 `using(true)`；写仍严格。展示他人信息靠快照，不放开 profiles 读权限。
-- **点赞刷分**：`insert` 即 +1、`delete` 不扣，反复赞/取消可刷分。量小可接受；要严格可改成「被赞才给帖主加分」或加每日上限。
+- **点赞刷分**：`insert` 即 +1、`delete` 不扣，反复赞/取消可刷分。这是阶段 A 必须修复的完整性风险；修复前 points 不能作为可信成长或商业依据。目标方案是不可变事件账本、唯一业务键、冲正和每日上限。
+- **其它刷分路径**：评论/帖子删除重建和任务 false→true 也会重复奖励。正确解法是不可变 points 事件账本 + 唯一业务事件键，不只是前端限频。
 - **乐观更新 vs 权威值**：前端本地 ±1 只为即时反馈，真实计数以触发器维护的列为准（下次拉取覆盖）。
 - **导航靠壳委托**：动作按钮必须 `stopPropagation`，否则会连带触发卡片的 `data-go` 跳转。
 
 ## 六、验证
-两用户 e2e（13 项）覆盖：公共读、四类计数触发器、作者防伪造、关注、RLS（非作者不能改/删、点赞记录私有）；0006 触发器单测（积分/等级/通知/标签）；jsdom 集成冒烟（feed/筛选/我的+子标签/composer 标签+媒体/详情评论）。
+两用户 RLS E2E、触发器检查和 jsdom 社区回归的可执行覆盖矩阵见 [测试指南](../guides/TESTING.md)。现有套件覆盖 INSERT 防伪造；作者 UPDATE 服务端可信字段的缺口已列入“当前未覆盖的重要风险”，修复迁移时必须新增负向回归，避免把半条安全链写成已完成。

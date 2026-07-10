@@ -1,0 +1,39 @@
+# ADR-0002：Supabase 承担 Auth、Postgres 与 Storage，RLS 是数据授权边界
+
+> **本文内容：**记录认证、关系数据、文件存储和行级授权采用 Supabase 的决策。  
+> **作用：**明确浏览器直连场景下真正的安全边界，以及所有数据模型必须满足的 RLS/Storage 约束。  
+> **何时更新：**身份提供商、数据库/Storage、租户模型、JWT 验证或授权策略改变时；出现重大 RLS 事件时。  
+> **安全说明：**本文记录目标边界，不代表现有每条策略都安全；已知缺口见根 `SECURITY.md`。
+
+- **状态：**Accepted
+- **日期：**2026-06-20
+- **决策者：**项目维护者
+- **范围：**认证、PostgreSQL、PostgREST、Storage
+
+## 背景
+
+产品需要邮箱登录、用户私有课程/课件、公共社区、文件上传和后续实时通知。早期团队希望降低自建认证、对象存储和数据库运维成本，同时允许简单 owner CRUD 直接从浏览器访问。
+
+## 决策
+
+- Supabase Auth 是用户身份源，用户 ID 使用 `auth.users.id`。
+- Postgres 是业务事实源；Storage 保存文件对象，表中只存对象引用和元数据。
+- 用户请求携带 Supabase JWT；NestJS 优先通过项目 JWKS 校验 issuer/audience/签名，旧 HS256 secret 只作兼容回退并计划淘汰。
+- 对浏览器可访问的表和 bucket 默认启用 RLS/Storage policy；授权依据 `auth.uid()`、所有权和明确公共范围，而不是客户端过滤。
+- service-role 只存在于服务端受控环境，并视为 Restricted secret；它绕过 RLS，所有使用点需额外业务授权和审计。
+- schema 变更只通过可追踪迁移发布，并用至少两个普通用户做允许/拒绝测试。
+
+## 后果
+
+Supabase 减少基础设施工作并提供统一身份，但 RLS 错误会直接成为数据泄露/篡改；service-role 泄露影响极大。Auth 用户删除可以级联部分表，却不会自动证明所有 Storage、备份、第三方 AI、支付和审计记录已按政策处理。
+
+## 当前实现与目标差距
+
+- **当前：**Auth、profiles、courses/materials、notifications/feedback、community、schedule 表和两个 bucket 已通过迁移建立；多数 owner 数据有 RLS。
+- **当前风险：**profile 更新策略没有列级保护；若干 definer 函数执行权过宽；community-media 是 public；注册绕过邮箱确认且无滥用控制；尚无自动 RLS 测试门禁。
+- **目标：**修复已知权限问题；所有迁移在隔离数据库自动重放并执行角色矩阵；Storage 生命周期、导出/删除、审计和 Realtime channel 授权纳入同一模型。
+
+## 验证与复审
+
+每个资源验证匿名、用户 A、用户 B、后端服务角色的每个 CRUD 动作。任何“前端隐藏按钮即可安全”的实现直接违反本 ADR。
+

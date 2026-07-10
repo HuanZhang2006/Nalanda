@@ -29,6 +29,12 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Test
+        run: pnpm test
+
       # 前端静态产物（Supabase 公钥在构建时注入）
       - name: Build web
         run: pnpm --filter @nalanda/web build

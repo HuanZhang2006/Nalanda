@@ -1,5 +1,10 @@
 # 02 · 用户系统与认证
 
+> **文档定位**
+> - **内容**：记录当前 Supabase Auth、NestJS JWT 守卫、Profile 建档和注册流程。
+> - **作用**：说明认证数据流与安全边界，供登录故障排查和后续邮箱/OAuth 改造参考。
+> - **何时更新**：认证提供商、令牌校验、注册/找回密码、角色、Profile 权限或密钥变化时。
+
 > 目标：用户能注册 / 登录 / 退出（真实后端），后端能信任登录态，每个用户有自己的资料档案且只能访问自己的数据。
 
 ## 1. 技术方案总览
@@ -48,6 +53,8 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 
 > **关键认知**：本项目 Supabase 用**非对称密钥（ES256）**签发用户令牌（令牌头 `alg:ES256, kid:...`）。最初守卫只做 HS256 + JWT secret，导致真实用户令牌验不过、`/api/me` 401。改用 JWKS 后通过。教训：先看令牌头的 `alg` 再决定验签方式。
 
+当前 HS256 回退只限制算法/签名，没有与 JWKS 路径一样校验 issuer/audience；如继续保留回退，应补齐一致验证。
+
 ## 4. 前端：客户端 + 带令牌请求 + 登录界面
 
 文件：`apps/web/src/lib/supabase.ts`、`lib/api.ts`、`App.tsx`、`NalandaApp.tsx`
@@ -86,6 +93,8 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 
 **权衡**：当前**不做邮箱验证**（任意邮箱可注册）。这是 MVP 取舍，保证可用。将来要真验证：接可发信的 SMTP（如 Resend）+ 配 Site URL（`https://nalanda.online`）+ 打开邮箱确认即可。
 
+安全边界：该公开注册接口持有 service-role 能力，当前没有验证码、限流或 CAPTCHA，并明确返回重复邮箱。正式增长前必须增加滥用防护与邮箱验证，详见 [SECURITY](../../SECURITY.md)。
+
 ## 7. 配置与密钥（谁用哪把）
 
 | 变量 | 用处 | 机密 |
@@ -98,11 +107,9 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 - 前端密钥经 GitHub Secrets 在 CI 构建期注入；后端密钥只存服务器 `/opt/nalanda/.env`（不入库、不进 CI 日志）。
 - **service_role 切勿进前端**：它能绕过所有 RLS 读写整库。
 
-## 8. 验证（线上实测）
+## 8. 验证
 
-- 注册新邮箱 → 200（建已确认账号）；重复注册 → 409；坏邮箱/弱密码 → 400。
-- 新账号注册后**立即登录**成功；真实 ES256 令牌打 `https://nalanda.online/api/me` → 200 返回 `{id,email,role:authenticated}`；无/伪造令牌 → 401。
-- 注册触发器：新用户在 `profiles` 自动建行（RLS 下本人可见）。
+历史线上实测曾覆盖注册状态码、ES256 `/api/me` 和 Profile 自动建档。当前可复现测试、所需隔离 Supabase 项目和命令以 [测试指南](../guides/TESTING.md) 为准；不要用生产项目运行会创建/删除用户的 E2E。
 
 ## 9. 后续 TODO
 

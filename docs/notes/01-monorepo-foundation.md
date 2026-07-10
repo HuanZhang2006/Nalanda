@@ -1,5 +1,10 @@
 # 01 · 工程基建与 monorepo
 
+> **文档定位**
+> - **内容**：记录当前 pnpm/Turborepo 单仓结构、共享包和构建边界。
+> - **作用**：解释工程骨架及历史取舍，不把尚未创建的桌面/移动包写成现状。
+> - **何时更新**：workspace、包依赖、构建脚本、Node/pnpm 版本或目录职责变化时。
+
 > 目标：用一个仓库承载「Web 前端 + 桌面(Electron) + 移动(RN) + 后端(NestJS) + AI 微服务(Python)」，并在前后端之间共享类型与设计令牌，做到一处改、处处一致。
 
 ## 1. 技术方案
@@ -16,8 +21,8 @@ nalanda/
 │  ├─ web/      React + Vite（生产前端，已落地）
 │  ├─ api/      NestJS 核心后端（已落地：health/me/auth）
 │  ├─ ai/       Python FastAPI AI 微服务（骨架 + 桩）
-│  ├─ desktop/  Electron（规划）
-│  └─ mobile/   React Native（规划）
+│  ├─ desktop/  Electron（目标；目录尚不存在）
+│  └─ mobile/   React Native（目标；目录尚不存在）
 ├─ packages/
 │  ├─ types/    共享 TS 类型（与 AI 产物 schema、原型数据对齐）
 │  └─ ui/       设计令牌（tokens.css）+ 完整样式（nalanda.css）
@@ -40,7 +45,7 @@ nalanda/
 ## 4. 共享包
 
 ### packages/types
-纯类型，无运行时。导出与「AI 产物」「原型 `app/data.js`」一致的结构：`KnowledgePoint / QuizQuestion / KnowledgeGraph / MockExam / Language / MaterialType` 等。三方（原型数据 / Python schema / 前端类型）形状对齐，是后续接 AI 时「真数据直接渲染」的红利。
+纯类型，无运行时，定义目标 AI 产物：`KnowledgePoint / QuizQuestion / KnowledgeGraph / MockExam / Language / MaterialType` 等。它当前未被 Web/API 引用，且与原型短字段并不一致：例如 `title/definition` 对 `t/d`、`question/options` 对 `q/opts`、图节点缺少前端所需 `x/y/cls`。接 AI 前必须统一契约或提供显式适配层。
 
 ### packages/ui
 设计系统的「样式底座」：
@@ -52,14 +57,14 @@ nalanda/
 
 ```
 pnpm install                 # 安装 + 软链 workspace 包，生成 pnpm-lock.yaml
-pnpm build                   # turbo：按拓扑构建 types → (api/web)
+pnpm build                   # turbo：运行各 workspace 中存在的 build 脚本
   ├─ @nalanda/types: tsc → dist（.js + .d.ts）
   ├─ @nalanda/api:   tsc → dist/main.js（NestJS）
   └─ @nalanda/web:   vite build → dist/（静态产物）
 ```
 
 要点：
-- **Vite 用 esbuild 转译，不做类型检查**——所以 `vite build` 不会被 TS 严格模式卡住；类型检查走独立的 `typecheck` 脚本（`tsc --noEmit`）。这也是「移植的原型 JS 用 `// @ts-nocheck` 也能顺利构建」的原因。
+- **Vite 用 esbuild 转译，不做类型检查**——所以 `vite build` 不会替代独立的 `typecheck`。目前 9 个 legacy TS 文件使用 `// @ts-nocheck`，即使 typecheck 通过也不能证明 legacy 内部类型安全。
 - `pnpm-lock.yaml` **必须入库**：CI 与 Docker 构建用 `--frozen-lockfile` 保证可复现。
 - 后端镜像用 `pnpm deploy --prod` 从 workspace 抽出「仅含生产依赖」的自包含目录，使运行镜像精简。
 
@@ -70,4 +75,4 @@ pnpm build                   # turbo：按拓扑构建 types → (api/web)
 
 ## 7. 验证
 
-`pnpm install` + `pnpm build` 三个包全部成功；产物：`web/dist`（含编译后的设计令牌 CSS）、`api/dist/main.js`、`types/dist`。
+当前可执行验证以 [测试指南](../guides/TESTING.md) 为准。历史上三个包构建成功；不能仅凭旧记录判断当前提交可构建。

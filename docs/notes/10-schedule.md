@@ -1,5 +1,10 @@
 # 10 · 学习计划 Schedule · 详解
 
+> **文档定位**
+> - **内容**：记录学习目标/任务、RLS、完成奖励、连续学习和当前规则式填充。
+> - **作用**：解释 Schedule 的真实数据流与跨模块联动，并跟踪提醒/推荐的后续缺口。
+> - **何时更新**：任务/目标字段、奖励幂等、提醒、排程算法、时区或关联权限变化时。
+
 > 文件：`supabase/migrations/20260625000007_schedule.sql`、`apps/web/src/legacy/schedule.ts`。依赖 0006 的 `_add_points / _notify`。
 
 ---
@@ -7,7 +12,7 @@
 ## 一、数据模型
 
 ### study_goals（目标/考试）
-`id, user_id(默认 auth.uid()), title, exam_date date, course_id(可空,→courses on delete set null), created_at`。owner-only RLS。
+`id, user_id(默认 auth.uid()), title, exam_date date, course_id(可空,→courses on delete set null), created_at`。owner-only RLS。当前策略没有像 task 一样校验 `course_id` 必须属于本人，这是待修完整性缺口。
 
 ### study_tasks（任务）
 `id, user_id, title, due_date date(默认 current_date), done bool, done_at, course_id?, material_id?, goal_id?, created_at`。
@@ -49,7 +54,7 @@ if new.done and not coalesce(old.done,false) then
 end if;
 ```
 要点：
-- **幂等防刷**：`streak_date=today` 时再完成任务不重复 +streak（但仍 +5 分——可按需改）。
+- **仅 streak 同日幂等**：`streak_date=today` 时不重复 +streak，但任务可以 false→true 反复获得 +5 points，奖励本身并不防刷。
 - `is distinct from` 处理 NULL（首次 streak_date 为空）。
 - definer：要改 profiles.points/streak + 写 notifications，普通用户对自己 profiles 有 update 权，但 points/streak 不该客户端可写，统一走触发器更稳。
 
@@ -111,9 +116,9 @@ handle: settab / toggle / edit / del / addtask(带 data-date) / addgoal / delgoa
 | 完成 → 侧栏积分即时刷新 | toggleTask 调 `syncShellUser()` |
 
 ## 五、验证
-后端 e2e：完成 +5 分、streak=1、同日不重复计、RLS 隔离、关联课程归属校验被拦；jsdom 冒烟：三视图、目标倒计时、任务课程/资料链接、本周 7 列、加任务弹窗、勾选完成。
+数据库 E2E 与 jsdom Schedule 回归的可执行命令见 [测试指南](../guides/TESTING.md)。测试应明确区分“streak 同日不重复”与“points 可重复奖励”的当前行为。
 
 ## 六、待扩展
 - **到期提醒**需服务端定时（Supabase `pg_cron`）；现在是进应用时界面高亮逾期/今日，不主动推送。
-- 取消完成是否回滚积分/streak（目前不回滚，防刷分简单）。
+- 取消完成目前既不冲正 points/streak，也没有阻止再次 false→true 获得 +5；需改为幂等 points 事件和明确的 streak/冲正规则。
 - Home 首页接「今日待办 + streak」串到首屏。
