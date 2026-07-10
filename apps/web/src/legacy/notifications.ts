@@ -4,8 +4,14 @@ import { ICON } from "./icons";
 
 let sb = null, USER = null, toastFn = () => {};
 let items = [];
+let sessionVersion = 0;
 
-export function initNotifications(supabase, user, toast) { sb = supabase; USER = user; if (toast) toastFn = toast; }
+export function initNotifications(supabase, user, toast) {
+  sessionVersion++;
+  sb = supabase; USER = user; toastFn = toast || (() => {});
+  items = [];
+  document.getElementById("notif-pop")?.remove();
+}
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function timeAgo(s) {
@@ -18,16 +24,24 @@ function timeAgo(s) {
 }
 
 export async function refreshNotifBadge() {
+  const currentVersion = sessionVersion, client = sb;
   const el = document.getElementById("notif-badge");
   if (!el || !sb) return;
   try {
-    const { count } = await sb.from("notifications").select("id", { count: "exact", head: true }).eq("read", false);
+    const { count, error } = await client.from("notifications").select("id", { count: "exact", head: true }).eq("read", false);
+    if (error) throw error;
+    if (currentVersion !== sessionVersion) return;
     if (count > 0) { el.textContent = count > 99 ? "99+" : String(count); el.style.display = ""; }
     else el.style.display = "none";
-  } catch { el.style.display = "none"; }
+  } catch (e) {
+    if (currentVersion !== sessionVersion) return;
+    el.style.display = "none";
+    toastFn("通知状态加载失败：" + (e.message || ""));
+  }
 }
 
 export async function openNotifications() {
+  const currentVersion = sessionVersion, client = sb;
   const existing = document.getElementById("notif-pop");
   if (existing) { existing.remove(); return; } // 再点收起
 
@@ -47,18 +61,24 @@ export async function openNotifications() {
   const listEl = pop.querySelector("#notif-list");
   pop.querySelector("#notif-backdrop").onclick = () => pop.remove();
   pop.querySelector('[data-nt="readall"]').onclick = async () => {
-    try { await sb.from("notifications").update({ read: true }).eq("read", false); } catch {}
-    await reload(); refreshNotifBadge();
+    try {
+      const { error } = await client.from("notifications").update({ read: true }).eq("read", false);
+      if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
+      await reload(); refreshNotifBadge();
+    } catch (e) { if (currentVersion === sessionVersion) toastFn("标记已读失败：" + (e.message || "")); }
   };
 
   async function reload() {
     listEl.innerHTML = `<div class="muted" style="padding:28px;text-align:center;font-size:13px">加载中…</div>`;
     try {
-      const { data, error } = await sb.from("notifications").select("*").order("created_at", { ascending: false }).limit(40);
+      const { data, error } = await client.from("notifications").select("*").order("created_at", { ascending: false }).limit(40);
       if (error) throw error;
+      if (currentVersion !== sessionVersion) { pop.remove(); return; }
       items = data || [];
       draw();
     } catch (e) {
+      if (currentVersion !== sessionVersion) return;
       listEl.innerHTML = `<div class="muted" style="padding:28px;text-align:center;font-size:13px">加载失败：${esc(e.message || "")}</div>`;
     }
   }
@@ -82,7 +102,12 @@ export async function openNotifications() {
       el.onclick = async () => {
         const n = items.find((x) => x.id === el.dataset.id);
         if (n && !n.read) {
-          try { await sb.from("notifications").update({ read: true }).eq("id", n.id); n.read = true; draw(); refreshNotifBadge(); } catch {}
+          try {
+            const { error } = await client.from("notifications").update({ read: true }).eq("id", n.id);
+            if (error) throw error;
+            if (currentVersion !== sessionVersion) return;
+            n.read = true; draw(); refreshNotifBadge();
+          } catch (e) { if (currentVersion === sessionVersion) toastFn("标记已读失败：" + (e.message || "")); }
         }
       };
     });
@@ -92,6 +117,17 @@ export async function openNotifications() {
 
 // 供其它模块产生通知（如提交反馈后）
 export async function notify(title, body, type) {
-  if (!sb) return;
-  try { await sb.from("notifications").insert({ title, body: body || null, type: type || null }); refreshNotifBadge(); } catch {}
+  const currentVersion = sessionVersion, client = sb;
+  if (!sb) return false;
+  try {
+    const { error } = await client.from("notifications").insert({ title, body: body || null, type: type || null });
+    if (error) throw error;
+    if (currentVersion !== sessionVersion) return false;
+    refreshNotifBadge();
+    return true;
+  } catch (e) {
+    if (currentVersion !== sessionVersion) return false;
+    toastFn("通知写入失败：" + (e.message || ""));
+    return false;
+  }
 }

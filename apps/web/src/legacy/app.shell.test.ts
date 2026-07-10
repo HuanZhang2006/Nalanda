@@ -7,7 +7,6 @@ describe("legacy 应用壳", () => {
     const addListener = vi.spyOn(window, "addEventListener");
     const removeListener = vi.spyOn(window, "removeEventListener");
     const { mountNalanda } = await import("./app");
-    const resizeListener = addListener.mock.calls.find(([type]) => type === "resize")?.[1];
 
     const root = document.createElement("div");
     document.body.appendChild(root);
@@ -18,6 +17,7 @@ describe("legacy 应用壳", () => {
       supabase,
       onSignOut,
     });
+    const resizeListener = addListener.mock.calls.find(([type]) => type === "resize")?.[1];
     await flush(16);
 
     expect(root.querySelector(".brand-name")?.textContent).toBe("Nalanda");
@@ -44,6 +44,9 @@ describe("legacy 应用壳", () => {
 
     click(root.querySelector('[data-go="create"]'));
     expect(root.textContent).toContain("Create a note");
+    vi.useFakeTimers();
+    click(root.querySelector('[data-act="runGen"]'));
+    expect(document.body.textContent).toContain("Generating from your material");
 
     click(root.querySelector('[data-act="signOut"]'));
     expect(onSignOut).toHaveBeenCalledOnce();
@@ -51,6 +54,24 @@ describe("legacy 应用壳", () => {
     cleanup();
     expect(root.innerHTML).toBe("");
     expect(removeListener).toHaveBeenCalledWith("resize", resizeListener);
+
+    // 退出后再次登录会重新挂载 resize，不能只在模块 import 时注册一次。
+    const secondRoot = document.createElement("div");
+    document.body.appendChild(secondRoot);
+    const secondCleanup = mountNalanda(secondRoot, {
+      user: { id: "u2", email: "bob@example.edu" },
+      supabase: createSupabaseMock(undefined, "u2"),
+      onSignOut,
+    });
+    await flush(12);
+    expect(addListener.mock.calls.filter(([type]) => type === "resize")).toHaveLength(2);
+    expect(secondRoot.textContent).toContain("Good morning, bob");
+    // 上一账号的 mock generation timer 不能在新账号中跳转或显示成功。
+    vi.advanceTimersByTime(1_000);
+    await flush(4);
+    expect(secondRoot.textContent).toContain("Good morning, bob");
+    expect(document.body.textContent).not.toContain("Note created — added to My Notes");
+    secondCleanup();
+    expect(removeListener.mock.calls.filter(([type]) => type === "resize")).toHaveLength(2);
   });
 });
-

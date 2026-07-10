@@ -7,6 +7,7 @@ import { syncShellUser } from "./profile";
 let sb = null, USER = null, toastFn = () => {};
 let rootEl = null;
 const state = { loading: true, error: "", tab: "today", tasks: [], goals: [], courses: [], materials: [], streak: 0 };
+let sessionVersion = 0;
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const pad = (n) => String(n).padStart(2, "0");
@@ -17,10 +18,16 @@ const WK = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"
 const courseById = (id) => state.courses.find((c) => c.id === id);
 const materialById = (id) => state.materials.find((m) => m.id === id);
 
-export function initSchedule(supabase, user, toast) { sb = supabase; USER = user; if (toast) toastFn = toast; }
+export function initSchedule(supabase, user, toast) {
+  sessionVersion++;
+  sb = supabase; USER = user; toastFn = toast || (() => {});
+  rootEl = null;
+  Object.assign(state, { loading: true, error: "", tab: "today", tasks: [], goals: [], courses: [], materials: [], streak: 0 });
+}
 export function mountSchedule(el) { rootEl = el; if (!rootEl) return; render(); load(); }
 
 async function load() {
+  const currentVersion = sessionVersion;
   if (!sb) { state.loading = false; state.error = "未配置 Supabase"; render(); return; }
   state.loading = true; render();
   try {
@@ -32,10 +39,14 @@ async function load() {
       sb.from("materials").select("id,name,course_id,type").order("created_at", { ascending: false }),
       sb.from("profiles").select("streak").eq("id", USER.id).single(),
     ]);
+    if (currentVersion !== sessionVersion) return;
+    const failed = [t, g, c, m, p].find((result) => result.error);
+    if (failed) throw failed.error;
     state.tasks = t.data || []; state.goals = g.data || []; state.courses = c.data || []; state.materials = m.data || [];
     state.streak = (p.data && p.data.streak) || 0;
     state.error = "";
-  } catch (e) { state.error = e.message || "加载失败"; }
+  } catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
+  if (currentVersion !== sessionVersion) return;
   state.loading = false; render();
 }
 
@@ -157,24 +168,30 @@ function handle(action, el) {
 }
 
 async function toggleTask(id) {
+  const currentVersion = sessionVersion, client = sb;
   const t = state.tasks.find((x) => x.id === id); if (!t) return;
   const done = !t.done;
   try {
-    const { error } = await sb.from("study_tasks").update({ done, done_at: done ? new Date().toISOString() : null }).eq("id", id);
+    const { error } = await client.from("study_tasks").update({ done, done_at: done ? new Date().toISOString() : null }).eq("id", id);
     if (error) throw error;
-    if (done) toastFn("完成 +5 积分", "check");
+    if (currentVersion !== sessionVersion) return;
+    // 相同业务指纹可能是幂等恢复而非新奖励；客户端拿不到账本 transition，
+    // 因此这里只确认任务状态，不虚报本次一定增加了 5 points。
+    if (done) toastFn("任务已完成", "check");
     await load();
     syncShellUser();
-  } catch (e) { toastFn("操作失败：" + (e.message || "")); }
+  } catch (e) { if (currentVersion === sessionVersion) toastFn("操作失败：" + (e.message || "")); }
 }
 
 async function delTask(id) {
-  try { await sb.from("study_tasks").delete().eq("id", id); toastFn("已删除", "check"); await load(); }
-  catch (e) { toastFn("删除失败：" + (e.message || "")); }
+  const currentVersion = sessionVersion, client = sb;
+  try { const { error } = await client.from("study_tasks").delete().eq("id", id); if (error) throw error; if (currentVersion !== sessionVersion) return; toastFn("已删除", "check"); await load(); }
+  catch (e) { if (currentVersion === sessionVersion) toastFn("删除失败：" + (e.message || "")); }
 }
 async function delGoal(id) {
-  try { await sb.from("study_goals").delete().eq("id", id); await load(); }
-  catch (e) { toastFn("删除失败：" + (e.message || "")); }
+  const currentVersion = sessionVersion, client = sb;
+  try { const { error } = await client.from("study_goals").delete().eq("id", id); if (error) throw error; if (currentVersion !== sessionVersion) return; await load(); }
+  catch (e) { if (currentVersion === sessionVersion) toastFn("删除失败：" + (e.message || "")); }
 }
 
 function modalShell(inner) {
@@ -211,6 +228,7 @@ function taskModal(existing, presetDate) {
   const btn = scrim.querySelector('[data-x="save"]'); let saving = false;
   btn.onclick = async () => {
     if (saving) return;
+    const currentVersion = sessionVersion, client = sb;
     const title = scrim.querySelector("#tk-title").value.trim();
     if (!title) { toastFn("请填写任务"); return; }
     const row = {
@@ -220,10 +238,11 @@ function taskModal(existing, presetDate) {
     };
     saving = true; btn.disabled = true; btn.textContent = "保存中…";
     try {
-      if (isEdit) { const { error } = await sb.from("study_tasks").update(row).eq("id", existing.id); if (error) throw error; }
-      else { const { error } = await sb.from("study_tasks").insert(row); if (error) throw error; }
+      if (isEdit) { const { error } = await client.from("study_tasks").update(row).eq("id", existing.id); if (error) throw error; }
+      else { const { error } = await client.from("study_tasks").insert(row); if (error) throw error; }
+      if (currentVersion !== sessionVersion) return;
       scrim.remove(); toastFn(isEdit ? "已保存" : "已添加", "check"); await load();
-    } catch (e) { saving = false; btn.disabled = false; btn.textContent = isEdit ? "保存" : "添加"; toastFn("失败：" + (e.message || "")); }
+    } catch (e) { if (currentVersion !== sessionVersion) return; saving = false; btn.disabled = false; btn.textContent = isEdit ? "保存" : "添加"; toastFn("失败：" + (e.message || "")); }
   };
 }
 
@@ -236,22 +255,25 @@ function goalModal() {
   const btn = scrim.querySelector('[data-x="save"]'); let saving = false;
   btn.onclick = async () => {
     if (saving) return;
+    const currentVersion = sessionVersion, client = sb;
     const title = scrim.querySelector("#gl-title").value.trim();
     if (!title) { toastFn("请填写标题"); return; }
     saving = true; btn.disabled = true; btn.textContent = "创建中…";
-    try { const { error } = await sb.from("study_goals").insert({ title, exam_date: scrim.querySelector("#gl-date").value || null }); if (error) throw error; scrim.remove(); toastFn("已创建", "check"); await load(); }
-    catch (e) { saving = false; btn.disabled = false; btn.textContent = "创建"; toastFn("失败：" + (e.message || "")); }
+    try { const { error } = await client.from("study_goals").insert({ title, exam_date: scrim.querySelector("#gl-date").value || null }); if (error) throw error; if (currentVersion !== sessionVersion) return; scrim.remove(); toastFn("已创建", "check"); await load(); }
+    catch (e) { if (currentVersion !== sessionVersion) return; saving = false; btn.disabled = false; btn.textContent = "创建"; toastFn("失败：" + (e.message || "")); }
   };
 }
 
 async function autoplan() {
+  const currentVersion = sessionVersion, client = sb;
   if (!state.courses.length) { toastFn("先在 Materials 建课程，才能智能填充"); return; }
   toastFn("生成复习任务中…");
   try {
     const rows = state.courses.slice(0, 6).map((c, i) => ({ title: `复习 ${c.code || c.name}`, due_date: dstr(addDays(new Date(), i)), course_id: c.id }));
-    const { error } = await sb.from("study_tasks").insert(rows);
+    const { error } = await client.from("study_tasks").insert(rows);
     if (error) throw error;
+    if (currentVersion !== sessionVersion) return;
     toastFn(rows.length + " 个复习任务已加入本周", "check");
     state.tab = "week"; await load();
-  } catch (e) { toastFn("失败：" + (e.message || "")); }
+  } catch (e) { if (currentVersion === sessionVersion) toastFn("失败：" + (e.message || "")); }
 }

@@ -55,7 +55,23 @@ describe("学习计划 jsdom 集成", () => {
     click(root.querySelector('[data-sc="toggle"][data-id="t1"]'));
     await flush(24);
     expect(supabase.tables.study_tasks.find((task) => task.id === "t1")?.done).toBe(true);
-    expect(toast).toHaveBeenCalledWith("完成 +5 积分", "check");
+    expect(toast).toHaveBeenCalledWith("任务已完成", "check");
+  });
+
+  it("删除返回 error 时保留任务并向用户报错", async () => {
+    const supabase = createSupabaseMock(undefined, "u1", { errors: { study_tasks: { delete: "delete denied" } } });
+    const toast = vi.fn();
+    initProfile(supabase, { id: "u1", email: "alice@example.edu" }, toast);
+    initSchedule(supabase, { id: "u1", email: "alice@example.edu" }, toast);
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    mountSchedule(root);
+    await flush(20);
+
+    click(root.querySelector('[data-sc="del"][data-id="t1"]'));
+    await flush(16);
+
+    expect(supabase.tables.study_tasks.some((task) => task.id === "t1")).toBe(true);
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("delete denied"));
   });
 });
-

@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-07-10。当前仅有 points 触发器和可写的 `profiles.credits`/`vip_until` 字段；真实 AI 计费、市场购买、账本、Stripe、VIP 和创作者结算均未实现。目标规则在发布门禁完成前不得对外宣称上线。
+> **状态基线：**2026-07-10。迁移 0008 已实现 points 事件账本、净额幂等/冲正、Profile 敏感列保护和内部 RPC 撤权；`credits`/VIP 仍只是客户端只读的预留缓存，真实 AI 计费、市场购买、商业账本、Stripe、VIP 权益和创作者结算均未实现。目标商业规则在对应发布门禁完成前不得对外宣称上线。
 
 ## 1. 规范用语和总原则
 
@@ -25,16 +25,17 @@
 
 ### 2.1 当前可验证事实
 
-- `profiles` 有 `credits`、`vip_until`、`level`，迁移 0006/0007 增加 `points`、`streak`。
+- `profiles` 有 `credits`、`vip_until`、`level`，迁移 0006/0007 增加 `points`、`streak`；迁移 0008 把 points 改为 `point_entries` 的只读 projection。
 - points 当前奖励：点赞者 +1、评论者 +2、普通发帖 +10、转发 +3、完成任务 +5；等级阈值为 0/50/150/350/700/1200。
-- points 由 `SECURITY DEFINER` 触发器直接更新 profile；动作撤销不冲正，可删除/重做刷取。
-- profile owner update 当前可直接修改 credits、points、等级、VIP 和 streak；函数执行授权也未完全收紧。
+- 当前五类奖励均通过 `point_event_states` 和 append-style `point_entries` 激活/冲正；相同持久业务键在删除/取消后重建只恢复原净额，不再累计刷分。
+- authenticated 只能更新 `username/university/major/year/language`；`credits/points/level/vip/streak` 由列级授权和防御触发器保护。`_add_points` 已停用并对客户端/service-role 撤权，`_notify`、`_set_point_event` 及 trigger helpers 不再是客户端 RPC surface。
+- 0008 只能把迁移前 `profiles.points` 保存为 `legacy_opening`，无法判断旧漏洞期间的 points、credits、VIP 或 streak 是否被篡改；生产发布前必须审计，不能把 opening entry 当成可信逐笔历史。
 - Create、Market、Home 中的余额、价格、25 credits、70% 分成和兑换 VIP 目前是假数据/原型交互。
-- 没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
+- 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
 
 ### 2.2 发布限制
 
-在 P0 字段/RPC 权限、不可变账本、幂等、对账和相关测试完成前：
+Profile/RPC/当前 points 重做路径的 P0 已由 0008 封堵，但 credits/VIP/支付账本、对账、日上限和商业测试仍未实现。因此：
 
 - 不接入 live Stripe key，不接受真实付款；
 - 不把 `profiles.credits` 当可消费余额；
@@ -51,15 +52,15 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 ### 3.2 奖励事件与初始值
 
-为保持当前体验，目标首版沿用以下数值，但必须改为事件账本：
+为保持当前体验，迁移 0008 沿用以下数值并已接入事件账本。业务键是数据库生成且不可由客户端改写；“初始防滥用上限”仍是下一阶段门禁，当前尚未执行：
 
 | 事件 | Points | 业务事件 ID | 撤销规则 | 初始防滥用上限 |
 |---|---:|---|---|---|
-| 发布原创帖子 | +10 | `post:{post_id}:created` | 删除/审核移除产生 -10 冲正 | 每日计分 3 篇 |
-| 转发帖子 | +3 | `repost:{post_id}:created` | 删除产生 -3 | 每日计分 10 次 |
-| 发布有效评论 | +2 | `comment:{comment_id}:created` | 删除/审核移除产生 -2 | 每日计分 10 条 |
-| 首次点赞 | +1 | `like:{post_id}:{actor_id}` | 取消产生 -1；重赞只恢复同一净额 | 每日计分 20 个不同帖子 |
-| 首次完成任务 | +5 | `task:{task_id}:completed:v1` | 取消完成产生 -5；同一任务净额最多 +5 | 每日计分 10 个任务 |
+| 发布原创帖子 | +10 | `post:{owner}:{normalized-content-sha256}` | 最后一个同键帖子删除时 -10；重建只恢复净额 | 每日计分 3 篇 |
+| 转发帖子 | +3 | `repost:{actor}:{root-post-business-key}` | 最后一个同键转发删除时 -3；重建只恢复净额 | 每日计分 10 次 |
+| 发布有效评论 | +2 | `comment:{target-post-business-key}:{actor}` | 同一 actor/目标内容只有一个有效奖励 claim；删尽时 -2 | 每日计分 10 条 |
+| 首次点赞 | +1 | `like:{target-post-business-key}:{actor}` | 同一 actor/目标内容只有一个有效奖励 claim；取消后 -1 | 每日计分 20 个不同帖子 |
+| 首次完成任务 | +5 | `task:{owner}:{normalized-task-sha256}:completed:v1` | 最后一个同键任务取消/删除时 -5；重做只恢复净额 | 每日计分 10 个任务 |
 
 自赞、自评、自关注、同一内容重复关系、被系统判定为垃圾/协同行为的事件不奖励。上限按用户主时区自然日计算并记录时区快照；换时区不能重置。达到上限不阻止正常使用，只是不再加 points，并向用户清楚提示。
 
@@ -252,10 +253,12 @@ Webhook 必须：使用原始 body 验签；检查 live/test mode 和账户；�
 
 ### Phase 0：封堵当前风险
 
-- 列级禁止客户端修改 credits、points、level、VIP、streak、反馈状态；
-- 撤销 definer 默认执行权，修复调用身份；
-- 建立 points 事件账本/幂等/冲正和迁移校验；
-- 原型商业入口保持 demo/feature flag。
+- [x] 列级禁止客户端修改 credits、points、level、VIP、streak；
+- [x] 撤销 points/notification definer 的客户端默认执行权，停用 `_add_points`；
+- [x] 建立当前 points 事件账本、稳定业务键、净额幂等/冲正、空库与 0007→0008 升级测试；
+- [ ] 在生产应用 0008 前审计旧漏洞期间的 opening points、credits、VIP 和 streak，并记录处置；
+- [ ] 收紧 feedback `status` 等仍由 owner 整行策略暴露的服务端字段；
+- [x] 原型商业入口保持 demo/feature flag，不接真实支付。
 
 ### Phase 1：无真实支付的账本
 
@@ -294,4 +297,3 @@ Webhook 必须：使用原始 body 验签；检查 live/test mode 和账户；�
 - [隐私与数据删除](../governance/PRIVACY_AND_DATA_DELETION.md)
 - [内容审核](../governance/CONTENT_MODERATION.md)
 - [AI 评测与成本治理](../ai/EVALUATION_AND_COST.md)
-

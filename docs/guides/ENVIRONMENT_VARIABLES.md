@@ -31,7 +31,7 @@
 |---|---|---|---|---|
 | `PORT` | 当前可选 | 公开配置 | `apps/api/src/main.ts` | 监听端口；无效或缺失时为 `3000`。生产 compose 显式设置 `3000`。 |
 | `SUPABASE_URL` | 当前必需（认证/注册） | 公开配置 | Auth controller、JWT guard、health | Admin Auth 基址、JWKS/issuer 基址；缺失时注册报 `SERVER_MISCONFIG`，受保护接口无法通过 JWKS 验签。 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 当前必需（注册） | **最高机密** | `apps/api/src/auth/auth.controller.ts` | 调用 Supabase Admin API 创建已确认用户，绕过 RLS；缺失时注册报 `SERVER_MISCONFIG`。只能存在于后端。 |
+| `SUPABASE_SERVICE_ROLE_KEY` | 当前必需（注册/readiness） | **最高机密** | Auth controller、health | 调用 Supabase Admin API 创建已确认用户，并让 `/api/health` 对 PostgREST 做 `limit=0` 探针；绕过 RLS，只能存在于后端且绝不进入响应/日志。 |
 | `SUPABASE_JWT_SECRET` | 当前可选 | **最高机密** | `apps/api/src/auth/supabase.guard.ts` | 旧 HS256 令牌的回退验签。当前守卫优先使用 JWKS；非对称签名项目不应无理由复制此值。 |
 | `REDIS_URL` | 当前仅状态标记 | 内部配置；若含密码则机密 | health | 当前 API 不建立 Redis 连接，只在 `/api/health` 显示 `configured/unset`。目标用于 BullMQ/缓存。 |
 | `AI_SERVICE_URL` | 当前仅状态标记 | 内部配置 | health | 当前 API 不调用 AI，只在健康响应显示是否设置。目标值为 AI 内网地址。 |
@@ -49,12 +49,20 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 
 ## 5. 数据库迁移运维变量
 
-消费者：`scripts/db-push.mjs`。只应临时注入受控终端或 CI secret，不应写进应用 `.env`。
+消费者：Supabase CLI、发布恢复点脚本，以及仅供应急的 `scripts/db-push.mjs`。只应临时注入受控终端或 GitHub protected environment，不应写进应用 `.env`。
 
 | 变量 | 状态 | 敏感级别 | 用途与注意事项 |
 |---|---|---|---|
 | `SUPABASE_ACCESS_TOKEN` | 执行脚本必需 | **最高机密** | Supabase 账号 Personal Access Token，可访问 Management API；使用最小权限账号并在离职/泄露时立即撤销。 |
-| `SUPABASE_PROJECT_REF` | 强烈要求显式提供 | 项目标识 | 目标项目 Ref。脚本存在默认 Ref；为避免误发到错误项目，所有人工和自动化调用都必须显式设置。 |
+| `SUPABASE_PROJECT_REF` | 必需 | 项目标识 | 目标项目 Ref。脚本已移除默认值；CI 还会与 `VITE_SUPABASE_URL` 交叉核对。 |
+| `SUPABASE_DB_PASSWORD` | CLI 远端操作必需 | **最高机密** | `supabase link/db dump/db push/db lint` 的数据库密码；仅放 `production-database` environment。 |
+| `ALLOW_LEGACY_DB_PUSH` | 旧脚本显式开关 | 公开配置 | 只有值为 `YES` 才允许不维护 history 的 `db-push.mjs`；正常 CI 禁止使用。 |
+| `BACKUP_ENCRYPTION_KEY` | 本地备份/恢复脚本必需 | **最高机密** | 加密/验证 release archive；CI 对应 secret 名为 `DB_BACKUP_ENCRYPTION_KEY`。 |
+| `BACKUP_OUTPUT` | 创建恢复点必需 | 受限路径 | 加密输出路径，必须以 `.tar.gz.enc` 结尾。 |
+| `BACKUP_ARCHIVE` | 验证/恢复必需 | 受限路径 | 已下载的加密数据库 archive。 |
+| `RESTORE_DATABASE_URL` | 隔离恢复必需 | **最高机密** | 只能指向新建空白项目；恢复脚本拒绝源项目。 |
+| `RESTORE_TARGET_PROJECT_REF` / `RESTORE_CONFIRM_PROJECT_REF` | 隔离恢复必需 | 项目标识 | 两次 Ref 必须相同且连接串包含该 Ref。 |
+| `ALLOW_ISOLATED_RESTORE` | 隔离恢复开关 | 公开配置 | 必须显式为 `YES`；不允许原地生产恢复。 |
 | `DATABASE_URL` | 运维约定，应用未读取 | **最高机密** | 本文档体系在备份/恢复示例中使用的临时 PostgreSQL 连接串；不是当前应用运行变量。优先通过密码文件或 secret 注入，避免进入 shell history。 |
 
 ## 6. 当前生产 CI/CD 变量
@@ -66,10 +74,15 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | `SERVER_HOST` | 当前必需 | 受限配置 | SSH/scp 目标主机。 |
 | `SERVER_USER` | 当前必需 | 受限配置 | 部署账号。当前文档描述为 `root`；目标应迁移到最小权限部署用户。 |
 | `SERVER_SSH_KEY` | 当前必需 | **最高机密** | CI 专用 SSH 私钥；公钥位于服务器 `authorized_keys`。 |
+| `SERVER_SSH_KNOWN_HOSTS` | 当前必需 | 受限配置 | 预先核验的服务器 SSH host key；CI 禁止运行时 `ssh-keyscan` 建立首次信任。 |
 | `VITE_SUPABASE_URL` | 当前必需 | 公开配置 | Web 构建期注入。 |
 | `VITE_SUPABASE_ANON_KEY` | 当前必需 | 公开凭据 | Web 构建期注入。 |
+| `SUPABASE_ACCESS_TOKEN` | 有新迁移时必需 | **最高机密** | Supabase CLI 发布身份，只放 `production-database` environment。 |
+| `SUPABASE_DB_PASSWORD` | 有新迁移时必需 | **最高机密** | 远端 dry-run/dump/push/lint。 |
+| `SUPABASE_PROJECT_REF` | 有新迁移时必需 | 项目标识 | 与生产 Web URL 交叉确认。 |
+| `DB_BACKUP_ENCRYPTION_KEY` | 有新迁移时必需 | **最高机密** | 加密 14 天保留的 release recovery artifact；副本须离线保存。 |
 
-服务器 `/opt/nalanda/.env` 至少需要 `SUPABASE_URL` 和 `SUPABASE_SERVICE_ROLE_KEY` 才能支持注册；`SUPABASE_JWT_SECRET` 仅作为旧 HS256 回退。当前 CI**不会**创建或更新这个文件。
+服务器 `/opt/nalanda/.env` 至少需要 `SUPABASE_URL` 和 `SUPABASE_SERVICE_ROLE_KEY` 才能支持注册；`SUPABASE_JWT_SECRET` 仅作为旧 HS256 回退。当前 CI**不会**创建或更新这个文件。API image 的 Git SHA 位于非秘密 `/opt/nalanda/.deploy.env`，由 CI 原子更新。
 
 ## 7. Supabase RLS E2E 变量
 
@@ -108,7 +121,7 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | 环境 | Web 公开配置 | API/AI 服务端秘密 | 运维临时秘密 |
 |---|---|---|---|
 | 本地 | `apps/web/.env.local` | `apps/api/.env`；AI 进程环境 | 当前 shell/安全密码文件 |
-| GitHub Actions | Actions Secrets 注入 Web 构建 | 当前工作流不注入 API 运行密钥 | `SERVER_SSH_KEY` 等 Actions Secrets |
+| GitHub Actions | Actions Secrets 注入 Web 构建 | API 运行密钥仍只在服务器；DB 发布密钥在 protected environment | `SERVER_SSH_KEY`、已核验 host key、Supabase CLI 密钥、备份加密 key |
 | 当前生产 | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env`，权限应为 `0600` | 仅维护窗口临时注入，不落日志 |
 | hybrid 目标 | 构建 Web 时另行注入 `VITE_*` | `infra/hybrid-2g/.env` | 仅维护窗口临时注入 |
 

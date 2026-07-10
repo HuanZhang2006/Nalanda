@@ -50,11 +50,15 @@ Nalanda/
 │  ├─ ui/                  CSS，不是 React 组件库
 │  └─ types/               AI 目标类型；当前未被 Web/API 消费
 ├─ app/                    独立静态桌面/移动高保真原型
-├─ supabase/migrations/    0001–0007
+├─ supabase/
+│  ├─ config.toml          本地/CI Supabase 基线
+│  └─ migrations/          顺序 SQL migration
 ├─ infra/
 │  ├─ deploy/              当前生产 nginx + API-only 部署
 │  └─ hybrid-2g/           Caddy + API + AI + Redis 通用模板
-├─ scripts/db-push.mjs     Management API 迁移脚本
+├─ scripts/
+│  ├─ db-push.mjs          旧 Management API 应急脚本
+│  └─ *db-release*.sh      加密发布恢复点与隔离恢复工具
 └─ docs/                   架构、蓝图、实现笔记和操作手册
 ```
 
@@ -73,8 +77,8 @@ Nalanda/
 ### 4.2 React 与 legacy 的边界
 
 - React 负责 Supabase session 恢复、登录/注册界面、主题和挂载容器。
-- `NalandaApp` 在 `useEffect` 中调用 `mountNalanda()`。
-- legacy 应用使用模块单例状态、HTML 字符串、容器级事件委托和内存路由。
+- `NalandaApp` 在 `useEffect` 中调用 `mountNalanda()`；依赖用户 ID/邮箱，切换账号会先清理旧挂载再创建新会话。
+- legacy 应用仍使用模块单例、HTML 字符串、容器级事件委托和内存路由，但挂载时会重置路由/用户/模块状态，并以 session version 丢弃旧账号迟到的异步响应。
 - 没有 react-router；URL、浏览器历史、刷新恢复和深链接尚未实现。
 - `packages/ui` 只导出 CSS；Web 导入 `nalanda.css`，没有共享 React 组件。
 - 9 个 legacy TypeScript 文件使用 `@ts-nocheck`，因此普通 `tsc` 不覆盖其内部类型。
@@ -87,7 +91,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Profile/Growth | Supabase Profile + count 查询 | 真实，但敏感列权限待修 |
+| Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |
 | Home | `legacy/data.ts` | mock |
@@ -113,7 +117,7 @@ Nalanda/
 
 | 方法 | 路径 | 认证 | 行为 |
 |---|---|---|---|
-| GET | `/api/health` | 无 | 返回服务时间和环境变量是否存在；不验证依赖连通性 |
+| GET | `/api/health` | 无 | 5 秒内探测 Supabase JWKS + PostgREST profiles 空查询；成功 200，失败 503 |
 | POST | `/api/auth/register` | 无 | 用 service-role 创建 `email_confirm:true` 用户 |
 | GET | `/api/me` | Bearer | JWKS/HS256 守卫验签后回显 claims |
 
@@ -159,30 +163,32 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 | 通知反馈 | `notifications`, `feedback` |
 | 社区 | `posts`, `comments`, `post_likes`, `post_favorites`, `follows`, `tags` |
 | 计划 | `study_goals`, `study_tasks` |
+| 成长积分 | `point_entries`, `point_event_states` |
 
 完整关系、字段和策略见 [ERD](guides/ERD.md)。
 
 ### 7.2 RLS 概览
 
-- `profiles/courses/materials/notifications/feedback/study_*` 采用 owner-only 行策略。
+- `profiles/courses/materials/notifications/feedback/study_*` 采用 owner-only 行策略；Profile 另以列级 UPDATE grant 和触发器保护服务端字段。
 - `posts/comments` 对认证用户公共读，作者写删。
 - likes/favorites 只允许用户读写自己的记录。
 - follows 允许关注双方读取，关注者创建/删除。
 - tags 对认证用户公共读，当前也允许任意插入。
 - 私有 `materials` bucket 按对象路径第一段 `user_id` 隔离。
 - `community-media` 是公开桶，写删按用户文件夹限制。
+- `point_entries` 只允许用户读取自己的条目；客户端和 service-role 都不能直接写，`point_event_states` 对客户端完全隐藏。
 
-### 7.3 已知数据完整性问题
+### 7.3 已关闭项与剩余数据完整性边界
 
-- Profile owner update 没有限制列，用户可修改自己的 points、credits、等级、VIP 和 streak。
-- `_add_points(uid,d)`、`_notify(uid,...)` 是普通 `SECURITY DEFINER` 函数，迁移未显式撤销客户端执行权。
-- 帖子作者可在 UPDATE 时修改作者快照和冗余计数；防伪造触发器只覆盖 INSERT。
-- points 奖励没有不可变事件账本，赞/评论/帖子/任务可通过重复状态转换刷取。
+- 0008 已关闭 Profile 敏感列写入、内部 RPC 客户端 EXECUTE，以及赞/评论/原创/转发/任务删除重做累计获分问题。
+- points 使用 append-only entries、持久 event state、稳定业务键和冲正；Profile 的 points/level 只是账本投影。迁移前缓存作为 `legacy_opening`，无法追溯为逐笔可信历史。
+- 帖子 `repost_of` 与 points key 已不可变，但作者仍可在 UPDATE 时修改作者快照、冗余计数和时间；INSERT 防伪造尚未覆盖这些字段的更新路径。
 - `study_goals.course_id` 缺少课程归属校验；task 没校验 material 与 course 相互匹配。
 - feedback owner policy 允许用户自行修改 `status`。
 - Storage 文件和 metadata 删除不是事务；社区媒体存在孤儿文件。
+- points 尚无每日计分上限、内容质量/审核撤销和协同行为检测；credits/VIP 虽已锁写，但没有商业事实账本。
 
-这些属于开发路线图阶段 A 的前置修复，不能等到支付上线再处理。
+剩余授权/完整性项仍属于阶段 A；商业账本、反滥用和 Storage 治理必须在相应功能开放前完成。
 
 ## 8. 当前部署
 
@@ -190,13 +196,12 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 
 GitHub Actions 在 runner 上：
 
-1. 安装 pnpm/Node 依赖。
-2. 运行 workspace typecheck 和默认 Vitest/jsdom 测试。
-3. 构建 Web。
-4. 构建 API Docker 镜像。
-5. 打包 Web 和镜像，经 SSH/SCP 上传。
-6. 服务器 `docker load`、替换静态目录、`docker compose up -d`。
-7. 轮询 `/api/health`。
+1. 运行 docs check、workspace typecheck、Vitest/jsdom 和 build。
+2. 先验证 0007→0008 历史数据升级，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points E2E。
+3. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
+4. 构建 Web 与 Git SHA API image，经预先核验 host key 的 SSH/SCP 上传。
+5. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
+6. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
 
 服务器上宿主 nginx 托管 `/opt/nalanda/web`，把 `/api/` 反代到仅绑定 `127.0.0.1:8411` 的 API 容器。生产 compose 不启动 AI/Redis。
 
@@ -206,9 +211,9 @@ GitHub Actions 在 runner 上：
 
 ### 8.3 发布局限
 
-- SQL 迁移未与应用部署形成受追踪的一体化发布。
-- `/health` 只看变量存在，不验证 Supabase/JWKS 依赖。
-- 使用 `latest`，失败无自动回滚，并可能 prune 旧镜像。
+- API health 已验证 Supabase JWKS/PostgREST 基本 readiness，但不覆盖 Storage、注册写入、完整 RLS 或浏览器登录路径；Redis/AI 仍只看变量。
+- 数据库 release archive 仍不含 Storage 文件字节，且 CI 不自动逆向生产数据。
+- 不可变 image/release 目前仍主要保留在单台服务器，缺少异地 registry 和自动容量策略。
 - SSH 部署用户在当前文档中为 root。
 - 仓库 nginx 文件不含 certbot 实际生成的完整 TLS 状态。
 
@@ -220,15 +225,15 @@ GitHub Actions 在 runner 上：
 - Web 使用 Vite；`vite build` 不等同于 TypeScript 类型检查。
 - Python AI 不属于 pnpm workspace，需要独立安装和启动。
 - 可执行测试命令和环境要求见 [测试指南](guides/TESTING.md)。
-- 默认 `pnpm test` 运行 4 组 jsdom 集成测试；3 组真实 Supabase RLS/Storage E2E 需要隔离项目凭据和 project-ref 二次确认，默认跳过。
+- 默认 `pnpm test` 当前运行 9 个 Web jsdom 与 2 个 API readiness 单元测试；本机未设置显式开关时 3 个 RLS/Storage/points E2E 跳过。PR/main workflow 会启动一次性本地 Supabase，先运行 0007→0008 升级夹具，再显式运行这 3 组 E2E；手工托管运行仍需隔离项目和 Ref 二次确认。
 - 历史实现笔记中的“已验证”必须能映射到仓库测试；不能复现的旧验证只能作为历史记录。
 
 ## 10. 当前优先风险
 
-1. 收紧 Profile、definer RPC、帖子可信字段和反馈状态权限。
-2. 将 points 奖励改为幂等事件/账本。
-3. 修复 legacy 跨会话单例、resize 生命周期、详情动作刷新和错误处理。
-4. 统一 AI/前端/TS 契约，再实现真实生成链路。
-5. 建立可追踪迁移、恢复演练、监控告警和密钥轮换。
+1. 收紧帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等剩余授权和完整性缺口。
+2. 为 points 增加每日上限、内容审核撤销、协同滥用检测，并审计迁移前 `legacy_opening`；credits/VIP 另建商业账本。
+3. 统一 AI/前端/TS 契约，再实现真实生成链路。
+4. 补 API/FastAPI/真浏览器与托管 staging 测试，执行数据库/Storage 恢复演练和持续告警。
+5. 逐步移除 `@ts-nocheck`/legacy 双实现，增加 URL 路由、深链接与类型安全 React 组件。
 
 处理顺序和验收门见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。

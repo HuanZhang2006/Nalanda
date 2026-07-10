@@ -12,6 +12,7 @@ const state = { loading: true, error: "", courses: [], materials: [], course: "a
 let rootEl = null;
 let fileInput = null;
 let uploading = false;
+let sessionVersion = 0;
 
 const FT = { pdf: "pdf", ppt: "ppt", pptx: "ppt", doc: "doc", docx: "doc", md: "md", markdown: "md", html: "html", htm: "html", txt: "txt" };
 const IMG = ["png", "jpg", "jpeg", "gif", "webp", "svg", "bmp", "avif"];
@@ -45,7 +46,13 @@ function previewKind(ext) {
 }
 
 export function initMaterials(supabase, user, toast) {
-  sb = supabase; USER = user; if (toast) toastFn = toast;
+  sessionVersion++;
+  sb = supabase; USER = user; toastFn = toast || (() => {});
+  Object.assign(state, { loading: true, error: "", courses: [], materials: [], course: "all" });
+  rootEl = null;
+  uploading = false;
+  if (fileInput) fileInput.remove();
+  fileInput = null;
 }
 
 export function mountMaterials(el) {
@@ -55,6 +62,7 @@ export function mountMaterials(el) {
 }
 
 async function load() {
+  const currentVersion = sessionVersion;
   if (!sb) { state.loading = false; state.error = "未配置 Supabase"; render(); return; }
   state.loading = true; render();
   try {
@@ -62,6 +70,7 @@ async function load() {
       sb.from("courses").select("*").order("created_at", { ascending: true }),
       sb.from("materials").select("*").order("created_at", { ascending: false }),
     ]);
+    if (currentVersion !== sessionVersion) return;
     if (c.error) throw c.error;
     if (m.error) throw m.error;
     state.courses = c.data || [];
@@ -69,8 +78,10 @@ async function load() {
     if (state.course !== "all" && !state.courses.some((x) => x.id === state.course)) state.course = "all";
     state.error = "";
   } catch (e) {
+    if (currentVersion !== sessionVersion) return;
     state.error = e.message || "加载失败（数据库迁移已应用了吗？）";
   }
+  if (currentVersion !== sessionVersion) return;
   state.loading = false; render();
 }
 
@@ -230,6 +241,7 @@ function courseModal(existing) {
   let saving = false;
   saveBtn.onclick = async () => {
     if (saving) return; // 防重复点击 → 防止建出两个同名课程
+    const currentVersion = sessionVersion, client = sb;
     const code = scrim.querySelector("#nc-code").value.trim();
     const name = scrim.querySelector("#nc-name").value.trim() || code;
     if (!name) { toastFn("请填写课程名称"); return; }
@@ -238,17 +250,20 @@ function courseModal(existing) {
     saveBtn.innerHTML = `<span class="spin"></span><span>${isEdit ? "保存中…" : "创建中…"}</span>`;
     try {
       if (isEdit) {
-        const { error } = await sb.from("courses").update({ code, name }).eq("id", existing.id);
+        const { error } = await client.from("courses").update({ code, name }).eq("id", existing.id);
         if (error) throw error;
+        if (currentVersion !== sessionVersion) return;
         close(); toastFn("已保存", "check"); await load();
       } else {
-        const { data, error } = await sb.from("courses").insert({ code, name }).select().single();
+        const { data, error } = await client.from("courses").insert({ code, name }).select().single();
         if (error) throw error;
+        if (currentVersion !== sessionVersion) return;
         close(); toastFn("课程已创建", "check");
         await load();
         if (data) { state.course = data.id; render(); }
       }
     } catch (e) {
+      if (currentVersion !== sessionVersion) return;
       saving = false;
       saveBtn.disabled = false;
       saveBtn.textContent = isEdit ? "保存" : "创建";
@@ -258,6 +273,7 @@ function courseModal(existing) {
 }
 
 async function deleteCourse(id) {
+  const currentVersion = sessionVersion, client = sb;
   const c = courseById(id); if (!c) return;
   const mats = state.materials.filter((m) => m.course_id === id);
   const okToGo = await confirmDialog({
@@ -265,16 +281,22 @@ async function deleteCourse(id) {
     message: `将删除课程「${c.code || c.name}」及其下 ${mats.length} 份资料，且不可撤销。`,
     confirmText: "删除课程",
   });
+  if (currentVersion !== sessionVersion) return;
   if (!okToGo) return;
   toastFn("删除中…");
   try {
     const paths = mats.map((m) => m.storage_path).filter(Boolean);
-    if (paths.length) await sb.storage.from("materials").remove(paths); // 先删存储文件（级联只删表行）
-    const { error } = await sb.from("courses").delete().eq("id", id);
+    if (paths.length) {
+      const { error } = await client.storage.from("materials").remove(paths); // 先删存储文件（级联只删表行）
+      if (error) throw error;
+    }
+    const { error } = await client.from("courses").delete().eq("id", id);
     if (error) throw error;
+    if (currentVersion !== sessionVersion) return;
     if (state.course === id) state.course = "all";
     toastFn("课程已删除", "check");
   } catch (e) {
+    if (currentVersion !== sessionVersion) return;
     toastFn("删除失败：" + (e.message || ""));
   }
   await load();
@@ -297,6 +319,7 @@ function pickFiles() {
 }
 
 async function doUpload(files) {
+  const currentVersion = sessionVersion, client = sb, userId = USER.id;
   const course = state.course;
   if (course === "all") { toastFn("请先选择课程"); return; }
   if (uploading) return;
@@ -305,14 +328,21 @@ async function doUpload(files) {
   let ok = 0;
   for (const f of files) {
     try {
-      const path = `${USER.id}/${crypto.randomUUID()}.${extOf(f.name)}`;
-      const up = await sb.storage.from("materials").upload(path, f, { upsert: false, contentType: f.type || undefined });
+      const path = `${userId}/${crypto.randomUUID()}.${extOf(f.name)}`;
+      const up = await client.storage.from("materials").upload(path, f, { upsert: false, contentType: f.type || undefined });
       if (up.error) throw up.error;
-      const ins = await sb.from("materials").insert({ course_id: course, name: f.name, type: typeOf(f.name), size_bytes: f.size, storage_path: path });
-      if (ins.error) { await sb.storage.from("materials").remove([path]); throw ins.error; }
+      if (currentVersion !== sessionVersion) return;
+      const ins = await client.from("materials").insert({ course_id: course, name: f.name, type: typeOf(f.name), size_bytes: f.size, storage_path: path });
+      if (ins.error) {
+        const cleanup = await client.storage.from("materials").remove([path]);
+        if (cleanup.error) console.error("Failed to clean up orphaned material upload", cleanup.error);
+        throw ins.error;
+      }
+      if (currentVersion !== sessionVersion) return;
       ok++;
       toastFn(`上传中… (${ok}/${files.length})`, "upload");
     } catch (e) {
+      if (currentVersion !== sessionVersion) return;
       toastFn("上传失败：" + (e.message || f.name));
     }
   }
@@ -322,15 +352,20 @@ async function doUpload(files) {
 }
 
 async function delMaterial(id) {
+  const currentVersion = sessionVersion, client = sb;
   const m = state.materials.find((x) => x.id === id); if (!m) return;
   const okToGo = await confirmDialog({ title: "删除资料", message: `删除「${m.name}」？此操作不可撤销。`, confirmText: "删除" });
+  if (currentVersion !== sessionVersion) return;
   if (!okToGo) return;
   try {
-    await sb.storage.from("materials").remove([m.storage_path]);
-    const { error } = await sb.from("materials").delete().eq("id", id);
+    const storage = await client.storage.from("materials").remove([m.storage_path]);
+    if (storage.error) throw storage.error;
+    const { error } = await client.from("materials").delete().eq("id", id);
     if (error) throw error;
+    if (currentVersion !== sessionVersion) return;
     toastFn("已删除", "check");
   } catch (e) {
+    if (currentVersion !== sessionVersion) return;
     toastFn("删除失败：" + (e.message || ""));
   }
   await load();
@@ -338,8 +373,10 @@ async function delMaterial(id) {
 
 /* ---------- 下载（不跳新页，触发浏览器下载） ---------- */
 async function downloadMaterial(id) {
+  const currentVersion = sessionVersion, client = sb;
   const m = state.materials.find((x) => x.id === id); if (!m) return;
-  const { data, error } = await sb.storage.from("materials").createSignedUrl(m.storage_path, 120, { download: m.name });
+  const { data, error } = await client.storage.from("materials").createSignedUrl(m.storage_path, 120, { download: m.name });
+  if (currentVersion !== sessionVersion) return;
   if (error || !data) { toastFn("无法获取文件链接"); return; }
   const a = document.createElement("a");
   a.href = data.signedUrl; a.download = m.name; a.style.display = "none";
@@ -348,10 +385,12 @@ async function downloadMaterial(id) {
 
 /* ---------- 软件内预览（多格式） ---------- */
 async function previewMaterial(id) {
+  const currentVersion = sessionVersion, client = sb;
   const m = state.materials.find((x) => x.id === id); if (!m) return;
   const ext = extOf(m.name);
   const kind = previewKind(ext);
-  const { data, error } = await sb.storage.from("materials").createSignedUrl(m.storage_path, 600); // 10 分钟
+  const { data, error } = await client.storage.from("materials").createSignedUrl(m.storage_path, 600); // 10 分钟
+  if (currentVersion !== sessionVersion) return;
   if (error || !data) { toastFn("无法获取文件链接"); return; }
   const url = data.signedUrl;
 

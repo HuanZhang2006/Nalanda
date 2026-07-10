@@ -18,9 +18,8 @@ export function NalandaApp({ user, onSignOut }: { user: User; onSignOut: () => v
       onSignOut: () => signOutRef.current(),
     });
     return cleanup;
-    // 仅挂载一次（同一用户会话内 email 不变；令牌刷新不重挂）
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    // 令牌刷新不重挂，但同一 React 树内切换账号时必须销毁旧会话状态。
+  }, [user.id, user.email]);
 
   return <div className="app" ref={ref} />;
 }

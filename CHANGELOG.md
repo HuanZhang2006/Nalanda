@@ -13,15 +13,29 @@
 
 - 建立项目蓝图/最终说明、ERD/API、本地开发、环境变量、测试、数据库发布/回滚、备份恢复、监控告警和密钥轮换等文档体系。
 - 建立 SECURITY、CONTRIBUTING、ADR、隐私与数据删除、内容审核、AI 评测/成本以及 points/credits/VIP/支付统一规则。
-- 为文档宣称的 Web jsdom 与 Supabase 双用户 RLS/Storage E2E 补充可执行测试基线；API HTTP、FastAPI 和真浏览器 E2E 仍明确列为待补。
+- 为 Web 补齐 9 个 jsdom 回归、为 API readiness 增加 2 个单元测试，并扩展 3 个 Supabase 双用户 RLS/Storage E2E；API HTTP、FastAPI 和真浏览器 E2E 仍明确列为待补。
+- 增加本地 Supabase CLI 基线、PR/main 的 0007→0008 历史数据升级夹具、空库迁移重建、数据库 lint 与真实本地 RLS/Storage/points CI 门禁。
+- 增加生产 migration dry-run、加密发布恢复点、隔离恢复脚本和 migration history 发布流程。
 
 ### Changed
 
 - 旧文档按当前代码与迁移重新标注“当前、部分实现、目标”，不再把蓝图能力描述为已经上线。
+- 生产 Web/API 改用 Git SHA 不可变 release；本机或公网 smoke 失败时自动恢复上一应用 release，数据库仍采用向前迁移。
+- `/api/health` 从变量存在检查升级为 Supabase JWKS + PostgREST 双探针；失败返回 sanitized 503，部署 smoke 只接受真实 readiness。
+
+### Fixed
+
+- 重置 legacy 模块级会话状态并丢弃旧账号迟到响应，修复跨账号资料/社区/通知残留；账号变化会重新挂载应用。
+- 把 resize 监听改为挂载/清理对称生命周期，修复退出再登录后无法重挂。
+- 登录态读取、退出、Materials、通知、反馈、Profile、Community 和 Schedule 现在检查 Supabase/Storage `{ error }`；社区关系动作只在后端成功后更新界面，避免假成功。
+- 会话变化会复位登录按钮 loading，退出失败在已登录界面可见。
 
 ### Security
 
-- 文档化当前 profile 服务端字段可写、definer 函数执行授权和 points 非幂等等高优先级风险；对应代码修复完成前仍属于开放事项。
+- 新增 0008 migration：Profile 只允许客户端更新公开资料列，并以防御触发器保护 credits、points、等级、VIP 和 streak。
+- 撤销 `_add_points`、`_notify`、`_set_point_event` 与新旧 trigger helpers 的客户端 EXECUTE；旧 `_add_points` 对 service-role 也不可调用。
+- 新增 append-only `point_entries`、内部 `point_event_states`、稳定业务键、冲正和并发串行化；点赞、评论、原创/转发和任务取消后重做不再累计刷分。
+- 剩余开放项包括帖子 UPDATE 可信字段、feedback 状态、注册滥用、公开媒体治理，以及 credits/VIP/支付商业账本。
 
 ## [0.4.0] - 2026-06-27
 

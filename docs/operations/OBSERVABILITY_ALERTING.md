@@ -8,10 +8,10 @@
 
 当前已有信号：
 
-- `GET /api/health`：API 进程存活和三个变量的 `configured/unset`；
+- `GET /api/health`：API 进程存活，并真实探测 Supabase JWKS 与 PostgREST profiles 空查询；Redis/AI 仍只报告 `configured/unset`；
 - `GET /health`：AI 进程存活和 Anthropic key 是否存在；AI 当前未部署在生产编排中；
-- 当前生产 deploy workflow 在发布后轮询 `http://127.0.0.1:8411/api/health`；
-- API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose logs` 查看；
+- deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase`，并检查公网 Web root；失败会回退上一 Web/API release；
+- API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
 - nginx access/error log、systemd、Docker 与主机资源命令；
 - GitHub Actions deploy 运行结果；
 - Supabase 控制台可提供平台侧 Auth/数据库/Storage 日志与指标，具体可用项取决于项目配置。
@@ -20,11 +20,11 @@
 
 - 外部持续探测、SLO 仪表盘、集中日志、结构化 request log、trace、metrics endpoint；
 - error tracking、pager/值班表、告警路由和告警演练；
-- `/api/health` 不检查 Supabase/JWKS、数据库、Storage、Redis 或 AI 的连通性；
+- `/api/health` 尚不检查 Storage、注册写入、完整 RLS、Redis 或 AI 的连通性；
 - Web 前端异常和浏览器直连 Supabase 失败没有服务端集中信号；
-- 备份新鲜度、RLS/数据完整性、TLS 到期、成本、AI 质量和支付对账告警。
+- 日常备份新鲜度、RLS/数据完整性、TLS 到期、成本、AI 质量和支付对账告警；迁移前加密恢复点已有 CI 门禁，但没有持续告警。
 
-所以“deploy health ok”只证明 API 当时返回 200，不能证明核心用户路径健康。
+所以“deploy health ok”已证明 API→Supabase JWKS/PostgREST 基本连通，但仍不证明 Storage、浏览器直连、注册/登录写路径或核心业务全部健康。
 
 ## 2. 服务与信号地图
 
@@ -33,13 +33,13 @@
 | DNS/TLS/nginx | 是 | 外部 curl、nginx logs、证书工具 | 无持续 probe/到期告警 |
 | Web 静态站 | 是 | nginx status/access、浏览器人工检查 | 无 RUM/JS error/performance |
 | NestJS API | 是 | `/api/health`、container logs | 无 latency/status metrics/request ID |
-| Supabase Auth | 是 | 平台日志、注册错误、用户反馈 | 登录由浏览器直连，API health 不探测 |
-| Supabase Postgres/PostgREST | 是 | 平台指标/日志、人工 SQL | 无应用级 query/error dashboard |
+| Supabase Auth | 是 | API health 的 JWKS 探针、平台日志、注册错误 | 登录由浏览器直连；health 不执行真实登录 |
+| Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
 | FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
 | Redis/BullMQ | 未接入当前业务 | hybrid compose 有目标配置 | 无队列/worker 指标 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
-| 备份 | 未自动化 | 人工恢复点记录 | 无成功/年龄/可恢复性告警 |
+| 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
 
 ## 3. 目标 SLI/SLO（待批准）
 
@@ -91,7 +91,7 @@ curl -fsS --max-time 10 https://nalanda.online/api/health
 curl -fsSI --max-time 10 https://nalanda.online/
 ```
 
-API health 中 `deps.* = configured` 只表示变量非空，不表示依赖正常。不能把它作为数据库或 AI readiness。
+API health 中 `deps.supabase = ok` 表示 JWKS 与 PostgREST 空查询在超时内成功；`redis/ai = configured` 仍只表示变量非空。不能把该 endpoint 当作 Storage、RLS、登录或 AI 完整 readiness。
 
 TLS 检查：
 
@@ -104,8 +104,8 @@ echo | openssl s_client -servername nalanda.online -connect nalanda.online:443 2
 
 ```bash
 cd /opt/nalanda
-docker compose ps
-docker compose logs --since=30m --tail=300 api
+docker compose --env-file .deploy.env ps
+docker compose --env-file .deploy.env logs --since=30m --tail=300 api
 curl -fsS --max-time 5 http://127.0.0.1:8411/api/health
 docker stats --no-stream
 df -h
@@ -140,7 +140,7 @@ tail -n 200 /var/log/nginx/error.log
 
 1. 从外部复现并记录 UTC 时间/状态码，不发送真实用户 token。
 2. 在服务器检查 compose 状态、最近日志、资源和本地 health。
-3. 若容器停止，先保存日志和退出原因，再执行 `docker compose up -d`；不要无限重启掩盖 OOM/配置错误。
+3. 若容器停止，先保存日志和退出原因，再执行 `docker compose --env-file .deploy.env up -d`；不要无限重启掩盖 OOM/配置错误或绕过 Git SHA image。
 4. 若最近刚部署，核对 workflow、镜像 build 和环境文件；当前没有可靠上一镜像，谨慎声明“回滚”。
 5. 恢复后从外部验证 health、登录和本次影响路径，持续观察。
 

@@ -6,6 +6,7 @@ import { DB } from "./data";
 let sb = null, USER = null, toastFn = () => {};
 let rootEl = null;
 const state = { loading: true, error: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 } };
+let sessionVersion = 0;
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const initialsOf = (s) => String(s || "?").trim().slice(0, 2).toUpperCase();
@@ -13,7 +14,12 @@ const TIER_BG = ["", "linear-gradient(135deg,#c9925f,#a97142)", "linear-gradient
 const TIER_NAME = ["", "铜", "银", "金"];
 const tierOf = (v, th) => th.reduce((t, x) => t + (v >= x ? 1 : 0), 0);
 
-export function initProfile(supabase, user, toast) { sb = supabase; USER = user; if (toast) toastFn = toast; }
+export function initProfile(supabase, user, toast) {
+  sessionVersion++;
+  sb = supabase; USER = user; toastFn = toast || (() => {});
+  rootEl = null;
+  Object.assign(state, { loading: true, error: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 } });
+}
 export function mountProfile(el) { rootEl = el; if (!rootEl) return; render(); load(); }
 
 async function fetchProfile() {
@@ -24,14 +30,18 @@ async function fetchProfile() {
     sb.from("courses").select("id", { count: "exact", head: true }),
     sb.from("feedback").select("id", { count: "exact", head: true }),
   ]);
+  const failed = [p, pc, mc, cc, fc].find((result) => result.error);
+  if (failed) throw failed.error;
   return { profile: p.data, counts: { posts: pc.count || 0, materials: mc.count || 0, courses: cc.count || 0, feedback: fc.count || 0 } };
 }
 
 async function load() {
+  const currentVersion = sessionVersion;
   if (!sb) { state.loading = false; state.error = "未配置 Supabase"; render(); return; }
   state.loading = true; render();
-  try { const r = await fetchProfile(); state.profile = r.profile; state.counts = r.counts; state.error = ""; }
-  catch (e) { state.error = e.message || "加载失败"; }
+  try { const r = await fetchProfile(); if (currentVersion !== sessionVersion) return; state.profile = r.profile; state.counts = r.counts; state.error = ""; }
+  catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
+  if (currentVersion !== sessionVersion) return;
   state.loading = false; render();
 }
 
@@ -151,6 +161,7 @@ function editModal() {
   const saveBtn = scrim.querySelector('[data-ed="save"]'); let saving = false;
   saveBtn.onclick = async () => {
     if (saving) return;
+    const currentVersion = sessionVersion, client = sb, userId = USER.id;
     const patch = {
       username: scrim.querySelector("#pf-username").value.trim() || null,
       university: scrim.querySelector("#pf-university").value.trim() || null,
@@ -160,23 +171,30 @@ function editModal() {
     };
     saving = true; saveBtn.disabled = true; saveBtn.textContent = "保存中…";
     try {
-      const { error } = await sb.from("profiles").update(patch).eq("id", USER.id);
+      const { error } = await client.from("profiles").update(patch).eq("id", userId);
       if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
       close(); toastFn("已保存", "check"); await load(); syncShellUser();
-    } catch (e) { saving = false; saveBtn.disabled = false; saveBtn.textContent = "保存"; toastFn("保存失败：" + (e.message || "")); }
+    } catch (e) {
+      if (currentVersion !== sessionVersion) return;
+      saving = false; saveBtn.disabled = false; saveBtn.textContent = "保存"; toastFn("保存失败：" + (e.message || ""));
+    }
   };
 }
 
 export async function syncShellUser() {
   if (!sb) return;
+  const currentVersion = sessionVersion, client = sb, userId = USER.id;
   try {
-    const { data } = await sb.from("profiles").select("*").eq("id", USER.id).single();
+    const { data, error } = await client.from("profiles").select("*").eq("id", userId).single();
+    if (error) throw error;
+    if (currentVersion !== sessionVersion) return;
     if (!data) return;
     const name = data.username || (data.email || "").split("@")[0] || "用户";
     DB.user.name = name; DB.user.initials = initialsOf(name);
-    DB.user.points = data.points || 0; DB.user.level = data.level || 1; DB.user.levelName = data.level_name || "Novice";
+    DB.user.points = data.points || 0; DB.user.credits = data.credits || 0; DB.user.level = data.level || 1; DB.user.levelName = data.level_name || "Novice";
     const nm = document.querySelector(".uchip-name"); if (nm) nm.textContent = name;
     const sub = document.querySelector(".uchip-sub"); if (sub) sub.textContent = `Lv ${DB.user.level} · ${DB.user.levelName} · ${DB.user.points.toLocaleString()} 积分`;
     document.querySelectorAll(".avatar").forEach((a) => { if (a.dataset.go === "profile" || a.closest(".uchip")) a.textContent = DB.user.initials; });
-  } catch {}
+  } catch (e) { if (currentVersion === sessionVersion) toastFn("资料同步失败：" + (e.message || "")); }
 }

@@ -18,14 +18,23 @@
 | `20260625000005_community.sql` | posts、comments、likes、favorites、follows、计数/作者触发器 |
 | `20260625000006_points_tags_notify.sql` | points、tags、公开社区媒体、互动通知和等级 |
 | `20260625000007_schedule.sql` | study_goals、study_tasks、streak、任务完成奖励 |
+| `20260710000008_security_points_ledger.sql` | Profile 列级写保护、内部 RPC 撤权、`point_entries`/`point_event_states`、稳定业务键、冲正与幂等奖励 |
 
-当前共 13 张 public 业务表和两个 Storage bucket。关系、删除行为和策略见 [ERD](../docs/guides/ERD.md)。
+当前共 15 张 public 业务表和两个 Storage bucket。关系、删除行为和策略见 [ERD](../docs/guides/ERD.md)。
 
 ## 应用迁移
 
-正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)，先备份、在 staging 验证，再显式指定目标项目。
+正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)。仓库已提交 `config.toml`；CI 会先验证 0007→0008 历史数据升级，再从空库重建、lint、运行本地真实 RLS/Storage/points E2E，然后在受保护 environment 中 dry-run、创建加密恢复点并用 migration history 发布。
 
-推荐长期方案是 Supabase CLI 的迁移历史：
+本地基线：
+
+```bash
+supabase start
+supabase db reset --local --no-seed
+supabase db lint --local --schema public --level error --fail-on error
+```
+
+远端正常方案是 Supabase CLI migration history：
 
 ```bash
 supabase link --project-ref <明确的项目 ref>
@@ -38,10 +47,11 @@ supabase db push
 ```bash
 SUPABASE_ACCESS_TOKEN=sbp_xxx \
 SUPABASE_PROJECT_REF=<明确的非生产或已确认项目 ref> \
+ALLOW_LEGACY_DB_PUSH=YES \
 node scripts/db-push.mjs
 ```
 
-警告：脚本当前带历史默认 project ref。不要省略 `SUPABASE_PROJECT_REF`；后续应修改脚本为缺失即失败，并迁移到带历史表的 CLI 流程。
+警告：该脚本已移除默认 Ref 并强制应急开关，但仍不维护 history、没有跨文件事务，不属于正常发布。旧生产若曾人工应用迁移，首次 CLI 发布必须先按操作手册逐项核对并 baseline/repair history，禁止盲目 `--include-all`。
 
 SQL Editor 只作为紧急/初始化兜底。手动执行后必须记录执行人、时间、目标项目、SQL hash 和验证结果，避免数据库状态脱离版本控制。
 
@@ -59,8 +69,10 @@ SQL Editor 只作为紧急/初始化兜底。手动执行后必须记录执行�
 - 社区帖子/评论对 authenticated 公共读，写仍限作者。
 - Storage 私有资料按对象路径第一段 user id 隔离。
 
-RLS 只限制行，不能保护同一行中的敏感列。当前 Profile 的 points、credits、level、VIP、streak 仍可由本人整行更新；`_add_points`、`_notify` 也需显式撤销客户端 execute。修复前不能把成长或钱包当作可信账本。
+RLS 只限制行，不能自动保护同一行中的敏感列。0008 因此撤销 Profile 整表 UPDATE，只向 authenticated 授予 `username/university/major/year/language` 列更新，并用防御触发器保护 `credits/points/level/vip/streak`；`_add_points` 已对所有客户端及 service-role 撤权，`_notify`、`_set_point_event` 和 trigger helpers 也不再是客户端 RPC surface。
+
+当前 points 已由 append-only `point_entries`、内部 `point_event_states` 和 Profile projection 维护；点赞、评论、原创/转发和任务取消/删除会冲正，重做只恢复同一业务事件净额。剩余边界是：迁移前余额只能作为 `legacy_opening` 导入，尚无每日奖励上限/内容质量反滥用；`credits`/`vip_until` 虽不可由客户端修改，但还没有订单、credits/VIP 事实账本，不能作为商业能力启用。
 
 ## 验证
 
-任何 RLS 变更至少用用户 A/B 验证：本人成功、他人不可读/写、外键不能指向他人对象、service-role 仅出现在受控后端。可执行套件和环境保护见 [测试指南](../docs/guides/TESTING.md)。
+任何 RLS/授权变更至少用用户 A/B 验证：本人允许字段成功、敏感列/RPC/ledger 写入失败、他人不可读写、外键不能指向他人对象。当前 3 组 RLS E2E 与独立 0007→0008 升级夹具会在 PR/main 的一次性本地 Supabase 实际运行；本机无显式环境时 RLS suite 安全跳过。命令见[测试指南](../docs/guides/TESTING.md)。

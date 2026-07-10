@@ -33,7 +33,7 @@
 
 ## 4. 升级范式（照 Materials 做）
 每个模块从 mock → 真后端走同一套路（详见 [06](06-materials.md) 与 [04](04-frontend-and-prototype-port.md)）：
-1. 写迁移：建表 + owner-only RLS（+ 需要的存储/外键归属校验），用 `db-push` 应用（[05](05-database-and-rls.md)）。
+1. 写迁移：建表 + owner-only RLS（+ 需要的存储/外键归属校验），用本地 Supabase reset/E2E 验证并经 CLI history 发布（[05](05-database-and-rls.md)）。
 2. 写自管容器的真实模块（`legacy/xxx.ts`，导出 `mountXxx(el)`，用 `supabase` 直连）。
 3. 在 `app.ts`：`VIEWS.xxx = () => '<div id="xxx-root"></div>'` + `go()` 钩子挂载 + 透传依赖。
 4. 两用户端到端验证 RLS/存储隔离。

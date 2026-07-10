@@ -57,12 +57,23 @@ Authorization: Bearer <supabase-access-token>
   "deps": {
     "redis": "unset",
     "ai": "unset",
-    "supabase": "configured"
+    "supabase": "ok"
   }
 }
 ```
 
-语义限制：依赖状态只检查对应环境变量是否存在，不会连接 Redis、AI 或 Supabase，也不验证数据库迁移。因此它是 liveness/配置提示，不是完整 readiness。
+语义：返回 200 前会在 5 秒超时内同时访问 Supabase JWKS 与 `profiles?select=id&limit=0` PostgREST 探针；后者只使用服务端 service-role header 且不读取行。任一配置缺失、URL 非法、网络/HTTP 失败都会返回 503，响应只写 `supabase: "unavailable"`，不泄露上游错误或 key。Redis/AI 仍只显示 `configured/unset`，Storage、注册写入、RLS 和完整用户路径不在本 endpoint 内验证。
+
+失败响应 `503`：
+
+```json
+{
+  "status": "error",
+  "service": "nalanda-api",
+  "time": "2026-07-10T00:00:00.000Z",
+  "deps": { "redis": "unset", "ai": "unset", "supabase": "unavailable" }
+}
+```
 
 示例：
 
@@ -285,7 +296,8 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 | 领域 | 表 | Web 当前使用的主要操作 | 授权边界摘要 |
 |---|---|---|---|
-| 个人资料 | `profiles` | 本人 select/update | 当前 own update 可写整行，服务端字段尚未隔离 |
+| 个人资料 | `profiles` | 本人 select；只更新 username/university/major/year/language | 0008 的列级 GRANT + 防御触发器保护 points/credits/level/VIP/streak |
+| Points | `point_entries` | 本人只读账本 | 客户端不可 insert/update/delete；`point_event_states` 对客户端完全隐藏 |
 | 资料库 | `courses`, `materials` | owner CRUD | materials 写入额外校验课程 owner |
 | 通知 | `notifications` | owner select/insert/update | 用户可标已读；当前 policy 也允许改其它 own 字段 |
 | 反馈 | `feedback` | owner select/insert | policy 实际允许 owner 全 CRUD |
@@ -307,7 +319,9 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 5.4 数据库函数/RPC 暴露面
 
-前端当前没有显式调用 `rpc()`。不过 `public` schema 的函数可能由 PostgREST 暴露；`_add_points`、`_notify` 等 `SECURITY DEFINER` 函数当前迁移没有显式收回默认 EXECUTE。应在安全迁移中撤权，并为确需客户端调用的 RPC 建立窄参数、调用者绑定和幂等检查。
+前端当前没有显式调用 `rpc()`。迁移 0008 已停用 `_add_points`，撤销 `_add_points`、`_notify`、`_set_point_event` 以及内部 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`/`_set_point_event` 只保留受信 service-role 调用能力。RLS E2E 会以普通用户尝试这三条 RPC 并验证失败，也验证普通用户与 service-role 都不能直接写 ledger/state。
+
+未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 
 ## 6. 尚未实现的目标 API
 
@@ -316,7 +330,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 - 资料解析、AI 生成任务提交/排队/状态/取消/重试；
 - 笔记与四类生成产物的版本化 CRUD；
 - 市场发布、购买、授权、搜索和创作者结算；
-- points/credits 不可变账本、余额、VIP entitlement；
+- points 规则版本/每日上限/反滥用与管理调整 API；credits 不可变账本、余额、VIP entitlement；
 - Stripe checkout/payment intent/webhook/refund；
 - 内容举报、审核、管理员处置与申诉；
 - 用户数据导出、删除请求与进度；

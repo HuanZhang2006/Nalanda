@@ -2,21 +2,21 @@
 
 > **文档定位**
 > - **内容**：记录通知面板、反馈和 Profile/Growth 的当前数据流与前端函数。
-> - **作用**：解释三个真实 Supabase 模块及其联动；不代表敏感字段权限已经完善。
+> - **作用**：解释三个真实 Supabase 模块及其联动，并标明客户端字段与服务端字段的权限边界。
 > - **何时更新**：Profile 字段/权限、通知刷新方式、反馈状态机或徽章/等级规则变化时。
 
-> 文件：`...0004_notifications_feedback.sql`（表）、`...0006_*`（profiles.points）、`...0007_*`（profiles.streak）、`apps/web/src/legacy/{notifications,feedback,profile}.ts`。
+> 文件：`...0004_notifications_feedback.sql`（表）、`...0006_*`（旧 points）、`...0007_*`（streak）、`...0008_security_points_ledger.sql`（敏感列与 points 账本）、`apps/web/src/legacy/{notifications,feedback,profile}.ts`。
 
 ---
 
 ## 一、数据模型
 - `notifications(user_id, type, title, body, read bool, created_at)` — owner-only RLS。`type` 仅做图标/分类用途，前端目前不强依赖。
 - `feedback(user_id, category, summary, body, status default 'open', created_at)` — owner-only RLS。
-- `profiles` 相关列：`points`（活动积分，0006）、`level/level_name`（由 points 推导，0006 的 `_add_points` 维护）、`streak/streak_date`（0007）、`credits`（**预留给未来充值钱包，与 points 不同**）。
+- `profiles` 相关列：`points`（活动积分，0008 起由 `point_entries` 重建）、`level/level_name`（由 points 阈值派生）、`streak/streak_date`（0007 增加、0008 锁为服务端维护）、`credits`（**预留给未来充值钱包，与 points 不同**）。
 
 > 关键概念：**积分 points（做事赚）≠ 钱包 credits（充值/未来）**。Profile 展示 points；credits 暂不展示。
 
-> 当前安全缺口：`profiles_update_own` 允许本人更新整行，客户端事实上可以直接改 points、credits、level、VIP 和 streak；feedback 的 `for all` owner policy 也允许用户改自己的 status。后续迁移必须做列级/命令级收口。
+> 当前边界：0008 已撤销 Profile 整表 UPDATE，authenticated 只获准更新 `username/university/major/year/language`，防御触发器同时保护 points、credits、level、VIP 和 streak；points/notification definer helpers 也已撤销客户端 EXECUTE。尚未收口的是 feedback 的 `for all` owner policy，用户仍可改自己的 `status`，该字段不能作为可信客服工作流状态。
 
 ---
 
@@ -25,6 +25,8 @@
 模块级：`sb, USER, toastFn, items[]`。
 
 **initNotifications(sb,user,toast)** — 注入依赖（在 `mountNalanda` 里调）。
+
+每次 init 都会清空上一账号缓存并递增会话版本；加载、标记已读和发送通知的延迟结果只有版本仍匹配时才更新当前 UI。Supabase 返回的 `{ error }` 会转成可见失败，不再把失败请求当成功。
 
 **refreshNotifBadge()** — 只查数量不取数据：
 ```
@@ -47,7 +49,7 @@ const { count } = await sb.from("notifications").select("id",{count:"exact",head
 
 ## 三、反馈（`feedback.ts`）—— 路由 `#fb-root`
 
-模块级：`state={loading,error,tickets,category:'Bug',saving}`；常量 `CATS`（分类）、`STATUS`（状态→[中文,色]）。
+模块级：`state={loading,error,tickets,category:'Bug',saving}`；常量 `CATS`（分类）、`STATUS`（状态→[中文,色]）。init 会重置此 state，异步操作用会话版本丢弃跨账号迟到响应。
 
 - **mountFeedback(el)** → `render()`（骨架）→ `load()`。
 - **load()** → `sb.from("feedback").select("*").order("created_at",desc)`（RLS 只返回自己的）→ 填 `tickets`。
@@ -65,7 +67,7 @@ const { count } = await sb.from("notifications").select("id",{count:"exact",head
 
 ## 四、个人资料（`profile.ts`）—— 路由 `#profile-root`
 
-模块级：`state={loading,error,profile,counts:{posts,materials,courses,feedback}}`；常量 `LEVEL_TH=[50,150,350,700,1200]`、`TIER_BG`（铜/银/金渐变）、`tierOf(v,th)`。
+模块级：`state={loading,error,profile,counts:{posts,materials,courses,feedback}}`；常量 `LEVEL_TH=[50,150,350,700,1200]`、`TIER_BG`（铜/银/金渐变）、`tierOf(v,th)`。init 会重置 state，加载/保存/壳同步都校验 Supabase `{ error }` 与会话版本。
 
 **fetchProfile()** — 一次并发 5 个查询：
 ```
@@ -98,7 +100,7 @@ profiles(本人 *), posts(count, repost_of=null), materials(count), courses(coun
 - `mountNalanda` 注入 supabase 给三个 `init*`，并在启动后调 `refreshNotifBadge()` + `syncShellUser()`。
 
 ## 六、验证
-两用户 RLS E2E 的目标覆盖 profiles 隔离、notifications 私有、feedback 私有；jsdom 覆盖铃铛、feedback、profile 和侧栏同步。实际文件、命令与环境要求见 [测试指南](../guides/TESTING.md)。
+两用户 RLS E2E 已覆盖 profiles 隔离、notifications 私有和 feedback 私有；jsdom 覆盖铃铛、错误提示、feedback、profile、侧栏同步与跨账号清理。PR/main 会在一次性本地 Supabase 运行 RLS 套件；实际文件和命令见[测试指南](../guides/TESTING.md)。
 
 ## 七、可扩展
 - 通知做实时（Supabase Realtime 订阅 `notifications` 表 → 来新通知即时跳角标）。

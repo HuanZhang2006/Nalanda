@@ -27,11 +27,10 @@
 
 ## 当前实现与目标差距
 
-- **当前：**push `main` 触发构建部署，健康检查验证 API；Web 直接访问 Supabase。
-- **当前限制：**CI 缺少完整测试/迁移/回滚门禁；健康检查主要验证进程和配置存在，不证明依赖业务可用。
-- **目标：**增加不可变版本、分阶段发布、数据库迁移门禁、自动/一键回滚、备份恢复演练、结构化日志和 SLO 告警；AI/Redis/Stripe 只有达到各自门禁后才加入拓扑。
+- **当前：**PR/main 会执行 typecheck、Web jsdom、API readiness unit、build、本地 Supabase 升级/重建/lint/RLS E2E；新增 migration 在加密恢复点后通过受保护 environment 发布；应用以 Git SHA release 部署并自动回退上一 Web/API；health 会探测 Supabase JWKS/PostgREST。
+- **当前限制：**health 尚不证明 Storage、真实注册/登录、完整 RLS 或全部业务路径；数据库不自动逆向；Storage bytes、异地 artifact、持续监控和完整恢复演练仍缺失。
+- **目标：**增加 staging/canary、异地 artifact/Storage 备份、完整恢复演练、结构化日志和 SLO 告警；AI/Redis/Stripe 只有达到各自门禁后才加入拓扑。
 
 ## 验证与复审
 
 每次发布记录版本、迁移、健康/冒烟结果和回滚点。增加第二台主机、托管平台或 AI worker 时新建/更新 ADR，并同步运维文档。
-

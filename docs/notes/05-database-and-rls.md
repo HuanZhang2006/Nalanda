@@ -25,6 +25,8 @@ create policy X_all_own on public.X
 
 > 心法：**前端的过滤只是体验，真正的隔离写在 RLS 里。**
 
+RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。包含余额、角色、状态或审核字段的表还必须使用列级 GRANT、命令拆分策略或防御触发器；`SECURITY DEFINER` 函数必须固定 `search_path` 并撤销默认客户端 EXECUTE。
+
 ## 3. 现有迁移（`supabase/migrations/`）
 | 文件 | 内容 |
 |---|---|
@@ -35,6 +37,7 @@ create policy X_all_own on public.X
 | `0005_community.sql` | posts / comments / likes / favorites / follows + 计数触发器 |
 | `0006_points_tags_notify.sql` | points、tags、社区媒体、互动通知与等级函数 |
 | `0007_schedule.sql` | study_goals / study_tasks、streak 与完成任务触发器 |
+| `0008_security_points_ledger.sql` | Profile 敏感列白名单、内部 RPC 撤权、稳定 points 业务键、`point_entries`/`point_event_states` 与冲正触发器 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
@@ -44,11 +47,12 @@ create policy X_all_own on public.X
 - `create extension if not exists pgcrypto;`（`gen_random_uuid()` 需要）
 
 ## 5. 怎么应用迁移
-### 当前脚本（过渡方案）
+### 旧应急脚本（不属于正常发布）
 `scripts/db-push.mjs` 按文件名顺序，把每个 `.sql` 经 **Supabase Management API** 应用；必须显式确认目标项目：
 ```bash
 SUPABASE_ACCESS_TOKEN=sbp_xxx \
 SUPABASE_PROJECT_REF=<明确的开发/staging/已审批生产 ref> \
+ALLOW_LEGACY_DB_PUSH=YES \
 node scripts/db-push.mjs
 ```
 - 令牌来自 Supabase 控制台 → Account → Access Tokens（权限很大，**当密码看待**）。
@@ -56,7 +60,7 @@ node scripts/db-push.mjs
 
 > ⚠️ 坑：直接用默认 UA 调 `api.supabase.com/.../database/query` 会被 Cloudflare 拦（403 / `error code: 1010`）。脚本里**带浏览器 UA** 才放行。
 
-> ⚠️ 当前 `db-push.mjs` 在未提供 `SUPABASE_PROJECT_REF` 时默认指向历史生产 project ref，容易误操作。正式流程必须显式指定环境，并按 [数据库发布与回滚](../operations/DATABASE_RELEASE_ROLLBACK.md) 执行。
+> ⚠️ `db-push.mjs` 已移除默认 Ref 并强制 `ALLOW_LEGACY_DB_PUSH=YES`，但仍无 history；正式流程使用仓库 `config.toml` 与 Supabase CLI，并按 [数据库发布与回滚](../operations/DATABASE_RELEASE_ROLLBACK.md) 执行。
 
 ### 手动（兜底）：SQL Editor
 没令牌时：控制台 → SQL Editor → 粘贴迁移 → Run。第一版 profiles 即这样应用。
@@ -77,6 +81,7 @@ create policy things_all_own on public.things for all to authenticated
 若新表用外键引用了另一张「属于用户」的表，要在 `with check` 里**额外校验被引用行也归本人**（否则会出现 [06](06-materials.md) 里 0003 修复的那种越权）。
 
 ## 7. 待改进
-- 迁移目前靠本地跑 `db-push`（带访问令牌）；可把令牌存 GitHub Secret，在 CI 里自动应用，让 schema 随代码上。
-- 暂无「迁移已应用」追踪表（靠幂等兜底）；规模大了可引入 Supabase CLI 的版本管理。
-- RLS 是行级权限，不会自动限制同一行的敏感列。当前 `profiles` owner update 仍能改 points/credits/VIP/streak；普通 `SECURITY DEFINER` 函数也需要显式 `REVOKE EXECUTE`。
+- CI 已通过 CLI migration history 发布，并在生产 migration 前完成本地重建/RLS E2E、dry-run 和加密恢复点；首次生产启用仍须人工 baseline 旧历史。
+- 仍需定期 staging 演练、Storage 文件异地备份、数据库恢复演练和 schema drift 告警。
+- 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
+- 0008 将旧 `profiles.points` 导入 `legacy_opening`，只能锁住未来写入，不能证明旧余额未被漏洞篡改；生产发布必须先完成人工/业务数据审计并保存记录。

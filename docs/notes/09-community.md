@@ -6,14 +6,14 @@
 > - **何时更新**：帖子字段、RLS、积分、媒体、审核、前端交互或测试覆盖变化时。
 
 > 目标：能照着复盘/重写。逐表讲数据与 RLS、逐触发器讲服务端逻辑、逐函数讲前端逻辑与数据流。
-> 文件：`supabase/migrations/20260625000005_community.sql`（结构）、`...0006_points_tags_notify.sql`（积分/通知/标签/媒体）、`apps/web/src/legacy/community.ts`（前端）。
+> 文件：`supabase/migrations/20260625000005_community.sql`（结构）、`...0006_points_tags_notify.sql`（旧积分/通知/标签/媒体）、`...0008_security_points_ledger.sql`（稳定业务键、账本与冲正）、`apps/web/src/legacy/community.ts`（前端）。
 
 ---
 
 ## 一、数据模型（为什么这样设计）
 
 ### posts（帖子）
-关键列：`id, user_id(作者), author_name/author_university/author_major(展示快照), title, body, kind, subject(遗留,未用), tags text[], repost_of(转发指向原帖), like_count/comment_count/favorite_count/repost_count(冗余计数), image_url/audio_url, created_at/updated_at`。
+关键列：`id, user_id(作者), author_name/author_university/author_major(展示快照), title, body, kind, subject(遗留,未用), tags text[], repost_of(转发指向原帖), points_business_key(0008 生成且不可变), like_count/comment_count/favorite_count/repost_count(冗余计数), image_url/audio_url, created_at/updated_at`。
 
 设计要点：
 - **作者快照字段**：社区要展示「别人」的名字/学校，但 `profiles` 是 owner-only（只能读自己）。两种解法：放开 profiles 读权限，或把作者信息「拍快照」存到帖子上。选后者——更隐私（不暴露 email 等），代价是改名后旧帖不更新（可接受）。
@@ -21,8 +21,8 @@
 - **转发即帖子**：`repost_of` 指向原帖，转发就是一条普通 post。好处：转发自然进入 feed、可被再赞/评论；坏处：要在渲染时把原帖查出来内嵌。
 
 ### comments / post_likes / post_favorites / follows / tags
-- `comments(post_id, user_id, author_name, body)`。
-- `post_likes / post_favorites`：联合主键 `(post_id, user_id)`——天然防重复点赞/收藏。
+- `comments(post_id, user_id, author_name, body, points_business_key)`；同一用户对同一稳定目标内容的多个评论共享一个 points claim。
+- `post_likes(post_id,user_id,points_business_key)` / `post_favorites`：联合主键 `(post_id, user_id)`——天然防同一行重复点赞/收藏；0008 的稳定键还跨同内容重建/重复帖去重奖励。
 - `follows(follower_id, following_id)` 联合主键。
 - `tags(kind, value)` 联合主键，`kind ∈ university|major|subject|tag`——全局标签池（见 0006）。
 
@@ -65,20 +65,23 @@ update posts set like_count = greatest(0, like_count + d) where id = pid;  -- �
 select username, university, major into new.author_name, new.author_university, new.author_major
 from profiles where id = auth.uid();
 ```
-INSERT 时会无视客户端传的 author_*，强制用 profiles 真值。但 UPDATE policy 当前允许作者更新整行，因此作者仍可在插入后篡改快照、计数、时间和 `repost_of`；“防伪造”尚未覆盖更新路径。
+INSERT 时会无视客户端传的 author_*，强制用 profiles 真值。但 UPDATE policy 当前仍允许作者修改快照、计数和时间；0008 已锁定 `repost_of` 与 points key，其它可信字段的“防伪造”尚未覆盖更新路径。
 
 ### 3) 转发计数（0005 `_bump_repost`）
 `after insert/delete on posts`：若 `repost_of` 非空，给原帖 `repost_count ±1`。
 
-### 4) 积分 + 互动通知（0006）
-- `_add_points(uid, d)`：`profiles.points += d`，再按阈值（50/150/350/700/1200）重算 `level/level_name`。
-- `_notify(uid, type, title, body)`：往 `notifications` 插一条（给别人发，需 definer）。
-- 触发器（都先判断 `actor ≠ owner` 避免自我通知）：
-  - `_on_like`（post_likes insert）：点赞者 **+1 分**；通知帖主「收到一个赞 · {who} 赞了《{title}》」。
-  - `_on_comment`：评论者 **+2 分**；通知帖主。
+### 4) 积分 + 互动通知（0006，points 在 0008 替换）
+- `_add_points(uid, d)` 已停用并对客户端/service-role 撤权；`profiles.points` 由 append-style `point_entries` 总和重建。
+- `_set_point_event(...)` 是唯一 points 状态转换入口：按稳定业务键串行化，激活写正 entry，删除/取消写负 entry，同状态重试为 no-op；客户端无 EXECUTE。
+- `_notify(uid, type, title, body)` 仍由受信 trigger/service-role 写通知，但客户端 EXECUTE 已撤销。
+- 触发器：
+  - `_on_like`（insert/delete）：非自赞首次有效 claim **+1**，删尽同键关系 **-1**；通知帖主。
+  - `_on_comment`（insert/delete）：非自评首次有效 claim **+2**，删尽同键评论 **-2**；通知帖主。
   - `_on_fav`：通知帖主（不加分）。
-  - `_on_post`：发帖 **+10**；转发 **+3** 且通知原作者。
+  - `_on_post`（insert/delete）：原创有效 claim **+10**、转发 **+3**；删尽同键帖子时冲正，转发时通知原作者。
   - `_on_follow`：通知被关注者。
+
+原创键由作者 + 规范化 title/body/kind/subject/排序 tags 的 SHA-256 生成；转发锚定根原创键；点赞/评论锚定目标帖的不可变键 + actor。数据库在 before insert 生成这些字段，并拒绝修改 `repost_of` 或已生成的 key。
 
 ### 5) 全局标签自动收集（0006）
 - `profiles` 改 university/major、`courses` 新建 → upsert 进 `tags`（`on conflict do nothing`）。
@@ -99,15 +102,15 @@ const state = { loading, error, filter, mineTab, counts, posts, liked:Set, faved
 let feedEl;                             // 当前挂载容器
 ```
 - `filter`：`all | following | mine | question | tip | note_share | t:<标签值>`。
-- `liked/faved`：当前列表里我点过赞/收藏的帖子 id 集合（用于高亮 + 乐观更新）。
+- `liked/faved`：当前列表里我点过赞/收藏的帖子 id 集合（用于高亮；写库成功后才更新）。
 - `originals`：转发帖的原帖 map（id→原帖），渲染内嵌用。
 
 ### 生命周期
-`mountCommunity(el)` → `renderFeed()`（先出骨架）→ `await ensureMe()`（拉我的资料/关注/标签，只一次）→ `load()`（按 filter 拉帖子）。
+`mountCommunity(el)` → `renderFeed()`（先出骨架）→ `await ensureMe()`（拉当前账号资料/关注/标签）→ `load()`（按 filter 拉帖子）。每次 init 会清空上一账号的 `me/followingIds/globalTags/state`；异步操作以 `sessionVersion` 丢弃账号切换后的迟到响应。
 
 ### 关键函数逐个讲
 
-**ensureMe()** — 一次并发拉三样：我的 profile、我的关注列表、全局 tags；填 `me / followingIds / globalTags`。`meLoaded` 保证只拉一次。
+**ensureMe()** — 一次并发拉三样：我的 profile、我的关注列表、全局 tags；填 `me / followingIds / globalTags`。`meLoaded` 保证在本次账号会话只拉一次，下一次 init 会清空。
 
 **load()** — feed 主查询。按 `filter` 拼 supabase 查询：
 - `question/tip/note_share` → `.eq("kind", f)`
@@ -140,12 +143,11 @@ function wire(scope){ scope.querySelectorAll("[data-cm]").forEach(el =>
 ### 动作的数据流（以点赞为例）
 ```
 点赞 span(data-cm=like) → wire 的 onclick → handle("like") → toggleLike(id)
-toggleLike：乐观更新（liked 集合 +/-，本地 like_count ±1）→ renderFeed() 立即变
-           → await post_likes insert/delete
-DB 触发器：likes_cnt 改 like_count(权威值)；_on_like 给点赞者 +1 分、通知帖主
-（下次 load/hydrate 会拿到权威计数；本地乐观值只为即时反馈）
+toggleLike：await post_likes insert/delete → 检查 { error } 与 sessionVersion
+           → 成功后才更新 liked 集合和本地 like_count → renderFeed()
+DB 触发器：likes_cnt 改 like_count(权威值)；_on_like 激活/冲正同一 points claim，并在非自赞时通知帖主
 ```
-`toggleFav/toggleFollow` 同理乐观更新。`addComment/delComment` 走「写库后整页重挂 `mountPost`」（评论量小，简单可靠）。`delPost` 用应用内 `confirmDialog` 二次确认。
+`toggleFav/toggleFollow` 同样只在后端成功后更新 UI。`addComment/delComment` 走「写库成功后整页重挂 `mountPost`」（评论量小，简单可靠）。`delPost` 用应用内 `confirmDialog` 二次确认。所有路径都会展示 Supabase 失败，不再把 `{ error }` 当成功。
 
 ### 发帖/编辑（composer）
 - 一个弹窗同时干 新建 与 编辑（`existing` 有无）。
@@ -163,10 +165,10 @@ DB 触发器：likes_cnt 改 like_count(权威值)；_on_like 给点赞者 +1 �
 
 ## 五、坑 / 取舍
 - **公共读 vs owner-only**：社区第一次用 `using(true)`；写仍严格。展示他人信息靠快照，不放开 profiles 读权限。
-- **点赞刷分**：`insert` 即 +1、`delete` 不扣，反复赞/取消可刷分。这是阶段 A 必须修复的完整性风险；修复前 points 不能作为可信成长或商业依据。目标方案是不可变事件账本、唯一业务键、冲正和每日上限。
-- **其它刷分路径**：评论/帖子删除重建和任务 false→true 也会重复奖励。正确解法是不可变 points 事件账本 + 唯一业务事件键，不只是前端限频。
-- **乐观更新 vs 权威值**：前端本地 ±1 只为即时反馈，真实计数以触发器维护的列为准（下次拉取覆盖）。
+- **当前 points 完整性**：0008 已修复点赞取消/重赞、评论/帖子删除重建、转发和任务取消重做的净额刷分；相同业务键只有一个 active claim，删除/取消写冲正。每日上限、垃圾内容识别和协同作弊检测仍未实现，所以 points 仍不能作为货币或商业权益。
+- **旧余额边界**：迁移前 points 只能作为 `legacy_opening` 保留，无法从旧表证明其中是否含已刷积分；生产发布必须先审计历史余额。
+- **UI 与权威值**：互动 UI 只在数据库成功后变更；冗余计数仍以触发器维护的列为权威，下次加载会覆盖本地显示。
 - **导航靠壳委托**：动作按钮必须 `stopPropagation`，否则会连带触发卡片的 `data-go` 跳转。
 
 ## 六、验证
-两用户 RLS E2E、触发器检查和 jsdom 社区回归的可执行覆盖矩阵见 [测试指南](../guides/TESTING.md)。现有套件覆盖 INSERT 防伪造；作者 UPDATE 服务端可信字段的缺口已列入“当前未覆盖的重要风险”，修复迁移时必须新增负向回归，避免把半条安全链写成已完成。
+两用户 RLS E2E、0007→0008 数据升级夹具、points 重做/并发/原帖级联冲正和 jsdom 社区失败回归的可执行覆盖矩阵见 [测试指南](../guides/TESTING.md)。套件覆盖 INSERT 防伪造、稳定 key 不可修改、敏感 Profile/RPC 拒绝；作者仍可 UPDATE 快照/冗余计数等字段（`repost_of` 与 points key 除外），这是独立的剩余列级权限缺口。

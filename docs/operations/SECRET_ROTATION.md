@@ -21,16 +21,17 @@
 | `SUPABASE_SERVICE_ROLE_KEY` | API `.env` / `/opt/nalanda/.env` | 注册 endpoint 的 Admin Auth | **否** | 当前使用，最高权限 |
 | `SUPABASE_JWT_SECRET` | API `.env` | 旧 HS256 验签回退 | 否 | 可选；非对称项目通常不需 |
 | Supabase JWT signing keys/JWKS | Supabase 管理 | Supabase 签发；API JWKS 验签 | 公钥可见 | 当前使用 |
-| `SUPABASE_ACCESS_TOKEN` | 人工 shell/安全存储 | `scripts/db-push.mjs` Management API | 否 | 人工迁移时使用 |
-| PostgreSQL 密码/`DATABASE_URL` | Supabase/运维 secret | 备份、恢复、人工维护 | 否 | 应仅临时使用；应用未读取 |
+| `SUPABASE_ACCESS_TOKEN` | `production-database` environment / 安全存储 | Supabase CLI 发布；旧脚本应急 | 否 | 当前 CI 使用 |
+| `SUPABASE_DB_PASSWORD` / 恢复连接串 | protected environment / 运维 secret | dry-run、dump、push、lint、隔离恢复 | 否 | 当前 CI/恢复使用；应用未读取 |
+| `DB_BACKUP_ENCRYPTION_KEY` | protected environment + 离线恢复保管 | 加密/验证 migration 前 archive | 否 | 当前 CI 使用，必须有离线副本 |
 | `SERVER_SSH_KEY` | GitHub Actions Secret | deploy workflow SSH/scp | 否 | 当前使用 |
+| `SERVER_SSH_KNOWN_HOSTS` | GitHub Actions Secret | 固定服务器 host identity | 公钥材料 | 当前使用，变更需线下核验 |
 | 服务器 SSH authorized key | 服务器 | 接受 CI/管理员连接 | 公钥 | 当前使用 |
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
 | TLS private key / ACME account | 生产 certbot/nginx | HTTPS | 否 | 当前由服务器维护 |
-| 备份加密 key | 尚未建立 | 未来备份自动化 | 否 | 目标 |
 
 完整变量消费者见 [环境变量矩阵](../guides/ENVIRONMENT_VARIABLES.md)。项目 URL、Project Ref、域名、`SERVER_HOST`/`SERVER_USER` 不是密码，但仍应限制修改权限并纳入配置变更审计。
 
@@ -89,9 +90,9 @@
 
    ```bash
    cd /opt/nalanda
-   docker compose up -d --force-recreate api
-   docker compose ps
-   docker compose logs --since=5m --tail=100 api
+   docker compose --env-file .deploy.env up -d --force-recreate api
+   docker compose --env-file .deploy.env ps
+   docker compose --env-file .deploy.env logs --since=5m --tail=100 api
    ```
 
 5. `/api/health` 只能验证 `SUPABASE_URL` 是否设置，不能验证 service-role。使用受控的临时 smoke 邮箱测试一次 `POST /api/auth/register`，随后在 Supabase Admin 中删除该账号和级联数据；同时验证普通登录和 `/api/me`。
@@ -114,24 +115,24 @@
 
 ## 7. Supabase Personal Access Token
 
-`SUPABASE_ACCESS_TOKEN` 只供 `scripts/db-push.mjs` 调 Management API，不是用户 access token，也不应放在 `/opt/nalanda/.env`。
+`SUPABASE_ACCESS_TOKEN` 供受保护 CI 的 Supabase CLI 发布以及旧脚本应急使用，不是用户 access token，也不应放在 `/opt/nalanda/.env`。
 
 1. 使用专用、最小权限的运维身份创建新 token。
-2. 更新受控 secret store/CI（如果未来自动迁移）；当前人工命令临时注入。
-3. 用**开发或 staging Project Ref**运行迁移/只读验证，确认 token 权限；不得把生产作为试验目标。
+2. 更新 `production-database` environment Secret；required reviewer 和 branch restriction 不得取消。
+3. 用**开发或 staging Project Ref**运行 `migration list`/dry-run，确认 token 权限；不得把生产作为试验目标。
 4. 撤销旧 token，检查近期 Management API 活动。
 5. 若持有人离职、设备丢失或 token 进日志，立即撤销并审计其可访问的全部 Supabase 项目。
 
-脚本有默认 Project Ref；轮换测试和每次执行都必须显式设置 `SUPABASE_PROJECT_REF`。
+旧脚本已移除默认 Project Ref；轮换测试和每次执行仍必须显式设置 `SUPABASE_PROJECT_REF`。生产 Ref 还会与 `VITE_SUPABASE_URL` 交叉核对。
 
 ## 8. PostgreSQL 密码/连接串
 
-当前应用不读取 `DATABASE_URL`，所以数据库密码主要用于备份/人工运维。
+当前应用不读取数据库密码；它由受保护 CI 用于 dry-run、加密恢复点、push/lint，也用于隔离恢复。
 
 1. 确认所有 dump、BI、管理员和自动化消费者。
 2. 在 Supabase 当前控制台轮换数据库密码/创建新最小权限角色。
-3. 更新 secret manager、`.pgpass`/备份 runner；不要写进 shell history。
-4. 在 staging 做连接和一次完整 dump + `pg_restore --list` 验证。
+3. 更新 `SUPABASE_DB_PASSWORD`、恢复工具/secret manager；不要写进 shell history。
+4. 在 staging 执行 dry-run、完整加密 dump 和 `restore-db-release.sh verify`，并至少完成一次隔离恢复。
 5. 撤销旧角色/密码并检查连接失败与异常来源。
 
 未来 API 若直连 Postgres，应使用独立最小权限应用角色和连接池配置，不能复用 owner/备份凭据。
@@ -143,9 +144,10 @@
 1. 在受控机器生成新的专用 ed25519 keypair，设置清晰 comment；私钥只进 GitHub Secret。
 2. 把新公钥加入当前部署账号 `~/.ssh/authorized_keys`，尽可能限制来源/命令/权限。
 3. 更新 GitHub Actions Secret `SERVER_SSH_KEY`。
-4. 手动运行 deploy workflow，验证上传、容器部署和外部 health。
-5. 从 `authorized_keys` 删除旧公钥，再运行一次只读连接/下次部署验证。
-6. 记录 GitHub audit log、服务器 auth log 和 key fingerprint。
+4. 若服务器 host key 也发生变化，必须通过控制台/可信网络核对新 fingerprint 后更新 `SERVER_SSH_KNOWN_HOSTS`；禁止用 workflow 内 `ssh-keyscan` 接受未知 key。
+5. 手动运行 deploy workflow，验证上传、不可变 release、外部 health 和失败回退。
+6. 从 `authorized_keys` 删除旧公钥，再运行一次只读连接/下次部署验证。
+7. 记录 GitHub audit log、服务器 auth log 和 key fingerprint。
 
 当前部署账号为高权限账号。目标是专用最小权限 deploy user，只允许写 `/opt/nalanda` 和执行所需 compose 操作。
 

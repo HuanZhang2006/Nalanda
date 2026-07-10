@@ -68,5 +68,18 @@ describe("通知、反馈与个人资料", () => {
     expect(profileRoot.textContent).toContain("Alice Updated");
     expect(shell.querySelector(".uchip-name")?.textContent).toBe("Alice Updated");
   });
-});
 
+  it("通知更新返回 error 时不在本地假装已读", async () => {
+    const supabase = createSupabaseMock(undefined, "u1", { errors: { notifications: { update: "notification denied" } } });
+    const toast = vi.fn();
+    document.body.innerHTML = `<span id="notif-badge"></span>`;
+    initNotifications(supabase, user, toast);
+    await openNotifications();
+    await flush(12);
+
+    click(document.querySelector(".notif-item"));
+    await flush(12);
+    expect(supabase.tables.notifications[0].read).toBe(false);
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("notification denied"));
+  });
+});

@@ -14,11 +14,11 @@
 | [02-用户系统与认证](02-auth-and-user-system.md) | Supabase Auth、JWKS 验签、自建注册接口、profiles + RLS、登录前端 |
 | [03-部署架构与 CI/CD](03-deployment-and-cicd.md) | 托管 + 自托管混合、nginx 隔离、GitHub Actions 流水线、踩坑实录 |
 | [04-前端与原型复现](04-frontend-and-prototype-port.md) | React + Vite、设计令牌、把 Claude Design 原型搬进生产应用 |
-| [05-数据库 / 迁移 / RLS](05-database-and-rls.md) | Supabase Postgres、owner-only RLS 模式、迁移幂等写法、`db-push` 自动化 |
+| [05-数据库 / 迁移 / RLS](05-database-and-rls.md) | Supabase Postgres、owner-only RLS、CLI history、本地重建与旧 `db-push` 边界 |
 | [06-Materials 资料库](06-materials.md) | 第一个真后端模块：courses/materials + Storage + RLS、上传/下载/预览/删除 |
 | [07-原型模块（剩余 mock）](07-prototype-modules.md) | 仍用假数据的模块（Home / Notes / Create / Market）+ 升级范式 |
-| [08-通知 / 反馈 / 个人资料](08-notifications-feedback-profile.md) | 通知面板、反馈、Profile 真数据 + 积分/分级徽章 |
-| [09-社区](09-community.md) | 发帖/评论/点赞/收藏/转发/关注、全局标签、图片音频、积分+通知联动 |
-| [10-学习计划](10-schedule.md) | 任务/目标、完成→积分+连续学习、关联课程资料、智能填充 |
+| [08-通知 / 反馈 / 个人资料](08-notifications-feedback-profile.md) | 通知面板、反馈、Profile 真数据、受保护 points projection + 分级徽章 |
+| [09-社区](09-community.md) | 发帖/评论/点赞/收藏/转发/关注、媒体、points 稳定业务键/冲正和通知联动 |
+| [10-学习计划](10-schedule.md) | 任务/目标、幂等完成奖励 + 连续学习、关联课程资料、智能填充 |
 
-> 状态：已接 Supabase 真数据 —— 注册/登录、**Materials、社区、学习计划、通知、反馈、个人资料（积分/等级/徽章）**，以及 Web/API 生产部署。剩余 mock：Home / AI 笔记生成（Create + Notes）/ 笔记市场 / 支付。迁移目前可脚本化执行，但尚未与生产应用发布形成自动、可回滚的一体化流程。
+> 状态：已接 Supabase 真数据 —— 注册/登录、**Materials、社区、学习计划、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API 生产部署。剩余 mock：Home / AI 笔记生成（Create + Notes）/ 笔记市场 / 支付。PR/main 已有本地升级/空库迁移/RLS 门禁，生产新增迁移经受保护 environment、加密恢复点和 CLI history 发布；数据库失败采用阻断/forward-fix/隔离恢复，应用 smoke 失败自动回退上一 release。
