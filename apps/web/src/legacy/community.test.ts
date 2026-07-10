@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { click, createSupabaseMock, flush } from "../test/supabase-mock";
+import { click, createSupabaseMock, defaultSeed, flush } from "../test/supabase-mock";
 import { initCommunity, mountCommunity, mountPost } from "./community";
 
 describe("社区 jsdom 集成", () => {
@@ -73,5 +73,44 @@ describe("社区 jsdom 集成", () => {
 
     expect(supabase.tables.comments.some((comment) => comment.body === "补充一个例子" && comment.post_id === "p1")).toBe(true);
     expect(root.textContent).toContain("补充一个例子");
+  });
+
+  it("切换账号会清空筛选/互动缓存，写入失败不会产生乐观假成功", async () => {
+    const firstRoot = document.createElement("div");
+    document.body.appendChild(firstRoot);
+    initCommunity(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
+    await mountCommunity(firstRoot);
+    await flush(16);
+    click(firstRoot.querySelector('[data-cm="filter"][data-f="question"]'));
+    await flush(12);
+
+    const seed = defaultSeed();
+    seed.profiles = [{ id: "u2", username: "Bob", email: "bob@example.edu" }];
+    seed.posts = [{
+      id: "bp1", user_id: "u2", author_name: "Bob", title: "Bob 的新会话", body: "isolated",
+      kind: "experience", tags: ["OnlyBob"], repost_of: null, like_count: 0, favorite_count: 0,
+      comment_count: 0, repost_count: 0, created_at: new Date().toISOString(),
+    }];
+    seed.post_likes = [];
+    seed.post_favorites = [];
+    seed.follows = [];
+    seed.tags = [{ kind: "tag", value: "OnlyBob" }];
+    const toast = vi.fn();
+    const second = createSupabaseMock(seed, "u2", { errors: { post_likes: { insert: "like denied" } } });
+    const secondRoot = document.createElement("div");
+    document.body.appendChild(secondRoot);
+    initCommunity(second, { id: "u2", email: "bob@example.edu" }, toast);
+    await mountCommunity(secondRoot);
+    await flush(16);
+
+    expect(secondRoot.querySelector('[data-cm="filter"][data-f="all"]')?.classList.contains("chip-accent")).toBe(true);
+    expect(secondRoot.textContent).toContain("Bob 的新会话");
+    expect(secondRoot.textContent).not.toContain("工作记忆是什么");
+
+    click(secondRoot.querySelector('[data-cm="like"][data-id="bp1"]'));
+    await flush(12);
+    expect(second.tables.post_likes).toHaveLength(0);
+    expect(secondRoot.querySelector('[data-cm="like"][data-id="bp1"]')?.textContent).toContain("0");
+    expect(toast).toHaveBeenCalledWith(expect.stringContaining("like denied"));
   });
 });

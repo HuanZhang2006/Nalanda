@@ -6,7 +6,8 @@ name: nalanda
 
 services:
   api:
-    image: nalanda-api:latest
+    # CI 通过 .deploy.env 注入不可变 Git SHA；缺失时直接失败，避免误启 latest。
+    image: ${NALANDA_API_IMAGE:?run docker compose with --env-file .deploy.env}
     restart: unless-stopped
     env_file: .env
     environment:

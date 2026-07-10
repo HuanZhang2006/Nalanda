@@ -34,7 +34,7 @@
 ## 3. React 侧接线
 
 - `main.tsx`：`import "@nalanda/ui/nalanda.css"`（完整样式）+ `import "./index.css"`。
-- `NalandaApp.tsx`：`useEffect` 调 `mountNalanda(ref.current, { user:{id,email}, supabase, onSignOut })`，依赖 `[]` 只挂载一次（令牌刷新不重挂），返回 `cleanup`。
+- `NalandaApp.tsx`：`useEffect` 调 `mountNalanda(ref.current, { user:{id,email}, supabase, onSignOut })`，依赖 `user.id/user.email`；令牌刷新不重挂，但同一 React 树切换账号会先 cleanup 再以新身份挂载。
 - `App.tsx`：会话存在 → `<NalandaApp>`；否则登录页（见 [02 笔记](02-auth-and-user-system.md)）。
 - `index.html`：加载 Newsreader / Public Sans / IBM Plex Mono 字体；`data-theme` 由 JS 控制明暗。
 
@@ -57,7 +57,8 @@
 ## 7. 踩坑
 
 - **挂载在哪**：原型用 `document.getElementById("app")`；改为对 React 提供的容器 `_root` 操作，避免与 React 渲染冲突。
-- **顶层 `window.addEventListener`**：当前 resize 只在模块求值时注册，cleanup 会移除但重新 mount 不会重加；React StrictMode 开发挂载或登出再登录后，图谱 resize 会失效。应把 add/remove 对称放进 `mountNalanda`。
+- **`window.addEventListener` 生命周期**：resize 的 add/remove 已对称放进 `mountNalanda`/cleanup；StrictMode 或登出再登录会重新挂载监听器，jsdom shell 回归对此有断言。
+- **跨账号模块单例**：legacy 模块仍是单例，但每次 `init*` 都会清空用户态缓存并递增 `sessionVersion`；异步响应只有版本仍匹配时才可写 UI，防止 A 的延迟响应落到 B 的页面。新增模块必须沿用这一约束，或改成实例化 React state。
 - **body 布局**：登录页需要居中、应用需要 `.app` 占满视口；把全局居中从 `index.css` 移除，分别由登录页自身和 `.app`（`height:100vh` 网格）负责。
 
 ## 8. 验证
@@ -68,4 +69,4 @@
 
 ## 9. 后续 TODO（迁移方向）
 
-逐模块把「innerHTML 视图」重构为类型安全 React 组件。当前优先级是：**修复 legacy 生命周期/跨账号状态 → 统一 AI 契约 → 接通真实 Create + Notes → Home 真数据 → Market/credits/支付**。Materials、Community、Schedule 等已接 Supabase 的模块也要逐步 React 化，但不再把“接真后端”列为未完成。迁移期允许新旧模块共存。
+逐模块把「innerHTML 视图」重构为类型安全 React 组件。legacy 生命周期、跨账号清理、登录 loading 和主要 Supabase `{ error }` 检查已补齐；当前优先级是：**统一 AI 契约（前端暂保留 mock）→ 接通真实 Create + Notes → Home 真数据 → Market/credits/支付**。Materials、Community、Schedule 等已接 Supabase 的模块也要逐步 React 化，但不再把“接真后端”列为未完成。迁移期允许新旧模块共存。

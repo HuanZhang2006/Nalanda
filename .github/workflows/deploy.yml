@@ -1,20 +1,107 @@
 name: deploy
 
 on:
+  pull_request:
+    branches: [main]
+    paths-ignore:
+      - "docs/**"
+      - "**/*.md"
   push:
     branches: [main]
     paths-ignore:
       - "docs/**"
       - "**/*.md"
   workflow_dispatch:
+    inputs:
+      apply_database_migrations:
+        description: "Run the protected production database release even when this is a manual rerun"
+        required: true
+        type: boolean
+        default: false
 
 concurrency:
-  group: deploy-main
+  group: deploy-${{ github.event_name == 'pull_request' && github.event.pull_request.number || 'main' }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+
+env:
+  SUPABASE_CLI_VERSION: 2.101.0
+  PUBLIC_ORIGIN: https://nalanda.online
+
 jobs:
-  deploy:
+  quality:
+    name: Typecheck, tests, and build
     runs-on: ubuntu-latest
+    outputs:
+      migrations_changed: ${{ steps.migration_changes.outputs.changed }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Detect and protect migration changes
+        id: migration_changes
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          MANUAL_DB_RELEASE: ${{ inputs.apply_database_migrations || false }}
+        run: |
+          set -Eeuo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "changed=${MANUAL_DB_RELEASE}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          base="$BEFORE_SHA"
+          if [[ -z "$base" || "$base" == "0000000000000000000000000000000000000000" ]]; then
+            empty_tree="$(git hash-object -t tree /dev/null)"
+            base="$empty_tree"
+          fi
+
+          changes="$(git diff --name-status "$base" "$GITHUB_SHA" -- supabase/migrations)"
+          if [[ -z "$changes" ]]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "$changes"
+          if awk '$1 != "A" { exit 1 }' <<< "$changes"; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "Existing migration files are immutable; add a new forward migration." >&2
+            exit 1
+          fi
+
+      - name: Documentation checks
+        run: pnpm docs:check
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit and jsdom tests
+        run: pnpm test
+
+      - name: Build all workspaces
+        run: pnpm build
+
+  migration_validation:
+    name: Rebuild, lint, and RLS-test local Supabase
+    needs: quality
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
 
@@ -29,57 +116,386 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
 
-      - name: Typecheck
-        run: pnpm typecheck
+      - uses: supabase/setup-cli@v2
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
 
-      - name: Test
-        run: pnpm test
+      - name: Exercise the 0007 to 0008 data upgrade, then rebuild from scratch
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          supabase start
 
-      # 前端静态产物（Supabase 公钥在构建时注入）
-      - name: Build web
+          status_file="$RUNNER_TEMP/supabase-status.env"
+          supabase status -o env > "$status_file"
+          set -a
+          source "$status_file"
+          set +a
+
+          fixture="$RUNNER_TEMP/nalanda-points-upgrade.json"
+          supabase db reset --local --no-seed --version 20260625000007
+          ALLOW_POINTS_UPGRADE_E2E=YES \
+          POINTS_UPGRADE_FIXTURE="$fixture" \
+          SUPABASE_URL="$API_URL" \
+          SUPABASE_ANON_KEY="$ANON_KEY" \
+          SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+          node apps/web/tests/points-upgrade.e2e.mjs seed
+
+          supabase migration up --local
+          ALLOW_POINTS_UPGRADE_E2E=YES \
+          POINTS_UPGRADE_FIXTURE="$fixture" \
+          SUPABASE_URL="$API_URL" \
+          SUPABASE_ANON_KEY="$ANON_KEY" \
+          SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+          node apps/web/tests/points-upgrade.e2e.mjs assert
+
+          # Auth/PostgREST/Storage are required by the real RLS suite. Rebuild
+          # from an empty database as a separate check after the upgrade path.
+          supabase db reset --local --no-seed
+
+      - name: Lint database functions
+        run: supabase db lint --local --schema public --level error --fail-on error
+
+      - name: Run real RLS and Storage E2E against local Supabase
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          status_file="$RUNNER_TEMP/supabase-status.env"
+          supabase status -o env > "$status_file"
+          set -a
+          source "$status_file"
+          set +a
+          SUPABASE_URL="$API_URL" \
+          SUPABASE_ANON_KEY="$ANON_KEY" \
+          SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+          SUPABASE_RLS_E2E_CONFIRM_REF="127" \
+          pnpm test:rls
+
+      - name: Stop local Supabase
+        if: always()
+        run: supabase stop --no-backup
+
+  database_release:
+    name: Back up and migrate production database
+    needs: [quality, migration_validation]
+    if: >-
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      needs.quality.outputs.migrations_changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production-database
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: supabase/setup-cli@v2
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Validate protected database inputs
+        shell: bash
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.DB_BACKUP_ENCRYPTION_KEY }}
+          EXPECTED_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+        run: |
+          set -Eeuo pipefail
+          for name in SUPABASE_ACCESS_TOKEN SUPABASE_DB_PASSWORD SUPABASE_PROJECT_REF BACKUP_ENCRYPTION_KEY EXPECTED_SUPABASE_URL; do
+            [[ -n "${!name:-}" ]] || { echo "Missing protected input: $name" >&2; exit 2; }
+          done
+          [[ "$EXPECTED_SUPABASE_URL" == "https://${SUPABASE_PROJECT_REF}.supabase.co" ]] || {
+            echo "SUPABASE_PROJECT_REF does not match the Web production Supabase URL" >&2
+            exit 2
+          }
+
+      - name: Link project and show migration plan
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+        run: |
+          set -Eeuo pipefail
+          supabase link --project-ref "$SUPABASE_PROJECT_REF"
+          supabase migration list --linked
+          supabase db push --linked --dry-run
+
+      - name: Create encrypted pre-migration recovery point
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+          SUPABASE_PROJECT_REF: ${{ secrets.SUPABASE_PROJECT_REF }}
+          BACKUP_ENCRYPTION_KEY: ${{ secrets.DB_BACKUP_ENCRYPTION_KEY }}
+          BACKUP_OUTPUT: ${{ runner.temp }}/nalanda-db-${{ github.sha }}.tar.gz.enc
+        run: bash scripts/create-db-release-backup.sh
+
+      - name: Retain encrypted recovery point
+        uses: actions/upload-artifact@v4
+        with:
+          name: db-recovery-${{ github.sha }}
+          path: ${{ runner.temp }}/nalanda-db-${{ github.sha }}.tar.gz.enc
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Apply forward migrations
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: supabase db push --linked
+
+      - name: Verify remote migration history and functions
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          set -Eeuo pipefail
+          supabase migration list --linked
+          supabase db push --linked --dry-run
+          supabase db lint --linked --schema public --level error --fail-on error
+
+  deploy_application:
+    name: Deploy immutable application release
+    needs: [quality, migration_validation, database_release]
+    if: >-
+      always() &&
+      github.event_name != 'pull_request' &&
+      github.ref == 'refs/heads/main' &&
+      needs.quality.result == 'success' &&
+      needs.migration_validation.result == 'success' &&
+      (needs.database_release.result == 'success' || needs.database_release.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production
+      url: https://nalanda.online
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9.12.3
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build Web with production public configuration
         run: pnpm --filter @nalanda/web build
         env:
           VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
           VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY }}
 
-      # 在 runner 上构建后端镜像（不占服务器内存），再 save 成 tar 传过去
-      - name: Build API image
-        run: docker build -f infra/hybrid-2g/api.Dockerfile -t nalanda-api:latest .
+      - name: Build immutable API image
+        run: docker build -f infra/hybrid-2g/api.Dockerfile -t "nalanda-api:${GITHUB_SHA}" .
 
       - name: Package artifacts
         run: |
-          docker save nalanda-api:latest | gzip > nalanda-api.tar.gz
+          set -Eeuo pipefail
+          docker save "nalanda-api:${GITHUB_SHA}" | gzip > nalanda-api.tar.gz
           tar -C apps/web/dist -czf web.tgz .
+          gzip -t nalanda-api.tar.gz
+          tar -tzf web.tgz >/dev/null
 
-      - name: Setup SSH
+      - name: Validate and install SSH trust
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KNOWN_HOSTS: ${{ secrets.SERVER_SSH_KNOWN_HOSTS }}
         run: |
+          set -Eeuo pipefail
+          for name in SERVER_HOST SERVER_USER SERVER_SSH_KEY SERVER_SSH_KNOWN_HOSTS; do
+            [[ -n "${!name:-}" ]] || { echo "Missing deployment secret: $name" >&2; exit 2; }
+          done
           install -m 700 -d ~/.ssh
-          printf '%s\n' "${{ secrets.SERVER_SSH_KEY }}" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "${{ secrets.SERVER_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          printf '%s\n' "$SERVER_SSH_KEY" > ~/.ssh/id_ed25519
+          printf '%s\n' "$SERVER_SSH_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 600 ~/.ssh/id_ed25519 ~/.ssh/known_hosts
+          ssh-keygen -F "$SERVER_HOST" -f ~/.ssh/known_hosts >/dev/null || {
+            echo "SERVER_SSH_KNOWN_HOSTS has no entry for SERVER_HOST" >&2
+            exit 2
+          }
 
-      - name: Upload artifacts
+      - name: Upload release to an isolated incoming directory
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
         run: |
-          scp -i ~/.ssh/id_ed25519 nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
-            "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}:/opt/nalanda/"
+          set -Eeuo pipefail
+          ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+            "$SERVER_USER@$SERVER_HOST" "install -d -m 700 /opt/nalanda/incoming/${GITHUB_SHA}"
+          scp -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
+            "$SERVER_USER@$SERVER_HOST:/opt/nalanda/incoming/${GITHUB_SHA}/"
 
-      - name: Deploy on server
+      - name: Activate release and automatically roll back application on failure
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          RELEASE_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
-          ssh -i ~/.ssh/id_ed25519 "${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }}" 'bash -se' <<'REMOTE'
-          set -e
-          cd /opt/nalanda
-          gunzip -c nalanda-api.tar.gz | docker load
-          rm -f nalanda-api.tar.gz
-          # 替换前端静态文件
-          rm -rf web && mkdir web && tar -C web -xzf web.tgz && rm web.tgz
-          # 启动/更新后端
-          docker compose up -d
-          # 自检
-          ok=
-          for i in $(seq 1 20); do
-            if curl -fsS http://127.0.0.1:8411/api/health >/dev/null; then ok=1; echo "api health ok"; break; fi
+          set -Eeuo pipefail
+          ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+            "$SERVER_USER@$SERVER_HOST" bash -se -- "$GITHUB_SHA" "$RELEASE_ID" "$PUBLIC_ORIGIN" <<'REMOTE'
+          set -Eeuo pipefail
+
+          sha="$1"
+          release_id="$2"
+          public_origin="$3"
+          root=/opt/nalanda
+          incoming="$root/incoming/$sha"
+          release="$root/releases/$release_id"
+          next_compose="$root/docker-compose.yml.next-$release_id"
+          next_env="$root/.deploy.env.next-$release_id"
+          previous_compose="$incoming/docker-compose.previous.yml"
+
+          assert_api_health() {
+            local endpoint="$1"
+            local payload
+            payload="$(curl -fsS --max-time 10 "$endpoint")" || return 1
+            python3 -c '
+          import json, sys
+          value = json.load(sys.stdin)
+          assert value.get("status") == "ok"
+          assert value.get("service") == "nalanda-api"
+          assert value.get("deps", {}).get("supabase") == "ok"
+          ' <<< "$payload"
+          }
+
+          assert_auth_guard() {
+            local endpoint="$1"
+            local status
+            status="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$endpoint")" || return 1
+            [[ "$status" == "401" ]]
+          }
+
+          wait_for_api() {
+            local endpoint="$1"
+            local attempt
+            for attempt in $(seq 1 30); do
+              if assert_api_health "$endpoint"; then
+                return 0
+              fi
+              sleep 2
+            done
+            return 1
+          }
+
+          current_container="$(
+            docker ps -aq \
+              --filter label=com.docker.compose.project=nalanda \
+              --filter label=com.docker.compose.service=api \
+              | head -n 1
+          )"
+          previous_image=""
+          if [[ -n "$current_container" ]]; then
+            previous_image="$(docker inspect --format '{{.Config.Image}}' "$current_container")"
+          fi
+
+          if [[ -f "$root/docker-compose.yml" ]]; then
+            cp "$root/docker-compose.yml" "$previous_compose"
+          fi
+          previous_web=""
+          if [[ -L "$root/web" ]]; then
+            previous_web="$(readlink -f "$root/web")"
+          elif [[ -d "$root/web" ]]; then
+            legacy="$root/releases/legacy-$(date -u +%Y%m%dT%H%M%SZ)"
+            mkdir -p "$legacy"
+            mv "$root/web" "$legacy/web"
+            ln -s "$legacy/web" "$root/web"
+            previous_web="$legacy/web"
+          fi
+
+          rollback_application() {
+            local reason="$1"
+            echo "Application release failed: $reason" >&2
+
+            if [[ -n "$previous_web" && -d "$previous_web" ]]; then
+              rm -f "$root/web.rollback"
+              ln -s "$previous_web" "$root/web.rollback"
+              mv -Tf "$root/web.rollback" "$root/web"
+            fi
+
+            if [[ -n "$previous_image" && -f "$previous_compose" ]]; then
+              printf 'NALANDA_API_IMAGE=%s\n' "$previous_image" > "$root/.deploy.env.rollback"
+              cp "$previous_compose" "$root/docker-compose.yml.rollback"
+              docker compose \
+                --env-file "$root/.deploy.env.rollback" \
+                -f "$root/docker-compose.yml.rollback" \
+                up -d --force-recreate api
+              mv "$root/docker-compose.yml.rollback" "$root/docker-compose.yml"
+              mv "$root/.deploy.env.rollback" "$root/.deploy.env"
+              wait_for_api http://127.0.0.1:8411/api/health || {
+                echo "Previous API also failed health verification; manual intervention required." >&2
+                return 1
+              }
+              echo "Previous Web/API release restored."
+              return 0
+            fi
+
+            echo "No previous API image was available for automatic rollback." >&2
+            return 1
+          }
+
+          [[ -s "$incoming/nalanda-api.tar.gz" ]]
+          [[ -s "$incoming/web.tgz" ]]
+          [[ -s "$incoming/docker-compose.yml" ]]
+          gzip -t "$incoming/nalanda-api.tar.gz"
+          tar -tzf "$incoming/web.tgz" >/dev/null
+
+          mkdir -p "$release/web"
+          tar -C "$release/web" -xzf "$incoming/web.tgz"
+          cp "$incoming/docker-compose.yml" "$next_compose"
+          printf 'NALANDA_API_IMAGE=nalanda-api:%s\n' "$sha" > "$next_env"
+          gunzip -c "$incoming/nalanda-api.tar.gz" | docker load
+
+          if ! docker compose --env-file "$next_env" -f "$next_compose" up -d --force-recreate api; then
+            rollback_application "docker compose failed" || true
+            exit 1
+          fi
+          if ! wait_for_api http://127.0.0.1:8411/api/health; then
+            docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 api || true
+            rollback_application "local API health check failed" || true
+            exit 1
+          fi
+          if ! assert_auth_guard http://127.0.0.1:8411/api/me; then
+            rollback_application "local auth guard smoke check failed" || true
+            exit 1
+          fi
+
+          if ! {
+            mv "$next_compose" "$root/docker-compose.yml"
+            mv "$next_env" "$root/.deploy.env"
+            rm -f "$root/web.next"
+            ln -s "$release/web" "$root/web.next"
+            mv -Tf "$root/web.next" "$root/web"
+          }; then
+            rollback_application "release activation failed" || true
+            exit 1
+          fi
+
+          external_ok=false
+          for attempt in $(seq 1 15); do
+            web_payload="$(curl -fsS --max-time 10 "$public_origin/" || true)"
+            if assert_api_health "$public_origin/api/health" \
+              && assert_auth_guard "$public_origin/api/me" \
+              && grep -q '<div id="root"></div>' <<< "$web_payload"; then
+              external_ok=true
+              break
+            fi
             sleep 2
           done
+          if [[ "$external_ok" != true ]]; then
+            rollback_application "external API/Web smoke check failed" || true
+            exit 1
+          fi
+
+          rm -rf "$incoming"
           docker image prune -f >/dev/null 2>&1 || true
-          [ -n "$ok" ] || { echo "API health check failed"; docker compose logs --tail=40 api; exit 1; }
+          echo "Release $release_id is healthy and active."
           REMOTE

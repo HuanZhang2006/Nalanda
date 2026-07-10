@@ -6,10 +6,10 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260625000007_schedule.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260710000008_security_points_ledger.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。
 
-- **当前实现**：13 张 `public` 业务表、`auth.users` 外部身份表、2 个 Storage bucket，以及相关 RLS/函数/触发器。
-- **未实现目标**：AI 笔记产物、生成任务、市场、钱包账本、订单/支付、订阅/VIP 权益、审核、审计等实体。它们可能出现在架构蓝图中，但当前数据库不存在。
+- **当前实现**：15 张 `public` 业务表、`auth.users` 外部身份表、2 个 Storage bucket，以及相关 RLS/函数/触发器。
+- **未实现目标**：AI 笔记产物、生成任务、市场、credits 钱包账本、订单/支付、订阅/VIP 权益、审核、审计等实体。它们可能出现在架构蓝图中，但当前数据库不存在。
 
 ## 2. 当前 ERD
 
@@ -89,6 +89,7 @@ erDiagram
         text_array tags
         text image_url
         text audio_url
+        text points_business_key
         integer like_count
         integer comment_count
         integer favorite_count
@@ -102,11 +103,13 @@ erDiagram
         uuid user_id FK
         text author_name
         text body
+        text points_business_key
         timestamptz created_at
     }
     POST_LIKES {
         uuid post_id PK_FK
         uuid user_id PK_FK
+        text points_business_key
         timestamptz created_at
     }
     POST_FAVORITES {
@@ -142,7 +145,34 @@ erDiagram
         date due_date
         boolean done
         timestamptz done_at
+        text points_business_key
         timestamptz created_at
+    }
+    POINT_ENTRIES {
+        bigint id PK
+        uuid user_id FK
+        text event_type
+        text business_key
+        integer amount
+        text rule_version
+        uuid source_id
+        integer transition_no
+        bigint reversal_of FK
+        jsonb metadata
+        timestamptz created_at
+    }
+    POINT_EVENT_STATES {
+        text business_key PK
+        uuid user_id FK
+        text event_type
+        integer reward_amount
+        boolean is_active
+        integer transition_no
+        uuid source_id
+        bigint last_entry_id FK
+        jsonb metadata
+        timestamptz created_at
+        timestamptz updated_at
     }
 
     AUTH_USERS ||--o| PROFILES : "id"
@@ -158,6 +188,8 @@ erDiagram
     AUTH_USERS ||--o{ FOLLOWS : "following"
     AUTH_USERS ||--o{ STUDY_GOALS : "owns"
     AUTH_USERS ||--o{ STUDY_TASKS : "owns"
+    AUTH_USERS ||--o{ POINT_ENTRIES : "owns ledger"
+    AUTH_USERS ||--o{ POINT_EVENT_STATES : "owns event state"
     COURSES ||--o{ MATERIALS : "contains"
     COURSES o|--o{ STUDY_GOALS : "optionally groups"
     COURSES o|--o{ STUDY_TASKS : "optionally groups"
@@ -167,6 +199,8 @@ erDiagram
     POSTS ||--o{ COMMENTS : "has"
     POSTS ||--o{ POST_LIKES : "has"
     POSTS ||--o{ POST_FAVORITES : "has"
+    POINT_ENTRIES o|--o{ POINT_ENTRIES : "previous transition"
+    POINT_ENTRIES o|--o| POINT_EVENT_STATES : "last entry"
 ```
 
 `auth.users` 由 Supabase Auth 管理；图中只展示应用实际引用的 `id` 和概念性 `email`，不是对 Auth 内部表的完整定义。
@@ -175,7 +209,7 @@ erDiagram
 
 ### 3.1 `profiles`
 
-与 `auth.users` 共享主键，注册后的 `handle_new_user` 触发器负责创建。`points`/等级用于活动成长，`credits` 是预留钱包数值；两者当前都直接存于此表，不存在账本。
+与 `auth.users` 共享主键，注册后的 `handle_new_user` 触发器负责创建。`points`/等级用于活动成长：`points` 是 `point_entries` 的缓存投影，等级由该投影计算；`credits` 仍只是尚无钱包账本的预留数值。普通 authenticated 用户只能更新资料白名单列，不能更新 points、credits、等级、VIP 或 streak。
 
 | 列 | 类型 | 空值/默认 | 关系或说明 |
 |---|---|---|---|
@@ -185,9 +219,9 @@ erDiagram
 | `university`, `major`, `year` | `text` | 可空 | 用户资料 |
 | `language` | `text` | 非空，`'zh'` | 当前无 check constraint |
 | `credits` | `integer` | 非空，`0` | 尚无钱包账本/支付闭环 |
-| `points` | `integer` | 非空，`0` | 迁移 0006 增加 |
-| `level` | `integer` | 非空，`1` | `_add_points` 计算 |
-| `level_name` | `text` | 非空，`'Novice'` | `_add_points` 计算 |
+| `points` | `integer` | 非空，`0` | 迁移 0006 增加；0008 起由 ledger 总和投影并 clamp 到 `0..2147483647` |
+| `level` | `integer` | 非空，`1` | `_set_point_event` 根据 points 投影计算 |
+| `level_name` | `text` | 非空，`'Novice'` | `_set_point_event` 根据 points 投影计算 |
 | `vip_until` | `timestamptz` | 可空 | 尚无订阅/支付写入规则 |
 | `streak` | `integer` | 非空，`0` | 迁移 0007 增加 |
 | `streak_date` | `date` | 可空 | 最近一次计入连续学习的日期 |
@@ -249,17 +283,18 @@ erDiagram
 | `tags` | `text[]` | 非空，`'{}'` | 不与 `tags` 表做 FK |
 | `repost_of` | `uuid` | 可空 | → `posts.id CASCADE`；原帖删除会级联删除转发帖 |
 | `image_url`, `audio_url` | `text` | 可空 | 通常是公开 bucket URL，无 FK/所有权校验 |
+| `points_business_key` | `text` | 非空 | 0008 增加；原创按 owner + 规范化内容生成，转发按 actor + 根原创内容键生成，且与 `repost_of` 一并不可变 |
 | `like_count`, `comment_count`, `favorite_count`, `repost_count` | `int` | 非空，`0` | 触发器维护的冗余计数 |
 | `created_at`, `updated_at` | `timestamptz` | 非空，`now()` | posts 没有自动 touch trigger，前端编辑时自行写 `updated_at` |
 
-索引：`created_at DESC`、`user_id`、`subject`。
+索引：`created_at DESC`、`user_id`、`subject`、`points_business_key`。
 
 #### 互动与关系
 
 | 表 | 主键 | 其它列/关系 | 删除行为 |
 |---|---|---|---|
-| `comments` | `id uuid` | `post_id → posts`、`user_id → auth.users`、`author_name` 快照、`body NOT NULL`、`created_at` | post/user 均 CASCADE；索引 `(post_id, created_at)` |
-| `post_likes` | `(post_id,user_id)` | `created_at` | post/user 均 CASCADE；唯一主键防止同用户同时保留重复点赞 |
+| `comments` | `id uuid` | `post_id → posts`、`user_id → auth.users`、`author_name` 快照、`body NOT NULL`、`points_business_key NOT NULL`、`created_at` | post/user 均 CASCADE；points key 锚定目标帖不可变内容键 + actor；索引 `(post_id, created_at)` 与 points key |
+| `post_likes` | `(post_id,user_id)` | `points_business_key NOT NULL`、`created_at` | post/user 均 CASCADE；points key 锚定目标帖不可变内容键 + actor；同逻辑内容重复帖共用奖励 claim |
 | `post_favorites` | `(post_id,user_id)` | `created_at` | post/user 均 CASCADE；唯一主键防止同时保留重复收藏 |
 | `follows` | `(follower_id,following_id)` | 二者均 → `auth.users`，`created_at` | user CASCADE；当前没有 `follower_id <> following_id` check |
 | `tags` | `(kind,value)` | `created_at` | 独立全局字典，无 FK；kind 注释约定 university/major/subject/tag，无 check |
@@ -278,8 +313,9 @@ erDiagram
 |  | `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
 |  | `title` | `text` | 非空 | — |
 |  | `due_date` | `date` | 非空，`current_date` | 索引 `(user_id,due_date)` |
-|  | `done` | `boolean` | 非空，`false` | false→true 触发积分/streak |
+|  | `done` | `boolean` | 非空，`false` | 任何 done 更新进入幂等状态机；首次完成激活 points/streak，取消会冲正 points |
 |  | `done_at` | `timestamptz` | 可空 | 当前数据库不强制与 `done` 一致 |
+|  | `points_business_key` | `text` | 非空 | 0008 增加；插入时按 owner、规范化标题、日期和关联实体生成，之后不可变 |
 |  | `course_id` | `uuid` | 可空 | → `courses.id SET NULL`；RLS 校验 owner |
 |  | `material_id` | `uuid` | 可空 | → `materials.id SET NULL`；RLS 校验 owner |
 |  | `goal_id` | `uuid` | 可空 | → `study_goals.id SET NULL`；RLS 校验 owner |
@@ -287,15 +323,43 @@ erDiagram
 
 `study_goals` 的当前 RLS 只校验 goal 的 `user_id`，没有像 `study_tasks` 一样检查可选 `course_id` 的归属；这是应在后续安全迁移中收紧的边界。
 
+### 3.6 Points 账本与事件状态
+
+`point_entries` 是当前 points 的追加式分录，`point_event_states` 是只供数据库内部使用的业务事件状态机。迁移 0008 先把旧 `profiles.points` 写为一条 `legacy_opening`，再把已有帖子、评论关系、点赞和已完成任务登记为 `transition_no=0` 的 active 状态，不重复加分。
+
+| 表 | 列 | 类型/约束 | 说明 |
+|---|---|---|---|
+| `point_entries` | `id` | `bigint identity` PK | 分录 ID |
+|  | `user_id` | `uuid NOT NULL` | → `auth.users.id CASCADE`；authenticated 仅能读取自己的分录 |
+|  | `event_type` | `text NOT NULL` | `legacy_opening/post_created/repost_created/like_created/comment_created/task_completed` 等 |
+|  | `business_key` | `text NOT NULL` | 永久业务键；与 `transition_no` 组成唯一约束 |
+|  | `amount` | `integer NOT NULL, <> 0` | 激活为正、取消/删除冲正为负 |
+|  | `rule_version` | `text NOT NULL` | 当前新事件为 `points-v1`；opening 为 `legacy-import-v1` |
+|  | `source_id` | `uuid` 可空 | 触发该 transition 的当前源记录，不做 FK，源删除后分录仍保留 |
+|  | `transition_no` | `integer >= 0` | opening 为 0；同一业务键后续严格递增 |
+|  | `reversal_of` | `bigint` 可空 | → 前一条 `point_entries.id ON DELETE NO ACTION`，形成 transition 链 |
+|  | `metadata` | `jsonb NOT NULL` | 源对象与迁移/active 信息 |
+|  | `created_at` | `timestamptz NOT NULL` | 默认 `now()` |
+| `point_event_states` | `business_key` | `text` PK | 每个永久业务事件一行 |
+|  | `user_id` | `uuid NOT NULL` | → `auth.users.id CASCADE` |
+|  | `event_type`, `reward_amount` | 非空 | 键碰撞时类型/用户/奖励必须一致，否则事务失败 |
+|  | `is_active`, `transition_no` | 非空 | 当前净状态及最新 transition |
+|  | `source_id`, `last_entry_id` | 可空 | 当前源记录；最新分录引用为 `ON DELETE NO ACTION` |
+|  | `metadata`, `created_at`, `updated_at` | 非空 | 内部状态与审计时间 |
+
+状态转换通过 `_set_point_event` 的 advisory lock、profile 行锁、状态行锁和唯一键串行化。点赞与评论按 actor + 目标帖不可变内容键、转发按 actor + 根原创内容键、原创帖按 owner + 规范化内容、任务按 owner + 规范化任务指纹去重。相同内容的重复帖子及删除后重建会复用 claim。取消/删除写负分录，重做写正分录，净额不会随循环操作累计；任务只有首次激活 `transition=1` 会推进 streak。
+
+历史边界：0008 无法判断旧宽松权限期间的 `profiles.points/credits/vip/streak` 是否曾被人为篡改。`points` opening 只用于保持升级前余额，不代表该余额已经审计；生产发布前必须按可信日志/快照核查异常账号。credits/VIP 仍没有可重建账本。
+
 ## 4. 删除与生命周期规则
 
 | 父实体删除 | 当前结果 |
 |---|---|
-| `auth.users` | 级联删除 profile、课程、资料、通知、反馈、帖子、评论、点赞、收藏、关注关系、目标、任务；Storage 文件是否删除不由这些 FK 保证。 |
+| `auth.users` | 级联删除 profile、课程、资料、通知、反馈、帖子、评论、点赞、收藏、关注关系、目标、任务、points 分录与事件状态；Storage 文件是否删除不由这些 FK 保证。 |
 | `courses` | 资料 CASCADE；目标/任务的 `course_id` SET NULL。 |
 | `materials` | 任务的 `material_id` SET NULL；Storage 对象不会由表 FK 自动删除。 |
 | `study_goals` | 任务的 `goal_id` SET NULL。 |
-| `posts` | 评论/点赞/收藏 CASCADE；引用它的转发帖也 CASCADE。媒体对象不会自动删除。 |
+| `posts` | 评论/点赞/收藏 CASCADE；引用它的转发帖也 CASCADE；相关 active points 事件会按 trigger 冲正。媒体对象不会自动删除。 |
 
 删除账号尚无仓库内编排来清理 Storage 孤儿对象或验证级联完整性；隐私删除流程必须单独实现并测试。
 
@@ -305,7 +369,7 @@ erDiagram
 
 | 表 | SELECT | INSERT | UPDATE | DELETE |
 |---|---|---|---|---|
-| `profiles` | 本人 | 无客户端 policy（由 Auth trigger 建档） | 本人整行 | 无客户端 policy |
+| `profiles` | 本人 | 无客户端 policy（由 Auth trigger 建档） | 本人仅 `username/university/major/year/language`；受保护列由 grant + trigger 双重禁止 | 无客户端 policy |
 | `courses` | owner | owner | owner | owner |
 | `materials` | owner | owner + 关联课程 owner | owner + 关联课程 owner | owner |
 | `notifications` | owner | owner | owner | owner |
@@ -317,8 +381,10 @@ erDiagram
 | `tags` | 所有 authenticated | 任意 authenticated | 无 policy | 无 policy |
 | `study_goals` | owner | owner | owner | owner |
 | `study_tasks` | owner | owner + 所有关联实体 owner | 同左 | owner |
+| `point_entries` | 本人 | 无客户端权限/policy | 无客户端权限/policy | 无客户端权限/policy |
+| `point_event_states` | 无客户端权限/policy | 无 | 无 | 无 |
 
-重要现状：`profiles_update_own` 允许本人更新整行，因此 `points`、`credits`、`level`、`level_name`、`vip_until`、`streak` 等服务端控制字段尚未被列级权限或安全 RPC 保护。`notifications`/`feedback` 的 `for all` policy 也允许 owner 改写本应由服务端管理的字段。安全加固应通过新迁移完成，不能只依赖前端隐藏控件。
+迁移 0008 已修复 Profile 整行更新缺口：表级 UPDATE 从 authenticated 撤销后只授予资料列，并以 `_guard_profile_managed_fields` 做防御。剩余边界是 `notifications`/`feedback` 的 `for all` owner policy 仍允许 owner 改写部分本应由服务端管理的字段，例如 feedback status；帖子作者也仍能更新快照和冗余计数字段，除 `repost_of` 与 points key 已锁定外，尚未形成完整列级白名单。
 
 ## 6. Storage 模型
 
@@ -341,18 +407,19 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_bump_repost` / `repost_cnt` | post INSERT/DELETE | 维护原帖转发计数 |
 | `_sync_profile_tags` / `profiles_tags` | profile INSERT/相关 UPDATE | 收集大学/专业全局标签 |
 | `_sync_course_tags` / `courses_tags` | course INSERT | 收集 subject 标签 |
-| `_add_points` | 被其它函数调用 | 调整 points，并按阈值写 level/name |
+| `_add_points` | 已停用的旧 helper | 不再被业务触发器使用，PUBLIC/anon/authenticated/service_role EXECUTE 均已撤销 |
 | `_notify` | 被其它函数调用 | 插入通知 |
-| `_on_like` / `likes_award` | like AFTER INSERT | 点赞者 +1，通知帖主 |
-| `_on_comment` / `comments_award` | comment AFTER INSERT | 评论者 +2，通知帖主 |
+| `_set_point_event` | 内部状态转换 | 以业务键写分录/状态、重算 points/等级；客户端无 EXECUTE，service_role 可通过受信 RPC 调用 |
+| `_post_points_key`、`_root_post_points_key`、`_task_points_key` 与 assign/preserve triggers | post/like/comment/task INSERT 与受保护 UPDATE | 生成并冻结内容锚定业务键；post 的 `repost_of` 与互动 identity 同时冻结 |
+| `_guard_profile_managed_fields` | profile BEFORE UPDATE | 防止普通 JWT 角色修改经济、等级、VIP、streak 字段 |
+| `_on_like` / `likes_award` | like AFTER INSERT/DELETE | 非自赞首次激活 +1；删除冲正；通知帖主 |
+| `_on_comment` / `comments_award` | comment AFTER INSERT/DELETE | 非自评 actor/post 关系 +2；最后一条删除冲正；通知帖主 |
 | `_on_fav` / `favs_notify` | favorite AFTER INSERT | 通知帖主 |
-| `_on_post` / `posts_award` | post AFTER INSERT | 原创 +10 / 转发 +3，并按需通知 |
+| `_on_post` / `posts_award` | post AFTER INSERT/DELETE | 原创 +10 / 转发 +3；最后一个同业务键删除时冲正，并按需通知 |
 | `_on_follow` / `follows_notify` | follow AFTER INSERT | 通知被关注者 |
-| `_on_task_done` / `task_done` | task `done` AFTER UPDATE | false→true +5，更新 streak，发送里程碑通知 |
+| `_on_task_done` / `task_points_update`,`task_points_delete` | task `done` AFTER UPDATE 或 DELETE | 首次完成 +5；取消/最后一个同键任务删除冲正；仅首次激活更新 streak |
 
-这些辅助函数多为 `SECURITY DEFINER SET search_path=public`。迁移当前没有显式撤销 `_add_points`、`_notify` 等函数对默认角色的 EXECUTE；发布前应审计 PostgREST RPC 暴露面并在安全迁移中只授权必要调用方。
-
-当前积分触发器没有事件账本或幂等键。删除后重新点赞/评论/发帖、任务 done→false→true 等操作可能重复获分；这也是统一 points/credits 规则落库前必须解决的模型问题。
+迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
 ## 8. 索引清单
 
@@ -362,8 +429,15 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `posts_created_idx(created_at DESC)`
 - `posts_user_idx(user_id)`
 - `posts_subject_idx(subject)`
+- `posts_points_business_key_idx(points_business_key)`
 - `comments_post_idx(post_id, created_at)`
+- `comments_points_business_key_idx(points_business_key)`
+- `post_likes_points_business_key_idx(points_business_key)`
 - `study_tasks_user_due_idx(user_id, due_date)`
+- `study_tasks_points_business_key_idx(points_business_key)`
+- `point_entries_user_created_idx(user_id, created_at DESC)`
+- `point_event_states_user_idx(user_id, updated_at DESC)`
+- `point_entries UNIQUE(business_key, transition_no)`
 - 主键/唯一约束自动提供的索引：所有单列主键及 likes、favorites、follows、tags 的复合主键。
 
 ## 9. 目标模型（尚不存在）
@@ -373,7 +447,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `notes`、结构化知识点、题库、知识图谱、模拟考试与版本；
 - `generation_jobs`、解析结果、AI 模型/提示词版本、失败与重试状态；
 - 市场商品、授权/购买关系、创作者分成；
-- 不可变 points 事件账本、credits 钱包账本、余额投影；
+- credits 钱包账本、余额投影和经过审批的管理员调整；points 账本已存在，但仍需反滥用上限、对账与运营工具；
 - VIP entitlement/订阅、订单、支付 intent、webhook 幂等记录、退款；
 - 内容举报、审核队列、处置与申诉；
 - 用户同意、数据导出/删除任务、保留期限；

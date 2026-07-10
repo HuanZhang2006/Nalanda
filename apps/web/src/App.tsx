@@ -25,14 +25,35 @@ export function App() {
   const [err, setErr] = useState("");
 
   useEffect(() => {
+    let active = true;
     const t = localStorage.getItem("nalanda-theme") ||
       (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
     document.documentElement.setAttribute("data-theme", t);
     setThemeState(t);
     if (!supabaseConfigured) return setReady(true);
-    supabase!.auth.getSession().then(({ data }) => { setSession(data.session); setReady(true); });
-    const { data: sub } = supabase!.auth.onAuthStateChange((_e, s) => setSession(s));
-    return () => sub.subscription.unsubscribe();
+    supabase!.auth.getSession()
+      .then(({ data, error }) => {
+        if (!active) return;
+        if (error) setErr("无法读取登录状态，请刷新重试");
+        setSession(data.session);
+        setReady(true);
+      })
+      .catch(() => {
+        if (!active) return;
+        setErr("无法读取登录状态，请刷新重试");
+        setReady(true);
+      });
+    const { data: sub } = supabase!.auth.onAuthStateChange((_e, s) => {
+      if (!active) return;
+      setSession(s);
+      // submit 成功依赖 auth 事件完成跳转；任何会话切换都要结束按钮 loading。
+      setLoading(false);
+      if (s) setErr("");
+    });
+    return () => {
+      active = false;
+      sub.subscription.unsubscribe();
+    };
   }, []);
 
   const toggleTheme = useCallback(() => {
@@ -42,7 +63,15 @@ export function App() {
     setThemeState(t);
   }, []);
 
-  const signOut = useCallback(() => { supabase!.auth.signOut(); }, []);
+  const signOut = useCallback(async () => {
+    setErr("");
+    try {
+      const { error } = await supabase!.auth.signOut();
+      if (error) setErr("退出登录失败，请检查网络后重试");
+    } catch {
+      setErr("退出登录失败，请检查网络后重试");
+    }
+  }, []);
 
   const em = email.trim().toLowerCase();
   const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em);
@@ -79,7 +108,12 @@ export function App() {
     }
   }
 
-  if (session) return <NalandaApp user={session.user} onSignOut={signOut} />;
+  if (session) return (
+    <>
+      <NalandaApp user={session.user} onSignOut={signOut} />
+      {err && <div role="alert" style={sessionErrBox}>{err}</div>}
+    </>
+  );
 
   return (
     <div style={screen}>
@@ -204,3 +238,8 @@ const primary: CSSProperties = {
   boxShadow: "var(--shadow-sm)",
 };
 const disabledBtn: CSSProperties = { opacity: 0.5, cursor: "not-allowed", boxShadow: "none" };
+const sessionErrBox: CSSProperties = {
+  position: "fixed", right: 18, bottom: 18, zIndex: 100, maxWidth: 360,
+  padding: "10px 14px", borderRadius: 10, background: "var(--card)", color: "var(--pink)",
+  border: "1px solid color-mix(in srgb, var(--pink) 35%, var(--border))", boxShadow: "var(--shadow-md)",
+};

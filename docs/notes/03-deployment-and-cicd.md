@@ -55,23 +55,24 @@ server {
 
 ## 4. CI/CD 流水线
 
-文件：`.github/workflows/deploy.yml`，触发：push 到 `main`（`paths-ignore: docs/**, **/*.md`）或手动 `workflow_dispatch`。
+文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 再执行受保护数据库/应用发布；手动 `workflow_dispatch` 默认只发应用，显式选中 `apply_database_migrations` 才发布数据库。纯文档变更由 docs workflow 处理。
 
 步骤逻辑：
-1. checkout + pnpm/setup-node + `pnpm install --frozen-lockfile`。
-2. **质量门**：`pnpm typecheck`，然后运行默认 `pnpm test`（jsdom；需要真实 Supabase 的 RLS E2E 默认安全跳过）。
-3. **构建前端**：`pnpm --filter @nalanda/web build`，注入 `VITE_SUPABASE_URL/ANON`（来自 GitHub Secrets）。
-4. **构建后端镜像（在 runner 上）**：`docker build -f infra/hybrid-2g/api.Dockerfile -t nalanda-api:latest .`。
-5. **打包产物**：`docker save | gzip` 成 tar；前端 dist 打成 `web.tgz`。
-6. **SSH 上传**：用部署私钥 `scp` 镜像 tar + web.tgz + compose 文件到 `/opt/nalanda/`。
-7. **服务器部署**：`docker load` 镜像 → 替换 `web/` 静态 → `docker compose up -d` → 轮询 `http://127.0.0.1:8411/api/health` 自检（失败则打印日志并退出非零）。
+1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API readiness unit）、全部 workspace build。
+2. **数据库门**：先执行 0007→0008 历史数据升级夹具，再做完整本地 Supabase 空库重建 + lint，并实际运行双用户 RLS/Storage/points E2E。
+3. **生产迁移（仅新增 migration）**：protected environment 审批 → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
+4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
+5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
+6. **激活**：API 本地 health 的 Supabase JWKS/PostgREST 双探针通过后原子切换 Web symlink，再从公网验证 Web/API。
+7. **应用回退**：任一 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；数据库不自动逆向。
 
 Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
 
 为什么用 `docker save/load` 而非镜像仓库：免去在服务器配 registry 凭据，镜像天然私有；代价是每次传输镜像（可接受）。后续可切 GHCR + 缓存。
 
 ### Secrets / 密钥分层
-- **GitHub Secrets**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`（专用 ed25519 部署私钥，可吊销）、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`。
+- **production 应用 environment**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`。
+- **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
 - **服务器 `/opt/nalanda/.env`**：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_JWT_SECRET`——只在服务器，不进 CI、不入库。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
@@ -85,7 +86,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 ## 6. 踩坑实录（最值得复盘）
 
 ### (a) 容器内 DNS 解析失败 → 登录 401
-**现象**：`/api/health` 正常，但 `/api/me` 对真实令牌一直 401。
+**历史现象**：当时 `/api/health` 只看变量，因此 health 正常但 `/api/me` 对真实令牌一直 401；当前 health 已增加 JWKS/PostgREST 探针。
 **定位**：容器内 `getaddrinfo EAI_AGAIN`（DNS 失败），但 raw TCP 出网正常。宿主机用 `systemd-resolved`（`127.0.0.53`），容器内嵌 DNS 转发不到这个回环地址 → JWKS 拉不到 → 验签落到 HS256 回退 → ES256 令牌验不过 → 401。
 **修复**：compose 给 api 服务显式 `dns: [1.1.1.1, 8.8.8.8]`，重建容器即恢复。
 **教训**：systemd-resolved 主机上的容器常需显式 DNS；「health 正常但依赖外网的校验失败」要先查容器 DNS/出网。
@@ -110,15 +111,16 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 
 ```bash
 cd /opt/nalanda
-docker compose ps
-docker compose logs --tail=50 api
-docker compose restart api
+docker compose --env-file .deploy.env ps
+docker compose --env-file .deploy.env logs --tail=50 api
+docker compose --env-file .deploy.env restart api
+readlink -f web
 # 手动触发部署：GitHub → Actions → deploy → Run workflow
 ```
 
 ## 9. 后续 TODO
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
-- 部署增加版本标签/回滚；接 Sentry/日志。
+- 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
 - 上线 redis/ai 服务（做 AI 生成时）；Stripe Webhook 入口（做支付时）。
-- 为隔离 Supabase 测试项目配置受控 CI，运行真实双用户 RLS/Storage E2E；当前默认 CI 只跑无凭据 jsdom 套件。
+- 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。

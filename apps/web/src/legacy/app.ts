@@ -27,6 +27,10 @@ const S = {
   genSel: ["list","quiz"],
   rail: false,
 };
+const INITIAL_S = {
+  route: "home", noteId: "n1", noteTab: "list", postId: "p1", course: "all",
+  marketFilter: "All", quiz: {}, genSel: ["list", "quiz"], rail: false,
+};
 
 const NAV = [
   { sect:"Workspace" },
@@ -174,7 +178,16 @@ const ACTIONS = {
     if(i>=0) S.genSel.splice(i,1); else S.genSel.push(k);
     go("create");
   },
-  runGen(){ toast("Generating from your material…"); setTimeout(()=>{ toast("Note created — added to My Notes", "check"); go("note",{noteId:"n1",noteTab:"list"}); }, 900); },
+  runGen(){
+    const version = _mountVersion;
+    toast("Generating from your material…");
+    clearTimeout(generationTimer);
+    generationTimer = setTimeout(()=>{
+      if(version !== _mountVersion || !_root) return;
+      toast("Note created — added to My Notes", "check");
+      go("note",{noteId:"n1",noteTab:"list"});
+    }, 900);
+  },
   marketFilter(t){ S.marketFilter = t.dataset.f; go("market"); },
   openBuy(t){ openModal(buyModal(t.dataset.k)); },
   confirmBuy(t){ closeModal(); toast("Added to your notes — "+fmt(+t.dataset.price)+" credits spent","check"); },
@@ -195,7 +208,7 @@ function openModal(html){
   document.body.appendChild(s);
 }
 function closeModal(){ const s=document.getElementById("scrim"); if(s) s.remove(); }
-let toastTimer;
+let toastTimer, generationTimer, _mountVersion = 0;
 function toast(msg, icon){
   document.getElementById("toast")?.remove();
   const d = document.createElement("div"); d.className="toast"; d.id="toast";
@@ -226,7 +239,6 @@ function drawEdges(){
   }).join("");
 }
 _onResize = ()=>{ if(S.route==="note"||S.route==="create") drawEdges(); };
-window.addEventListener("resize", _onResize);
 
 /* ---------- boot is called from inline script after all view files load ---------- */
 function boot(){
@@ -235,13 +247,25 @@ function boot(){
   go("home");
 }
 export function mountNalanda(container, opts){
+  _mountVersion++;
+  clearTimeout(generationTimer); generationTimer = null;
+  clearTimeout(toastTimer); toastTimer = null;
   _root = container; _opts = opts || {};
+  Object.assign(S, INITIAL_S, { quiz: {}, genSel: [...INITIAL_S.genSel] });
+  document.documentElement.removeAttribute("data-rail");
+  window.addEventListener("resize", _onResize);
   if (_opts.user && _opts.user.email) {
     const nm = String(_opts.user.email).split("@")[0];
     DB.user.email = _opts.user.email;
     DB.user.name = nm;
     DB.user.handle = "@" + nm;
     DB.user.initials = nm.slice(0, 2).toUpperCase();
+    // 真实资料返回前不展示上一账号的财富/成长数据。
+    DB.user.credits = 0;
+    DB.user.points = 0;
+    DB.user.level = 1;
+    DB.user.levelName = "Novice";
+    DB.user.vip = false;
   }
   initMaterials(_opts.supabase, _opts.user, toast);
   initNotifications(_opts.supabase, _opts.user, toast);
@@ -255,8 +279,22 @@ export function mountNalanda(container, opts){
   refreshNotifBadge();
   syncShellUser();
   return () => {
-    try { if (_root) _root.innerHTML = ""; } catch (e) {}
+    try { if (_root === container) _root.innerHTML = ""; } catch (e) {}
     if (_onResize) window.removeEventListener("resize", _onResize);
+    document.querySelectorAll("#notif-pop, .scrim, #toast").forEach((el)=>el.remove());
+    if (_root === container) {
+      _mountVersion++;
+      clearTimeout(generationTimer); generationTimer = null;
+      clearTimeout(toastTimer); toastTimer = null;
+      // 立即使所有在途请求失效；不能等到下一个账号 mount 才递增模块版本。
+      initMaterials(null, null, null);
+      initNotifications(null, null, null);
+      initFeedback(null, null, null);
+      initProfile(null, null, null);
+      initCommunity(null, null, null);
+      initSchedule(null, null, null);
+      _root = null; _opts = {};
+    }
   };
 }
 /* ============================================================

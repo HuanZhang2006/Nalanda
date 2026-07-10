@@ -5,7 +5,7 @@
 > - **作用**：解释 Schedule 的真实数据流与跨模块联动，并跟踪提醒/推荐的后续缺口。
 > - **何时更新**：任务/目标字段、奖励幂等、提醒、排程算法、时区或关联权限变化时。
 
-> 文件：`supabase/migrations/20260625000007_schedule.sql`、`apps/web/src/legacy/schedule.ts`。依赖 0006 的 `_add_points / _notify`。
+> 文件：`supabase/migrations/20260625000007_schedule.sql`（结构/旧触发器）、`...0008_security_points_ledger.sql`（稳定任务键、points 冲正与敏感列保护）、`apps/web/src/legacy/schedule.ts`。
 
 ---
 
@@ -15,9 +15,10 @@
 `id, user_id(默认 auth.uid()), title, exam_date date, course_id(可空,→courses on delete set null), created_at`。owner-only RLS。当前策略没有像 task 一样校验 `course_id` 必须属于本人，这是待修完整性缺口。
 
 ### study_tasks（任务）
-`id, user_id, title, due_date date(默认 current_date), done bool, done_at, course_id?, material_id?, goal_id?, created_at`。
+`id, user_id, title, due_date date(默认 current_date), done bool, done_at, course_id?, material_id?, goal_id?, points_business_key, created_at`。
 - **三个可空外键**让任务能挂到 课程 / 资料 / 目标——这是和 Materials 的联动基础。
 - `on delete set null`：删了课程/资料，任务还在，只是断开关联（不级联删任务）。
+- 0008 在 INSERT 时用 owner + 规范化 title/due_date/course/material/goal 生成不可变 `task:{owner}:{sha256}:completed:v1`；相同逻辑任务共享一个奖励 claim，客户端不能指定或修改 key。
 
 ### profiles 增列
 `streak int`（连续学习天数）、`streak_date date`（最近计入连续的那天）。
@@ -37,26 +38,26 @@ create policy study_tasks_own ... for all to authenticated
 
 ---
 
-## 二、完成任务触发器（0007 `_on_task_done`，`security definer`）
+## 二、完成任务触发器（0008 `_on_task_done`，`security definer`）
 
-`after update of done on study_tasks`：仅当 `done` 由 false→true 时执行（取消勾选不回滚）：
+0008 替换 0007 的直接加分触发器，监听 `done` 更新和任务删除：
+
+```text
+done=true  → _set_point_event(stable_task_key, +5, active=true)
+done=false → 若没有其它同键已完成任务，写 -5 冲正
+DELETE     → 若删除的是最后一个同键已完成任务，写 -5 冲正
 ```
-if new.done and not coalesce(old.done,false) then
-  perform _add_points(new.user_id, 5);              -- 1) +5 积分（顺带可能升级，见 0006）
-  select streak, streak_date into s, sd from profiles where id=new.user_id;
-  if sd = today          then ns := s;              -- 2) 今天已计过 → streak 不变
-  elsif sd = today - 1   then ns := s + 1;          --    昨天计过 → +1（连续）
-  else                        ns := 1; end if;      --    断了/首次 → 重置为 1
-  update profiles set streak=ns, streak_date=today where id=new.user_id;
-  if ns in (3,7,14,30,100) and sd is distinct from today then
-    perform _notify(new.user_id, 'streak', '🔥 连续学习 N 天', '...');   -- 3) 里程碑通知
-  end if;
-end if;
-```
-要点：
-- **仅 streak 同日幂等**：`streak_date=today` 时不重复 +streak，但任务可以 false→true 反复获得 +5 points，奖励本身并不防刷。
-- `is distinct from` 处理 NULL（首次 streak_date 为空）。
-- definer：要改 profiles.points/streak + 写 notifications，普通用户对自己 profiles 有 update 权，但 points/streak 不该客户端可写，统一走触发器更稳。
+
+`_set_point_event` 用业务键 advisory lock + 状态行锁串行化。相同状态重试返回 no-op；取消后重做只写恢复 entry，因此该键的净额最多 +5。`profiles.points/level` 每次从完整账本总和重建，而不是在已 clamp 的缓存上盲目加减。
+
+streak 规则与 points 分开：
+
+- 只有该永久任务键第一次成功激活（`transition=1`）才按 `streak_date` 推进 streak；同日保持、昨日 +1、断档/首次重置为 1；
+- 取消、删除或重做不会回退或再次推进 streak；streak 表示“曾在某日完成有效任务”的历史活动，不是当前 done 数；
+- 迁移前已完成任务以 active/transition 0 回填，后续重做不会伪造新 streak；
+- 3/7/14/30/100 天首次到达时由 `_notify` 写里程碑通知。
+
+Profile 的 points/level/streak 列已禁止普通客户端更新；`_set_point_event`、`_notify` 和 trigger helpers 也没有客户端 EXECUTE，触发器以受控 definer 权限完成写入。
 
 ---
 
@@ -70,7 +71,7 @@ dstr(d) → 'YYYY-MM-DD'（本地时区，避免 UTC 偏移）；todayStr()；ad
 > 日期都用本地 `YYYY-MM-DD` 字符串比较（`due_date` 是 date 类型），不碰时间/时区，避免「今天的任务跑到昨天」。
 
 ### 生命周期
-`mountSchedule(el)` → `render()`（骨架）→ `load()`。
+`mountSchedule(el)` → `render()`（骨架）→ `load()`。每次 init 会重置上一账号的任务/目标/筛选/streak，并递增 `sessionVersion`；延迟查询或写入只有版本仍匹配时才允许更新 UI。
 
 **load()** — 一次并发拉 5 样：任务（`due_date >= 今天-14`，只取近期+未来）、目标、课程、资料、我的 streak。一把填进 state 再 render。
 
@@ -90,7 +91,7 @@ dstr(d) → 'YYYY-MM-DD'（本地时区，避免 UTC 偏移）；todayStr()；ad
 wire(): 给 [data-sc] 绑 onclick（preventDefault + stopPropagation + handle）
 handle: settab / toggle / edit / del / addtask(带 data-date) / addgoal / delgoal / autoplan
 ```
-- **toggleTask(id)**：`update study_tasks set done=!done, done_at` → `await load()`（刷新 streak/积分/统计）→ `syncShellUser()`（刷新左下角侧栏积分，跨模块调 [08](08-notifications-feedback-profile.md) 的导出函数）。完成时 toast「完成 +5 积分」。
+- **toggleTask(id)**：`update study_tasks set done=!done, done_at`，检查 Supabase `{ error }` → `await load()`（刷新 streak/统计）→ `syncShellUser()`（刷新左下角侧栏积分，跨模块调 [08](08-notifications-feedback-profile.md) 的导出函数）。完成时只提示「任务已完成」，因为同键重做可能是账本 no-op/净额恢复，前端不能无条件宣称新增 +5。
 - **taskModal(existing, presetDate)**：新建/编辑同一弹窗。日期默认 `presetDate`（本周列点「+」带过来）或今天。课程下拉来自我的 courses；**资料下拉随所选课程联动**（`drawMats()` 在 course `onchange` 时按 `course_id` 过滤 materials）。`saving` 锁防重复。
 - **goalModal()**：标题 + 日期 → insert study_goals。
 - **autoplan()**（智能填充）：取我的课程（≤6）生成 `复习 {课程}` 任务，`due_date` 用 `addDays(今天, i)` 铺到本周，带 `course_id`；一次性 `insert(rows)`。落地原型的「Re-plan」——纯启发式、不依赖 AI，但真的写库。
@@ -99,7 +100,7 @@ handle: settab / toggle / edit / del / addtask(带 data-date) / addgoal / delgoa
 ```
 点复选钮(data-sc=toggle) → handle("toggle") → toggleTask
   → update study_tasks.done=true
-  → 触发器 _on_task_done：+5 分、streak 计算、可能里程碑通知、可能升级
+  → 触发器 _on_task_done：激活同键 +5 claim；仅首次激活计算 streak；可能通知/升级
   → await load() 重新拉（streak/统计为权威值）→ render()
   → syncShellUser() 刷新侧栏「Lv x · 名 · 积分」
 ```
@@ -109,16 +110,16 @@ handle: settab / toggle / edit / del / addtask(带 data-date) / addgoal / delgoa
 ## 四、跨模块联动一览
 | 联动 | 实现位置 |
 |---|---|
-| 完成 → 积分/等级 | 触发器 `_add_points`（[08](08-notifications-feedback-profile.md) 的积分体系） |
+| 完成/取消/删除 → 积分/等级 | `_on_task_done` → `_set_point_event` → `point_entries` projection（见 [08](08-notifications-feedback-profile.md)） |
 | 完成 → 连续学习 + 里程碑通知 | 触发器 streak + `_notify`（通知模块展示） |
 | 任务 ↔ 课程/资料 | taskModal 选自 Materials；chip `data-go="materials"` 跳转 |
 | 智能填充 ← 课程 | autoplan 读 courses 生成任务 |
 | 完成 → 侧栏积分即时刷新 | toggleTask 调 `syncShellUser()` |
 
 ## 五、验证
-数据库 E2E 与 jsdom Schedule 回归的可执行命令见 [测试指南](../guides/TESTING.md)。测试应明确区分“streak 同日不重复”与“points 可重复奖励”的当前行为。
+数据库 E2E 与 jsdom Schedule 回归的可执行命令见 [测试指南](../guides/TESTING.md)。覆盖首次完成、取消冲正、重做净额、删除/重建同键任务、key 不可修改、streak 不重复和 Supabase 写失败；跨账号清理/迟到响应由应用壳与 Community jsdom 回归验证同一 session-version 模式。0007→0008 夹具还验证历史已完成任务以 transition 0 回填。
 
 ## 六、待扩展
 - **到期提醒**需服务端定时（Supabase `pg_cron`）；现在是进应用时界面高亮逾期/今日，不主动推送。
-- 取消完成目前既不冲正 points/streak，也没有阻止再次 false→true 获得 +5；需改为幂等 points 事件和明确的 streak/冲正规则。
+- points 取消/重做的净额幂等已完成；仍需产品化每日奖励上限、时区快照、反垃圾/协同作弊和运营规则版本。
 - Home 首页接「今日待办 + streak」串到首屏。

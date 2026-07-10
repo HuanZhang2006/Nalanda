@@ -31,7 +31,8 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
 - 未实现：BullMQ/Redis 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime 订阅、Electron、React Native、完整 i18n、管理后台、官方课程。
-- 先决风险：Profile 敏感列可被客户端修改、内部 `SECURITY DEFINER` 函数权限过宽、积分事件不幂等、AI 数据契约尚未统一。
+- 安全基线进展：0008 已保护 Profile 敏感列、收口内部 `SECURITY DEFINER` RPC，并为当前 points 奖励建立可冲正幂等账本；前端跨账号生命周期和 Supabase 错误处理也已修复。
+- 仍需优先完成：帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 反滥用/旧余额审计；AI 数据契约统一。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 
@@ -99,13 +100,13 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 目标能力：帖子、评论、赞、收藏、转发、关注、标签、媒体、举报、屏蔽、审核队列、申诉、频率限制和反垃圾。
 
-当前社交功能基本可用，但必须先收紧可由作者更新的服务端可信字段、修复积分刷取和孤儿媒体，再扩展推荐。详细规则见 [内容审核](governance/CONTENT_MODERATION.md)。
+当前社交功能基本可用，points 删除/取消/重做已按稳定业务事件冲正去重；扩展推荐前仍须收紧作者可更新的服务端可信字段，增加奖励上限/内容质量反滥用，并治理孤儿媒体。详细规则见[内容审核](governance/CONTENT_MODERATION.md)。
 
 ### 3.6 学习计划
 
 目标能力：任务/目标、资料关联、考试倒计时、提醒、重复任务、时区、日历同步、基于薄弱点的可解释排程。
 
-当前有基础任务、目标、连续学习和启发式填充；后续需完成到期提醒、幂等奖励、历史任务分页、目标外键归属校验和真正的 AI/规则推荐。
+当前有基础任务、目标、连续学习、启发式填充和幂等任务奖励；取消/删除会冲正，同一永久业务事件重做不会再次推进 streak。后续需完成到期提醒、历史任务分页、目标外键归属校验和真正的 AI/规则推荐。
 
 ### 3.7 市场、钱包、VIP 与支付
 
@@ -188,13 +189,14 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 目标：在继续加功能前，先让现有真实数据可信、测试可复现、发布可回滚。
 
-- 限制 Profile 敏感列更新；撤销内部 definer 函数的客户端执行权。
-- 把 points 改为幂等事件/账本；修复帖子可信字段和反馈状态权限。
-- 修复跨账号 legacy 状态、resize 生命周期、详情页刷新和 Supabase error 处理。
-- 将 migration 检查、typecheck、jsdom 测试和构建纳入 CI。
+- **已实现：**限制 Profile 敏感列、撤销内部 definer 客户端执行权、points append-only 账本/冲正/幂等，以及对应双用户 RLS 回归。
+- **已实现：**修复跨账号 legacy 状态、迟到异步响应、resize 重挂、登录/退出 loading 和 Supabase/Storage error 处理，并补齐 9 个 jsdom 测试；API readiness 已用 JWKS/PostgREST 双探针和 2 个单元测试加固。
+- **剩余：**修复帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等权限/完整性问题。
+- **剩余：**给 points 增加规则版本、每日上限、内容审核撤销和协同行为检测；审计迁移前 `legacy_opening`。
+- 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、构建、加密恢复点与应用回退门禁；继续补 API/浏览器 E2E。
 - 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
 
-验收：P0 安全项关闭；默认 CI 全绿；两用户 RLS E2E 可在隔离项目重复执行；发布有恢复步骤。
+验收：仓库 P0 回归关闭且 production migration history 可证明已应用；默认 CI 全绿；两用户 RLS E2E 在一次性本地 Supabase 可重复执行；剩余权限项关闭；发布和恢复完成演练。
 
 ### 阶段 B：AI 最小闭环
 
@@ -239,11 +241,11 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 | ID | 能力 | 当前 | 目标阶段 | 关键依赖 |
 |---|---|---|---|---|
-| SEC-01 | Profile 敏感列与内部 RPC 收口 | 未完成 | A | 新迁移、RLS E2E |
+| SEC-01 | Profile 敏感列与内部 RPC 收口 | 已实现 | A | 0008、RLS E2E；待生产 migration 记录 |
 | SEC-02 | 注册限流、邮箱验证、找回密码 | 未完成 | A/B | SMTP、Throttler |
-| QA-01 | jsdom 与双用户 RLS/Storage 可执行测试 | 部分：jsdom 已进 CI，真实 RLS 需隔离项目 | A | 隔离测试项目、API 测试 |
-| OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 文档基线 | A | 运维演练 |
-| FE-01 | legacy 跨会话与错误处理修复 | 未完成 | A | 回归测试 |
+| QA-01 | jsdom、API readiness 与双用户 RLS/Storage 可执行测试 | 部分 | A | 9 jsdom + 2 API unit + CI 本地 RLS；staging/API HTTP/FastAPI/浏览器待补 |
+| OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
+| FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
 | AI-01 | 统一生成契约与任务模型 | 未完成 | B | OpenAPI、迁移 |
 | AI-02 | 解析、分块、引用、embedding | 桩 | B | FastAPI、pgvector |
 | AI-03 | 知识清单真实生成 | mock | B | AI-01/02 |

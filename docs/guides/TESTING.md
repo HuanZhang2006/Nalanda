@@ -12,12 +12,13 @@
 | TypeScript 静态检查 | Web/API/types 的 `tsc` 任务 | 否 | `pnpm typecheck` |
 | 构建 | Turbo 构建 types/API/Web | 否（Web 变量可为空但功能不完整） | `pnpm build` |
 | Web jsdom 集成 | Vitest + jsdom + 内存 Supabase mock，覆盖 legacy 壳与主要模块交互 | 否 | `pnpm test` |
-| Supabase RLS E2E | Vitest node 环境，两名真实用户访问 Auth/PostgREST/Storage | **是，且会写/删数据** | `pnpm test:rls` |
-| NestJS HTTP 自动测试 | 尚无 | — | 无 |
+| Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
+| 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用 0008 并验证回填/冲正；仅允许 localhost | 本地 Docker | 见 5.5 |
+| NestJS readiness 单元 | Vitest 直接验证 JWKS/PostgREST 双探针成功与 sanitized 503；尚无启动 Nest 的 HTTP E2E | 否（fetch mock） | `pnpm --filter @nalanda/api test` |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
 | 真浏览器 E2E | 尚无 Playwright/Cypress | — | 无 |
 
-重要术语：当前 `src/**/*.test.ts` 是 **jsdom 模块集成测试**，不会启动 Vite、NestJS 或浏览器，也不会真正执行数据库 RLS。`tests/rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**，但不会打开浏览器或经过 Nalanda API。文档不得把任一层单独称为“完整产品 E2E”。
+重要术语：当前 `apps/web/src/**/*.test.ts` 是 **jsdom 模块集成测试**，不会启动 Vite、NestJS 或浏览器，也不会真正执行数据库 RLS；`apps/api/src/**/*.test.ts` 使用 Node 环境和 mock。`tests/rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**，`tests/points-upgrade.e2e.mjs` 是**历史 schema 升级夹具**；两者都不会打开浏览器或经过 Nalanda API。文档不得把任一层单独称为“完整产品 E2E”。
 
 ## 2. 首次准备
 
@@ -68,10 +69,12 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 
 | 测试文件 | 当前覆盖 |
 |---|---|
-| `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、8 个导航模块、Create、退出、resize listener 清理 |
-| `apps/web/src/legacy/account-modules.test.ts` | 通知未读/已读、反馈提交和通知、Profile 加载/编辑/壳同步 |
-| `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签和模拟媒体上传、发帖、详情评论 |
-| `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务交互 |
+| `apps/web/src/App.auth.test.ts` | 登录会话切换、登出/登录 loading 复位与认证错误恢复 |
+| `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、8 个导航模块、Create、退出、resize listener 重挂与跨账号清理 |
+| `apps/web/src/legacy/account-modules.test.ts` | 通知未读/已读、错误处理、反馈提交、Profile 加载/编辑/壳同步 |
+| `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功 |
+| `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
+| `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 
 ### 4.2 mock 的边界
 
@@ -160,29 +163,55 @@ git check-ignore .env.rls.local
 
 ### 5.4 当前真实覆盖
 
-- Profile owner 读写与跨用户隐藏；profile university/major → tags 同步；
+- Profile owner 读写与跨用户隐藏；只允许资料列更新，points/credits/level/VIP/streak 写入均被拒；profile university/major → tags 同步；
+- `_add_points`、`_notify`、`_set_point_event` 客户端 RPC 被拒；普通用户和 service-role 都不能直接写 points ledger/state，用户只能读自己的 entries；
 - 通知、反馈、课程、资料 owner 隔离；owner 资料列表与显式删除路径；
 - 跨用户课程不能创建 material；
 - private `materials` Storage：owner 上传/下载/签 URL/删除，另一用户不能下载、签 URL 或写入 owner 路径；
-- 社区 authenticated 公共读，帖子作者权限、作者快照防伪造；
+- 社区 authenticated 公共读，帖子作者权限、作者快照防伪造、`repost_of`/points key 不可修改；
 - like/favorite/comment/repost 四类计数、关系行可见性、关注和互动通知；
+- like/comment/repost/original post 的稳定业务键、取消/删除冲正、重建恢复净额、并发删除最后评论、原帖级联冲正、ledger projection 与跨用户隐藏；
 - 发帖积分达到等级阈值后的 points/level/name；
-- study task/goal owner 隔离、关联归属、完成积分和同日 streak。
+- study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
+- 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
 
-当前未覆盖的重要风险：
+当前未覆盖或尚未实现的重要风险：
 
-- `profiles` owner 可直接改 points/credits/VIP/等级/streak；
-- `_add_points`/`_notify` 等高权限 RPC 的 EXECUTE 暴露；
-- 帖子作者可在 UPDATE 时篡改 author 快照、冗余计数、时间和 `repost_of`；现有套件只验证 INSERT 防伪造和非作者更新被拒；
-- 删除重建互动/任务导致重复获分的幂等问题；
+- 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；自动测试证明迁移语义，但不能证明生产历史余额未被旧漏洞篡改，发布前必须人工/业务审计；
+- 帖子作者仍可在 UPDATE 时篡改 author 快照、冗余计数和时间；0008 只锁住 `repost_of` 与 points key；
 - `study_goals.course_id` 跨 owner 归属；
 - `community-media` public bucket 的写/删/对象清理；
 - 账号删除后的全部 Storage 孤儿与隐私删除流程；
-- 并发写、网络中断和长时间 session。
+- 每日 points 上限、垃圾/重复内容和协同作弊；除并发评论冲正外的高并发、网络中断和长时间 session。
 
-这些是应新增安全迁移与负向 E2E 的优先项，而不是当前套件已证明安全。
+这些是后续安全迁移、产品治理与负向 E2E 的优先项，不属于当前套件已证明安全的范围。
 
-### 5.5 失败与清理
+### 5.5 0007 → 0008 升级夹具
+
+`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`，因此不能对托管项目运行。CI 的完整顺序是：
+
+```bash
+supabase start
+supabase status -o env > /tmp/supabase-status.env
+set -a; . /tmp/supabase-status.env; set +a
+
+fixture=/tmp/nalanda-points-upgrade.json
+supabase db reset --local --no-seed --version 20260625000007
+ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
+  SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" \
+  SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+  node apps/web/tests/points-upgrade.e2e.mjs seed
+
+supabase migration up --local
+ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
+  SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" \
+  SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+  node apps/web/tests/points-upgrade.e2e.mjs assert
+```
+
+夹具验证：受漏洞影响的 Profile 值被保留但未来不可由客户端写；points 生成 `legacy_opening` 且等级按账本重算；历史 duplicate post/like/comment/repost/task 获得稳定 key 和 active/transition 0 状态而不重复加分；删尽/恢复只改变一次净额；历史 task 重做不推进 streak；最终 projection 等于 ledger 并可随 Auth 删除清理。随后 CI 还会再从空库 reset 并运行常规 RLS E2E，避免升级通过掩盖空库重建失败。
+
+### 5.6 失败与清理
 
 1. 保留脱敏 Vitest 错误和 Supabase request ID，不复制 key/JWT/用户正文。
 2. 先判断是迁移缺失、RLS 预期变化、平台故障还是测试 cleanup 失败。
@@ -191,7 +220,13 @@ git check-ignore .env.rls.local
 5. 如果必须清理，使用 service-role 的受控管理员工具，按 Storage 对象 → Auth 用户 → 残留 tags 顺序核对；保留操作记录。
 6. 任何时候发现命令指向生产，立即终止测试、轮换已暴露的 service-role（如有）、审计已产生数据并按事故流程处理。
 
-## 6. API 与 AI 当前可执行 smoke
+## 6. API 与 AI 当前可执行测试/smoke
+
+API readiness 单元测试已包含在根 `pnpm test`，也可单独运行：
+
+```bash
+pnpm --filter @nalanda/api test
+```
 
 启动 API 后：
 
@@ -237,16 +272,26 @@ node scripts/check-docs.mjs
 `.github/workflows/deploy.yml` 当前在构建/部署前执行：
 
 ```bash
+pnpm docs:check
 pnpm typecheck
 pnpm test
+pnpm build
+supabase start
+# 先运行上文 0007→0008 seed / migration up / assert
+supabase db reset --local --no-seed  # 再验证完整空库重建
+supabase db lint --local --schema public --level error --fail-on error
+# 从 supabase status -o env 注入本地 URL/keys 后：
+pnpm test:rls
 ```
 
-随后构建 Web 和 API 镜像。真实 RLS E2E 默认 skip，不在 deploy CI 中运行，因为它需要高权限 secret 且会修改外部项目。独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`；本地提交前仍应先运行一次。
+`pull_request` 只运行质量和本地 Supabase job，不读取生产 secrets；本地 service-role 只管理 CI 创建的一次性容器。push `main` 新增 migration 时，还会经 protected environment 完成远端 dry-run、加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 里的外部 RLS suite 仍 skip，但 deploy workflow 会显式运行升级夹具和本地 RLS suite。0008 首次生产审批还必须附历史 Profile opening/credits/VIP/streak 审计记录；CI 无法从缺失的历史事件中自动判断旧值真伪。
+
+独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
 目标 CI 分层：
 
-- PR 必跑：docs check、typecheck、jsdom、API/FastAPI unit/contract、build；
-- 受保护 staging：完整 migrations + 双用户 RLS/Storage E2E；
+- PR 已跑：docs check、typecheck、Web jsdom、API readiness unit、build、升级/空库 migrations/lint + 双用户 RLS/Storage E2E；其余 API/FastAPI unit/contract 仍待补；
+- 受保护 staging 目标：近生产数据规模与配置漂移 E2E；
 - 发布前：真浏览器主路径、恢复点、迁移/回滚演练；
 - 定时：RLS 安全回归、依赖/secret scan、备份恢复、AI 评测/成本（接入后）。
 
@@ -259,7 +304,7 @@ pnpm test
 | Markdown | docs check |
 | Web/legacy UI | typecheck + 相关 jsdom + 全部 `pnpm test` + build |
 | Supabase query shape | jsdom + disposable project RLS E2E |
-| Migration/RLS/trigger/function | 空项目全迁移 + 重放 + RLS E2E + 发布前备份 |
+| Migration/RLS/trigger/function | 空项目全迁移 + 相关旧版本→新版本升级夹具 + lint + RLS E2E + 发布前备份 |
 | NestJS auth/API | typecheck/build + 当前 smoke；补相应自动 HTTP test 后纳入 CI |
 | AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
 | nginx/compose/CI | build image + staging deploy + 外部 health/login |

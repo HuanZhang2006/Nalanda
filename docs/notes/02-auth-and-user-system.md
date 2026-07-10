@@ -11,7 +11,7 @@
 
 - **身份与令牌**：Supabase Auth（GoTrue）。负责注册、登录、签发 JWT、会话刷新。
 - **令牌验证**：NestJS 用项目的 **JWKS**（非对称 ES256 公钥）验证 Supabase 签发的访问令牌。
-- **用户资料**：PostgreSQL `public.profiles` 表，与 `auth.users` 一一对应；注册时触发器自动建档；RLS 保证「只能读/改自己」。
+- **用户资料**：PostgreSQL `public.profiles` 表，与 `auth.users` 一一对应；注册时触发器自动建档；RLS 保证只能访问自己的行，0008 的列级授权保证只能改公开资料字段。
 - **注册策略**：自建 `POST /api/auth/register`，用 service_role 直接创建「已确认」账号，绕开不可靠的确认邮件（详见第 6 节）。
 
 ```
@@ -25,12 +25,12 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 
 ## 2. 数据层：profiles + RLS + 触发器
 
-迁移文件：`supabase/migrations/20260620000001_profiles.sql`
+迁移文件：`supabase/migrations/20260620000001_profiles.sql`（建表/RLS）与 `20260710000008_security_points_ledger.sql`（敏感列收口）。
 
-- 表 `public.profiles`：`id uuid PK → auth.users(id) ON DELETE CASCADE`，外加 `username/email/university/major/year/language/credits/level/level_name/vip_until/created_at/updated_at`。
+- 表 `public.profiles`：`id uuid PK → auth.users(id) ON DELETE CASCADE`，外加 `username/email/university/major/year/language/credits/points/level/level_name/vip_until/streak/streak_date/created_at/updated_at`。
 - **RLS**（数据库层强制，绕不过去）：
   - `profiles_select_own`：`auth.uid() = id` 才能 select。
-  - `profiles_update_own`：`auth.uid() = id` 才能 update（`using` + `with check`）。
+  - `profiles_update_own`：`auth.uid() = id` 才能 update 该行（`using` + `with check`）；表级 UPDATE 已从 authenticated 撤销，只授予 `username/university/major/year/language` 五列，防御触发器再次保护 points/credits/level/VIP/streak。
 - **注册自动建档**：函数 `handle_new_user()`（`security definer`）在 `auth.users` 插入后，向 `profiles` 插一行（`username` 取邮箱 `@` 前缀）；触发器 `on_auth_user_created`。
 - **维护 `updated_at`**：`touch_updated_at()` + before-update 触发器。
 
@@ -66,6 +66,7 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
   - 登录页：**登录/注册分段切换**、邮箱**trim+小写规范化**、实时校验（邮箱格式 + 密码≥6）、密码显示/隐藏、loading/错误红框、主题切换。
   - 注册：先 `POST /api/auth/register`，成功后 `signInWithPassword` **自动登录**；错误码映射明确文案。
   - 登录：`signInWithPassword`（规范化邮箱）。
+  - 初始化 session、登录和退出都会检查 Supabase `{ error }`；账号切换会复位提交 loading，退出失败显示在已登录界面。
 
 ## 5. 端到端令牌流程（逻辑）
 
@@ -114,5 +115,5 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 ## 9. 后续 TODO
 
 - `/api/me` 由「回显 JWT claims」升级为「用 service_role 读 `profiles` 返回完整档案」。
-- 角色/权限（user/creator/admin）守卫；成长系统（credits/等级/徽章）写入 `profiles` 与账本表。
+- 角色/权限（user/creator/admin）守卫；points 已有账本，后续为 credits/VIP/支付建立独立事实账本和只读 Profile projection。
 - 真邮箱验证（SMTP）、OAuth、找回密码。

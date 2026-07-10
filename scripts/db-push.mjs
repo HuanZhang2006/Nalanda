@@ -1,14 +1,25 @@
-// 应用 supabase/migrations 下所有迁移（按文件名顺序）到 Supabase。
-// 迁移均为幂等（create ... if not exists / drop policy if exists + create），可重复执行。
-// 用法： SUPABASE_ACCESS_TOKEN=sbp_xxx node scripts/db-push.mjs
-//   可选： SUPABASE_PROJECT_REF=xxxx（默认下方常量）
+// 旧版应急工具：通过 Management API 重放 supabase/migrations 下的全部 SQL。
+// 正常发布必须使用 Supabase CLI 的迁移历史（见 DATABASE_RELEASE_ROLLBACK.md）。
+// 本脚本不维护远端迁移账本，也不提供跨文件事务，只允许人工应急使用。
+// 用法：SUPABASE_ACCESS_TOKEN=sbp_xxx SUPABASE_PROJECT_REF=xxxx node scripts/db-push.mjs
 import fs from "node:fs";
 import path from "node:path";
 
 const TOKEN = process.env.SUPABASE_ACCESS_TOKEN;
-const REF = process.env.SUPABASE_PROJECT_REF || "xsjlmyarvyloktoclvwn";
+const REF = process.env.SUPABASE_PROJECT_REF;
 if (!TOKEN) {
   console.error("缺少 SUPABASE_ACCESS_TOKEN（Supabase 控制台 → Account → Access Tokens）");
+  process.exit(1);
+}
+if (!REF) {
+  console.error("缺少 SUPABASE_PROJECT_REF；为防止误发，脚本不再提供默认项目");
+  process.exit(1);
+}
+
+if (process.env.ALLOW_LEGACY_DB_PUSH !== "YES") {
+  console.error(
+    "db-push.mjs 不维护迁移历史，仅供应急。确认已备份且必须使用时，显式设置 ALLOW_LEGACY_DB_PUSH=YES。",
+  );
   process.exit(1);
 }
 

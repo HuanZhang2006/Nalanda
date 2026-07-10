@@ -10,6 +10,12 @@ export type RecordedOperation = {
   action: "select" | "insert" | "update" | "delete";
   payload?: unknown;
 };
+type Action = RecordedOperation["action"];
+
+export type SupabaseMockOptions = {
+  errors?: Record<string, Partial<Record<Action, string>>>;
+  storageErrors?: Partial<Record<"upload" | "remove" | "createSignedUrl", string>>;
+};
 
 class Query implements PromiseLike<any> {
   private action: RecordedOperation["action"] = "select";
@@ -24,6 +30,7 @@ class Query implements PromiseLike<any> {
     private readonly tables: Seed,
     private readonly operations: RecordedOperation[],
     private readonly userId: string,
+    private readonly errors: SupabaseMockOptions["errors"],
   ) {}
 
   select(_columns = "*", options?: { count?: string; head?: boolean }) {
@@ -103,6 +110,8 @@ class Query implements PromiseLike<any> {
   private execute() {
     const { rows, matches } = this.matchingRows();
     this.operations.push({ table: this.table, action: this.action, payload: this.payload });
+    const configuredError = this.errors?.[this.table]?.[this.action];
+    if (configuredError) return { data: null, count: null, error: new Error(configuredError) };
 
     if (this.action === "select") {
       if (this.countOnly) return { data: null, count: matches.length, error: null };
@@ -181,18 +190,28 @@ export function defaultSeed(): Seed {
   };
 }
 
-export function createSupabaseMock(seed: Seed = defaultSeed(), userId = "u1") {
+export function createSupabaseMock(seed: Seed = defaultSeed(), userId = "u1", options: SupabaseMockOptions = {}) {
   const tables = Object.fromEntries(Object.entries(seed).map(([table, rows]) => [table, rows.map((row) => ({ ...row }))]));
   const operations: RecordedOperation[] = [];
-  const upload = vi.fn(async (_path: string, _file: File) => ({ data: { path: _path }, error: null }));
+  const upload = vi.fn(async (_path: string, _file: File) => ({
+    data: options.storageErrors?.upload ? null : { path: _path },
+    error: options.storageErrors?.upload ? new Error(options.storageErrors.upload) : null,
+  }));
+  const remove = vi.fn(async () => ({ error: options.storageErrors?.remove ? new Error(options.storageErrors.remove) : null }));
+  const createSignedUrl = vi.fn(async (path: string) => ({
+    data: options.storageErrors?.createSignedUrl ? null : { signedUrl: `https://signed.example/${path}` },
+    error: options.storageErrors?.createSignedUrl ? new Error(options.storageErrors.createSignedUrl) : null,
+  }));
   const getPublicUrl = vi.fn((path: string) => ({ data: { publicUrl: `https://cdn.example/${path}` } }));
 
   return {
     tables,
     operations,
-    from: vi.fn((table: string) => new Query(table, tables, operations, userId)),
-    storage: { from: vi.fn(() => ({ upload, getPublicUrl, remove: vi.fn(async () => ({ error: null })) })) },
+    from: vi.fn((table: string) => new Query(table, tables, operations, userId, options.errors)),
+    storage: { from: vi.fn(() => ({ upload, getPublicUrl, remove, createSignedUrl })) },
     upload,
+    remove,
+    createSignedUrl,
     getPublicUrl,
   };
 }

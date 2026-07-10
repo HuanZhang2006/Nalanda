@@ -56,11 +56,32 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
   }, 30_000);
 
   afterAll(async () => {
+    const cleanupErrors: string[] = [];
     // auth 级联不保证清理 Storage，因此先用 service role 删除测试对象。
-    if (admin && storagePaths.length) await admin.storage.from("materials").remove(storagePaths);
+    if (admin && storagePaths.length) {
+      const removed = await admin.storage.from("materials").remove(storagePaths);
+      if (removed.error) cleanupErrors.push(`Storage cleanup: ${removed.error.message}`);
+    }
     // 删除 auth 用户会通过外键级联删除本套件产生的业务表数据。
-    if (admin && aId) await admin.auth.admin.deleteUser(aId);
-    if (admin && bId) await admin.auth.admin.deleteUser(bId);
+    if (admin && aId) {
+      const deleted = await admin.auth.admin.deleteUser(aId);
+      if (deleted.error) cleanupErrors.push(`User A cleanup: ${deleted.error.message}`);
+    }
+    if (admin && bId) {
+      const deleted = await admin.auth.admin.deleteUser(bId);
+      if (deleted.error) cleanupErrors.push(`User B cleanup: ${deleted.error.message}`);
+    }
+    if (admin && aId && bId) {
+      const [entryRemnants, stateRemnants] = await Promise.all([
+        admin.from("point_entries").select("id").in("user_id", [aId, bId]),
+        admin.from("point_event_states").select("business_key").in("user_id", [aId, bId]),
+      ]);
+      if (entryRemnants.error) cleanupErrors.push(`Ledger cleanup check: ${entryRemnants.error.message}`);
+      else if (entryRemnants.data.length) cleanupErrors.push(`Ledger cleanup check: ${entryRemnants.data.length} rows remain`);
+      if (stateRemnants.error) cleanupErrors.push(`Point state cleanup check: ${stateRemnants.error.message}`);
+      else if (stateRemnants.data.length) cleanupErrors.push(`Point state cleanup check: ${stateRemnants.data.length} rows remain`);
+    }
+    if (cleanupErrors.length) throw new Error(cleanupErrors.join("; "));
   }, 30_000);
 
   it("隔离 profile、通知、反馈、课程、资料和存储归属", async () => {
@@ -73,6 +94,83 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const forbiddenProfileUpdate = await b.from("profiles").update({ username: "spoofed" }).eq("id", aId).select("id");
     expect(forbiddenProfileUpdate.error).toBeNull();
     expect(forbiddenProfileUpdate.data).toEqual([]);
+
+    const protectedBefore = await a.from("profiles")
+      .select("points,credits,level,level_name,vip_until,streak,streak_date")
+      .eq("id", aId)
+      .single();
+    expect(protectedBefore.error).toBeNull();
+    const protectedPatches = [
+      { points: 99_999 },
+      { credits: 99_999 },
+      { level: 6 },
+      { level_name: "FORGED" },
+      { vip_until: "2099-01-01T00:00:00.000Z" },
+      { streak: 99_999 },
+      { streak_date: "2099-01-01" },
+    ];
+    for (const patch of protectedPatches) {
+      const result = await a.from("profiles").update(patch).eq("id", aId);
+      expect(result.error, `profile 受保护字段不应允许客户端更新：${Object.keys(patch)[0]}`).not.toBeNull();
+    }
+    const protectedAfter = await a.from("profiles")
+      .select("points,credits,level,level_name,vip_until,streak,streak_date")
+      .eq("id", aId)
+      .single();
+    expect(protectedAfter.data).toEqual(protectedBefore.data);
+
+    const rpcBefore = await a.from("profiles").select("points").eq("id", aId).single();
+    expect((await a.rpc("_add_points", { uid: aId, d: 9_999 })).error).not.toBeNull();
+    expect((await a.rpc("_notify", {
+      uid: bId,
+      ntype: "forged",
+      ntitle: "forged",
+      nbody: "forged",
+    })).error).not.toBeNull();
+    expect((await a.rpc("_set_point_event", {
+      p_user_id: aId,
+      p_event_type: "forged",
+      p_business_key: `forged:${aId}`,
+      p_reward_amount: 9_999,
+      p_active: true,
+      p_source_id: aId,
+      p_metadata: {},
+    })).error).not.toBeNull();
+    expect((await a.rpc("_points_normalize_text", { p_value: "client helper call" })).error).not.toBeNull();
+    expect((await a.rpc("_post_points_key", {
+      p_user_id: aId,
+      p_title: "forged",
+      p_body: "forged",
+      p_kind: "forged",
+      p_subject: "forged",
+      p_tags: [],
+    })).error).not.toBeNull();
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data).toEqual(rpcBefore.data);
+    expect((await b.from("notifications").select("id").eq("type", "forged")).data).toEqual([]);
+
+    const forgedLedgerWrite = await a.from("point_entries").insert({
+      user_id: aId,
+      event_type: "forged",
+      business_key: `forged:${aId}`,
+      amount: 9_999,
+      transition_no: 1,
+    });
+    expect(forgedLedgerWrite.error).not.toBeNull();
+    expect((await a.from("point_event_states").select("business_key").limit(1)).error).not.toBeNull();
+    expect((await admin.from("point_entries").insert({
+      user_id: aId,
+      event_type: "service-forged",
+      business_key: `service-forged:${aId}`,
+      amount: 9_999,
+      transition_no: 1,
+    })).error).not.toBeNull();
+    expect((await admin.from("point_event_states").insert({
+      business_key: `service-forged:${aId}`,
+      user_id: aId,
+      event_type: "service-forged",
+      reward_amount: 9_999,
+    })).error).not.toBeNull();
+
     const uniqueUniversity = `E2E University ${aId.slice(0, 8)}`;
     const uniqueMajor = `E2E Major ${aId.slice(0, 8)}`;
     expect((await a.from("profiles").update({ university: uniqueUniversity, major: uniqueMajor }).eq("id", aId)).error).toBeNull();
@@ -151,12 +249,27 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     const publicRead = await b.from("posts").select("id").eq("id", post.data!.id).single();
     expect(publicRead.error).toBeNull();
+    const originalPostKey = post.data!.points_business_key;
+    expect(originalPostKey).toMatch(/^post:/);
+    const forgedPostKey = await a.from("posts")
+      .update({ points_business_key: `forged:${aId}` })
+      .eq("id", post.data!.id);
+    expect(forgedPostKey.error).not.toBeNull();
+    const forgedRepostIdentity = await a.from("posts")
+      .update({ repost_of: post.data!.id })
+      .eq("id", post.data!.id);
+    expect(forgedRepostIdentity.error).not.toBeNull();
+
     await expect(b.from("post_likes").insert({ post_id: post.data!.id })).resolves.toMatchObject({ error: null });
     await expect(b.from("post_favorites").insert({ post_id: post.data!.id })).resolves.toMatchObject({ error: null });
     const comment = await b.from("comments").insert({ post_id: post.data!.id, body: "comment", author_name: "HACKER" }).select("*").single();
     expect(comment.error).toBeNull();
     expect(comment.data?.author_name).not.toBe("HACKER");
-    await expect(b.from("posts").insert({ repost_of: post.data!.id, kind: "experience", tags: [] })).resolves.toMatchObject({ error: null });
+    const repost = await b.from("posts")
+      .insert({ repost_of: post.data!.id, kind: "experience", tags: [] })
+      .select("id,points_business_key")
+      .single();
+    expect(repost.error).toBeNull();
     await expect(b.from("follows").insert({ following_id: aId })).resolves.toMatchObject({ error: null });
 
     const counted = await a.from("posts").select("like_count,favorite_count,comment_count,repost_count").eq("id", post.data!.id).single();
@@ -170,13 +283,179 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(forbiddenDelete.data).toEqual([]);
     expect((await a.from("notifications").select("id").in("type", ["like", "comment", "favorite", "repost", "follow"])).data!.length).toBeGreaterThanOrEqual(5);
 
+    // like：actor + 原帖不可变内容键为永久业务键；取消会冲正，重赞只恢复同一净额。
+    const bPointsAfterInteractions = await b.from("profiles").select("points").eq("id", bId).single();
+    expect((await b.from("post_likes").delete().eq("post_id", post.data!.id)).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points - 1);
+    expect((await b.from("post_likes").insert({ post_id: post.data!.id })).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+
+    // comment：同一用户在同一逻辑帖子只有一个净奖励；仍有另一条时删除不冲正。
+    const secondComment = await b.from("comments")
+      .insert({ post_id: post.data!.id, body: "second comment" })
+      .select("id")
+      .single();
+    expect(secondComment.error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+    expect((await b.from("comments").delete().eq("id", comment.data!.id)).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+    expect((await b.from("comments").delete().eq("id", secondComment.data!.id)).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points - 2);
+    const recreatedComment = await b.from("comments")
+      .insert({ post_id: post.data!.id, body: "comment recreated" })
+      .select("id")
+      .single();
+    expect(recreatedComment.error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+
+    // 并发删除同一 actor/post 的最后两条评论也只能做一次冲正，不能遗留 active。
+    const concurrentComment = await b.from("comments")
+      .insert({ post_id: post.data!.id, body: "concurrent delete" })
+      .select("id")
+      .single();
+    expect(concurrentComment.error).toBeNull();
+    const concurrentDeletes = await Promise.all([
+      b.from("comments").delete().eq("id", recreatedComment.data!.id),
+      b.from("comments").delete().eq("id", concurrentComment.data!.id),
+    ]);
+    expect(concurrentDeletes.map((result) => result.error)).toEqual([null, null]);
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points - 2);
+    const concurrentCommentState = await admin.from("point_event_states")
+      .select("is_active,transition_no")
+      .eq("business_key", `comment:${originalPostKey}:${bId}`)
+      .single();
+    expect(concurrentCommentState.data).toEqual({ is_active: false, transition_no: 4 });
+    expect((await b.from("comments").insert({ post_id: post.data!.id, body: "restored after concurrent delete" })).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+
+    // repost：actor + original 为永久业务键；重复转发不加分，最后一个删除才冲正。
+    const duplicateRepost = await b.from("posts")
+      .insert({ repost_of: post.data!.id, kind: "experience", tags: [], body: "another caption" })
+      .select("id")
+      .single();
+    expect(duplicateRepost.error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+    expect((await b.from("posts").delete().eq("id", repost.data!.id)).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+    expect((await b.from("posts").delete().eq("id", duplicateRepost.data!.id)).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points - 3);
+    const recreatedRepost = await b.from("posts")
+      .insert({ repost_of: post.data!.id, kind: "experience", tags: [] })
+      .select("id")
+      .single();
+    expect(recreatedRepost.error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bPointsAfterInteractions.data!.points);
+
+    // 原创帖使用规范化内容指纹；删除/重建反复执行后净 points 回到原值。
+    const beforeDisposablePost = bPointsAfterInteractions.data!.points;
+    const disposablePost = await b.from("posts").insert({
+      title: "Stable fingerprint post",
+      body: "same normalized body",
+      kind: "tip",
+      subject: "E2E",
+      tags: ["ledger", "idempotency"],
+    }).select("id,points_business_key").single();
+    expect(disposablePost.error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(beforeDisposablePost + 10);
+    expect((await b.from("posts").delete().eq("id", disposablePost.data!.id)).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(beforeDisposablePost);
+    const recreatedPost = await b.from("posts").insert({
+      title: "  stable   fingerprint POST ",
+      body: " same normalized   body ",
+      kind: "TIP",
+      subject: "e2e",
+      tags: ["idempotency", "ledger"],
+    }).select("id,points_business_key").single();
+    expect(recreatedPost.error).toBeNull();
+    expect(recreatedPost.data!.points_business_key).toBe(disposablePost.data!.points_business_key);
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(beforeDisposablePost + 10);
+    expect((await b.from("posts").delete().eq("id", recreatedPost.data!.id)).error).toBeNull();
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(beforeDisposablePost);
+
+    const likeKey = `like:${originalPostKey}:${bId}`;
+    const commentKey = `comment:${originalPostKey}:${bId}`;
+    const repostKey = `repost:${bId}:${originalPostKey}`;
+    const ownLedger = await b.from("point_entries")
+      .select("event_type,business_key,amount,transition_no")
+      .in("business_key", [likeKey, commentKey, repostKey, disposablePost.data!.points_business_key]);
+    expect(ownLedger.error).toBeNull();
+    expect(ownLedger.data!.filter((entry) => entry.business_key === likeKey).map((entry) => entry.amount).sort((x, y) => x - y))
+      .toEqual([-1, 1, 1]);
+    expect(ownLedger.data!.filter((entry) => entry.business_key === commentKey).map((entry) => entry.amount).sort((x, y) => x - y))
+      .toEqual([-2, -2, 2, 2, 2]);
+    expect(ownLedger.data!.filter((entry) => entry.business_key === repostKey).map((entry) => entry.amount).sort((x, y) => x - y))
+      .toEqual([-3, 3, 3]);
+    expect(ownLedger.data!.filter((entry) => entry.business_key === disposablePost.data!.points_business_key).map((entry) => entry.amount))
+      .toHaveLength(4);
+    expect((await a.from("point_entries").select("id").in("business_key", [likeKey, commentKey, repostKey])).data).toEqual([]);
+
+    const states = await admin.from("point_event_states")
+      .select("business_key,is_active,transition_no")
+      .in("business_key", [likeKey, commentKey, repostKey, disposablePost.data!.points_business_key]);
+    expect(states.error).toBeNull();
+    expect(states.data).toEqual(expect.arrayContaining([
+      { business_key: likeKey, is_active: true, transition_no: 3 },
+      { business_key: commentKey, is_active: true, transition_no: 5 },
+      { business_key: repostKey, is_active: true, transition_no: 3 },
+      { business_key: disposablePost.data!.points_business_key, is_active: false, transition_no: 4 },
+    ]));
+
+    // 删除原帖会级联删除 like/comment/repost；每个 actor 的净奖励都必须各冲正一次。
+    const aBeforeCascade = await a.from("profiles").select("points").eq("id", aId).single();
+    const bBeforeCascade = await b.from("profiles").select("points").eq("id", bId).single();
+    expect((await a.from("posts").delete().eq("id", post.data!.id)).error).toBeNull();
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points)
+      .toBe(aBeforeCascade.data!.points - 10);
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(bBeforeCascade.data!.points - 6);
+    const cascadedStates = await admin.from("point_event_states")
+      .select("business_key,is_active,transition_no")
+      .in("business_key", [likeKey, commentKey, repostKey]);
+    expect(cascadedStates.data).toEqual(expect.arrayContaining([
+      { business_key: likeKey, is_active: false, transition_no: 4 },
+      { business_key: commentKey, is_active: false, transition_no: 6 },
+      { business_key: repostKey, is_active: false, transition_no: 4 },
+    ]));
+    const bLedgerAfterCascade = await b.from("point_entries").select("amount");
+    expect(bLedgerAfterCascade.error).toBeNull();
+    expect(bLedgerAfterCascade.data!.reduce((sum, entry) => sum + entry.amount, 0))
+      .toBe((await b.from("profiles").select("points").eq("id", bId).single()).data!.points);
+
+    // 相同原创内容重建只恢复原来的 +10，不增加历史净额。
+    const restoredOriginal = await a.from("posts").insert({
+      title: "RLS community post",
+      body: "body",
+      kind: "question",
+      tags: ["e2e"],
+    }).select("points_business_key").single();
+    expect(restoredOriginal.error).toBeNull();
+    expect(restoredOriginal.data!.points_business_key).toBe(originalPostKey);
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points)
+      .toBe(aBeforeCascade.data!.points);
+
     // 发帖触发器每篇 +10；达到 50 后等级应同步提升为 Learner。
     const extraPosts = Array.from({ length: 4 }, (_, index) => ({ title: `Level post ${index}`, kind: "experience", tags: [] }));
     expect((await a.from("posts").insert(extraPosts)).error).toBeNull();
     const leveled = await a.from("profiles").select("points,level,level_name").eq("id", aId).single();
     expect(leveled.data!.points).toBeGreaterThanOrEqual(50);
     expect(leveled.data).toMatchObject({ level: 2, level_name: "Learner" });
-  }, 30_000);
+  }, 60_000);
 
   it("验证计划 RLS、跨用户课程校验、完成积分和同日 streak 去重", async () => {
     const course = await a.from("courses").insert({ code: "PLAN 101", name: "Plan Course" }).select("id").single();
@@ -194,23 +473,72 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const tasks = await a.from("study_tasks").insert([
       { title: "Plan task one", course_id: course.data!.id, material_id: material.data!.id, goal_id: goal.data!.id },
       { title: "Plan task two", course_id: course.data!.id },
-    ]).select("id");
+    ]).select("id,points_business_key");
     expect(tasks.error).toBeNull();
     expect(tasks.data).toHaveLength(2);
     expect((await b.from("study_tasks").select("id").in("id", tasks.data!.map((task) => task.id))).data).toEqual([]);
 
     const crossOwnerTask = await b.from("study_tasks").insert({ title: "Cross owner", course_id: course.data!.id });
     expect(crossOwnerTask.error).not.toBeNull();
+    const forgedTaskKey = await a.from("study_tasks")
+      .update({ points_business_key: `forged:${aId}` })
+      .eq("id", tasks.data![0].id);
+    expect(forgedTaskKey.error).not.toBeNull();
 
     const before = await a.from("profiles").select("points,streak").eq("id", aId).single();
-    await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![0].id);
+    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![0].id)).error).toBeNull();
     const afterFirst = await a.from("profiles").select("points,streak").eq("id", aId).single();
-    await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![1].id);
+    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![1].id)).error).toBeNull();
     const afterSecond = await a.from("profiles").select("points,streak").eq("id", aId).single();
 
     expect(afterFirst.data!.points).toBe(before.data!.points + 5);
     expect(afterSecond.data!.points).toBe(before.data!.points + 10);
     expect(afterFirst.data!.streak).toBeGreaterThanOrEqual(1);
     expect(afterSecond.data!.streak).toBe(afterFirst.data!.streak);
-  }, 30_000);
+
+    // 同一任务反复取消/完成只在 +5/-5 间切换，且不会再次推进 streak。
+    expect((await a.from("study_tasks").update({ done: false, done_at: null }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(before.data!.points + 5);
+    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: false, done_at: null }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![0].id)).error).toBeNull();
+    const afterRedo = await a.from("profiles").select("points,streak").eq("id", aId).single();
+    expect(afterRedo.data!.points).toBe(before.data!.points + 10);
+    expect(afterRedo.data!.streak).toBe(afterFirst.data!.streak);
+
+    // 删除已完成任务会冲正；相同业务指纹的重建仅恢复净 +5。
+    expect((await a.from("study_tasks").delete().eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(before.data!.points + 5);
+    const recreatedTask = await a.from("study_tasks").insert({
+      title: "  plan   TASK one ",
+      course_id: course.data!.id,
+      material_id: material.data!.id,
+      goal_id: goal.data!.id,
+    }).select("id,points_business_key").single();
+    expect(recreatedTask.error).toBeNull();
+    expect(recreatedTask.data!.points_business_key).toBe(tasks.data![0].points_business_key);
+    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", recreatedTask.data!.id)).error).toBeNull();
+    const afterRecreate = await a.from("profiles").select("points,streak").eq("id", aId).single();
+    expect(afterRecreate.data!.points).toBe(before.data!.points + 10);
+    expect(afterRecreate.data!.streak).toBe(afterFirst.data!.streak);
+
+    const taskLedger = await a.from("point_entries")
+      .select("amount,transition_no")
+      .eq("business_key", tasks.data![0].points_business_key)
+      .order("transition_no", { ascending: true });
+    expect(taskLedger.error).toBeNull();
+    expect(taskLedger.data!.map((entry) => entry.amount)).toEqual([5, -5, 5, -5, 5, -5, 5]);
+    const taskState = await admin.from("point_event_states")
+      .select("is_active,transition_no")
+      .eq("business_key", tasks.data![0].points_business_key)
+      .single();
+    expect(taskState.data).toEqual({ is_active: true, transition_no: 7 });
+
+    const [allEntries, projectedProfile] = await Promise.all([
+      a.from("point_entries").select("amount"),
+      a.from("profiles").select("points").eq("id", aId).single(),
+    ]);
+    expect(allEntries.error).toBeNull();
+    expect(allEntries.data!.reduce((sum, entry) => sum + entry.amount, 0)).toBe(projectedProfile.data!.points);
+  }, 60_000);
 });

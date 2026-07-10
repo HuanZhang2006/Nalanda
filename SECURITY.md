@@ -36,24 +36,31 @@
 | 业务数据 | 多数 Web 业务通过 `supabase-js` 直连 PostgREST/Storage | 前端校验不是安全边界，必须依赖 RLS/约束 |
 | 私有资料 | `courses`、`materials` 和 `materials` bucket 按 `auth.uid()` 隔离 | 文件元数据删除不保证对象删除事务化 |
 | 社区 | 帖子/评论对已认证用户公共可读；社区媒体 bucket 当前为 public | 公共媒体 URL 不具有撤回、鉴权或防爬保证 |
+| Profile / points | 0008 用列级授权保护经济/等级/streak 字段；points 由只读账本、内部状态机和稳定业务键投影 | 这不等于 credits/VIP/支付已具备商业账本，也不等于有内容质量/每日上限防滥用 |
 | API | NestJS 目前仅 health、register、me | AI、支付、钱包、管理后台安全控制尚不存在 |
 | AI | FastAPI 为固定桩；当前生产编排未部署 AI 服务 | 配置文件中的 Claude/Redis 变量不代表能力已启用 |
 | 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
 
-## 4. 已知高优先级风险
+## 4. 已修复控制与开放风险
 
-以下是当前代码审计发现，不是未来设想。修复前不得把 points、credits、VIP 或支付能力作为可信商业功能开放：
+仓库的 0008 migration 已关闭最初三项 P0：
 
-1. `profiles_update_own` 允许用户更新本人 profile 的整行，因而可直接修改 `credits`、`points`、`level`、`vip_until`、`streak` 等服务端字段。
-2. `_add_points`、`_notify` 等 `SECURITY DEFINER` 函数未显式撤销 `PUBLIC`/`authenticated` 的执行权限，存在被直接 RPC 调用的风险。所有 definer 函数都需逐项审计权限、固定 `search_path`、输入身份和可调用角色。
-3. 点赞、评论、发帖、转发和任务完成奖励没有不可变事件账本与幂等键；删除后重做可重复获得 points。
-4. 注册接口持有 service-role，允许直接确认邮箱；当前缺少来源限制、速率限制、反自动化和滥用监控。
-5. NestJS 当前 `enableCors()` 未限制 Origin；上线新增敏感接口前必须改为显式 allowlist。
-6. 社区媒体为公开 bucket；删除帖子不会自动证明附件已删除，上传类型、大小、恶意文件和孤儿对象治理不完整。
-7. `feedback` 的 owner-all 策略允许用户更新自己的 `status`，不能作为可信工单状态机。
+1. authenticated 只能更新 Profile 的 `username/university/major/year/language`；`credits/points/level/level_name/vip_until/streak/streak_date` 由列级授权和防御触发器保护。
+2. `_add_points` 已对客户端和 service-role 撤权；`_notify`、`_set_point_event` 及 trigger helpers 已撤销客户端 EXECUTE，并固定 `search_path`。
+3. 点赞、评论、原创/转发和任务奖励写入 append-only `point_entries`，以持久业务键和 `point_event_states` 串行化；取消/删除冲正，重做只恢复同一净额。客户端不能写账本/状态表。
+
+这些控制由双用户 RLS 回归和 0007→0008 历史数据升级夹具覆盖。生产环境只有在 migration history 确认 0008 已应用后才具备同等保护，不能只凭仓库文件推断线上状态；首次发布还必须审计旧 Profile opening/credits/VIP/streak。
+
+仍开放的高优先级风险：
+
+1. 注册接口持有 service-role 并直接确认邮箱，缺少来源限制、速率限制、反自动化和滥用监控。
+2. NestJS 当前 `enableCors()` 未限制 Origin；上线新增敏感接口前必须改为显式 allowlist。
+3. 帖子作者 UPDATE 仍可能修改作者快照、冗余计数和时间等可信字段；0008 只额外锁定 `repost_of` 与 points business key。
+4. `feedback` owner-all 策略仍允许用户更新自己的 `status`；`study_goals.course_id` 等剩余关联完整性也要继续收紧。
+5. 社区媒体为公开 bucket；删除帖子不会自动证明附件已删除，上传类型、大小、恶意文件和孤儿对象治理不完整。
+6. 0008 只能把迁移前 points 缓存登记为 `legacy_opening`，无法证明旧分值来源；当前也没有每日计分上限、内容有效性/审核撤销和协同行为检测。因此 points 可作为技术上幂等的成长值，但还不是抗滥用信誉系统。
+7. `credits`/`vip_until` 已锁为服务端字段，却仍无订单、credit/VIP 账本或 Stripe 事实链，不能启用真实商业权益。
 8. 仓库曾存在本地环境文件；任何密钥一旦被提交、进入日志或共享终端输出，都必须按泄露处理，删除文件不能替代轮换。
-
-修复状态应通过迁移、自动化回归测试和 `CHANGELOG.md` 记录；不能只改客户端隐藏字段。
 
 ## 5. 数据与密钥分级
 
@@ -90,6 +97,8 @@
 5. 新日志、指标和告警不含 PII/secret；
 6. 生产变更先在隔离环境验证，支付使用 Stripe test mode；
 7. 高风险已知问题关闭后，才能启用相应功能 flag。
+
+当前 PR/main workflow 已执行 docs check、typecheck、9 个 Web jsdom、2 个 API readiness 单元测试和 build，并在一次性本地 Supabase 先验证 0007→0008 升级，再重建全部 migration、lint 后显式运行 3 个 RLS/Storage/points E2E。生产 migration 另经受保护 environment、dry-run、加密恢复点和远端验证；这些门禁不替代托管 staging、持续监控或人工安全评审。
 
 ## 8. 安全事件响应
 

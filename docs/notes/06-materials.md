@@ -76,7 +76,7 @@ and exists (select 1 from public.courses c
 - B：看不到 A 的课程/资料、不能下载或签名 A 的文件、不能写入 A 的路径、不能把资料挂到 A 的课程。
 - 清理：用 owner 验证正常删除路径；`afterAll` 再由 service-role 清 Storage 并删除测试用户兜底。
 
-这些用例默认跳过，只有对专用测试项目执行 `pnpm test:rls` 后才证明该项目的实际策略；本轮无凭据的默认 CI 不能替代真实 RLS 运行结果。
+默认 `pnpm test` 会跳过外部用例；PR/main deploy workflow 会启动一次性本地 Supabase 并显式执行 `pnpm test:rls`，证明仓库迁移在本地基线的实际策略。它仍不能替代托管 staging/生产配置漂移检查。
 
 > 这套「两用户互相验证 RLS」是检验任何 owner-only 模块的标准做法。可执行命令、环境保护和清理逻辑见 [测试指南](../guides/TESTING.md)，禁止默认对生产项目运行。
 

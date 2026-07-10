@@ -18,14 +18,14 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | 注册 / 登录 / 退出 | ✅ Supabase Auth；注册经 NestJS service-role 接口创建已确认账号 |
 | Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除 |
 | Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；数据在 Supabase |
-| Schedule | ✅ 任务、目标、课程/资料关联、积分和 streak；“智能填充”为规则式生成 |
-| Profile / 通知 / 反馈 | ✅ 真实数据；通知当前是查询刷新，不是 Realtime |
+| Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；“智能填充”为规则式生成 |
+| Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；通知当前是查询刷新，不是 Realtime |
 | Home | 🟡 高保真 mock，统计/课程/活动不是真实聚合 |
 | Notes / AI Create | 🟡 高保真 mock；FastAPI 只是桩，未形成解析/生成/落库链路 |
 | Note Market / credits / VIP / 支付 | 🟡 UI mock 或预留字段；无账本、订单或 Stripe |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-这里的“真实”主要表示浏览器真实读写 Supabase 并受 RLS 保护；目前并非所有业务都经过 NestJS。已知权限和积分完整性问题见 [当前架构](docs/ARCHITECTURE.md)。
+这里的“真实”主要表示浏览器真实读写 Supabase 并受 RLS/列级授权保护；目前并非所有业务都经过 NestJS。0008 已封堵 Profile 敏感列、内部 RPC 和当前 points 刷分路径，但 credits/VIP 仍只是不可由客户端写的预留缓存，不是商业账本；其余边界见[当前架构](docs/ARCHITECTURE.md)。
 
 ## 当前技术结构
 
@@ -42,7 +42,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 - `apps/api`：当前 NestJS 薄 API。
 - `apps/ai`：AI 桩。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：当前 7 个数据库迁移。
+- `supabase/migrations`：当前 8 个数据库迁移；最新 0008 建立 points 账本并收紧 Profile/RPC 权限。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/Redis 接入时的通用部署模板。
 
@@ -68,7 +68,7 @@ pnpm --filter @nalanda/web dev
 pnpm check   # docs:check + typecheck + test + build
 ```
 
-需要真实 Supabase 凭据的两用户 RLS E2E 不应默认打生产；具体命令和安全开关见 [测试指南](docs/guides/TESTING.md)。
+默认 `pnpm test` 运行 9 个 Web jsdom 和 2 个 API readiness 单元测试且不连接外部项目；本机结果中 3 个 RLS E2E 会安全跳过。PR/main CI 会启动一次性本地 Supabase，先验证 0007→0008 历史数据升级，再显式运行这 3 个双用户 RLS/Storage/points E2E。手工连接托管项目时禁止指向生产，安全开关见[测试指南](docs/guides/TESTING.md)。
 
 ## 静态设计原型
 

@@ -16,7 +16,8 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 数据类别 | 当前位置 | 当前目的/可见范围 | 当前删除特性与缺口 |
 |---|---|---|---|
 | 账户 | Supabase `auth.users` | 登录身份；API JWT | 删除 auth 用户会级联多张表，但无用户自助流程 |
-| Profile | `profiles` | 用户名、邮箱、学校、专业、年级、语言、成长展示 | owner-only 读取；当前整行可写，服务端字段未隔离 |
+| Profile | `profiles` | 用户名、邮箱、学校、专业、年级、语言、成长展示 | owner-only 读取；用户只可更新资料列，points/credits/level/VIP/streak 由 0008 保护 |
+| Points 记录 | `point_entries`、内部 `point_event_states` | 成长事件、冲正与 Profile projection | 用户只读自己的 entries、不可见 state；Auth 删除会级联，旧余额仅有待审计 opening |
 | 课程/资料元数据 | `courses`、`materials` | 私有学习资料组织 | 表按用户级联；Storage 对象需单独确认删除 |
 | 资料文件 | 私有 `materials` bucket | 预览、下载，未来 AI 输入 | 用户路径隔离；无统一导出/孤儿清理/备份删除证明 |
 | 社区 | `posts`、`comments`、互动、关注、`tags` | 已认证用户公共交流 | 账户删除级联内容；公共作者快照/全局标签需单独评估 |
@@ -39,7 +40,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 ## 4. 当前权利能力与诚实告知
 
 - **访问：**用户可在 UI 查看部分 profile、课程、资料、社区和计划；这不是完整数据访问包。
-- **更正：**可编辑部分 profile/内容，但尚未用列级权限区分用户字段与内部字段。
+- **更正：**Profile 已以列级权限区分用户资料与内部成长/经济字段；其它内容可编辑范围不一，feedback status、帖子冗余字段等仍待逐表收口。
 - **删除：**可删除自己的部分资料/帖子/评论/任务；没有“一键删除账户”、跨 Storage/AI/备份/支付的编排和完成证明。
 - **导出：**当前没有机器可读的完整导出。
 - **限制/反对/撤回：**当前没有统一工单状态与自动化执行。
@@ -124,4 +125,3 @@ AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 s
 - [内容审核](CONTENT_MODERATION.md)
 - [AI 评测与成本治理](../ai/EVALUATION_AND_COST.md)
 - [points/credits/VIP/支付规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md)
-

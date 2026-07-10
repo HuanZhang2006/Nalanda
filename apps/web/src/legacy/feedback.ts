@@ -6,24 +6,33 @@ import { notify } from "./notifications";
 let sb = null, USER = null, toastFn = () => {};
 let rootEl = null;
 const state = { loading: true, error: "", tickets: [], category: "Bug", saving: false };
+let sessionVersion = 0;
 
 const CATS = ["Bug", "功能建议", "内容问题", "支付", "创作者支持"];
 const STATUS = { open: ["处理中", "warn"], in_progress: ["处理中", "warn"], planned: ["已计划", "info"], resolved: ["已解决", "good"] };
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 function fmtDate(s) { const d = new Date(s); return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); }
 
-export function initFeedback(supabase, user, toast) { sb = supabase; USER = user; if (toast) toastFn = toast; }
+export function initFeedback(supabase, user, toast) {
+  sessionVersion++;
+  sb = supabase; USER = user; toastFn = toast || (() => {});
+  rootEl = null;
+  Object.assign(state, { loading: true, error: "", tickets: [], category: "Bug", saving: false });
+}
 
 export function mountFeedback(el) { rootEl = el; if (!rootEl) return; render(); load(); }
 
 async function load() {
+  const currentVersion = sessionVersion;
   if (!sb) { state.loading = false; state.error = "未配置 Supabase"; render(); return; }
   state.loading = true; render();
   try {
     const { data, error } = await sb.from("feedback").select("*").order("created_at", { ascending: false });
+    if (currentVersion !== sessionVersion) return;
     if (error) throw error;
     state.tickets = data || []; state.error = "";
-  } catch (e) { state.error = e.message || "加载失败"; }
+  } catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
+  if (currentVersion !== sessionVersion) return;
   state.loading = false; render();
 }
 
@@ -84,18 +93,23 @@ function handle(action, el) {
 
 async function submit(btn) {
   if (state.saving) return;
+  const currentVersion = sessionVersion;
+  const client = sb;
   const summary = rootEl.querySelector("#fb-summary").value.trim();
   const body = rootEl.querySelector("#fb-body").value.trim();
   if (!summary) { toastFn("请填写一句话概括"); return; }
   state.saving = true;
   btn.disabled = true; btn.textContent = "提交中…";
   try {
-    const { error } = await sb.from("feedback").insert({ category: state.category, summary, body: body || null });
+    const { error } = await client.from("feedback").insert({ category: state.category, summary, body: body || null });
     if (error) throw error;
+    if (currentVersion !== sessionVersion) return;
     await notify("反馈已收到", summary, "feedback");
+    if (currentVersion !== sessionVersion) return;
     toastFn("反馈已提交，谢谢！", "check");
     await load();
   } catch (e) {
+    if (currentVersion !== sessionVersion) return;
     state.saving = false;
     toastFn("提交失败：" + (e.message || ""));
     render();

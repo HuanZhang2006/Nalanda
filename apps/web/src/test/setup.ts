@@ -1,5 +1,8 @@
 import { afterEach, vi } from "vitest";
 
+// React 18 uses this flag to verify that stateful tests are wrapped in act().
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
+
 if (typeof window !== "undefined") {
   const values = new Map<string, string>();
   const storage: Storage = {

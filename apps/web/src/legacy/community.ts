@@ -8,6 +8,7 @@ const me = { id: null, name: "", university: "", major: "" };
 const followingIds = new Set();
 const globalTags = { university: [], major: [], subject: [], tag: [] };
 let meLoaded = false;
+let sessionVersion = 0;
 
 const state = { loading: true, error: "", filter: "all", mineTab: "posts", counts: { posts: 0, following: 0, followers: 0 }, posts: [], liked: new Set(), faved: new Set(), originals: {} };
 let feedEl = null;
@@ -27,27 +28,46 @@ function timeAgo(s) {
   return d.toLocaleDateString();
 }
 
-export function initCommunity(supabase, user, toast) { sb = supabase; USER = user; if (toast) toastFn = toast; }
+export function initCommunity(supabase, user, toast) {
+  sessionVersion++;
+  sb = supabase; USER = user; toastFn = toast || (() => {});
+  Object.assign(me, { id: null, name: "", university: "", major: "" });
+  followingIds.clear();
+  Object.keys(globalTags).forEach((key) => { globalTags[key] = []; });
+  meLoaded = false;
+  feedEl = null;
+  Object.assign(state, {
+    loading: true, error: "", filter: "all", mineTab: "posts",
+    counts: { posts: 0, following: 0, followers: 0 }, posts: [],
+    liked: new Set(), faved: new Set(), originals: {},
+  });
+}
 
 async function ensureMe() {
   if (meLoaded) return;
+  const currentVersion = sessionVersion;
   try {
     const [p, f, t] = await Promise.all([
       sb.from("profiles").select("id,username,university,major").eq("id", USER.id).single(),
       sb.from("follows").select("following_id").eq("follower_id", USER.id),
       sb.from("tags").select("kind,value").order("value", { ascending: true }),
     ]);
+    if (currentVersion !== sessionVersion) return;
+    const failed = [p, f, t].find((result) => result.error);
+    if (failed) throw failed.error;
     if (p.data) { me.id = p.data.id; me.name = p.data.username || (USER.email || "").split("@")[0]; me.university = p.data.university || ""; me.major = p.data.major || ""; }
     (f.data || []).forEach((x) => followingIds.add(x.following_id));
     globalTags.university = []; globalTags.major = []; globalTags.subject = []; globalTags.tag = [];
     (t.data || []).forEach((x) => { (globalTags[x.kind] || globalTags.tag).push(x.value); });
-  } catch {}
+  } catch (e) { if (currentVersion !== sessionVersion) return; toastFn("社区资料加载失败：" + (e.message || "")); }
+  if (currentVersion !== sessionVersion) return;
   meLoaded = true;
 }
 
 export async function mountCommunity(el) { feedEl = el; if (!feedEl) return; renderFeed(); await ensureMe(); load(); }
 
 async function load() {
+  const currentVersion = sessionVersion;
   if (state.filter === "mine") return loadMine();
   state.loading = true; renderFeed();
   try {
@@ -57,13 +77,19 @@ async function load() {
     else if (f.indexOf("t:") === 0) q = q.contains("tags", [f.slice(2)]);
     else if (f === "following") { const ids = [...followingIds]; if (!ids.length) { state.posts = []; state.loading = false; state.error = ""; return renderFeed(); } q = q.in("user_id", ids); }
     const { data, error } = await q;
+    if (currentVersion !== sessionVersion) return;
     if (error) throw error;
-    state.posts = data || []; await hydrate(state.posts); state.error = "";
-  } catch (e) { state.error = e.message || "加载失败"; }
+    state.posts = data || [];
+    await hydrate(state.posts, currentVersion);
+    if (currentVersion !== sessionVersion) return;
+    state.error = "";
+  } catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
+  if (currentVersion !== sessionVersion) return;
   state.loading = false; renderFeed();
 }
 
 async function loadMine() {
+  const currentVersion = sessionVersion;
   state.loading = true; renderFeed();
   try {
     const [pc, fwing, fwers] = await Promise.all([
@@ -71,35 +97,48 @@ async function loadMine() {
       sb.from("follows").select("following_id", { count: "exact", head: true }).eq("follower_id", USER.id),
       sb.from("follows").select("follower_id", { count: "exact", head: true }).eq("following_id", USER.id),
     ]);
+    if (currentVersion !== sessionVersion) return;
+    const countFailure = [pc, fwing, fwers].find((result) => result.error);
+    if (countFailure) throw countFailure.error;
     state.counts = { posts: pc.count || 0, following: fwing.count || 0, followers: fwers.count || 0 };
     const tab = state.mineTab; let posts = [];
-    if (tab === "posts") { const { data } = await sb.from("posts").select("*").eq("user_id", USER.id).is("repost_of", null).order("created_at", { ascending: false }); posts = data || []; }
-    else if (tab === "reposts") { const { data } = await sb.from("posts").select("*").eq("user_id", USER.id).not("repost_of", "is", null).order("created_at", { ascending: false }); posts = data || []; }
+    if (tab === "posts") { const { data, error } = await sb.from("posts").select("*").eq("user_id", USER.id).is("repost_of", null).order("created_at", { ascending: false }); if (error) throw error; posts = data || []; }
+    else if (tab === "reposts") { const { data, error } = await sb.from("posts").select("*").eq("user_id", USER.id).not("repost_of", "is", null).order("created_at", { ascending: false }); if (error) throw error; posts = data || []; }
     else {
       let ids = [];
-      if (tab === "replies") { const { data } = await sb.from("comments").select("post_id").eq("user_id", USER.id); ids = [...new Set((data || []).map((x) => x.post_id))]; }
-      else if (tab === "liked") { const { data } = await sb.from("post_likes").select("post_id"); ids = (data || []).map((x) => x.post_id); }
-      else if (tab === "faved") { const { data } = await sb.from("post_favorites").select("post_id"); ids = (data || []).map((x) => x.post_id); }
-      if (ids.length) { const { data } = await sb.from("posts").select("*").in("id", ids).order("created_at", { ascending: false }); posts = data || []; }
+      if (tab === "replies") { const { data, error } = await sb.from("comments").select("post_id").eq("user_id", USER.id); if (error) throw error; ids = [...new Set((data || []).map((x) => x.post_id))]; }
+      else if (tab === "liked") { const { data, error } = await sb.from("post_likes").select("post_id"); if (error) throw error; ids = (data || []).map((x) => x.post_id); }
+      else if (tab === "faved") { const { data, error } = await sb.from("post_favorites").select("post_id"); if (error) throw error; ids = (data || []).map((x) => x.post_id); }
+      if (ids.length) { const { data, error } = await sb.from("posts").select("*").in("id", ids).order("created_at", { ascending: false }); if (error) throw error; posts = data || []; }
     }
-    state.posts = posts; await hydrate(posts); state.error = "";
-  } catch (e) { state.error = e.message || "加载失败"; }
+    if (currentVersion !== sessionVersion) return;
+    state.posts = posts;
+    await hydrate(posts, currentVersion);
+    if (currentVersion !== sessionVersion) return;
+    state.error = "";
+  } catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
+  if (currentVersion !== sessionVersion) return;
   state.loading = false; renderFeed();
 }
 
-async function hydrate(posts) {
-  state.liked.clear(); state.faved.clear(); state.originals = {};
+async function hydrate(posts, currentVersion = sessionVersion) {
+  const client = sb;
+  const liked = new Set(), faved = new Set(), originals = {};
   const ids = posts.map((p) => p.id);
   if (ids.length) {
     const [lk, fv] = await Promise.all([
-      sb.from("post_likes").select("post_id").in("post_id", ids),
-      sb.from("post_favorites").select("post_id").in("post_id", ids),
+      client.from("post_likes").select("post_id").in("post_id", ids),
+      client.from("post_favorites").select("post_id").in("post_id", ids),
     ]);
-    (lk.data || []).forEach((x) => state.liked.add(x.post_id));
-    (fv.data || []).forEach((x) => state.faved.add(x.post_id));
+    const interactionFailure = [lk, fv].find((result) => result.error);
+    if (interactionFailure) throw interactionFailure.error;
+    (lk.data || []).forEach((x) => liked.add(x.post_id));
+    (fv.data || []).forEach((x) => faved.add(x.post_id));
   }
   const repIds = [...new Set(posts.map((p) => p.repost_of).filter(Boolean))];
-  if (repIds.length) { const { data } = await sb.from("posts").select("*").in("id", repIds); (data || []).forEach((o) => (state.originals[o.id] = o)); }
+  if (repIds.length) { const { data, error } = await client.from("posts").select("*").in("id", repIds); if (error) throw error; (data || []).forEach((o) => (originals[o.id] = o)); }
+  if (currentVersion !== sessionVersion) return;
+  state.liked = liked; state.faved = faved; state.originals = originals;
 }
 
 function tagChips() {
@@ -228,16 +267,22 @@ function postCard(p, big) {
 /* ============ DETAIL ============ */
 export async function mountPost(el, postId) {
   if (!el) return;
+  const currentVersion = sessionVersion, client = sb;
   await ensureMe();
+  if (currentVersion !== sessionVersion) return;
   el.innerHTML = `<div class="wrap"><div class="card card-pad muted">加载中…</div></div>`;
   let post, comments = [];
   try {
-    const pr = await sb.from("posts").select("*").eq("id", postId).single();
+    const pr = await client.from("posts").select("*").eq("id", postId).single();
     if (pr.error) throw pr.error; post = pr.data;
-    await hydrate([post]);
-    const cr = await sb.from("comments").select("*").eq("post_id", postId).order("created_at", { ascending: true });
+    await hydrate([post], currentVersion);
+    if (currentVersion !== sessionVersion) return;
+    const cr = await client.from("comments").select("*").eq("post_id", postId).order("created_at", { ascending: true });
+    if (cr.error) throw cr.error;
+    if (currentVersion !== sessionVersion) return;
     comments = cr.data || [];
   } catch (e) {
+    if (currentVersion !== sessionVersion) return;
     el.innerHTML = `<div class="wrap"><a class="btn btn-ghost btn-sm" data-go="community" style="margin-bottom:14px">${ICON("chevleft")}<span>社区</span></a><div class="card card-pad" style="color:var(--pink)">出错了：${esc(e.message || "帖子不存在")}</div></div>`;
     return;
   }
@@ -284,56 +329,96 @@ function handle(action, el) {
 const patch = (id, fn) => { const p = state.posts.find((x) => x.id === id); if (p) fn(p); };
 
 async function toggleLike(id) {
+  const currentVersion = sessionVersion, client = sb;
   const liked = state.liked.has(id);
   try {
-    if (liked) { state.liked.delete(id); patch(id, (p) => p.like_count = Math.max(0, (p.like_count || 0) - 1)); await sb.from("post_likes").delete().eq("post_id", id).eq("user_id", USER.id); }
-    else { state.liked.add(id); patch(id, (p) => p.like_count = (p.like_count || 0) + 1); await sb.from("post_likes").insert({ post_id: id }); }
-  } catch { toastFn("操作失败"); }
+    if (liked) {
+      const { error } = await client.from("post_likes").delete().eq("post_id", id).eq("user_id", USER.id);
+      if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
+      state.liked.delete(id); patch(id, (p) => p.like_count = Math.max(0, (p.like_count || 0) - 1));
+    } else {
+      const { error } = await client.from("post_likes").insert({ post_id: id });
+      if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
+      state.liked.add(id); patch(id, (p) => p.like_count = (p.like_count || 0) + 1);
+    }
+  } catch (e) { if (currentVersion === sessionVersion) toastFn("操作失败：" + (e.message || "")); }
+  if (currentVersion !== sessionVersion) return;
   renderFeed();
 }
 async function toggleFav(id) {
+  const currentVersion = sessionVersion, client = sb;
   const f = state.faved.has(id);
   try {
-    if (f) { state.faved.delete(id); patch(id, (p) => p.favorite_count = Math.max(0, (p.favorite_count || 0) - 1)); await sb.from("post_favorites").delete().eq("post_id", id).eq("user_id", USER.id); toastFn("已取消收藏"); }
-    else { state.faved.add(id); patch(id, (p) => p.favorite_count = (p.favorite_count || 0) + 1); await sb.from("post_favorites").insert({ post_id: id }); toastFn("已收藏", "check"); }
-  } catch { toastFn("操作失败"); }
+    if (f) {
+      const { error } = await client.from("post_favorites").delete().eq("post_id", id).eq("user_id", USER.id);
+      if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
+      state.faved.delete(id); patch(id, (p) => p.favorite_count = Math.max(0, (p.favorite_count || 0) - 1)); toastFn("已取消收藏");
+    } else {
+      const { error } = await client.from("post_favorites").insert({ post_id: id });
+      if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
+      state.faved.add(id); patch(id, (p) => p.favorite_count = (p.favorite_count || 0) + 1); toastFn("已收藏", "check");
+    }
+  } catch (e) { if (currentVersion === sessionVersion) toastFn("操作失败：" + (e.message || "")); }
+  if (currentVersion !== sessionVersion) return;
   renderFeed();
 }
 async function toggleFollow(uid) {
+  const currentVersion = sessionVersion, client = sb;
   const f = followingIds.has(uid);
   try {
-    if (f) { followingIds.delete(uid); await sb.from("follows").delete().eq("follower_id", USER.id).eq("following_id", uid); toastFn("已取消关注"); }
-    else { followingIds.add(uid); await sb.from("follows").insert({ following_id: uid }); toastFn("已关注", "check"); }
-  } catch { toastFn("操作失败"); }
+    if (f) {
+      const { error } = await client.from("follows").delete().eq("follower_id", USER.id).eq("following_id", uid);
+      if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
+      followingIds.delete(uid); toastFn("已取消关注");
+    } else {
+      const { error } = await client.from("follows").insert({ following_id: uid });
+      if (error) throw error;
+      if (currentVersion !== sessionVersion) return;
+      followingIds.add(uid); toastFn("已关注", "check");
+    }
+  } catch (e) { if (currentVersion === sessionVersion) toastFn("操作失败：" + (e.message || "")); }
+  if (currentVersion !== sessionVersion) return;
   renderFeed();
 }
 async function addComment(postId) {
+  const currentVersion = sessionVersion, client = sb;
   const input = document.getElementById("cm-input");
   const body = (input && input.value || "").trim();
   if (!body) { toastFn("评论不能为空"); return; }
-  try { const { error } = await sb.from("comments").insert({ post_id: postId, body }); if (error) throw error; const el = document.getElementById("post-root"); if (el) mountPost(el, postId); }
-  catch (e) { toastFn("评论失败：" + (e.message || "")); }
+  try { const { error } = await client.from("comments").insert({ post_id: postId, body }); if (error) throw error; if (currentVersion !== sessionVersion) return; const el = document.getElementById("post-root"); if (el) mountPost(el, postId); }
+  catch (e) { if (currentVersion === sessionVersion) toastFn("评论失败：" + (e.message || "")); }
 }
 async function delComment(id, postId) {
+  const currentVersion = sessionVersion, client = sb;
   if (!(await confirmDialog({ title: "删除评论", message: "确定删除这条评论？" }))) return;
-  try { await sb.from("comments").delete().eq("id", id); const el = document.getElementById("post-root"); if (el) mountPost(el, postId); }
-  catch (e) { toastFn("删除失败：" + (e.message || "")); }
+  if (currentVersion !== sessionVersion) return;
+  try { const { error } = await client.from("comments").delete().eq("id", id); if (error) throw error; if (currentVersion !== sessionVersion) return; const el = document.getElementById("post-root"); if (el) mountPost(el, postId); }
+  catch (e) { if (currentVersion === sessionVersion) toastFn("删除失败：" + (e.message || "")); }
 }
 async function delPost(id) {
+  const currentVersion = sessionVersion, client = sb;
   if (!(await confirmDialog({ title: "删除帖子", message: "确定删除这篇帖子？评论与互动会一并删除。" }))) return;
-  try { await sb.from("posts").delete().eq("id", id); toastFn("已删除", "check"); load(); }
-  catch (e) { toastFn("删除失败：" + (e.message || "")); }
+  if (currentVersion !== sessionVersion) return;
+  try { const { error } = await client.from("posts").delete().eq("id", id); if (error) throw error; if (currentVersion !== sessionVersion) return; toastFn("已删除", "check"); load(); }
+  catch (e) { if (currentVersion === sessionVersion) toastFn("删除失败：" + (e.message || "")); }
 }
 
-async function uploadMedia(file) {
+async function uploadMedia(file, expectedVersion = sessionVersion, client = sb, userId = USER.id) {
   const ext = (file.name.split(".").pop() || "bin").toLowerCase();
-  const path = `${USER.id}/${crypto.randomUUID()}.${ext}`;
-  const up = await sb.storage.from("community-media").upload(path, file, { contentType: file.type || undefined });
+  const path = `${userId}/${crypto.randomUUID()}.${ext}`;
+  const up = await client.storage.from("community-media").upload(path, file, { contentType: file.type || undefined });
   if (up.error) throw up.error;
-  return sb.storage.from("community-media").getPublicUrl(path).data.publicUrl;
+  if (expectedVersion !== sessionVersion) throw new Error("会话已切换");
+  return client.storage.from("community-media").getPublicUrl(path).data.publicUrl;
 }
 
 function repostModal(id) {
+  const modalVersion = sessionVersion, client = sb;
   const orig = state.posts.find((p) => p.id === id);
   const scrim = modalShell(`<h2 class="serif" style="font-size:20px;margin-bottom:12px">转发</h2>
     <textarea id="rp-body" class="search" style="width:100%;background:var(--card-2);min-height:80px;align-items:flex-start" placeholder="说点什么（可选）…"></textarea>
@@ -344,13 +429,14 @@ function repostModal(id) {
     if (saving) return; saving = true; btn.disabled = true; btn.textContent = "转发中…";
     try {
       const body = scrim.querySelector("#rp-body").value.trim();
-      const { error } = await sb.from("posts").insert({ repost_of: id, body: body || null, kind: "experience", tags: orig ? (orig.tags || []) : [] });
-      if (error) throw error; scrim.remove(); toastFn("已转发", "check"); state.filter = "all"; load();
-    } catch (e) { saving = false; btn.disabled = false; btn.textContent = "转发"; toastFn("转发失败：" + (e.message || "")); }
+      const { error } = await client.from("posts").insert({ repost_of: id, body: body || null, kind: "experience", tags: orig ? (orig.tags || []) : [] });
+      if (error) throw error; if (modalVersion !== sessionVersion) return; scrim.remove(); toastFn("已转发", "check"); state.filter = "all"; load();
+    } catch (e) { if (modalVersion !== sessionVersion) return; saving = false; btn.disabled = false; btn.textContent = "转发"; toastFn("转发失败：" + (e.message || "")); }
   };
 }
 
 function composer(existing) {
+  const composerVersion = sessionVersion, client = sb;
   const isEdit = !!existing;
   const selected = new Set(existing && existing.tags || []);
   let imageUrl = existing && existing.image_url || null;
@@ -383,7 +469,8 @@ function composer(existing) {
     const v = tagNew.value.trim(); if (!v) return; tagNew.value = "";
     if (!globalTags.tag.includes(v)) globalTags.tag.push(v);
     selected.add(v); drawTags();
-    try { await sb.from("tags").insert({ kind: "tag", value: v }); } catch {}
+    try { const { error } = await client.from("tags").insert({ kind: "tag", value: v }); if (error) throw error; }
+    catch (e) { if (composerVersion === sessionVersion) toastFn("标签保存失败：" + (e.message || "")); }
   };
 
   const mediaEl = scrim.querySelector("#ps-media");
@@ -397,7 +484,7 @@ function composer(existing) {
   };
   const pick = (accept, set) => {
     const inp = document.createElement("input"); inp.type = "file"; inp.accept = accept; inp.style.display = "none"; document.body.appendChild(inp);
-    inp.onchange = async () => { const f = inp.files && inp.files[0]; inp.remove(); if (!f) return; toastFn("上传中…", "upload"); try { const u = await uploadMedia(f); set(u); drawMedia(); toastFn("已添加", "check"); } catch (e) { toastFn("上传失败：" + (e.message || "")); } };
+    inp.onchange = async () => { const f = inp.files && inp.files[0]; inp.remove(); if (!f) return; toastFn("上传中…", "upload"); try { const u = await uploadMedia(f, composerVersion, client); if (composerVersion !== sessionVersion) return; set(u); drawMedia(); toastFn("已添加", "check"); } catch (e) { if (composerVersion === sessionVersion) toastFn("上传失败：" + (e.message || "")); } };
     inp.click();
   };
   scrim.querySelector('[data-x="img"]').onclick = () => pick("image/*", (u) => imageUrl = u);
@@ -413,10 +500,13 @@ function composer(existing) {
     const row = { kind: scrim.querySelector("#ps-kind").value, title: title || null, body: body || null, tags: [...selected], image_url: imageUrl, audio_url: audioUrl };
     saving = true; btn.disabled = true; btn.textContent = isEdit ? "保存中…" : "发布中…";
     try {
-      if (isEdit) { const { error } = await sb.from("posts").update({ ...row, updated_at: new Date().toISOString() }).eq("id", existing.id); if (error) throw error; toastFn("已保存", "check"); }
-      else { const { error } = await sb.from("posts").insert(row); if (error) throw error; toastFn("已发布", "check"); state.filter = "all"; }
+      if (isEdit) { const { error } = await client.from("posts").update({ ...row, updated_at: new Date().toISOString() }).eq("id", existing.id); if (error) throw error; }
+      else { const { error } = await client.from("posts").insert(row); if (error) throw error; }
+      if (composerVersion !== sessionVersion) return;
+      if (isEdit) toastFn("已保存", "check");
+      else { toastFn("已发布", "check"); state.filter = "all"; }
       scrim.remove(); load();
-    } catch (e) { saving = false; btn.disabled = false; btn.textContent = isEdit ? "保存" : "发布"; toastFn("失败：" + (e.message || "")); }
+    } catch (e) { if (composerVersion !== sessionVersion) return; saving = false; btn.disabled = false; btn.textContent = isEdit ? "保存" : "发布"; toastFn("失败：" + (e.message || "")); }
   };
 }
 
