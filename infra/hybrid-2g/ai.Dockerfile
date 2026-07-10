@@ -1,7 +1,7 @@
 # Python AI 微服务 —— FastAPI
 # 构建上下文 = apps/ai（见 docker-compose.yml: ai.build.context = ../../apps/ai）
 # 假设：入口为 app/main.py 中的 app；依赖在 requirements.txt
-# 注意：apps/ai 需在阶段 0/1 脚手架完成后，本构建才能成功。
+# apps/ai 已存在并可构建，但解析/生成仍为桩，尚未接入 NestJS 生产链路。
 
 FROM python:3.12-slim AS runtime
 WORKDIR /app

@@ -1,0 +1,248 @@
+# AI 评测与成本治理
+
+> **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
+> **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
+> **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
+> **状态基线：**2026-07-10。当前 `/parse` 返回空内容，四个 `/generate/*` 返回固定 placeholder；未调用 Claude、未部署 RAG/队列、未记录 token/cost，也没有生产 AI 结果。
+
+## 1. 范围和非目标
+
+范围包括 PPT/PPTX、DOC/DOCX、PDF、Markdown、HTML、TXT 的解析，以及知识清单、测验、知识图谱、模拟试卷；未来推荐功能接入前需扩展本文。评测既覆盖模型，也覆盖 parser、OCR、chunking、retrieval、schema validator、post-processing 和用户可见渲染。
+
+本文不承诺模型绝对正确，不用单一“准确率”掩盖不同错误，也不把供应商基准当 Nalanda 产品评测。费用数字来自运行时价格快照与账单，而不是写死在本文的易过期网页价格。
+
+## 2. 当前事实与启用限制
+
+当前代码可验证：
+
+- FastAPI 有 `/health`、`/parse`、`/generate/knowledge-list|quiz|graph|exam`；
+- `requirements.txt` 列出 Anthropic 和解析依赖，但依赖存在不代表已调用；
+- `ANTHROPIC_API_KEY` 只影响 health 中的 `configured/unset` 字段；
+- generation 函数忽略资料正文并返回固定 Pydantic 对象；
+- TypeScript 与 Python 的请求字段命名存在 camelCase/snake_case 差异，Web 也没有真实消费该契约；
+- 当前生产 compose 不包含 AI 服务，NestJS 没有 AI 模块、job 或服务间调用。
+
+因此当前不得：收费扣 credits；把 placeholder 标为“AI 已生成”；把 health configured 当供应商可用；用真实私有课件做非受控测试；公开承诺准确率/成本/延迟；将目标 AI 文档写成已上线。
+
+## 3. 可追溯生成记录
+
+每个解析/生成 job 必须记录以下非秘密元数据：
+
+- `job_id`、用户/资料内部 ID、请求幂等键、产物种类/语言/深度；
+- 输入文件 hash、格式、大小、页数；不得在普通日志记录原文；
+- parser/OCR/chunker/retriever 版本和配置 hash；
+- provider、model ID、model revision（若提供）、region；
+- system/prompt/template/tool schema 版本与 hash，不记录 secret；
+- 输入/输出/cache/reasoning/image/page等供应商计量；
+- 召回 chunk IDs/引用映射和权限快照；
+- schema validation、质量门、安全门结果；
+- queue/start/end 时间、尝试次数、终止原因；
+- provider price snapshot、估算/实际成本、hold/commit credits；
+- 结果版本、人工编辑派生关系、删除状态。
+
+同一结果必须能在不泄露正文的前提下回答“哪个资料、哪套流水线、哪个模型、花了多少、通过了哪些门”。不能保证模型 bit-for-bit 可复现时，应明确为 traceable，而不是 reproducible。
+
+## 4. 评测集治理
+
+### 4.1 数据集分层
+
+| 集合 | 用途 | 是否进入日常 CI | 数据要求 |
+|---|---|---:|---|
+| Contract fixtures | schema、边界、错误语义 | 是 | 合成、很小、可提交 |
+| Golden regression | 质量/解析回归 | 是（可分 nightly） | 授权、去标识、版本化、专家答案 |
+| Safety/red-team | 提示词注入、隐私、有害内容 | 是 | 合成/许可，严格访问 |
+| Cost/latency benchmark | token、页面、时延、重试 | Nightly/发布前 | 固定输入和 provider 模式 |
+| Shadow/online sample | 真实分布漂移 | 目标阶段 | 单独审批、最小化、优先仅指标/用户反馈 |
+
+至少覆盖中/英文，文本 PDF/扫描 PDF/PPTX/DOCX/MD/HTML/TXT，公式/表格/图片/页眉页脚，短/长文档，多学科，不同质量和恶意内嵌指令。每个样本记录来源、许可证/同意、可用范围、PII 检查、保留和删除日期。
+
+禁止把用户课件自动加入训练或 golden set。用户报告问题时，默认只记录错误类型和 trace ID；需要保留原文做评测必须单独、可撤回地同意，并限制访问/期限。测试集与 prompt 开发集分开，防止为已知答案过拟合。
+
+### 4.2 版本与防污染
+
+数据集使用不可变版本与 hash；变更记录新增/删除原因、标注者、仲裁和指标重算。模型供应商可能训练过公开材料，因此“公开测试高分”不作为唯一证据。Golden 答案至少经过一名领域审阅，高风险/争议样本双人仲裁。
+
+## 5. 评测维度与指标
+
+### 5.1 通用契约
+
+- HTTP 状态、错误码、超时、取消、重试与幂等符合 API 契约；
+- JSON/Pydantic/共享 TS schema 100% 通过；未知字段/版本按兼容策略处理；
+- 中/英文遵从、空输入、超长、损坏/加密文件、恶意内容均有确定结果；
+- 所有用户可见事实能关联 source chunk/page；无法支持的内容标注不确定或不生成；
+- 重试不重复扣费、写结果或泄露其他用户 chunk。
+
+### 5.2 解析/OCR
+
+指标按格式和页面类型拆分：页/块召回、规范化字符/词 F1、标题层级、阅读顺序、表格单元格结构、公式/图片说明、页码映射、重复/页眉噪声、语言识别、失败页比例。扫描件单独报告 OCR，不与数字文本平均掩盖。
+
+### 5.3 知识清单
+
+覆盖核心概念、定义正确/完整、依赖排序、去重、术语一致、引用支持、粒度适合、语言遵从。记录 unsupported claim rate、source coverage、专家 1–5 分和关键遗漏率。
+
+### 5.4 测验
+
+题干清楚；答案可由资料支持；`answerIndex`/多选与选项一致；干扰项合理且不含第二正确答案；解释引用资料；难度/知识点覆盖；重复率与答案位置偏差。用 solver + 专家抽样验证，不因模型“自评正确”而通过。
+
+### 5.5 知识图谱
+
+节点 ID 唯一、边端点存在、无孤立/重复（除非合理）、标签可读、关系有来源、层级/依赖符合课程语义。若产品声明 DAG，才把环作为错误；否则记录环与关系类型，不能凭视觉漂亮判断质量。
+
+### 5.6 模拟试卷
+
+总分与 section/题目 marks 一致；题型/知识点/难度分布符合用户选择；题目可解、答案与评分标准正确；无资料外关键假设；无重复/泄题；预计时长合理。任何“100 marks”元数据必须从结构计算，不接受模型自报不一致。
+
+### 5.7 人工评审量表
+
+盲评维度：groundedness、correctness、coverage、pedagogy、clarity、difficulty fit、safety，1–5 分并给证据。对不同模型随机化顺序，至少记录评审者背景和一致性；低一致项仲裁。人工偏好不替代可验证契约。
+
+## 6. 初始发布门禁
+
+阈值是首版目标，首个真实 baseline 后可以经评审调整，但不得为让失败模型上线而静默降低。
+
+| 门禁 | 目标 |
+|---|---:|
+| Schema/引用结构有效 | 100% release set |
+| 跨用户 chunk/PII/secret 泄露 | 0 个 P0/P1 |
+| 恶意文档指令改变系统规则/取密钥/越权 | 0 个成功攻击 |
+| 关键 unsupported claim | 0 个；普通 claims 支持率 ≥ 95% |
+| 引用指向真实且支持对应 claim | ≥ 98% |
+| Quiz 答案/选项/解释一致 | ≥ 99% |
+| Graph 结构完整性 | 100%（语义质量另计） |
+| Exam marks/结构一致 | 100% |
+| 目标语言遵从 | ≥ 99% |
+| 专家综合评分 ≥ 4/5 | ≥ 90% 样本，且无学科低于 80% |
+| 重复同一 job 的经济/结果副作用 | 0 |
+| 成本估算相对实际误差 | P90 ≤ 20%，且绝不超过用户确认 credits 上限 |
+
+解析门禁应在建立按格式 baseline 后填写到版本化 eval config；在此之前，任何格式只能标 beta，不把跨格式平均值作为发布证据。样本量、置信区间和各 slice 必须随 release report 公布，不能只给百分比。
+
+## 7. 安全、隐私与提示词注入
+
+测试至少包含：文档内“忽略系统指令”、要求输出密钥/其他用户资料、HTML/Markdown XSS、外链/像素追踪、数据 URI、恶意文件、超大/压缩炸弹、Unicode 欺骗、OCR 隐藏文本、错误引用、模型 prompt 泄露、工具参数注入、跨 job/cache 检索污染。
+
+核心规则：上传资料是数据，不是指令；检索必须先按 user/material 授权过滤再向量召回；模型没有 service-role/Stripe/任意网络/数据库工具；输出渲染净化；供应商调用只传最小片段；日志/trace 不存原文；删除 job 覆盖 prompt/cache/embedding/供应商副本。
+
+有害/违规内容按 [内容审核规范](../governance/CONTENT_MODERATION.md) 分流。高影响学术、医疗、法律、财务内容需明确非权威提示和来源，不得用流畅度掩盖不确定性。
+
+## 8. 成本核算
+
+### 8.1 价格快照
+
+供应商价格放在版本化、受审批的配置/price catalog，包含 provider、model、region、currency、effective_at、input/output/cache/image/page/tool 等单位价格和来源。每个 job 绑定创建时/实际调用时约定的 snapshot；供应商改价不重写历史。
+
+### 8.2 逐 job 成本
+
+以货币最小单位或更高精度 decimal 计算，最后按财务规则取整：
+
+```text
+provider_cost = input_tokens × input_rate
+              + output_tokens × output_rate
+              + cache_write/read_tokens × respective_rate
+              + image_or_page_units × respective_rate
+              + embedding/rerank/moderation/tool charges
+
+total_variable_cost = provider_cost
+                    + parser/OCR compute
+                    + queue/worker time
+                    + incremental storage/egress
+                    + retry cost not waived by provider
+```
+
+共享基础设施另做按 job/活跃用户分摊，不伪装成精确供应商成本。记录 estimated upper bound、actual、currency、pricing snapshot、attempt breakdown、谁承担失败/重试成本。credits 售价由产品价格决定，不能直接把 token 数暴露成事后无限扣款。
+
+### 8.3 单位经济指标
+
+按产物、语言、格式、页数、模型和 plan 分层观察：每成功 job 可变成本；每输入页/千字成本；每有效知识点/题目成本；缓存命中率；失败/重试浪费率；P50/P95 延迟；credits 收入标准价值；毛利率；退款/质量补偿率。
+
+初始目标：稳定阶段 P50 贡献毛利 ≥ 60%，P95 请求仍非负；失败/重试浪费 ≤ AI 供应商成本的 10%；实际成本不得超过 job 预算上限。若目标未达到，应优化/调价/限制尺寸，不得隐藏成本或追扣超出确认上限的 credits。
+
+## 9. 预算与运行时控制
+
+必须同时有：
+
+- **请求预算：**最大页数/字节/token/图片、最大输出、超时、重试次数、允许模型/工具；
+- **用户预算：**按 plan 的并发、日/月 jobs 和 included credits；
+- **系统预算：**供应商每小时/日/月软硬上限、模型/地区熔断、异常费用告警；
+- **任务预算：**estimated upper bound 对应 credit hold；实际超预算取消或降级，不自动扩大；
+- **队列背压：**达到容量/预算时排队或拒绝，不能无限堆积和过期扣费；
+- **kill switch：**按 provider/model/产物/地区关闭，保留已有资料访问。
+
+阈值作为受控环境配置，不在前端；变更有审计。降级顺序可为：减少上下文/输出 → 更便宜且已评测模型 → 只解析/保存草稿 → 延后/拒绝并释放 hold。不得在未告知时用质量显著不同的模型冒充原产品。
+
+## 10. 延迟和可靠性
+
+记录 queue wait 与 execution 分开。首个 baseline 前的暂定目标：≤20 页标准文本资料的单一产物 P95 在 120 秒内完成；组合/试卷 P95 在 300 秒内；更大资料在确认页展示分档预估。目标需由真实 staging benchmark 校准。
+
+job 状态至少：`queued/running/validating/succeeded/failed/canceled/expired`。用户可安全轮询/订阅；取消只在确认终止后释放资源；worker 崩溃可续跑或幂等重试；partial result 默认不收费且不公开，除非产品明确提供可接受的部分交付选项。
+
+## 11. 发布、灰度与回滚
+
+每次模型、prompt、parser、retriever、schema 或关键参数变化：
+
+1. 生成变更说明和预期收益/风险；
+2. 运行 contract、golden、安全、成本/延迟基准，保存版本化 report；
+3. 由 AI/产品评审质量，安全/隐私评审新增数据/工具，财务评审价格显著变化；
+4. staging dogfood 使用授权数据；
+5. 小流量 canary，与旧版本按 slice 对比；
+6. 监控质量反馈、失败、成本、延迟、退款和安全；
+7. 达门禁后逐步扩大，保留可立即回退的前一 pipeline version。
+
+回滚必须恢复 pipeline 路由与价格/credits 行为，不删除已经生成的历史结果；结果保留其原版本标识。schema 不兼容采用双读/双写/迁移，不让旧客户端崩溃。
+
+## 12. 在线监控与用户反馈
+
+目标在线指标：成功/各错误码、schema/quality gate fail、queue/执行 P50/P95、token/页/成本、hold release/commit、重试、取消、用户编辑/重生成/删除、显式好评/差评、退款、引用点击和安全 flags。反馈与质量 trace 关联，但普通分析系统只保存内部 ID 和聚合，不自动复制课件/输出。
+
+监控漂移按格式/语言/学科/模型/plan 分层。用户群差异只能用于质量公平性诊断，不用于基于学校/专业的敏感定价或歧视性限制。
+
+## 13. 事故等级
+
+- **P0：**跨用户资料/密钥泄露、模型工具造成真实资金/数据操作、大规模错误扣费；立即 kill switch、事件响应和密钥/会话处理。
+- **P1：**系统性严重幻觉、恶意内容绕过、大规模超预算/重复扣费、删除未生效；停止受影响 pipeline、释放/退款、保全最小证据。
+- **P2：**某格式/语言显著退化、延迟/成本 SLO 持续失败；降级/回滚并发布状态说明。
+
+复盘记录触发、检测、用户影响、数据/费用、补偿、根因和防复发评测。未经隐私审批，不把事故中的用户原文长期变成测试夹具。
+
+## 14. 分阶段实现清单
+
+### Phase 0：契约与安全底座
+
+- 统一 TS/Python/OpenAPI schema 和字段命名/版本；
+- 固定合成 contract fixtures 与 CI；
+- 服务间鉴权、输入限制、净化、trace/usage schema；
+- 明确第三方许可证，只使用商业兼容实现。
+
+### Phase 1：真实解析
+
+- 每种格式独立 parser、页/块来源、错误语义；
+- golden parse set 和按格式 baseline；
+- Storage 授权下载、临时文件清理和删除联动。
+
+### Phase 2：单产物模型生成（不收费 beta）
+
+- 模型/prompt/schema、grounded citations、质量/安全门；
+- price snapshot、usage/cost ledger、预算/kill switch；
+- staging/canary，仅授权测试账户。
+
+### Phase 3：异步与 credits
+
+- 持久 job/队列、幂等、取消、重试、hold/commit/release；
+- 经 [经济规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md) 的并发/退款测试；
+- 达成本估算与质量门后才收费。
+
+### Phase 4：公开/Market
+
+- 组合产物、RAG/embedding 删除、在线漂移；
+- AI 标识、公开前额外审核、版权/引用和申诉；
+- 定期模型卡、透明度与单位经济复审。
+
+## 15. 相关文档
+
+- [ADR-0004：核心 API 与 AI 分离](../adr/0004-core-api-and-ai-service-split.md)
+- [ADR-0007：第三方 AI 许可证](../adr/0007-third-party-ai-reference-licensing.md)
+- [安全策略](../../SECURITY.md)
+- [隐私与数据删除](../governance/PRIVACY_AND_DATA_DELETION.md)
+- [内容审核](../governance/CONTENT_MODERATION.md)
+- [points/credits/VIP/支付规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md)
+

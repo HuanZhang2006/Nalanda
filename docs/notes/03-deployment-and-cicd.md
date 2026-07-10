@@ -1,5 +1,10 @@
 # 03 · 部署架构与 CI/CD
 
+> **文档定位**
+> - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
+> - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
+> - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
+
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
 ## 1. 服务器现状（约束来源）
@@ -54,11 +59,14 @@ server {
 
 步骤逻辑：
 1. checkout + pnpm/setup-node + `pnpm install --frozen-lockfile`。
-2. **构建前端**：`pnpm --filter @nalanda/web build`，注入 `VITE_SUPABASE_URL/ANON`（来自 GitHub Secrets）。
-3. **构建后端镜像（在 runner 上）**：`docker build -f infra/hybrid-2g/api.Dockerfile -t nalanda-api:latest .`。
-4. **打包产物**：`docker save | gzip` 成 tar；前端 dist 打成 `web.tgz`。
-5. **SSH 上传**：用部署私钥 `scp` 镜像 tar + web.tgz + compose 文件到 `/opt/nalanda/`。
-6. **服务器部署**：`docker load` 镜像 → 替换 `web/` 静态 → `docker compose up -d` → 轮询 `http://127.0.0.1:8411/api/health` 自检（失败则打印日志并退出非零）。
+2. **质量门**：`pnpm typecheck`，然后运行默认 `pnpm test`（jsdom；需要真实 Supabase 的 RLS E2E 默认安全跳过）。
+3. **构建前端**：`pnpm --filter @nalanda/web build`，注入 `VITE_SUPABASE_URL/ANON`（来自 GitHub Secrets）。
+4. **构建后端镜像（在 runner 上）**：`docker build -f infra/hybrid-2g/api.Dockerfile -t nalanda-api:latest .`。
+5. **打包产物**：`docker save | gzip` 成 tar；前端 dist 打成 `web.tgz`。
+6. **SSH 上传**：用部署私钥 `scp` 镜像 tar + web.tgz + compose 文件到 `/opt/nalanda/`。
+7. **服务器部署**：`docker load` 镜像 → 替换 `web/` 静态 → `docker compose up -d` → 轮询 `http://127.0.0.1:8411/api/health` 自检（失败则打印日志并退出非零）。
+
+Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
 
 为什么用 `docker save/load` 而非镜像仓库：免去在服务器配 registry 凭据，镜像天然私有；代价是每次传输镜像（可接受）。后续可切 GHCR + 缓存。
 
@@ -90,7 +98,9 @@ server {
 ### (c) 内存红线
 服务器空闲内存极少，故所有重构建放 CI；容器设 `mem_limit 256m` 防止 api 失控波及邻居；并建议保留 swap。
 
-## 7. 验证（线上实测）
+## 7. 历史上线验证
+
+以下是该部署方案首次落地时的人工实测记录，不等于持续监控或当前可用性证明：
 
 - `https://nalanda.online` HTTPS 200、HTTP→HTTPS 301；既有站点（sub2api/lobe）不受影响。
 - 真实登录令牌打 `/api/me` → 200；CI run = success；自检通过。
@@ -111,3 +121,4 @@ docker compose restart api
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 部署增加版本标签/回滚；接 Sentry/日志。
 - 上线 redis/ai 服务（做 AI 生成时）；Stripe Webhook 入口（做支付时）。
+- 为隔离 Supabase 测试项目配置受控 CI，运行真实双用户 RLS/Storage E2E；当前默认 CI 只跑无凭据 jsdom 套件。

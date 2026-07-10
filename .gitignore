@@ -8,6 +8,11 @@ dist/
 .env.local
 .env.*.local
 
+# Supabase local credentials (never commit)
+.env.supabase.local
+apps/web/.env.local
+apps/api/.env
+
 # python
 __pycache__/
 *.pyc

@@ -1,5 +1,10 @@
 # 06 · Materials 资料库（第一个真后端模块）
 
+> **文档定位**
+> - **内容**：记录 Materials 的表、Storage、RLS、上传/预览/删除流程和外键权限复盘。
+> - **作用**：作为 Supabase owner-only 文件模块的实现案例。
+> - **何时更新**：课程/资料字段、Storage 策略、支持格式、预览、配额或清理流程变化时。
+
 > 目标：Materials 是第一个从「假数据」升级到「真后端」的业务模块，是后续模块的范本。讲清楚数据怎么建、文件怎么存、权限怎么隔离、前端各功能怎么实现，以及发现并修掉的一个越权漏洞。前置：[05 数据库/RLS](05-database-and-rls.md)、[04 前端与原型复现](04-frontend-and-prototype-port.md)。
 
 ## 1. 需求
@@ -56,7 +61,7 @@ and exists (select 1 from public.courses c
 ### 各功能逻辑
 - **新建课程** `newCourse()`：弹 `.scrim/.modal` 小表单 → `insert(...).select().single()` → 刷新并切到该课程。`user_id` 由数据库默认填。
 - **上传** `pickFiles()`→`doUpload()`：守卫（没课程先建、选 All 时提示先选课程）；支持点选 + 拖拽；每个文件 → 路径 `${user.id}/${crypto.randomUUID()}.${ext}` → `storage.upload` → `materials.insert`；**入库失败回滚**已传对象（删孤儿文件）；完成后刷新 + toast。
-- **预览 / 下载** `openMaterial(id, download)`：私有桶用 `createSignedUrl(path, 60[, {download:name}])`；预览内联 `window.open`，下载带 download 选项。
+- **预览 / 下载**：下载签名 URL 当前 120 秒；应用内预览签名 URL 600 秒。PDF/图片/HTML/Markdown/文本在应用内展示，Office 可选择交给 Microsoft 在线预览，其他格式下载查看。
 - **删除** `delMaterial()`：`confirm` → `storage.remove` 删文件 → `delete().eq('id')` 删记录 → 刷新。
 - **筛选**：顶部 chips 改 `state.course` 重渲染（前端过滤仅体验；安全仍靠 RLS）。
 
@@ -65,15 +70,17 @@ and exists (select 1 from public.courses c
 2. `VIEWS.materials = () => '<div id="mat-root"></div>'`（覆盖原 mock 视图）。
 3. `go()` 钩子：进 `materials` 路由时 `mountMaterials(#mat-root)`。
 
-## 7. 端到端验证（已做，可复现）
-造两个测试用户 A、B：
-- A：建课程 ✓ / 上传到自己文件夹 ✓ / 入库 ✓ / 列表 ✓ / 签名 URL ✓
-- B：看不到 A 的课程/资料（表 RLS）✓ / 打不开 A 的文件（存储 RLS）✓ / 不能挂到 A 的课程（0003）✓
-- 清理：删资料/课程/文件/用户
+## 7. 端到端验证
+两用户 RLS 套件包含以下真实 Supabase 断言：
+- A：建课程、资料入库/列表、上传并下载自己的文件、创建签名 URL、显式删除文件/资料/课程。
+- B：看不到 A 的课程/资料、不能下载或签名 A 的文件、不能写入 A 的路径、不能把资料挂到 A 的课程。
+- 清理：用 owner 验证正常删除路径；`afterAll` 再由 service-role 清 Storage 并删除测试用户兜底。
 
-> 这套「两用户互相验证 RLS」是检验任何 owner-only 模块的标准做法。
+这些用例默认跳过，只有对专用测试项目执行 `pnpm test:rls` 后才证明该项目的实际策略；本轮无凭据的默认 CI 不能替代真实 RLS 运行结果。
+
+> 这套「两用户互相验证 RLS」是检验任何 owner-only 模块的标准做法。可执行命令、环境保护和清理逻辑见 [测试指南](../guides/TESTING.md)，禁止默认对生产项目运行。
 
 ## 8. 扩展点
-- 列表分页 / 搜索 / 排序；内嵌预览（PDF.js / Office 转图）。
+- 列表分页 / 搜索 / 排序；更稳定的 PDF.js / Office 服务端转图。
 - 作为 **AI 笔记生成**的输入（下一个大模块）：拿 `storage_path` 让 AI 微服务读取解析。
 - 上传大小限制、类型白名单、进度条。

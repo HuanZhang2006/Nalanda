@@ -1,5 +1,10 @@
 # 04 · 前端与原型复现
 
+> **文档定位**
+> - **内容**：解释静态原型如何被移植进生产 Web、React/legacy 边界及渐进重构风险。
+> - **作用**：帮助维护当前混合前端；不把“页面可打开”解释为业务已真实实现。
+> - **何时更新**：入口、路由、挂载生命周期、legacy 模块、设计系统或 React 化边界变化时。
+
 > 目标：把最初用 Claude Design 做出的高保真原型（8 大模块 + 各子页）变成生产前端的真实页面，所有页面都能打开、交互可用；后端没做的部分先用假数据，注册/登录用真后端。
 
 ## 1. 技术方案
@@ -14,7 +19,7 @@
 
 ## 2. 原型 → ES module 的改造
 
-源：`app/{data.js, icons.js, app.js, views-core.js, views-more.js}` → `apps/web/src/legacy/{data.ts, icons.ts, app.ts}`（用一个确定性脚本批量转换，避免手改易错）：
+源：`app/{data.js, icons.js, app.js, views-core.js, views-more.js}` → `apps/web/src/legacy/{data.ts, icons.ts, app.ts}`。历史上按确定性转换思路处理，但该转换脚本没有保存在仓库，后续同步目前仍有人工漂移风险：
 
 - `data.js`：`const DB = {}` → `const DB: any = {}`；去掉 `window.DB`，改 `export { DB }`。
 - `icons.js`：去掉 IIFE 包裹；`window.ICON = function(){}` → `export function ICON(){}`；新增 `logout` 图标。
@@ -24,7 +29,7 @@
   - 把对 `document.getElementById("app")` 的 innerHTML / 事件委托改为对挂载容器 `_root` 操作。
   - 新增导出 `mountNalanda(container, opts)`：写入真实用户到 `DB.user`、`initTheme()` → `renderShell()` → `go("home")`，返回清理函数（清空容器 + 解绑 resize）。
   - 顶栏加「退出登录」按钮，`ACTIONS.signOut` 调 `opts.onSignOut`。
-- 三个文件加 `// @ts-nocheck`（移植 JS，类型不强求；Vite 用 esbuild 转译不做类型检查，构建不受影响）。
+- 当前 9 个 legacy TS 文件均有 `// @ts-nocheck`。这保证移植代码可构建，但也意味着 `tsc` 无法验证项目大部分业务前端。
 
 ## 3. React 侧接线
 
@@ -47,20 +52,20 @@
 
 ## 6. 数据形状对齐（接真后端的红利）
 
-原型 `DB.knowledge/quiz/graph/exam` 与 `packages/types`、未来 Python AI 的 JSON schema **三方一致**。意味着接 AI 时，后端产出的结构可直接喂给现有视图渲染，几乎不改数据契约。
+原型、`packages/types` 和 Python schema **目前不一致**。Knowledge、Quiz、Graph、Exam 的字段名与层级均有差异，图谱渲染还依赖目标 schema 没有的 `x/y/cls`；TS 使用 `materialId`，Python 使用 `material_id`。接 AI 前需要统一规范、生成类型并增加契约测试，不能直接“换数据即可”。
 
 ## 7. 踩坑
 
 - **挂载在哪**：原型用 `document.getElementById("app")`；改为对 React 提供的容器 `_root` 操作，避免与 React 渲染冲突。
-- **顶层 `window.addEventListener`**：原型在模块顶层注册 resize；保留但用变量持有以便 `cleanup` 解绑（StrictMode/重挂时不泄漏）。
+- **顶层 `window.addEventListener`**：当前 resize 只在模块求值时注册，cleanup 会移除但重新 mount 不会重加；React StrictMode 开发挂载或登出再登录后，图谱 resize 会失效。应把 add/remove 对称放进 `mountNalanda`。
 - **body 布局**：登录页需要居中、应用需要 `.app` 占满视口；把全局居中从 `index.css` 移除，分别由登录页自身和 `.app`（`height:100vh` 网格）负责。
 
 ## 8. 验证
 
 - `vite build` 通过（完整 `nalanda.css` 约 19.6KB 进包）。
-- **无头 DOM 冒烟测试**（jsdom + esbuild 打包后注入 `<script>` 执行）：壳渲染、8 个模块逐一打开、导航切换、退出回调、卸载清理**全部 PASS**。
+- 可执行 jsdom 回归已纳入仓库测试基线；覆盖矩阵和命令见 [测试指南](../guides/TESTING.md)。历史的临时脚本结果不再作为唯一证据。
 - 线上包内含全部视图文案；`https://nalanda.online` 登录后可浏览所有页面。
 
 ## 9. 后续 TODO（迁移方向）
 
-逐模块把「innerHTML 视图」重构为真正的 React 组件，并接真后端：优先级建议 **资料库（上传到 Supabase Storage）→ AI 笔记生成（接 Python/Claude）→ 市场/支付 → 社区/计划**。迁移期可让「已 React 化的模块」与「仍走原型的模块」共存。
+逐模块把「innerHTML 视图」重构为类型安全 React 组件。当前优先级是：**修复 legacy 生命周期/跨账号状态 → 统一 AI 契约 → 接通真实 Create + Notes → Home 真数据 → Market/credits/支付**。Materials、Community、Schedule 等已接 Supabase 的模块也要逐步 React 化，但不再把“接真后端”列为未完成。迁移期允许新旧模块共存。

@@ -1,5 +1,10 @@
 # 生产部署（nalanda.online）
 
+> **文档定位**
+> - **内容**：记录当前生产服务器上的 Web/API/nginx 拓扑、部署依赖和维护入口。
+> - **作用**：帮助理解现网布局；正式发布、数据库变更、备份与恢复应按 operations 手册执行。
+> - **何时更新**：域名、服务器、CI、compose、nginx/TLS、部署账号或密钥位置变化时。
+
 服务器已运行多个项目（共用 nginx + uofa.ink）。Nalanda 以**隔离、可叠加**的方式接入，不影响既有服务。
 
 ## 拓扑
@@ -38,7 +43,11 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 ## 流程
 
-推送到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：构建 → 上传 → 服务器 `docker load` + `docker compose up -d` + 健康自检。也可在 Actions 页手动 `workflow_dispatch`。
+推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：安装 → typecheck → 默认 jsdom 测试 → 构建 → 上传 → 服务器 `docker load` + `docker compose up -d` + 健康自检。需要真实 Supabase 的 RLS E2E 不在默认部署 job 中。也可在 Actions 页手动 `workflow_dispatch`。
+
+纯 Markdown 变更由 [docs workflow](../../.github/workflows/docs.yml) 校验文档定位字段和相对链接，不重新部署应用。
+
+> 安全待办：当前记录的部署用户是 root。应迁移为最小权限 deploy 用户，只授予 `/opt/nalanda`、受控 Docker/服务操作和 nginx reload 能力，并轮换现有部署密钥。
 
 ## 服务器维护速查
 

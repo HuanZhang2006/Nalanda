@@ -1,5 +1,10 @@
 # 08 · 通知 / 反馈 / 个人资料 · 详解
 
+> **文档定位**
+> - **内容**：记录通知面板、反馈和 Profile/Growth 的当前数据流与前端函数。
+> - **作用**：解释三个真实 Supabase 模块及其联动；不代表敏感字段权限已经完善。
+> - **何时更新**：Profile 字段/权限、通知刷新方式、反馈状态机或徽章/等级规则变化时。
+
 > 文件：`...0004_notifications_feedback.sql`（表）、`...0006_*`（profiles.points）、`...0007_*`（profiles.streak）、`apps/web/src/legacy/{notifications,feedback,profile}.ts`。
 
 ---
@@ -10,6 +15,8 @@
 - `profiles` 相关列：`points`（活动积分，0006）、`level/level_name`（由 points 推导，0006 的 `_add_points` 维护）、`streak/streak_date`（0007）、`credits`（**预留给未来充值钱包，与 points 不同**）。
 
 > 关键概念：**积分 points（做事赚）≠ 钱包 credits（充值/未来）**。Profile 展示 points；credits 暂不展示。
+
+> 当前安全缺口：`profiles_update_own` 允许本人更新整行，客户端事实上可以直接改 points、credits、level、VIP 和 streak；feedback 的 `for all` owner policy 也允许用户改自己的 status。后续迁移必须做列级/命令级收口。
 
 ---
 
@@ -91,7 +98,7 @@ profiles(本人 *), posts(count, repost_of=null), materials(count), courses(coun
 - `mountNalanda` 注入 supabase 给三个 `init*`，并在启动后调 `refreshNotifBadge()` + `syncShellUser()`。
 
 ## 六、验证
-两用户后端 e2e：profiles 读/改本人、他人不可改；notifications 未读计数/标记已读/RLS 私有；feedback 提交/本人可见/他人 0 条。jsdom 集成冒烟：铃铛弹面板、feedback 路由、profile 真数据 + 侧栏同步。
+两用户 RLS E2E 的目标覆盖 profiles 隔离、notifications 私有、feedback 私有；jsdom 覆盖铃铛、feedback、profile 和侧栏同步。实际文件、命令与环境要求见 [测试指南](../guides/TESTING.md)。
 
 ## 七、可扩展
 - 通知做实时（Supabase Realtime 订阅 `notifications` 表 → 来新通知即时跳角标）。
