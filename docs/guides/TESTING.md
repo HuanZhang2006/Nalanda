@@ -188,20 +188,30 @@ git check-ignore .env.rls.local
 
 ### 5.5 0007 → 0008 升级夹具
 
-`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`，因此不能对托管项目运行。CI 的完整顺序是：
+`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`，因此不能对托管项目运行。`supabase start` 会自动应用目录中的所有迁移，因此 CI 在启动旧 schema 时会**临时**把 0008 移到 runner 临时目录；`trap` 保证任何失败后都放回。不要在有未提交修改的个人工作区手工照抄该移动步骤。CI 的完整顺序是：
 
 ```bash
+ledger_migration=supabase/migrations/20260710000008_security_points_ledger.sql
+staged_ledger_migration=/tmp/$(basename "$ledger_migration")
+restore_ledger_migration() {
+  test -f "$staged_ledger_migration" && mv "$staged_ledger_migration" "$ledger_migration"
+}
+trap restore_ledger_migration EXIT
+mv "$ledger_migration" "$staged_ledger_migration"
+
 supabase start
 supabase status -o env > /tmp/supabase-status.env
 set -a; . /tmp/supabase-status.env; set +a
 
 fixture=/tmp/nalanda-points-upgrade.json
-supabase db reset --local --no-seed --version 20260625000007
+# 目录中仅有 0001–0007，因此这是一个真实的旧 schema。
+supabase db reset --local --no-seed
 ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" \
   SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
   node apps/web/tests/points-upgrade.e2e.mjs seed
 
+restore_ledger_migration
 supabase migration up --local
 ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" \
