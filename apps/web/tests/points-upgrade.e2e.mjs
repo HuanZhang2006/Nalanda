@@ -1,6 +1,20 @@
 import assert from "node:assert/strict";
 import { readFile, unlink, writeFile } from "node:fs/promises";
 import { createClient } from "@supabase/supabase-js";
+import WebSocket from "ws";
+
+// @supabase/realtime-js initializes a Realtime client with every createClient
+// call, even though this fixture only uses Auth/PostgREST. Node 20 has no
+// native WebSocket, while the deployed runtime and CI intentionally target it.
+// Keep the test-only adapter explicit rather than depending on a transitive
+// package or silently running this important migration test on a newer Node.
+if (!globalThis.WebSocket) {
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: WebSocket,
+  });
+}
 
 const phase = process.argv[2];
 const url = process.env.SUPABASE_URL || "";

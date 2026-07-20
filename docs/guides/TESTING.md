@@ -28,7 +28,7 @@ corepack prepare pnpm@9.12.3 --activate
 pnpm install --frozen-lockfile
 ```
 
-要求 Node.js `>=20`。常规 jsdom 测试不需要 `.env`、Supabase、API、AI、Redis 或 Docker。
+要求 Node.js `>=20`。常规 jsdom 测试不需要 `.env`、Supabase、API、AI、Redis 或 Docker。真实 Supabase 测试在 Node 20 下会显式使用 `ws` 作为测试运行时的 WebSocket adapter：Supabase client 即使只访问 Auth/PostgREST 也会初始化 Realtime；不要移除 `apps/web` 的直接 `ws` 开发依赖或改为依赖间接依赖。
 
 ## 3. 日常本地验证
 

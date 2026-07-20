@@ -1,6 +1,18 @@
 // @vitest-environment node
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import WebSocket from "ws";
+
+// Supabase constructs its Realtime client for every createClient call. The
+// RLS suite itself uses Auth/PostgREST/Storage, but Node 20 needs this explicit
+// adapter to construct the client without a native WebSocket implementation.
+if (!globalThis.WebSocket) {
+  Object.defineProperty(globalThis, "WebSocket", {
+    configurable: true,
+    writable: true,
+    value: WebSocket,
+  });
+}
 
 const enabled = process.env.RUN_SUPABASE_RLS_E2E === "1";
 const url = process.env.SUPABASE_URL || "";
