@@ -85,6 +85,9 @@ importers:
       vitest:
         specifier: ^2.1.9
         version: 2.1.9(@types/node@22.19.21)(jsdom@25.0.1)
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
 
   packages/types:
     devDependencies:
