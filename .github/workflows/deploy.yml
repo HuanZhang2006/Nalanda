@@ -124,6 +124,21 @@ jobs:
         shell: bash
         run: |
           set -Eeuo pipefail
+
+          # `supabase start` eagerly applies every migration. Stage 0008 outside
+          # the migrations directory first so the fixture genuinely creates
+          # 0007-era rows, then restore and apply the forward migration.
+          ledger_migration="supabase/migrations/20260710000008_security_points_ledger.sql"
+          staged_ledger_migration="$RUNNER_TEMP/$(basename "$ledger_migration")"
+          [[ -f "$ledger_migration" ]] || { echo "Missing 0008 ledger migration" >&2; exit 2; }
+          restore_ledger_migration() {
+            if [[ -f "$staged_ledger_migration" ]]; then
+              mv -- "$staged_ledger_migration" "$ledger_migration"
+            fi
+          }
+          trap restore_ledger_migration EXIT
+          mv -- "$ledger_migration" "$staged_ledger_migration"
+
           supabase start
 
           status_file="$RUNNER_TEMP/supabase-status.env"
@@ -133,7 +148,9 @@ jobs:
           set +a
 
           fixture="$RUNNER_TEMP/nalanda-points-upgrade.json"
-          supabase db reset --local --no-seed --version 20260625000007
+          # Resetting while 0008 is staged out guarantees a clean 0001–0007
+          # schema even on CLI versions that start by applying all migrations.
+          supabase db reset --local --no-seed
           ALLOW_POINTS_UPGRADE_E2E=YES \
           POINTS_UPGRADE_FIXTURE="$fixture" \
           SUPABASE_URL="$API_URL" \
@@ -141,6 +158,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
           node apps/web/tests/points-upgrade.e2e.mjs seed
 
+          restore_ledger_migration
           supabase migration up --local
           ALLOW_POINTS_UPGRADE_E2E=YES \
           POINTS_UPGRADE_FIXTURE="$fixture" \
