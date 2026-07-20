@@ -90,9 +90,14 @@ async function seedLegacyFixture() {
   const task = await must(b.from("study_tasks").insert({ title: "Legacy completed task", due_date: "2030-01-02" }).select("id").single(), "create legacy task");
   await must(b.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", task.id), "complete legacy task");
 
-  // 0001-0007 allowed these forged updates. Fixed values make the opening-balance
-  // and derived-level assertions deterministic after 0008 is applied.
-  await must(a.from("profiles").update({
+  // Fixed historical values make the opening-balance and derived-level
+  // assertions deterministic after 0008 is applied. Seed them through the
+  // service role: the fixture models data that already exists before the
+  // security migration, and local Supabase CLI grant defaults for 0001-0007
+  // do not reliably grant an authenticated client UPDATE on public tables.
+  // The post-upgrade assertion below separately verifies that a normal user
+  // cannot alter any managed profile fields.
+  await must(admin.from("profiles").update({
     points: 77,
     credits: 700,
     level: 6,
@@ -101,7 +106,7 @@ async function seedLegacyFixture() {
     streak: 41,
     streak_date: "2099-01-01",
   }).eq("id", aId), "set legacy profile A baseline");
-  await must(b.from("profiles").update({
+  await must(admin.from("profiles").update({
     points: 23,
     credits: 230,
     level: 6,
