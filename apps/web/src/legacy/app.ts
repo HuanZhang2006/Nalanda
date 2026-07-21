@@ -7,11 +7,14 @@ import { initFeedback, mountFeedback } from "./feedback";
 import { initProfile, mountProfile, syncShellUser } from "./profile";
 import { initCommunity, mountCommunity, mountPost } from "./community";
 import { initSchedule, mountSchedule } from "./schedule";
+import { mountCourses } from "../features/courses/mount";
+import { mountCourseMarket } from "../features/courses/CourseMarket";
 
 const VIEWS: any = {};
 let _root: any = null;
 let _opts: any = {};
 let _onResize: any = null;
+let _islandCleanup: any = null;
 
 /* ============================================================
    Nalanda — app shell, routing, interactions
@@ -22,6 +25,10 @@ const S = {
   noteTab: "list",
   postId: "p1",
   course: "all",
+  learningCourseId: null,
+  learningUnitId: null,
+  learningScheduleId: null,
+  marketTab: "notes",
   marketFilter: "All",
   quiz: {},        // qIndex -> chosen
   genSel: ["list","quiz"],
@@ -29,6 +36,7 @@ const S = {
 };
 const INITIAL_S = {
   route: "home", noteId: "n1", noteTab: "list", postId: "p1", course: "all",
+  learningCourseId: null, learningUnitId: null, learningScheduleId: null, marketTab: "notes",
   marketFilter: "All", quiz: {}, genSel: ["list", "quiz"], rail: false,
 };
 
@@ -37,9 +45,10 @@ const NAV = [
   { id:"home", label:"Home", icon:"home" },
   { id:"notes", label:"My Notes", icon:"notes", badge:"5" },
   { id:"materials", label:"Materials", icon:"folder" },
+  { id:"courses", label:"Courses", icon:"quiz" },
   { id:"schedule", label:"Schedule", icon:"calendar" },
   { sect:"Discover" },
-  { id:"market", label:"Note Market", icon:"market" },
+  { id:"market", label:"Market", icon:"market" },
   { id:"community", label:"Community", icon:"users" },
   { sect:"You" },
   { id:"profile", label:"Profile & Growth", icon:"chart" },
@@ -47,7 +56,7 @@ const NAV = [
 ];
 
 const ROUTE_OF = { home:"home", notes:"notes", note:"notes", create:"notes",
-  materials:"materials", schedule:"schedule", market:"market",
+  materials:"materials", courses:"courses", schedule:"schedule", market:"market",
   community:"community", post:"community", profile:"profile", feedback:"feedback" };
 
 /* ---------- theme ---------- */
@@ -131,6 +140,7 @@ function renderNav(){
 
 /* ---------- router ---------- */
 function go(route, params){
+  if(_islandCleanup){ try{ _islandCleanup(); }catch(e){} _islandCleanup=null; }
   S.route = route;
   if(params) Object.assign(S, params);
   renderNav();
@@ -144,6 +154,20 @@ function go(route, params){
   if(route==="community"){ requestAnimationFrame(()=>{ const el=document.getElementById("comm-root"); if(el) mountCommunity(el); }); }
   if(route==="post"){ requestAnimationFrame(()=>{ const el=document.getElementById("post-root"); if(el) mountPost(el, S.postId); }); }
   if(route==="schedule"){ requestAnimationFrame(()=>{ const el=document.getElementById("sched-root"); if(el) mountSchedule(el); }); }
+  if(route==="courses"){
+    const initialLearningRoute = {
+      initialCourseId:S.learningCourseId||undefined,
+      initialUnitId:S.learningUnitId||undefined,
+      initialScheduleId:S.learningScheduleId||undefined,
+    };
+    // Schedule deep-link parameters are single-use. Keeping them in the shell
+    // would reopen the same review picker on every later Courses navigation.
+    S.learningCourseId=null; S.learningUnitId=null; S.learningScheduleId=null;
+    requestAnimationFrame(()=>{ const el=document.getElementById("courses-root"); if(el) _islandCleanup=mountCourses(el,{ toast, ...initialLearningRoute }); });
+  }
+  if(route==="market" && S.marketTab==="courses"){ requestAnimationFrame(()=>{ const el=document.getElementById("course-market-root"); if(el) _islandCleanup=mountCourseMarket(el,{
+    toast, navigateCourses:()=>setTimeout(()=>go("courses"),0)
+  }); }); }
 }
 
 /* ---------- click delegation ---------- */
@@ -159,6 +183,9 @@ function dataParams(t){
   if(t.dataset.note) p.noteId = t.dataset.note;
   if(t.dataset.post) p.postId = t.dataset.post;
   if(t.dataset.tab) p.noteTab = t.dataset.tab;
+  if(t.dataset.courseId) p.learningCourseId = t.dataset.courseId;
+  if(t.dataset.unitId) p.learningUnitId = t.dataset.unitId;
+  if(t.dataset.scheduleId) p.learningScheduleId = t.dataset.scheduleId;
   return p;
 }
 
@@ -189,6 +216,7 @@ const ACTIONS = {
     }, 900);
   },
   marketFilter(t){ S.marketFilter = t.dataset.f; go("market"); },
+  marketTab(t){ S.marketTab = t.dataset.marketTab; go("market"); },
   openBuy(t){ openModal(buyModal(t.dataset.k)); },
   confirmBuy(t){ closeModal(); toast("Added to your notes — "+fmt(+t.dataset.price)+" credits spent","check"); },
   closeModal(){ closeModal(); },
@@ -279,6 +307,7 @@ export function mountNalanda(container, opts){
   refreshNotifBadge();
   syncShellUser();
   return () => {
+    if(_islandCleanup){ try{ _islandCleanup(); }catch(e){} _islandCleanup=null; }
     try { if (_root === container) _root.innerHTML = ""; } catch (e) {}
     if (_onResize) window.removeEventListener("resize", _onResize);
     document.querySelectorAll("#notif-pop, .scrim, #toast").forEach((el)=>el.remove());
@@ -674,12 +703,18 @@ ACTIONS.upload = function(){ toast("Upload — choose a course to file it under"
 
 /* ---------------- NOTE MARKET ---------------- */
 VIEWS.market = function(){
+  if(S.marketTab==="courses") return `<div class="wrap wrap-wide">
+    <div class="page-head"><div><div class="eyebrow">Marketplace</div><h1 class="page-title">Market</h1>
+      <p class="page-sub">Note Market 保留演示数据；Course Market 提供真实、免费、独立快照克隆。</p></div></div>
+    <div class="tabs"><button class="tab" data-act="marketTab" data-market-tab="notes">Note Market · Demo</button><button class="tab active" data-act="marketTab" data-market-tab="courses">Course Market</button></div>
+    <div id="course-market-root"></div></div>`;
   const cats = ["All","Free","Top rated","Sciences","CS & Math","Premium"];
   let list = DB.market.slice();
   if(S.marketFilter==="Free") list = list.filter(m=>m.free);
   if(S.marketFilter==="Top rated") list = list.slice().sort((a,b)=>b.rating-a.rating);
   if(S.marketFilter==="Premium") list = list.filter(m=>m.price>=110);
   return `<div class="wrap wrap-wide">
+    <div class="tabs"><button class="tab active" data-act="marketTab" data-market-tab="notes">Note Market · Demo</button><button class="tab" data-act="marketTab" data-market-tab="courses">Course Market</button></div>
     <div class="page-head">
       <div><div class="eyebrow">Marketplace</div><h1 class="page-title">Note Market</h1>
         <p class="page-sub">Buy and sell exam-ready notes. Purchases drop straight into your library; creators earn credits.</p></div>
@@ -984,6 +1019,7 @@ VIEWS.feedback = function(){
 };
 
 VIEWS.materials = () => '<div id="mat-root"></div>';
+VIEWS.courses = () => '<div id="courses-root"></div>';
 VIEWS.feedback = () => '<div id="fb-root"></div>';
 VIEWS.profile = () => '<div id="profile-root"></div>';
 VIEWS.community = () => '<div id="comm-root"></div>';

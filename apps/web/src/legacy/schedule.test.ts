@@ -1,7 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { click, createSupabaseMock, flush } from "../test/supabase-mock";
 import { initSchedule, mountSchedule } from "./schedule";
 import { initProfile } from "./profile";
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("学习计划 jsdom 集成", () => {
   it("覆盖三视图、目标、课程/资料关联、周视图、任务弹窗与完成", async () => {
@@ -73,5 +75,37 @@ describe("学习计划 jsdom 集成", () => {
 
     expect(supabase.tables.study_tasks.some((task) => task.id === "t1")).toBe(true);
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("delete denied"));
+  });
+
+  it("合并独立课程复习日程并携带 Courses 深链参数", async () => {
+    const today = new Date();
+    const dueDate = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify([{
+      id: "review-1", courseId: "learning-course-1", unitId: "learning-unit-1", courseTitle: "词汇课",
+      unitName: "Unit 1", dueDate, skills: ["pronunciation", "spelling"], scope: "unlearned", status: "pending", completedAt: null,
+    }]), { status: 200, headers: { "Content-Type": "application/json" } }))));
+    const supabase = createSupabaseMock();
+    initProfile(supabase, { id: "u1", email: "alice@example.edu" }, vi.fn());
+    initSchedule(supabase, { id: "u1", email: "alice@example.edu" }, vi.fn());
+    const root = document.createElement("div"); document.body.appendChild(root); mountSchedule(root);
+    await flush(24);
+
+    expect(root.textContent).toContain("复习 词汇课 · Unit 1");
+    expect(root.textContent).toContain("不触发普通任务积分");
+    const link = root.querySelector('[data-go="courses"][data-schedule-id="review-1"]') as HTMLElement;
+    expect(link?.dataset).toMatchObject({ courseId: "learning-course-1", unitId: "learning-unit-1", scheduleId: "review-1" });
+  });
+
+  it("复习 API 失败时不伪装为空状态，并继续显示普通任务", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      code: "UPSTREAM_UNREACHABLE", message: "复习服务不可用",
+    }), { status: 503, headers: { "Content-Type": "application/json" } }))));
+    const supabase = createSupabaseMock();
+    initProfile(supabase, { id: "u1", email: "alice@example.edu" }, vi.fn());
+    initSchedule(supabase, { id: "u1", email: "alice@example.edu" }, vi.fn());
+    const root = document.createElement("div"); document.body.appendChild(root); mountSchedule(root);
+    await flush(24);
+    expect(root.textContent).toContain("复习工作记忆");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("复习服务不可用");
   });
 });

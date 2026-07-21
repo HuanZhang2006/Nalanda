@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type CSSProperties } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import { NalandaApp } from "./NalandaApp";
+import { PublicCourseShare } from "./features/courses/PublicCourseShare";
 
 type Mode = "signin" | "signup";
 
@@ -35,6 +36,7 @@ export function App() {
       .then(({ data, error }) => {
         if (!active) return;
         if (error) setErr("无法读取登录状态，请刷新重试");
+        if (data.session) restoreRequestedPath();
         setSession(data.session);
         setReady(true);
       })
@@ -45,6 +47,7 @@ export function App() {
       });
     const { data: sub } = supabase!.auth.onAuthStateChange((_e, s) => {
       if (!active) return;
+      if (s) restoreRequestedPath();
       setSession(s);
       // submit 成功依赖 auth 事件完成跳转；任何会话切换都要结束按钮 loading。
       setLoading(false);
@@ -77,6 +80,7 @@ export function App() {
   const emailOk = /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(em);
   const pwOk = password.length >= 6;
   const canSubmit = emailOk && pwOk && !loading;
+  const shareToken = window.location.pathname.match(/^\/shared\/courses\/([A-Za-z0-9_-]{40,60})\/?$/)?.[1];
 
   async function submit() {
     if (!canSubmit) return;
@@ -107,6 +111,8 @@ export function App() {
       setLoading(false);
     }
   }
+
+  if (shareToken && ready) return <PublicCourseShare token={shareToken} session={session} onSignOut={signOut} />;
 
   if (session) return (
     <>
@@ -189,6 +195,13 @@ export function App() {
       </div>
     </div>
   );
+}
+
+function restoreRequestedPath() {
+  const next = new URLSearchParams(window.location.search).get("next");
+  if (next?.startsWith("/shared/courses/") && !next.includes("..") && !next.includes("//")) {
+    window.history.replaceState(null, "", next);
+  }
 }
 
 const screen: CSSProperties = {

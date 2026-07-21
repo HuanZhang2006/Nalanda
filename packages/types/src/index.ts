@@ -50,3 +50,247 @@ export interface GenerateRequest {
   text?: string;
   lang: Language;
 }
+
+// ── Learning Courses v1 ────────────────────────────────────────────────────
+
+export type LearningCourseCategory =
+  | "english_vocabulary"
+  | "knowledge_points"
+  | "reading_comprehension"
+  | "question_bank";
+export type LearningSkill = "pronunciation" | "translation" | "spelling";
+export type LearningSessionMode = "initial" | "review";
+export type LearningStage = "recognition" | LearningSkill | "completed";
+export type LearningScope = "all" | "unlearned";
+
+export interface VocabularyWordInput {
+  id: string;
+  term: string;
+  translations: string[];
+  ipa?: string | null;
+}
+
+export interface VocabularyUnitInput {
+  id: string;
+  name: string;
+  isSystem: boolean;
+  words: VocabularyWordInput[];
+}
+
+export interface LearningCourseInput {
+  id: string;
+  title: string;
+  category: "english_vocabulary";
+  hasUnits: boolean;
+  locale: "en-US";
+  units: VocabularyUnitInput[];
+}
+
+export interface VocabularyWord extends VocabularyWordInput {
+  normalizedTerm: string;
+  position: number;
+  progress: {
+    recognitionSeen: boolean;
+    initialPronunciationPassed: boolean;
+    initialTranslationPassed: boolean;
+    initialSpellingPassed: boolean;
+    pronunciationReviewDates: string[];
+    translationReviewDates: string[];
+    spellingReviewDates: string[];
+    wrongCount: number;
+    reviewCount: number;
+    learnedAt: string | null;
+  };
+}
+
+export interface VocabularyUnit {
+  id: string;
+  name: string;
+  position: number;
+  isSystem: boolean;
+  words: VocabularyWord[];
+}
+
+export interface LearningCourseSummary {
+  id: string;
+  title: string;
+  category: "english_vocabulary";
+  hasUnits: boolean;
+  locale: "en-US";
+  unitCount: number;
+  wordCount: number;
+  learnedCount: number;
+  progressPercent: number;
+  activeSessionId: string | null;
+  canRepublish: boolean;
+  originPublicationId: string | null;
+  originShareId: string | null;
+  originAuthorName: string | null;
+  updatedAt: string;
+}
+
+export interface LearningCourseDetail extends LearningCourseSummary {
+  units: VocabularyUnit[];
+}
+
+export interface LearningSessionItem {
+  word: VocabularyWord;
+  position: number;
+  recognitionSeen: boolean;
+  pronunciationPassed: boolean;
+  translationPassed: boolean;
+  spellingPassed: boolean;
+  wrongCount: number;
+}
+
+export interface LearningSession {
+  id: string;
+  courseId: string;
+  unitId: string | null;
+  mode: LearningSessionMode;
+  scope: LearningScope;
+  selectedSkills: LearningSkill[];
+  stage: LearningStage;
+  active: boolean;
+  state: Record<string, unknown>;
+  items: LearningSessionItem[];
+}
+
+export interface StartLearningSessionRequest {
+  unitId: string;
+  mode: LearningSessionMode;
+  skills?: LearningSkill[];
+  scope?: LearningScope;
+  scheduleId?: string;
+}
+
+export interface LearningAttemptRequest {
+  wordId: string;
+  skill: LearningSkill;
+  answer: { wordId?: string; translations?: string[]; text?: string };
+}
+
+export interface LearningAttemptResult {
+  correct: boolean;
+  stage: LearningStage;
+  completed: boolean;
+  expected: string | string[];
+}
+
+export interface CreateReviewSchedulesRequest {
+  sourceSessionId: string;
+  offsets: Array<3 | 7 | 15 | 30>;
+}
+
+export interface ReviewSchedule {
+  id: string;
+  courseId: string;
+  unitId: string;
+  sourceSessionId: string;
+  courseTitle?: string;
+  unitName?: string;
+  dueDate: string;
+  skills: LearningSkill[];
+  scope: LearningScope;
+  status: "pending" | "completed" | "cancelled";
+  completedSessionId: string | null;
+  completedAt: string | null;
+}
+
+export interface CourseBadge {
+  code: string;
+  family: "vocab_words" | "vocab_courses" | "vocab_review_days";
+  tier: 1 | 2 | 3;
+  name: string;
+  description: string;
+  threshold: number;
+  icon: string;
+  awardedAt: string;
+}
+
+export interface LearningProfileSummary {
+  courses: number;
+  learnedWords: number;
+  reviewDays: number;
+  badges: CourseBadge[];
+}
+
+export interface CoursePublication {
+  id: string;
+  title: string;
+  description: string;
+  authorName: string;
+  category: "english_vocabulary";
+  hasUnits: boolean;
+  locale: "en-US";
+  version: number;
+  unitCount: number;
+  wordCount: number;
+  cloneCount: number;
+  createdAt: string;
+}
+
+export interface PublicCoursePreview extends CoursePublication {
+  units: Array<{
+    name: string;
+    position: number;
+    isSystem: boolean;
+    words: Array<Pick<VocabularyWordInput, "term" | "translations" | "ipa">>;
+  }>;
+  shareId?: string;
+  publicationId?: string;
+}
+
+export interface RenameLearningCourseRequest {
+  title: string;
+}
+
+export interface CreateCourseShareRequest {
+  courseId: string;
+}
+
+export interface PublishLearningCourseRequest {
+  description: string;
+  rightsDeclared: boolean;
+}
+
+export type CourseReportCategory =
+  | "abuse"
+  | "copyright"
+  | "privacy"
+  | "spam"
+  | "academic_integrity"
+  | "other";
+
+export interface CreateCourseReportRequest {
+  publicationId?: string;
+  shareId?: string;
+  category: CourseReportCategory;
+  details: string;
+}
+
+export interface ModerateCoursePublicationRequest {
+  action: "hide" | "restore" | "withdraw";
+  reason: string;
+}
+
+export interface PronunciationPhoneme {
+  phoneme: string;
+  accuracyScore: number;
+  needsPractice: boolean;
+}
+
+export interface PronunciationAssessment {
+  accuracyScore: number;
+  fluencyScore: number | null;
+  completenessScore: number | null;
+  pronunciationScore: number;
+  errorType: string | null;
+  phonemes: PronunciationPhoneme[];
+}
+
+export interface ApiErrorBody {
+  code: string;
+  message: string;
+  fieldErrors?: Record<string, string>;
+}

@@ -9,8 +9,8 @@
 权威迁移目录是 `supabase/migrations/`，本地 Supabase 基线是 `supabase/config.toml`。`.github/workflows/deploy.yml` 现在按以下顺序执行：
 
 1. 文档检查、TypeScript typecheck、默认测试和全部 workspace 构建；
-2. 启动完整本地 Supabase，先停在 0007 建立历史 points 夹具，再应用 0008–0010 验证回填、opening 归零、冲正与发布断言；随后从空库应用全部迁移；
-3. 运行 `db lint`，并用本地 Auth/PostgREST/Storage 实际执行双用户 RLS/Storage/points E2E；
+2. 启动完整本地 Supabase，自动暂存全部 0008+ 文件，先停在 0007 建立历史 points 夹具，再应用至最新迁移验证回填、opening 归零、Courses 增量与发布断言；随后从空库应用全部迁移；
+3. 运行 `db lint`，执行双用户 RLS/Storage/points/Courses E2E，再以 Azure fake 启动 Web/API 运行 Playwright Courses 主流程；
 4. 若 push 新增了迁移，质量与本地数据库门禁继续执行，但生产数据库和应用发布保持跳过；数据库 owner 必须先在该 `main` commit 上人工发起 `workflow_dispatch` 并选中 `plan_database_migrations`，核对 history/dry-run 后再另起一次执行选中 `apply_database_migrations`；
 5. 核对生产 Project Ref，显示远端 migration history 和 `db push --dry-run`；
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
@@ -121,6 +121,9 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 - [ ] 加密 artifact 上传成功；解密 key 在 Actions 之外可取回。
 - [ ] Storage 文件变更另有对象备份；数据库 dump 不含文件字节。
 - [ ] 准备应用 feature flag/降级、验证 SQL 和 forward-fix 草案。
+- [ ] Courses 发布：确认 0011–0013 的 15 张新表、`profiles.timezone`、`vocabulary-audio` bucket、全部 service-only RPC 和九个 badge 定义；应用先以所有 Courses flags 关闭部署。
+- [ ] Courses 大词表入口：把仓库 nginx `/api/ client_max_body_size 10m` 同步到实际 TLS server block，`nginx -t` 后 reload；确认 Nest JSON 10 MB 与评分 multipart 2 MB 的分层边界。
+- [ ] Azure key/region 只在 API 环境，fake 未进入生产；月预算、用户限额、熔断和真实合成账号 smoke 负责人已确认。
 
 ## 7. 本地与 staging 验证
 
@@ -128,7 +131,7 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 
 ```bash
 supabase start
-# 先按测试指南执行 0007→0010 seed / migration up / assert
+# 先按测试指南执行 0007→latest seed / migration up / assert
 supabase db reset --local --no-seed
 supabase db lint --local --schema public --level error --fail-on error
 ```
@@ -170,6 +173,8 @@ supabase stop --no-backup
 - Supabase Auth/PostgREST/Storage 错误率；
 - 应用登录、`/api/me` 和本次变更的最小业务路径。
 
+Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分享/市场只能经 API、publication 快照更新被拒、四阶段会话恢复、两次不同本地日期熟练、Schedule 不生成 `study_tasks`、同词集合只出现一条 +20 分录、课程删除保留分录/徽章历史，以及 `learning_speech_usage` 不含音频或参考文本。
+
 ### 8.1 2026-07-21 安全与积分发布记录
 
 - 发布提交：`271137279aacb42454018d9e1b401ed41f2380b7`；只读 plan：GitHub Actions run `29832166947`；受保护 apply：run `29832551375`。
@@ -180,6 +185,19 @@ supabase stop --no-backup
 - 应用 release `271137279aacb42454018d9e1b401ed41f2380b7-29832551375-1` 已激活。流水线和独立公网复核均确认 Web root 正常、`/api/health` 的 `status=ok`、`service=nalanda-api`、`deps.supabase=ok`，`/api/me` 未认证返回 401，Supabase JWKS 可用。
 
 该记录证明本次安全迁移和旧 11 points 冲正已上线；它不等于 Storage bytes 已备份、托管 staging/恢复演练已完成，或 points 已具备每日上限与内容反滥用。
+
+### 8.2 Courses 0011–0013 待执行发布单
+
+本节是下一次发布的**操作单，不是完成记录**：
+
+1. 在 `main` 对目标 Git SHA 运行只读 `plan_database_migrations`，确认 production history 当前止于 0010，dry-run 只列 0011–0013。
+2. 单独审批 `apply_database_migrations`，先生成并验证加密恢复点，再 apply 0011–0013；remote lint、history 和二次 dry-run 必须成功。
+3. 部署应用 release，但服务器 `.env` 保持 Courses、分享、市场、语音 flags 全关；同步 nginx `/api/` 的 10 MB body 上限并通过 `nginx -t`/reload，确认旧 Materials/Schedule/Profile/市场路径无回归。
+4. 只向私有 beta 开放 Courses 总开关；观察 API/DB 错误、session/progress 增长和 points 异常。
+5. 写入 Azure key/region、限额/预算，保持 fake=false，以受控合成账号验证 TTS 和一个≤8 秒、无个人数据的固定 WAV 评分；失败时熔断语音，文本学习继续。
+6. 分享和 Course Market 分别审批、分别打开；验证撤销 token、免费克隆、不可变版本、举报告警和管理员审计后再扩大范围。
+
+任一步失败：关闭最窄的对应 flag；应用问题恢复上一 release；数据库不执行 down/drop，只新增 forward-fix。只有完成后才能把 Courses 从“待生产发布”改为“已上线”，并新增包含 run/artifact/checksum/smoke 证据的发布记录。
 
 ## 9. 失败处置
 
@@ -205,6 +223,8 @@ supabase stop --no-backup
 ### 9.4 数据库成功、应用失败
 
 服务器会使用上一运行容器的镜像 tag 和上一 Web symlink 自动回退，并重新验证旧 API。数据库保持新 schema，所以新迁移必须向后兼容。workflow 失败后仍需人工确认外部站点、旧业务路径和数据库指标。
+
+若失败只影响 Courses/Azure/分享/市场，优先关闭最窄子 flag；不得为了恢复入口而把客户端表写权限或内部 RPC EXECUTE 重新开放。
 
 ### 9.5 数据损坏
 

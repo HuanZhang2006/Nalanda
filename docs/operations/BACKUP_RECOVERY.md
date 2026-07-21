@@ -30,6 +30,7 @@
 | 资产 | 发布 archive | 还需要什么 |
 |---|---|---|
 | `public` schema、函数、RLS、业务行 | 是 | 数据一致性、grants、trigger 验证 |
+| Courses 内容/会话/attempt/progress/日程/分享/出版/举报/徽章/语音用量 | 是 | append-only attempt/points、熟练日期、publication 不可变性与 service-only RPC 专项对账 |
 | Auth 用户 UUID/metadata | data dump 覆盖 | Provider、SMTP、URL、签名配置；密码/会话恢复能力需演练 |
 | Storage bucket/object metadata | data dump 覆盖 | **对象文件字节的异地复制和 manifest** |
 | migration history | 独立 schema/data dump | 与仓库 migration checksum 对账 |
@@ -49,6 +50,7 @@
 | 核心 | Auth、课程/资料、未来钱包/支付 | ≤ 15 分钟 | ≤ 4 小时 | PITR/日志恢复 + 事件账本 + 异地副本 |
 | 重要 | 社区、计划、通知、反馈 | ≤ 24 小时 | ≤ 8 小时 | 每日备份 + 每次迁移恢复点 |
 | 对象 | 私有资料、社区媒体 | ≤ 24 小时 | ≤ 24 小时 | S3/对象增量复制 + checksum manifest |
+| 学习 | 私有词表、进度、复习日程、徽章 | ≤ 24 小时 | ≤ 8 小时 | 每日 DB 备份 + 每次迁移恢复点；attempt/points 对账 |
 | 部署 | Web/API/config | 每次发布 | ≤ 2 小时 | Git SHA artifact + config-as-code + secret manager |
 
 points/credits/VIP/支付上线前必须有不可变事件账本、对账和 webhook 重放；否则恢复点之后的经济事件无法可靠重放。
@@ -102,6 +104,8 @@ bucket,path,size,content_type,etag_or_sha256,version,backed_up_at
 - 监控对象数、总字节和最近成功时间；
 - 恢复时先对齐数据库引用和 object path，不静默删除孤儿；
 - 隐私删除到期后同步清理备份，保留合规审计记录但不保留内容。
+
+`vocabulary-audio` 只含由规范化英文生成的公共 Azure TTS 缓存，可由数据库词条重新生成；v1 将它归类为**可丢失缓存**，不要求满足对象 RPO。若为了成本选择备份，也必须进入 manifest、保持 private 且不能混入用户录音。恢复时宁可清空/懒生成，也不能把 metadata 指向缺失字节后冒充完整。用户朗读录音从不落库/Storage，因此不存在录音备份或恢复步骤。
 
 ## 6. Supabase 平台恢复点
 
@@ -163,6 +167,9 @@ bash scripts/restore-db-release.sh restore-isolated
 - posts 冗余计数与关系聚合一致；
 - points/credits/VIP/streak 没有因恢复 trigger 改变；
 - function owner/search_path/EXECUTE grants 正确。
+- learning course/unit/word owner 链无 orphan，active session 唯一，attempt 仍为追加事实，progress 三组日期与 `learned_at` 一致；
+- review schedule 未被复制成 `study_tasks`；publication snapshot/版本/指纹未改变，撤销 share 不会重新 active；
+- 课程完成 points 业务键按用户+词集合唯一、badge award PK 唯一，Profile 学习聚合可从事实重算；speech usage 不含音频/参考文本。
 
 Auth/Storage：
 
@@ -176,6 +183,7 @@ Auth/Storage：
 
 - `/api/health`、登录、`/api/me`；
 - owner-only 课程/资料/任务/反馈；
+- Courses 列表/恢复会话/复习日程/Profile 聚合；分享撤销、市场免费克隆和客户端伪造 progress/points 失败；
 - 社区读写、计数、通知和幂等积分；
 - smoke 数据可完整清理；
 - 记录恢复耗时和实际 RPO/RTO。
@@ -204,3 +212,4 @@ Auth/Storage：
 - 不可变镜像/artifact 的异地 registry 与保留策略；
 - 恢复演练面板，记录最近成功时间和实际 RPO/RTO；
 - points/credits/支付事件账本和可重放 webhook。
+- Courses 数据/成长事实恢复对账脚本，以及 `vocabulary-audio` 缓存清空与懒重建演练。

@@ -1,9 +1,19 @@
 import { describe, expect, it, vi } from "vitest";
+import { act } from "react";
 import { click, createSupabaseMock, flush } from "../test/supabase-mock";
 
 describe("legacy 应用壳", () => {
-  it("挂载壳、打开 8 个模块、导航/退出，并在卸载时清理", async () => {
+  it("挂载壳、打开 9 个模块、导航/退出，并在卸载时清理", async () => {
     vi.resetModules();
+    const learningDetail = { id: "11111111-1111-4111-8111-111111111111", title: "Deep linked course",
+      category: "english_vocabulary", hasUnits: false, locale: "en-US", unitCount: 1, wordCount: 4,
+      learnedCount: 0, progressPercent: 0, activeSessionId: null, canRepublish: true, originAuthorName: null,
+      updatedAt: new Date().toISOString(), units: [{ id: "22222222-2222-4222-8222-222222222222", name: "默认单元",
+        position: 0, isSystem: true, words: [] }] };
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(new Response(
+      String(input).includes(`/learning-courses/${learningDetail.id}`) ? JSON.stringify(learningDetail) : "[]",
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    ))));
     const addListener = vi.spyOn(window, "addEventListener");
     const removeListener = vi.spyOn(window, "removeEventListener");
     const { mountNalanda } = await import("./app");
@@ -21,13 +31,14 @@ describe("legacy 应用壳", () => {
     await flush(16);
 
     expect(root.querySelector(".brand-name")?.textContent).toBe("Nalanda");
-    expect(root.querySelectorAll("#nav .nav-item")).toHaveLength(8);
+    expect(root.querySelectorAll("#nav .nav-item")).toHaveLength(9);
     expect(root.textContent).toContain("Good morning");
 
     const routes = [
       ["home", "Good morning"],
       ["notes", "My Notes"],
       ["materials", "Materials"],
+      ["courses", "学习课程"],
       ["schedule", "学习计划"],
       ["market", "Note Market"],
       ["community", "学习社区"],
@@ -36,13 +47,24 @@ describe("legacy 应用壳", () => {
     ] as const;
 
     for (const [route, expectedText] of routes) {
-      click(root.querySelector(`#nav [data-go="${route}"]`));
-      await flush(20);
+      await act(async () => { click(root.querySelector(`#nav [data-go="${route}"]`)); await flush(20); });
       expect(root.querySelector(`#nav [data-go="${route}"]`)?.classList.contains("active")).toBe(true);
       expect(root.textContent).toContain(expectedText);
     }
 
-    click(root.querySelector('[data-go="create"]'));
+    // Schedule's course/unit/schedule deep-link is consumed once; normal later
+    // navigation must not reopen a stale review picker.
+    const deepLink = document.createElement("button");
+    deepLink.dataset.go = "courses"; deepLink.dataset.courseId = learningDetail.id;
+    deepLink.dataset.unitId = learningDetail.units[0].id; deepLink.dataset.scheduleId = "33333333-3333-4333-8333-333333333333";
+    root.appendChild(deepLink);
+    await act(async () => { click(deepLink); await flush(20); });
+    expect(root.textContent).toContain("开始复习");
+    await act(async () => { click(root.querySelector('#nav [data-go="home"]')); await flush(8); click(root.querySelector('#nav [data-go="courses"]')); await flush(20); });
+    expect(root.textContent).toContain("还没有学习课程");
+    expect(root.querySelector(".modal")?.textContent || "").not.toContain("开始复习");
+
+    await act(async () => { click(root.querySelector('[data-go="create"]')); await flush(4); });
     expect(root.textContent).toContain("Create a note");
     vi.useFakeTimers();
     click(root.querySelector('[data-act="runGen"]'));
@@ -73,5 +95,6 @@ describe("legacy 应用壳", () => {
     expect(document.body.textContent).not.toContain("Note created — added to My Notes");
     secondCleanup();
     expect(removeListener.mock.calls.filter(([type]) => type === "resize")).toHaveLength(2);
+    vi.unstubAllGlobals();
   });
 });

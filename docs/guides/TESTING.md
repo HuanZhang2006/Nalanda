@@ -13,13 +13,13 @@
 | 构建 | Turbo 构建 types/API/Web | 否（Web 变量可为空但功能不完整） | `pnpm build` |
 | Web jsdom 集成 | Vitest + jsdom + 内存 Supabase mock，覆盖 legacy 壳与主要模块交互 | 否 | `pnpm test` |
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
-| 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用 0008–0010 并验证回填、冲正、归零与发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
+| 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
 | 发布工具单元 | 6 个 Node 内置 test 验证 production migration history 状态机、Storage policy/bucket dump 解析、migration-history schema 不存在/其他 dump 错误的恢复点分支，以及 schema diff 的 CLI 调用 | 否 | `pnpm test:release` |
-| NestJS readiness 单元 | Vitest 直接验证 JWKS/PostgREST 双探针成功与 sanitized 503；尚无启动 Nest 的 HTTP E2E | 否（fetch mock） | `pnpm --filter @nalanda/api test` |
+| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、CMUdict、Azure adapter/格式/超时/隐私 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
-| 真浏览器 E2E | 尚无 Playwright/Cypress | — | 无 |
+| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure fake 运行 Courses 主流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
-重要术语：当前 `apps/web/src/**/*.test.ts` 是 **jsdom 模块集成测试**，不会启动 Vite、NestJS 或浏览器，也不会真正执行数据库 RLS；`apps/api/src/**/*.test.ts` 使用 Node 环境和 mock。`tests/rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**，`tests/points-upgrade.e2e.mjs` 是**历史 schema 升级夹具**；两者都不会打开浏览器或经过 Nalanda API。文档不得把任一层单独称为“完整产品 E2E”。
+重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest 和本地 Supabase，但 Azure 是 fake。任何一层都不能单独证明生产数据库、真实 Azure 或完整产品已经可用。
 
 ## 2. 首次准备
 
@@ -61,7 +61,7 @@ pnpm --filter @nalanda/web test:watch
 pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 ```
 
-当前根 `pnpm lint` 没有实际 ESLint 任务，退出成功不能代替 typecheck/test。当前也没有 coverage threshold/报告脚本。
+根 `pnpm lint` 当前执行严格 TypeScript 静态检查（含未使用声明/参数与 switch fallthrough），不是 ESLint，也不能代替正常 typecheck/test。当前没有 coverage threshold/报告脚本。
 
 ## 4. jsdom 集成测试
 
@@ -77,6 +77,8 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功 |
 | `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
+| `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS 和上限 |
+| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、多单元纠错、排序、保存失败、进度切换、会话恢复和 API error |
 
 ### 4.2 mock 的边界
 
@@ -112,6 +114,7 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 - 上传真实 `materials` Storage 对象；
 - 触发 points/level、帖子计数、通知、标签同步和 streak；
 - finally/afterAll 尝试删除 Storage 对象与 Auth 用户。
+- 创建学习课程/单元/20 个词、会话/attempt/progress、复习日程、分享、不可变 publication、举报、克隆、徽章和课程 points 分录。
 
 只允许使用**可随时重置的一次性或专用测试 Supabase 项目**。即使设置了确认变量，也不得输入生产 Project Ref。测试会产生唯一 university/major/subject 全局 `tags`；当前 schema 没有客户端删除 policy，Auth 级联不会清理这些标签，因此项目可能残留少量测试 tag。最安全的清理方式是运行后重置/销毁该测试项目。
 
@@ -176,6 +179,10 @@ git check-ignore .env.rls.local
 - 发帖积分达到等级阈值后的 points/level/name；
 - study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
 - 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
+- Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage，也不能执行特权 RPC；Profile timezone 只接受 IANA 名称；
+- 候补池、同日本地日期去重、两次不同本地日期三能力熟练、错误/复习次数、schedule 完成且不创建普通 task；
+- 九级徽章的达标持久发放、20 词课程 +20、规范化词集合指纹防删除/克隆重复奖励；
+- 分享 token hash、撤销后事务克隆失败、匿名 PostgREST 拒绝、市场快照不可变、独立零进度克隆/禁止再传播、举报事务。
 
 当前未覆盖或尚未实现的重要风险：
 
@@ -185,18 +192,19 @@ git check-ignore .env.rls.local
 - `community-media` public bucket 的写/删/对象清理；
 - 账号删除后的全部 Storage 孤儿与隐私删除流程；
 - 每日 points 上限、垃圾/重复内容和协同作弊；除并发评论冲正外的高并发、网络中断和长时间 session。
+- 真实 Azure 账号、音频供应商网络、浏览器麦克风权限与实际发音质量；自动测试只使用 adapter fake/固定 WAV。
 
 这些是后续安全迁移、产品治理与负向 E2E 的优先项，不属于当前套件已证明安全的范围。
 
-### 5.5 0007 → 0010 升级夹具
+### 5.5 0007 → 最新迁移升级夹具
 
-`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`，因此不能对托管项目运行。`supabase start` 会自动应用目录中的所有迁移，因此 CI 在启动旧 schema 时会**临时**把 0008–0010 移到 runner 临时目录；`trap` 保证任何失败后都放回。不要在有未提交修改的个人工作区手工照抄该移动步骤。CI 的完整顺序是：
+`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`。`supabase start` 会提前应用全部迁移，所以 CI 按排序自动发现文件名 `>=20260710000008` 的**所有迁移**并临时移出，先建立真实 0001–0007 schema；这样未来 0014+ 不会在旧 fixture 阶段泄漏。`trap` 保证失败也恢复。不要在有未提交修改的个人工作区照抄移动步骤。核心逻辑是：
 
 ```bash
-upgrade_migrations=(
-  supabase/migrations/20260710000008_security_points_ledger.sql
-  supabase/migrations/20260721000009_reset_legacy_points.sql
-  supabase/migrations/20260721000010_verify_security_points_release.sql
+mapfile -t upgrade_migrations < <(
+  find supabase/migrations -maxdepth 1 -type f -name '*.sql' -print \
+    | LC_ALL=C sort \
+    | awk -F/ '$NF >= "20260710000008"'
 )
 staged_upgrade_dir=/tmp/nalanda-points-upgrade
 mkdir -p "$staged_upgrade_dir"
@@ -243,7 +251,39 @@ ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
 5. 如果必须清理，使用 service-role 的受控管理员工具，按 Storage 对象 → Auth 用户 → 残留 tags 顺序核对；保留操作记录。
 6. 任何时候发现命令指向生产，立即终止测试、轮换已暴露的 service-role（如有）、审计已产生数据并按事故流程处理。
 
-## 6. API 与 AI 当前可执行测试/smoke
+## 6. Playwright Courses 浏览器流程
+
+测试文件：`apps/web/e2e/courses.spec.ts`；配置会自行构建/启动 API 和 Vite，端口为 3000/5173。它会注册两个真实本地用户并写数据库，只允许对一次性本地 Supabase 运行。
+
+```bash
+pnpm --filter @nalanda/web exec playwright install chromium
+supabase start
+supabase db reset --local --no-seed
+supabase status -o env > /tmp/nalanda-supabase.env
+set -a
+. /tmp/nalanda-supabase.env
+set +a
+
+SUPABASE_URL="$API_URL" \
+SUPABASE_ANON_KEY="$ANON_KEY" \
+SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+SUPABASE_JWT_SECRET="$JWT_SECRET" \
+VITE_SUPABASE_URL="$API_URL" \
+VITE_SUPABASE_ANON_KEY="$ANON_KEY" \
+FEATURE_LEARNING_COURSES_ENABLED=true \
+FEATURE_COURSE_SHARING_ENABLED=true \
+FEATURE_COURSE_MARKET_ENABLED=true \
+FEATURE_PRONUNCIATION_ENABLED=true \
+AZURE_SPEECH_FAKE=true \
+PUBLIC_ORIGIN=http://127.0.0.1:5173 \
+pnpm --filter @nalanda/web test:playwright
+```
+
+确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元粘贴→重复错误修正→键盘排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%。当前不覆盖真实麦克风/Azure、两个真实日期的复习、分享撤销 UI 或全部治理操作；这些由 API/RLS/供应商 smoke 分层验证。
+
+失败时保留 Playwright trace/screenshot/video artifact，先区分 UI selector、API envelope、migration/RLS 和 webServer 启动问题。CI 会自动安装带系统依赖的 Chromium；本地只需当前平台浏览器包。
+
+## 7. API 与 AI 当前可执行测试/smoke
 
 API readiness 单元测试已包含在根 `pnpm test`，也可单独运行：
 
@@ -277,7 +317,9 @@ curl -fsS http://localhost:8000/generate/quiz \
 
 当前固定桩响应只能证明 schema/route 可调用，不证明解析、Claude、质量或成本。
 
-## 7. 文档测试
+API 测试覆盖受保护路由缺 bearer 拒绝、HS256 正确/错误 issuer 与 audience、readiness、Courses public 脱敏/owner、事务传播 RPC、输入指纹、CMUdict、WAV 格式/2 MB/8 秒、Azure phoneme 映射和 provider timeout 不记 attempt。真实 JWKS 网络拉取与轮换仍由一次性 Supabase/线上登录 smoke 承担。该层不证明 Nest HTTP multipart、真实 PostgREST 或 Azure endpoint。
+
+## 8. 文档测试
 
 ```bash
 node scripts/check-docs.mjs
@@ -290,7 +332,7 @@ node scripts/check-docs.mjs
 
 它不验证事实是否与代码一致、不验证 anchor、不执行代码块，也不检查外部 URL。修改 API/schema/脚本后仍需人工核对对应文档。
 
-## 8. CI 当前门禁
+## 9. CI 当前门禁
 
 `.github/workflows/deploy.yml` 当前在构建/部署前执行：
 
@@ -300,27 +342,29 @@ pnpm typecheck
 pnpm test
 pnpm build
 supabase start
-# 先运行上文 0007→0010 seed / migration up / assert
+# 先运行上文 0007→latest seed / migration up / assert
 supabase db reset --local --no-seed  # 再验证完整空库重建
 supabase db lint --local --schema public --level error --fail-on error
 # 从 supabase status -o env 注入本地 URL/keys 后：
 pnpm test:rls
+pnpm --filter @nalanda/web exec playwright install --with-deps chromium
+pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + Azure fake env
 ```
 
-`pull_request` 只运行质量和本地 Supabase job，不读取生产 secrets；本地 service-role 只管理 CI 创建的一次性容器。push `main` 新增 migration 时在验证后停止。owner 必须先手动运行 `plan_database_migrations`，复核远端 history/dry-run，再单独运行 `apply_database_migrations` 生成加密恢复点；若 history 为空，apply 还要求 0001–0007 public schema 零差异并核对 Storage policy/bucket，才 repair baseline、CLI push 和验证，之后部署应用。默认 `pnpm test` 里的外部 RLS suite 仍 skip，但 deploy workflow 会显式运行升级夹具和本地 RLS suite。0008–0010 首次生产审批必须附历史 Profile 聚合审计与归零决定；CI 无法从缺失的历史事件中自动判断旧值真伪。
+`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure 是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。Courses 生产发布后还必须由受控真实 Azure 账号 smoke；CI fake 不能代替。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
 目标 CI 分层：
 
-- PR 已跑：docs check、typecheck、Web jsdom、API readiness unit、build、升级/空库 migrations/lint + 双用户 RLS/Storage E2E；其余 API/FastAPI unit/contract 仍待补；
+- PR 已跑：docs check、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、升级/空库 migrations/database lint、双用户 RLS/Storage/Courses E2E、Playwright Courses；FastAPI contract 与真实 Azure 待补；
 - 受保护 staging 目标：近生产数据规模与配置漂移 E2E；
-- 发布前：真浏览器主路径、恢复点、迁移/回滚演练；
+- 发布前：恢复点、迁移/回滚演练、真实 Azure 合成账号 smoke；
 - 定时：RLS 安全回归、依赖/secret scan、备份恢复、AI 评测/成本（接入后）。
 
 高权限 E2E runner 必须使用独立 test project、受保护 environment approval 和短期/可轮换 secret，不能把 service-role 暴露给不受信任 fork PR。
 
-## 9. 发布验证矩阵
+## 10. 发布验证矩阵
 
 | 变更 | 最低必跑 |
 |---|---|
@@ -328,12 +372,13 @@ pnpm test:rls
 | Web/legacy UI | typecheck + 相关 jsdom + 全部 `pnpm test` + build |
 | Supabase query shape | jsdom + disposable project RLS E2E |
 | Migration/RLS/trigger/function | 空项目全迁移 + 相关旧版本→新版本升级夹具 + lint + RLS E2E + 发布前备份 |
-| NestJS auth/API | typecheck/build + 当前 smoke；补相应自动 HTTP test 后纳入 CI |
+| NestJS auth/Courses API | typecheck/build + API unit + RLS E2E + Playwright；multipart/真实 Azure 另做受控 smoke |
+| Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
 | AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
 | nginx/compose/CI | build image + staging deploy + 外部 health/login |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 
-## 10. 新增测试约定
+## 11. 新增测试约定
 
 1. 测试名描述用户行为/安全属性，不只写函数名。
 2. 每个 bug 修复先写能复现的失败测试；安全问题同时加负向用例。
