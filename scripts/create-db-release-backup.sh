@@ -72,16 +72,38 @@ supabase db dump \
   --exclude storage.buckets_vectors \
   --exclude storage.vector_indexes \
   --file "$workdir/data.sql"
-supabase db dump \
+
+# Projects created before CLI migration history was adopted may not have this
+# schema at all. Preserve that absence explicitly; every other dump error is
+# still fatal and blocks the release.
+migration_history_state="present"
+history_schema_error="$workdir/migration-history-schema.stderr"
+if supabase db dump \
   --linked \
   --schema supabase_migrations \
-  --file "$workdir/migration-history-schema.sql"
-supabase db dump \
-  --linked \
-  --schema supabase_migrations \
-  --data-only \
-  --use-copy \
-  --file "$workdir/migration-history-data.sql"
+  --file "$workdir/migration-history-schema.sql" \
+  2>"$history_schema_error"; then
+  cat "$history_schema_error" >&2
+  supabase db dump \
+    --linked \
+    --schema supabase_migrations \
+    --data-only \
+    --use-copy \
+    --file "$workdir/migration-history-data.sql"
+elif grep -Fq "no matching schemas were found" "$history_schema_error"; then
+  migration_history_state="absent"
+  echo "Remote supabase_migrations schema is absent; recording that state in the recovery point."
+  printf '%s\n' \
+    '-- Nalanda recovery point: supabase_migrations schema was absent at capture time.' \
+    > "$workdir/migration-history-schema.sql"
+  printf '%s\n' \
+    '-- Nalanda recovery point: no migration-history data existed at capture time.' \
+    > "$workdir/migration-history-data.sql"
+else
+  cat "$history_schema_error" >&2
+  exit 1
+fi
+rm -f "$history_schema_error"
 
 for dump_file in \
   roles.sql \
@@ -106,6 +128,7 @@ supabase_version="$(supabase --version)"
   printf 'source_project_ref=%s\n' "$SUPABASE_PROJECT_REF"
   printf 'supabase_cli=%s\n' "$supabase_version"
   printf 'scope=roles-schema-auth-storage-and-application-data-migration-history\n'
+  printf 'migration_history_state=%s\n' "$migration_history_state"
   printf 'storage_object_bytes_included=no\n'
 } > "$workdir/MANIFEST"
 

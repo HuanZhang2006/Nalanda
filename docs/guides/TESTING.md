@@ -14,7 +14,7 @@
 | Web jsdom 集成 | Vitest + jsdom + 内存 Supabase mock，覆盖 legacy 壳与主要模块交互 | 否 | `pnpm test` |
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用 0008–0010 并验证回填、冲正、归零与发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
-| 发布工具单元 | Node 内置 test 验证 production migration history 状态机、Storage policy/bucket dump 解析 | 否 | `pnpm test:release` |
+| 发布工具单元 | 5 个 Node 内置 test 验证 production migration history 状态机、Storage policy/bucket dump 解析，以及 migration-history schema 不存在/其他 dump 错误的恢复点分支 | 否 | `pnpm test:release` |
 | NestJS readiness 单元 | Vitest 直接验证 JWKS/PostgREST 双探针成功与 sanitized 503；尚无启动 Nest 的 HTTP E2E | 否（fetch mock） | `pnpm --filter @nalanda/api test` |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
 | 真浏览器 E2E | 尚无 Playwright/Cypress | — | 无 |
