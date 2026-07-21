@@ -78,9 +78,9 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByRole("heading", { name: "E2E English Vocabulary" })).toBeVisible();
   await expect(page.getByText("0%", { exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "开始学习" }).click();
+  await page.getByRole("article").getByRole("button", { name: "开始学习" }).click();
   await page.locator(".modal select").selectOption({ index: 0 });
-  await page.getByRole("button", { name: "开始学习" }).click();
+  await page.locator(".modal").getByRole("button", { name: "开始学习" }).click();
   await expect(page.locator(".course-term")).toHaveText("apple");
   await assessWithFixedWav(page);
   await page.getByRole("button", { name: "认识了，继续" }).click();
