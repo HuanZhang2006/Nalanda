@@ -110,6 +110,9 @@ jobs:
       - name: Documentation checks
         run: pnpm docs:check
 
+      - name: Production release tooling tests
+        run: pnpm test:release
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -142,17 +145,18 @@ jobs:
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
 
-      - name: Exercise the 0007 to 0009 data upgrade, then rebuild from scratch
+      - name: Exercise the 0007 to 0010 data upgrade, then rebuild from scratch
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          # `supabase start` eagerly applies every migration. Stage 0008/0009
+          # `supabase start` eagerly applies every migration. Stage 0008-0010
           # outside the migrations directory first so the fixture genuinely
-          # creates 0007-era rows, then restore and apply both forward changes.
+          # creates 0007-era rows, then restore and apply all forward changes.
           upgrade_migrations=(
             "supabase/migrations/20260710000008_security_points_ledger.sql"
             "supabase/migrations/20260721000009_reset_legacy_points.sql"
+            "supabase/migrations/20260721000010_verify_security_points_release.sql"
           )
           staged_upgrade_dir="$RUNNER_TEMP/nalanda-points-upgrade"
           mkdir -p "$staged_upgrade_dir"
@@ -291,6 +295,13 @@ jobs:
           path: ${{ runner.temp }}/nalanda-db-${{ github.sha }}.tar.gz.enc
           if-no-files-found: error
           retention-days: 14
+
+      - name: Verify and establish the reviewed production migration baseline
+        if: inputs.apply_database_migrations == true
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: bash scripts/prepare-production-migration-baseline.sh
 
       - name: Apply forward migrations
         if: inputs.apply_database_migrations == true

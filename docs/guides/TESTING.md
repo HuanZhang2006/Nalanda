@@ -13,7 +13,8 @@
 | 构建 | Turbo 构建 types/API/Web | 否（Web 变量可为空但功能不完整） | `pnpm build` |
 | Web jsdom 集成 | Vitest + jsdom + 内存 Supabase mock，覆盖 legacy 壳与主要模块交互 | 否 | `pnpm test` |
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
-| 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用 0008 并验证回填/冲正；仅允许 localhost | 本地 Docker | 见 5.5 |
+| 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用 0008–0010 并验证回填、冲正、归零与发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
+| 发布工具单元 | Node 内置 test 验证 production migration history 状态机、Storage policy/bucket dump 解析 | 否 | `pnpm test:release` |
 | NestJS readiness 单元 | Vitest 直接验证 JWKS/PostgREST 双探针成功与 sanitized 503；尚无启动 Nest 的 HTTP E2E | 否（fetch mock） | `pnpm --filter @nalanda/api test` |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
 | 真浏览器 E2E | 尚无 Playwright/Cypress | — | 无 |
@@ -37,6 +38,7 @@ pnpm install --frozen-lockfile
 ```bash
 node scripts/check-docs.mjs
 pnpm typecheck
+pnpm test:release
 pnpm test
 pnpm build
 ```
@@ -186,18 +188,29 @@ git check-ignore .env.rls.local
 
 这些是后续安全迁移、产品治理与负向 E2E 的优先项，不属于当前套件已证明安全的范围。
 
-### 5.5 0007 → 0009 升级夹具
+### 5.5 0007 → 0010 升级夹具
 
-`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`，因此不能对托管项目运行。`supabase start` 会自动应用目录中的所有迁移，因此 CI 在启动旧 schema 时会**临时**把 0008 移到 runner 临时目录；`trap` 保证任何失败后都放回。不要在有未提交修改的个人工作区手工照抄该移动步骤。CI 的完整顺序是：
+`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`，因此不能对托管项目运行。`supabase start` 会自动应用目录中的所有迁移，因此 CI 在启动旧 schema 时会**临时**把 0008–0010 移到 runner 临时目录；`trap` 保证任何失败后都放回。不要在有未提交修改的个人工作区手工照抄该移动步骤。CI 的完整顺序是：
 
 ```bash
-ledger_migration=supabase/migrations/20260710000008_security_points_ledger.sql
-staged_ledger_migration=/tmp/$(basename "$ledger_migration")
-restore_ledger_migration() {
-  test -f "$staged_ledger_migration" && mv "$staged_ledger_migration" "$ledger_migration"
+upgrade_migrations=(
+  supabase/migrations/20260710000008_security_points_ledger.sql
+  supabase/migrations/20260721000009_reset_legacy_points.sql
+  supabase/migrations/20260721000010_verify_security_points_release.sql
+)
+staged_upgrade_dir=/tmp/nalanda-points-upgrade
+mkdir -p "$staged_upgrade_dir"
+restore_upgrade_migrations() {
+  local migration staged
+  for migration in "${upgrade_migrations[@]}"; do
+    staged="$staged_upgrade_dir/$(basename "$migration")"
+    test -f "$staged" && mv "$staged" "$migration"
+  done
 }
-trap restore_ledger_migration EXIT
-mv "$ledger_migration" "$staged_ledger_migration"
+trap restore_upgrade_migrations EXIT
+for migration in "${upgrade_migrations[@]}"; do
+  mv "$migration" "$staged_upgrade_dir/$(basename "$migration")"
+done
 
 supabase start
 supabase status -o env > /tmp/supabase-status.env
@@ -211,7 +224,7 @@ ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
   node apps/web/tests/points-upgrade.e2e.mjs seed
 
-restore_ledger_migration
+restore_upgrade_migrations
 supabase migration up --local
 ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" \
@@ -287,14 +300,14 @@ pnpm typecheck
 pnpm test
 pnpm build
 supabase start
-# 先运行上文 0007→0009 seed / migration up / assert
+# 先运行上文 0007→0010 seed / migration up / assert
 supabase db reset --local --no-seed  # 再验证完整空库重建
 supabase db lint --local --schema public --level error --fail-on error
 # 从 supabase status -o env 注入本地 URL/keys 后：
 pnpm test:rls
 ```
 
-`pull_request` 只运行质量和本地 Supabase job，不读取生产 secrets；本地 service-role 只管理 CI 创建的一次性容器。push `main` 新增 migration 时在验证后停止。owner 必须先手动运行 `plan_database_migrations`，复核远端 history/dry-run，再单独运行 `apply_database_migrations` 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 里的外部 RLS suite 仍 skip，但 deploy workflow 会显式运行升级夹具和本地 RLS suite。0008/0009 首次生产审批必须附历史 Profile 聚合审计与归零决定；CI 无法从缺失的历史事件中自动判断旧值真伪。
+`pull_request` 只运行质量和本地 Supabase job，不读取生产 secrets；本地 service-role 只管理 CI 创建的一次性容器。push `main` 新增 migration 时在验证后停止。owner 必须先手动运行 `plan_database_migrations`，复核远端 history/dry-run，再单独运行 `apply_database_migrations` 生成加密恢复点；若 history 为空，apply 还要求 0001–0007 public schema 零差异并核对 Storage policy/bucket，才 repair baseline、CLI push 和验证，之后部署应用。默认 `pnpm test` 里的外部 RLS suite 仍 skip，但 deploy workflow 会显式运行升级夹具和本地 RLS suite。0008–0010 首次生产审批必须附历史 Profile 聚合审计与归零决定；CI 无法从缺失的历史事件中自动判断旧值真伪。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 

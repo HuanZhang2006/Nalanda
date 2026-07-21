@@ -39,6 +39,7 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0007_schedule.sql` | study_goals / study_tasks、streak 与完成任务触发器 |
 | `0008_security_points_ledger.sql` | Profile 敏感列白名单、内部 RPC 撤权、稳定 points 业务键、`point_entries`/`point_event_states` 与冲正触发器 |
 | `0009_reset_legacy_points.sql` | 用 append-only reversal 归零不可信 opening，并重建 Profile points/level 投影 |
+| `0010_verify_security_points_release.sql` | 只读断言 Profile 写权限、内部 RPC、opening reversal 和账本投影 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：

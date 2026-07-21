@@ -255,7 +255,7 @@ Webhook 必须：使用原始 body 验签；检查 live/test mode 和账户；�
 
 - [x] 列级禁止客户端修改 credits、points、level、VIP、streak；
 - [x] 撤销 points/notification definer 的客户端默认执行权，停用 `_add_points`；
-- [x] 建立当前 points 事件账本、稳定业务键、净额幂等/冲正、空库与 0007→0009 升级测试；
+- [x] 建立当前 points 事件账本、稳定业务键、净额幂等/冲正、空库与 0007→0010 升级/发布断言测试；
 - [x] 审计旧漏洞期间的 opening points/credits/VIP/streak，并记录 2026-07-21 points 归零决定与 0009 append-only reversal；
 - [ ] 收紧 feedback `status` 等仍由 owner 整行策略暴露的服务端字段；
 - [x] 原型商业入口保持 demo/feature flag，不接真实支付。
