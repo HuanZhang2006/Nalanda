@@ -25,7 +25,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | Note Market / credits / VIP / 支付 | 🟡 UI mock 或预留字段；无账本、订单或 Stripe |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-这里的“真实”主要表示浏览器真实读写 Supabase 并受 RLS/列级授权保护；目前并非所有业务都经过 NestJS。0008 已封堵 Profile 敏感列、内部 RPC 和当前 points 刷分路径，但 credits/VIP 仍只是不可由客户端写的预留缓存，不是商业账本；其余边界见[当前架构](docs/ARCHITECTURE.md)。
+这里的“真实”主要表示浏览器真实读写 Supabase 并受 RLS/列级授权保护；目前并非所有业务都经过 NestJS。生产已于 2026-07-21 应用 0008–0010，封堵 Profile 敏感列、内部 RPC 和当前 points 刷分路径，并以追加式冲正归零旧 points opening；credits/VIP 仍只是不可由客户端写的预留缓存，不是商业账本。其余边界见[当前架构](docs/ARCHITECTURE.md)。
 
 ## 当前技术结构
 
@@ -42,7 +42,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 - `apps/api`：当前 NestJS 薄 API。
 - `apps/ai`：AI 桩。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：当前 8 个数据库迁移；最新 0008 建立 points 账本并收紧 Profile/RPC 权限。
+- `supabase/migrations`：当前 10 个数据库迁移；0008 建立 points 账本并收紧 Profile/RPC 权限，0009 冲正旧 points opening，0010 执行发布断言。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/Redis 接入时的通用部署模板。
 

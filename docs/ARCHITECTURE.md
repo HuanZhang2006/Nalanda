@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-10。
+最后核对：2026-07-21。
 
 ---
 
@@ -35,6 +35,8 @@ Supabase Cloud 当前承担：
 - PostgreSQL/PostgREST：课程、资料、社区、计划、Profile、通知和反馈。
 - Storage：私有资料桶、公开社区媒体桶。
 - RLS：主要的数据隔离边界。
+
+生产 migration history 已于 2026-07-21 经受保护 plan/apply 建立 0001–0007 基线并同步至 0010；0008–0010 的安全权限、幂等 points 账本、旧 opening 冲正和发布断言已经在线生效。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 

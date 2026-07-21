@@ -170,6 +170,17 @@ supabase stop --no-backup
 - Supabase Auth/PostgREST/Storage 错误率；
 - 应用登录、`/api/me` 和本次变更的最小业务路径。
 
+### 8.1 2026-07-21 安全与积分发布记录
+
+- 发布提交：`271137279aacb42454018d9e1b401ed41f2380b7`；只读 plan：GitHub Actions run `29832166947`；受保护 apply：run `29832551375`。
+- apply 前远端 migration history 为空。脚本确认 public schema 与 0001–0007 **No schema changes found**，5 条 Storage policy 及 `materials` 私有/`community-media` 公开 bucket 均匹配后，仅将 0001–0007 标记为 applied。
+- 加密恢复点 `db-recovery-271137279aacb42454018d9e1b401ed41f2380b7` 已上传为 artifact `8496067281`，GitHub artifact digest 为 `c13e40ecec4270cc31c1b87bccc0b69ec52107bef60a71ad7d3bc8aacc042ff1`，保留 14 天；manifest 记录发布前 `supabase_migrations` schema 不存在。该逻辑恢复点不含 Storage 对象字节。
+- 0008、0009、0010 随后成功应用。0009 保留 `legacy_opening=11` 并追加 `legacy_opening_reset=-11`；0010 强制验证该 opening 恰有一条等额冲正、所有 Profile points/level 投影等于账本，以及 Profile 敏感列和内部 RPC 不可由客户端写/执行。
+- 发布后 local/remote history 从 0001 到 0010 全部一致，第二次 dry-run 返回 **Remote database is up to date**，remote public lint 返回 **No schema errors found**。
+- 应用 release `271137279aacb42454018d9e1b401ed41f2380b7-29832551375-1` 已激活。流水线和独立公网复核均确认 Web root 正常、`/api/health` 的 `status=ok`、`service=nalanda-api`、`deps.supabase=ok`，`/api/me` 未认证返回 401，Supabase JWKS 可用。
+
+该记录证明本次安全迁移和旧 11 points 冲正已上线；它不等于 Storage bytes 已备份、托管 staging/恢复演练已完成，或 points 已具备每日上限与内容反滥用。
+
 ## 9. 失败处置
 
 ### 9.1 本地重建、lint 或 RLS E2E 失败

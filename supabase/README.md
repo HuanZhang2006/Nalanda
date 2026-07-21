@@ -5,7 +5,7 @@
 > - **作用**：作为 Supabase 目录入口；完整关系看 ERD，正式发布/回滚看数据库操作手册。
 > - **何时更新**：新增/修改迁移、bucket、RLS、认证设置或数据库发布方式时。
 
-最后核对：2026-07-10。
+最后核对：2026-07-21。
 
 ## 当前内容
 
@@ -26,7 +26,7 @@
 
 ## 应用迁移
 
-正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)。仓库已提交 `config.toml`；CI 会先验证 0007→0010 历史数据升级、opening reversal 和发布断言，再从空库重建、lint、运行本地真实 RLS/Storage/points E2E。生产先用 `plan_database_migrations` 只读核对 history/dry-run，再由 owner 使用 `apply_database_migrations` 创建加密恢复点；若旧项目 history 为空，只有 public schema 与 0001–0007 零差异且 Storage policy/bucket 匹配时才记录 baseline 并继续发布。
+正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)。仓库已提交 `config.toml`；CI 会先验证 0007→0010 历史数据升级、opening reversal 和发布断言，再从空库重建、lint、运行本地真实 RLS/Storage/points E2E。生产先用 `plan_database_migrations` 只读核对 history/dry-run，再由 owner 使用 `apply_database_migrations` 创建加密恢复点；若旧项目 history 为空，只有 public schema 与 0001–0007 零差异且 Storage policy/bucket 匹配时才记录 baseline 并继续发布。该流程已于 2026-07-21 在生产完成，remote history 当前同步至 0010。
 
 本地基线：
 

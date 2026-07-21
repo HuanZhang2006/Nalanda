@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-07-10。
+最后核对：2026-07-21。
 
 ---
 
@@ -24,15 +24,15 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ## 2. 当前基线（不是最终完成状态）
 
-截至 2026-07-10，项目是“高保真 Web 应用 + 部分真实 Supabase 业务模块 + 生产部署”：
+截至 2026-07-21，项目是“高保真 Web 应用 + 部分真实 Supabase 业务模块 + 生产部署”：
 
 - 已落地：邮箱密码注册/登录、课程与资料、社区、学习计划、Profile、活动积分/等级、通知、反馈、Web 生产部署。
 - 部分落地：React 只承担鉴权壳；主应用仍是 `legacy` DOM 模块。Supabase 是当前主要业务后端，NestJS 只是薄网关。
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
 - 未实现：BullMQ/Redis 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime 订阅、Electron、React Native、完整 i18n、管理后台、官方课程。
-- 安全基线进展：0008 已保护 Profile 敏感列、收口内部 `SECURITY DEFINER` RPC，并为当前 points 奖励建立可冲正幂等账本；前端跨账号生命周期和 Supabase 错误处理也已修复。
-- 仍需优先完成：帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 反滥用/旧余额审计；AI 数据契约统一。
+- 安全基线进展：生产已应用 0008–0010，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；前端跨账号生命周期和 Supabase 错误处理也已修复。
+- 仍需优先完成：帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 每日上限、审核撤销和协同行为检测；AI 数据契约统一。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 
@@ -192,7 +192,8 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - **已实现：**限制 Profile 敏感列、撤销内部 definer 客户端执行权、points append-only 账本/冲正/幂等，以及对应双用户 RLS 回归。
 - **已实现：**修复跨账号 legacy 状态、迟到异步响应、resize 重挂、登录/退出 loading 和 Supabase/Storage error 处理，并补齐 9 个 jsdom 测试；API readiness 已用 JWKS/PostgREST 双探针和 2 个单元测试加固。
 - **剩余：**修复帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等权限/完整性问题。
-- **剩余：**发布已决定将旧 opening 归零的 0009，并给 points 增加规则版本、每日上限、内容审核撤销和协同行为检测。
+- **已上线：**0008–0010 已完成受保护生产发布；旧 opening 以追加式等额冲正归零，生产 history、发布断言和最终 dry-run 均通过。
+- **剩余：**给 points 增加产品级每日上限、内容审核撤销和协同行为检测；继续收紧帖子/feedback/关联归属权限。
 - 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、构建、加密恢复点与应用回退门禁；继续补 API/浏览器 E2E。
 - 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
 
@@ -241,7 +242,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 | ID | 能力 | 当前 | 目标阶段 | 关键依赖 |
 |---|---|---|---|---|
-| SEC-01 | Profile 敏感列与内部 RPC 收口 | 已实现 | A | 0008、RLS E2E；待生产 migration 记录 |
+| SEC-01 | Profile 敏感列与内部 RPC 收口 | 已上线 | A | 0008–0010、RLS E2E、2026-07-21 生产发布记录 |
 | SEC-02 | 注册限流、邮箱验证、找回密码 | 未完成 | A/B | SMTP、Throttler |
 | QA-01 | jsdom、API readiness 与双用户 RLS/Storage 可执行测试 | 部分 | A | 9 jsdom + 2 API unit + CI 本地 RLS；staging/API HTTP/FastAPI/浏览器待补 |
 | OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
