@@ -98,7 +98,7 @@
 6. 生产变更先在隔离环境验证，支付使用 Stripe test mode；
 7. 高风险已知问题关闭后，才能启用相应功能 flag。
 
-当前 PR/main workflow 已执行 docs check、5 个发布工具测试、typecheck、9 个 Web jsdom、2 个 API readiness 单元测试和 build，并在一次性本地 Supabase 先验证 0007→0010 升级，再重建全部 migration、lint 后显式运行 3 个 RLS/Storage/points E2E。生产 migration 先走只读 plan，再经受保护 environment、加密恢复点、基线状态/结构核验、apply 和远端验证；这些门禁不替代托管 staging、持续监控或人工安全评审。
+当前 PR/main workflow 已执行 docs check、6 个发布工具测试、typecheck、9 个 Web jsdom、2 个 API readiness 单元测试和 build，并在一次性本地 Supabase 先验证 0007→0010 升级，再重建全部 migration、lint 后显式运行 3 个 RLS/Storage/points E2E。生产 migration 先走只读 plan，再经受保护 environment、加密恢复点、基线状态/结构核验、apply 和远端验证；这些门禁不替代托管 staging、持续监控或人工安全评审。
 
 ## 8. 安全事件响应
 
