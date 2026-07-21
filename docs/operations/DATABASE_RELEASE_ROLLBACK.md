@@ -11,13 +11,13 @@
 1. 文档检查、TypeScript typecheck、默认测试和全部 workspace 构建；
 2. 启动完整本地 Supabase，先停在 0007 建立历史 points 夹具，再应用 0008 验证回填/冲正；随后从空库应用全部迁移；
 3. 运行 `db lint`，并用本地 Auth/PostgREST/Storage 实际执行双用户 RLS/Storage/points E2E；
-4. 若本次 push 新增了迁移，进入受保护的 `production-database` environment；
+4. 若 push 新增了迁移，质量与本地数据库门禁继续执行，但生产数据库和应用发布保持跳过；数据库 owner 必须在该 `main` commit 上人工发起 `workflow_dispatch` 并显式选中 `apply_database_migrations`，才进入 `production-database` environment；
 5. 核对生产 Project Ref，显示远端 migration history 和 `db push --dry-run`；
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
 7. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-8. 只有数据库 job 成功或本次没有迁移时，才构建并部署应用。
+8. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并部署应用。
 
-已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。手动运行 workflow 时，只有显式选中 `apply_database_migrations` 才执行数据库发布。
+已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。普通 push 永不直接修改生产数据库；手动运行 workflow 时，只有显式选中 `apply_database_migrations` 才执行数据库发布。
 
 `scripts/db-push.mjs` 是不维护 migration history 的旧版应急工具，现已：
 
@@ -89,10 +89,12 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 
 ## 5. GitHub 环境与 Secrets
 
-仓库必须建立两个受保护 environment：
+仓库必须建立两个 environment：
 
-- `production-database`：至少一名数据库 owner 审批；只允许 `main`；
+- `production-database`：只允许 `main`；支持 environment reviewer 的套餐还必须配置至少一名数据库 owner 审批；
 - `production`：应用发布审批可按团队风险级别设置。
+
+当前私有仓库套餐不支持 required reviewer。现有 `production-database` 已启用 `main` 分支限制；在套餐升级前，数据库发布不得由普通 push 自动授权，必须由数据库 owner 人工发起带 `apply_database_migrations=true` 的 `workflow_dispatch`，并在发布记录中保存 Ref、Git SHA、迁移列表、dry-run 与复核人。GitHub Environment 的存在不是审批证据。
 
 数据库 environment 需要：
 
@@ -114,7 +116,7 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 - [ ] 若包含 0008：已在维护窗口前审计旧 `profiles.points/credits/vip_until/streak`；异常值的认定和处置已审批，不能把 `legacy_opening` 当成可信逐笔历史。
 - [ ] 估算表规模、锁、statement timeout 和 backfill 时间。
 - [ ] [ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
-- [ ] `production-database` 审批人核对 Ref、Git SHA、迁移列表和 dry-run。
+- [ ] `production-database` owner 核对 Ref、Git SHA、迁移列表和 dry-run；若套餐无 reviewer 门禁，另存可审计的人工复核记录。
 - [ ] 加密 artifact 上传成功；解密 key 在 Actions 之外可取回。
 - [ ] Storage 文件变更另有对象备份；数据库 dump 不含文件字节。
 - [ ] 准备应用 feature flag/降级、验证 SQL 和 forward-fix 草案。

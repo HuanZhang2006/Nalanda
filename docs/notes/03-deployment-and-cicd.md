@@ -55,26 +55,28 @@ server {
 
 ## 4. CI/CD 流水线
 
-文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 再执行受保护数据库/应用发布；手动 `workflow_dispatch` 默认只发应用，显式选中 `apply_database_migrations` 才发布数据库。纯文档变更由 docs workflow 处理。
+文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 在无新 migration 时发布应用，若含新 migration 则验证后停止。数据库 owner 必须在对应 `main` commit 上手动运行 `workflow_dispatch` 并显式选中 `apply_database_migrations`，成功发布数据库后才继续应用发布。手动运行未选该开关时只重发应用。纯文档变更由 docs workflow 处理。
 
 步骤逻辑：
 1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API readiness unit）、全部 workspace build。
 2. **数据库门**：先执行 0007→0008 历史数据升级夹具，再做完整本地 Supabase 空库重建 + lint，并实际运行双用户 RLS/Storage/points E2E。
-3. **生产迁移（仅新增 migration）**：protected environment 审批 → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
+3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
 5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
 6. **激活**：API 本地 health 的 Supabase JWKS/PostgREST 双探针通过后原子切换 Web symlink，再从公网验证 Web/API。
-7. **应用回退**：任一 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；数据库不自动逆向。
+7. **应用回退**：任一 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；新 release 始终要求 Supabase 双探针为 `ok`，回退验证只要求旧 API 进程契约可用且 `/api/me` 未认证返回 401，以兼容尚未提供依赖级 health 的旧 image；数据库不自动逆向。
 
 Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
 
 为什么用 `docker save/load` 而非镜像仓库：免去在服务器配 registry 凭据，镜像天然私有；代价是每次传输镜像（可接受）。后续可切 GHCR + 缓存。
 
 ### Secrets / 密钥分层
-- **production 应用 environment**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`。
+- **repository Actions Secrets（当前实际位置）**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`；`production` environment 会在部署 job 中使用这些仓库级 Secrets。后续如迁移为 environment Secrets，应一次性迁移整组并验证。
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
 - **服务器 `/opt/nalanda/.env`**：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_JWT_SECRET`——只在服务器，不进 CI、不入库。
 - CI 用**独立部署密钥**而非 root 密码登录。
+
+`production-database` 已限制为只允许 `main`。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 人工发起 `workflow_dispatch` 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。该 environment 当前仍缺数据库发布 Secrets，未补齐前不能执行生产 migration。
 
 ## 5. 一次性服务器引导（已完成）
 
@@ -90,6 +92,8 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 **定位**：容器内 `getaddrinfo EAI_AGAIN`（DNS 失败），但 raw TCP 出网正常。宿主机用 `systemd-resolved`（`127.0.0.53`），容器内嵌 DNS 转发不到这个回环地址 → JWKS 拉不到 → 验签落到 HS256 回退 → ES256 令牌验不过 → 401。
 **修复**：compose 给 api 服务显式 `dns: [1.1.1.1, 8.8.8.8]`，重建容器即恢复。
 **教训**：systemd-resolved 主机上的容器常需显式 DNS；「health 正常但依赖外网的校验失败」要先查容器 DNS/出网。
+
+若宿主机、容器和独立公共 resolver 都对同一 Supabase hostname 返回 `NXDOMAIN`，这不是 Docker resolver 配置问题；应先在 Supabase 控制台确认项目是否暂停/删除或 URL 是否已失效。不得为让部署变绿而把 readiness 降级回“变量存在即健康”。
 
 ### (b) uofa.ink 证书续期失败（ACMEv1 账户）
 **现象**：`certbot renew` 报「Account does not exist」。
