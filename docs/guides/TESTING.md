@@ -240,7 +240,7 @@ ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   node apps/web/tests/points-upgrade.e2e.mjs assert
 ```
 
-夹具验证：credits/VIP/streak 等受漏洞影响的 Profile 值被保留但未来不可由客户端写；points 先生成 `legacy_opening`，再生成引用 opening 的 `legacy_opening_reset` 等额 reversal 并归零投影；历史 duplicate post/like/comment/repost/task 获得稳定 key 和 active/transition 0 状态而不重复加分；删尽/恢复只产生一次负向/恢复分录，Profile 保持非负；历史 task 重做不推进 streak；最终 projection 等于 ledger 并可随 Auth 删除清理。随后 CI 还会再从空库 reset 并运行常规 RLS E2E，避免升级通过掩盖空库重建失败。
+夹具验证：credits/VIP/streak 等受漏洞影响的 Profile 值被保留但未来不可由客户端写；points 先生成 `legacy_opening`，再生成引用 opening 的 `legacy_opening_reset` 等额 reversal 并归零投影；历史 duplicate post/like/comment/repost/task 获得稳定 key 和 active/transition 0 状态而不重复加分；删尽/恢复只产生一次负向/恢复分录，Profile 保持非负；历史 task 重做不推进 streak；最终 projection 等于 ledger 并可随 Auth 删除清理。随后 CI 还会再从空库 reset，并用最长 60 秒的 Auth/PostgREST 有界 readiness 探针确认重启完成后运行常规 RLS E2E；探针超时会失败，避免把服务启动竞态误报成策略失败，也不会无限重试掩盖故障。
 
 ### 5.6 失败与清理
 
@@ -279,7 +279,7 @@ PUBLIC_ORIGIN=http://127.0.0.1:5173 \
 pnpm --filter @nalanda/web test:playwright
 ```
 
-确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元粘贴→重复错误修正→键盘排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%。当前不覆盖真实麦克风/Azure、两个真实日期的复习、分享撤销 UI 或全部治理操作；这些由 API/RLS/供应商 smoke 分层验证。
+确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元粘贴→重复错误修正→指针拖动与键盘排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%。当前不覆盖真实麦克风/Azure、两个真实日期的复习、分享撤销 UI 或全部治理操作；这些由 API/RLS/供应商 smoke 分层验证。
 
 失败时保留 Playwright trace/screenshot/video artifact，先区分 UI selector、API envelope、migration/RLS 和 webServer 启动问题。CI 会自动安装带系统依赖的 Chromium；本地只需当前平台浏览器包。
 

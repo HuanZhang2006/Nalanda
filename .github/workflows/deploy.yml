@@ -237,6 +237,17 @@ jobs:
           set -a
           source "$status_file"
           set +a
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 2 -o /dev/null "$API_URL/auth/v1/health" && \
+               curl -fsS --max-time 2 -o /dev/null -H "apikey: $ANON_KEY" "$API_URL/rest/v1/"; then
+              break
+            fi
+            if [[ "$attempt" == "30" ]]; then
+              echo "Local Supabase Auth/PostgREST did not become ready after database reset." >&2
+              exit 1
+            fi
+            sleep 2
+          done
           SUPABASE_URL="$API_URL" \
           SUPABASE_ANON_KEY="$ANON_KEY" \
           SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
