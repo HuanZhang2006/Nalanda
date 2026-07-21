@@ -166,9 +166,9 @@ DB 触发器：likes_cnt 改 like_count(权威值)；_on_like 激活/冲正同�
 ## 五、坑 / 取舍
 - **公共读 vs owner-only**：社区第一次用 `using(true)`；写仍严格。展示他人信息靠快照，不放开 profiles 读权限。
 - **当前 points 完整性**：0008 已修复点赞取消/重赞、评论/帖子删除重建、转发和任务取消重做的净额刷分；相同业务键只有一个 active claim，删除/取消写冲正。每日上限、垃圾内容识别和协同作弊检测仍未实现，所以 points 仍不能作为货币或商业权益。
-- **旧余额边界**：迁移前 points 只能作为 `legacy_opening` 保留，无法从旧表证明其中是否含已刷积分；生产发布必须先审计历史余额。
+- **旧余额边界**：迁移前 points 由 0008 作为 `legacy_opening` 留痕，无法从旧表证明来源；2026-07-21 owner 已决定由 0009 追加等额 reversal 全部归零。
 - **UI 与权威值**：互动 UI 只在数据库成功后变更；冗余计数仍以触发器维护的列为权威，下次加载会覆盖本地显示。
 - **导航靠壳委托**：动作按钮必须 `stopPropagation`，否则会连带触发卡片的 `data-go` 跳转。
 
 ## 六、验证
-两用户 RLS E2E、0007→0008 数据升级夹具、points 重做/并发/原帖级联冲正和 jsdom 社区失败回归的可执行覆盖矩阵见 [测试指南](../guides/TESTING.md)。套件覆盖 INSERT 防伪造、稳定 key 不可修改、敏感 Profile/RPC 拒绝；作者仍可 UPDATE 快照/冗余计数等字段（`repost_of` 与 points key 除外），这是独立的剩余列级权限缺口。
+两用户 RLS E2E、0007→0009 数据升级/旧 opening 归零夹具、points 重做/并发/原帖级联冲正和 jsdom 社区失败回归的可执行覆盖矩阵见 [测试指南](../guides/TESTING.md)。套件覆盖 INSERT 防伪造、稳定 key 不可修改、敏感 Profile/RPC 拒绝；作者仍可 UPDATE 快照/冗余计数等字段（`repost_of` 与 points key 除外），这是独立的剩余列级权限缺口。

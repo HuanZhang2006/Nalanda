@@ -29,7 +29,7 @@
 - points 当前奖励：点赞者 +1、评论者 +2、普通发帖 +10、转发 +3、完成任务 +5；等级阈值为 0/50/150/350/700/1200。
 - 当前五类奖励均通过 `point_event_states` 和 append-style `point_entries` 激活/冲正；相同持久业务键在删除/取消后重建只恢复原净额，不再累计刷分。
 - authenticated 只能更新 `username/university/major/year/language`；`credits/points/level/vip/streak` 由列级授权和防御触发器保护。`_add_points` 已停用并对客户端/service-role 撤权，`_notify`、`_set_point_event` 及 trigger helpers 不再是客户端 RPC surface。
-- 0008 只能把迁移前 `profiles.points` 保存为 `legacy_opening`，无法判断旧漏洞期间的 points、credits、VIP 或 streak 是否被篡改；生产发布前必须审计，不能把 opening entry 当成可信逐笔历史。
+- 0008 把迁移前 `profiles.points` 保存为 `legacy_opening`；2026-07-21 聚合审计确认唯一 Profile 有 11 points、credits/streak 为 0 且无 VIP，owner 决定 points 归零。0009 追加等额 reversal，不删除 opening，也不把它当成可信逐笔历史。
 - Create、Market、Home 中的余额、价格、25 credits、70% 分成和兑换 VIP 目前是假数据/原型交互。
 - 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
 
@@ -255,8 +255,8 @@ Webhook 必须：使用原始 body 验签；检查 live/test mode 和账户；�
 
 - [x] 列级禁止客户端修改 credits、points、level、VIP、streak；
 - [x] 撤销 points/notification definer 的客户端默认执行权，停用 `_add_points`；
-- [x] 建立当前 points 事件账本、稳定业务键、净额幂等/冲正、空库与 0007→0008 升级测试；
-- [ ] 在生产应用 0008 前审计旧漏洞期间的 opening points、credits、VIP 和 streak，并记录处置；
+- [x] 建立当前 points 事件账本、稳定业务键、净额幂等/冲正、空库与 0007→0009 升级测试；
+- [x] 审计旧漏洞期间的 opening points/credits/VIP/streak，并记录 2026-07-21 points 归零决定与 0009 append-only reversal；
 - [ ] 收紧 feedback `status` 等仍由 owner 整行策略暴露的服务端字段；
 - [x] 原型商业入口保持 demo/feature flag，不接真实支付。
 

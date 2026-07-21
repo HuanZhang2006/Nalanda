@@ -181,7 +181,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 ### 7.3 已关闭项与剩余数据完整性边界
 
 - 0008 已关闭 Profile 敏感列写入、内部 RPC 客户端 EXECUTE，以及赞/评论/原创/转发/任务删除重做累计获分问题。
-- points 使用 append-only entries、持久 event state、稳定业务键和冲正；Profile 的 points/level 只是账本投影。迁移前缓存作为 `legacy_opening`，无法追溯为逐笔可信历史。
+- points 使用 append-only entries、持久 event state、稳定业务键和冲正；Profile 的 points/level 只是账本投影。迁移前缓存先作为 `legacy_opening` 留痕，再由 0009 追加 reversal 归零，无法追溯为逐笔可信历史。
 - 帖子 `repost_of` 与 points key 已不可变，但作者仍可在 UPDATE 时修改作者快照、冗余计数和时间；INSERT 防伪造尚未覆盖这些字段的更新路径。
 - `study_goals.course_id` 缺少课程归属校验；task 没校验 material 与 course 相互匹配。
 - feedback owner policy 允许用户自行修改 `status`。
@@ -197,7 +197,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 GitHub Actions 在 runner 上：
 
 1. 运行 docs check、workspace typecheck、Vitest/jsdom 和 build。
-2. 先验证 0007→0008 历史数据升级，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points E2E。
+2. 先验证 0007→0009 历史数据升级与 opening reversal，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points E2E。
 3. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
 4. 构建 Web 与 Git SHA API image，经预先核验 host key 的 SSH/SCP 上传。
 5. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
@@ -225,13 +225,13 @@ GitHub Actions 在 runner 上：
 - Web 使用 Vite；`vite build` 不等同于 TypeScript 类型检查。
 - Python AI 不属于 pnpm workspace，需要独立安装和启动。
 - 可执行测试命令和环境要求见 [测试指南](guides/TESTING.md)。
-- 默认 `pnpm test` 当前运行 9 个 Web jsdom 与 2 个 API readiness 单元测试；本机未设置显式开关时 3 个 RLS/Storage/points E2E 跳过。PR/main workflow 会启动一次性本地 Supabase，先运行 0007→0008 升级夹具，再显式运行这 3 组 E2E；手工托管运行仍需隔离项目和 Ref 二次确认。
+- 默认 `pnpm test` 当前运行 9 个 Web jsdom 与 2 个 API readiness 单元测试；本机未设置显式开关时 3 个 RLS/Storage/points E2E 跳过。PR/main workflow 会启动一次性本地 Supabase，先运行 0007→0009 升级夹具，再显式运行这 3 组 E2E；手工托管运行仍需隔离项目和 Ref 二次确认。
 - 历史实现笔记中的“已验证”必须能映射到仓库测试；不能复现的旧验证只能作为历史记录。
 
 ## 10. 当前优先风险
 
 1. 收紧帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等剩余授权和完整性缺口。
-2. 为 points 增加每日上限、内容审核撤销、协同滥用检测，并审计迁移前 `legacy_opening`；credits/VIP 另建商业账本。
+2. 为 points 增加每日上限、内容审核撤销、协同滥用检测，并持续审计 0009 的 opening reversal；credits/VIP 另建商业账本。
 3. 统一 AI/前端/TS 契约，再实现真实生成链路。
 4. 补 API/FastAPI/真浏览器与托管 staging 测试，执行数据库/Storage 恢复演练和持续告警。
 5. 逐步移除 `@ts-nocheck`/legacy 双实现，增加 URL 路由、深链接与类型安全 React 组件。

@@ -13,6 +13,11 @@ on:
       - "**/*.md"
   workflow_dispatch:
     inputs:
+      plan_database_migrations:
+        description: "Show the protected production migration plan without changing the database or deploying the application"
+        required: true
+        type: boolean
+        default: false
       apply_database_migrations:
         description: "Run the protected production database release even when this is a manual rerun"
         required: true
@@ -57,11 +62,20 @@ jobs:
         shell: bash
         env:
           BEFORE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          MANUAL_DB_PLAN: ${{ inputs.plan_database_migrations || false }}
           MANUAL_DB_RELEASE: ${{ inputs.apply_database_migrations || false }}
         run: |
           set -Eeuo pipefail
           if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
-            echo "changed=${MANUAL_DB_RELEASE}" >> "$GITHUB_OUTPUT"
+            if [[ "$MANUAL_DB_PLAN" == "true" && "$MANUAL_DB_RELEASE" == "true" ]]; then
+              echo "Choose either plan_database_migrations or apply_database_migrations, not both." >&2
+              exit 2
+            fi
+            if [[ "$MANUAL_DB_PLAN" == "true" || "$MANUAL_DB_RELEASE" == "true" ]]; then
+              echo "changed=true" >> "$GITHUB_OUTPUT"
+            else
+              echo "changed=false" >> "$GITHUB_OUTPUT"
+            fi
             exit 0
           fi
 
@@ -80,6 +94,14 @@ jobs:
           echo "$changes"
           if awk '$1 != "A" { exit 1 }' <<< "$changes"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              echo "::warning::Production release is blocked. Run workflow_dispatch with plan_database_migrations=true, review the plan, then run a separate apply_database_migrations=true execution for this main commit."
+              {
+                echo "### Production release pending"
+                echo
+                echo "New migrations passed source validation. On this main commit, run \`plan_database_migrations=true\`, review history/dry-run, then run a separate \`apply_database_migrations=true\` execution to back up and migrate production before deploying the application."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "Existing migration files are immutable; add a new forward migration." >&2
             exit 1
@@ -120,24 +142,34 @@ jobs:
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
 
-      - name: Exercise the 0007 to 0008 data upgrade, then rebuild from scratch
+      - name: Exercise the 0007 to 0009 data upgrade, then rebuild from scratch
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          # `supabase start` eagerly applies every migration. Stage 0008 outside
-          # the migrations directory first so the fixture genuinely creates
-          # 0007-era rows, then restore and apply the forward migration.
-          ledger_migration="supabase/migrations/20260710000008_security_points_ledger.sql"
-          staged_ledger_migration="$RUNNER_TEMP/$(basename "$ledger_migration")"
-          [[ -f "$ledger_migration" ]] || { echo "Missing 0008 ledger migration" >&2; exit 2; }
-          restore_ledger_migration() {
-            if [[ -f "$staged_ledger_migration" ]]; then
-              mv -- "$staged_ledger_migration" "$ledger_migration"
-            fi
+          # `supabase start` eagerly applies every migration. Stage 0008/0009
+          # outside the migrations directory first so the fixture genuinely
+          # creates 0007-era rows, then restore and apply both forward changes.
+          upgrade_migrations=(
+            "supabase/migrations/20260710000008_security_points_ledger.sql"
+            "supabase/migrations/20260721000009_reset_legacy_points.sql"
+          )
+          staged_upgrade_dir="$RUNNER_TEMP/nalanda-points-upgrade"
+          mkdir -p "$staged_upgrade_dir"
+          restore_upgrade_migrations() {
+            local migration staged
+            for migration in "${upgrade_migrations[@]}"; do
+              staged="$staged_upgrade_dir/$(basename "$migration")"
+              if [[ -f "$staged" ]]; then
+                mv -- "$staged" "$migration"
+              fi
+            done
           }
-          trap restore_ledger_migration EXIT
-          mv -- "$ledger_migration" "$staged_ledger_migration"
+          trap restore_upgrade_migrations EXIT
+          for migration in "${upgrade_migrations[@]}"; do
+            [[ -f "$migration" ]] || { echo "Missing upgrade migration: $migration" >&2; exit 2; }
+            mv -- "$migration" "$staged_upgrade_dir/$(basename "$migration")"
+          done
 
           supabase start
 
@@ -158,7 +190,7 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
           node apps/web/tests/points-upgrade.e2e.mjs seed
 
-          restore_ledger_migration
+          restore_upgrade_migrations
           supabase migration up --local
           ALLOW_POINTS_UPGRADE_E2E=YES \
           POINTS_UPGRADE_FIXTURE="$fixture" \
@@ -194,11 +226,12 @@ jobs:
         run: supabase stop --no-backup
 
   database_release:
-    name: Back up and migrate production database
+    name: Plan or migrate production database
     needs: [quality, migration_validation]
     if: >-
-      github.event_name != 'pull_request' &&
+      github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
+      (inputs.plan_database_migrations == true || inputs.apply_database_migrations == true) &&
       needs.quality.outputs.migrations_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -241,6 +274,7 @@ jobs:
           supabase db push --linked --dry-run
 
       - name: Create encrypted pre-migration recovery point
+        if: inputs.apply_database_migrations == true
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -250,6 +284,7 @@ jobs:
         run: bash scripts/create-db-release-backup.sh
 
       - name: Retain encrypted recovery point
+        if: inputs.apply_database_migrations == true
         uses: actions/upload-artifact@v4
         with:
           name: db-recovery-${{ github.sha }}
@@ -258,12 +293,14 @@ jobs:
           retention-days: 14
 
       - name: Apply forward migrations
+        if: inputs.apply_database_migrations == true
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
         run: supabase db push --linked
 
       - name: Verify remote migration history and functions
+        if: inputs.apply_database_migrations == true
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
@@ -282,7 +319,14 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.quality.result == 'success' &&
       needs.migration_validation.result == 'success' &&
-      (needs.database_release.result == 'success' || needs.database_release.result == 'skipped')
+      (
+        needs.quality.outputs.migrations_changed != 'true' ||
+        (
+          github.event_name == 'workflow_dispatch' &&
+          inputs.apply_database_migrations == true &&
+          needs.database_release.result == 'success'
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -385,6 +429,21 @@ jobs:
           ' <<< "$payload"
           }
 
+          # Rollback may restore an older image whose health payload predates
+          # dependency-level readiness. Verify that the previous API process
+          # and contract are back without weakening checks for the new release.
+          assert_api_process_health() {
+            local endpoint="$1"
+            local payload
+            payload="$(curl -fsS --max-time 10 "$endpoint")" || return 1
+            python3 -c '
+          import json, sys
+          value = json.load(sys.stdin)
+          assert value.get("status") == "ok"
+          assert value.get("service") == "nalanda-api"
+          ' <<< "$payload"
+          }
+
           assert_auth_guard() {
             local endpoint="$1"
             local status
@@ -394,9 +453,10 @@ jobs:
 
           wait_for_api() {
             local endpoint="$1"
+            local verifier="${2:-assert_api_health}"
             local attempt
             for attempt in $(seq 1 30); do
-              if assert_api_health "$endpoint"; then
+              if "$verifier" "$endpoint"; then
                 return 0
               fi
               sleep 2
@@ -448,8 +508,12 @@ jobs:
                 up -d --force-recreate api
               mv "$root/docker-compose.yml.rollback" "$root/docker-compose.yml"
               mv "$root/.deploy.env.rollback" "$root/.deploy.env"
-              wait_for_api http://127.0.0.1:8411/api/health || {
+              wait_for_api http://127.0.0.1:8411/api/health assert_api_process_health || {
                 echo "Previous API also failed health verification; manual intervention required." >&2
+                return 1
+              }
+              assert_auth_guard http://127.0.0.1:8411/api/me || {
+                echo "Previous API failed auth guard verification; manual intervention required." >&2
                 return 1
               }
               echo "Previous Web/API release restored."
