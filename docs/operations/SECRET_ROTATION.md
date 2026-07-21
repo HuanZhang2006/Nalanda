@@ -18,7 +18,7 @@
 | 凭据 | 当前存储/注入 | 当前消费者 | 客户端可见 | 状态 |
 |---|---|---|---|---|
 | `VITE_SUPABASE_ANON_KEY` | Web `.env.local` / GitHub Actions Secret | 浏览器 Supabase client | 是 | 当前使用 |
-| `SUPABASE_SERVICE_ROLE_KEY` | API `.env` / `/opt/nalanda/.env` | 注册 endpoint 的 Admin Auth | **否** | 当前使用，最高权限 |
+| `SUPABASE_SERVICE_ROLE_KEY` | API `.env` / `/opt/nalanda/.env` | 注册、readiness、Courses PostgREST/Storage/事务 RPC | **否** | 当前使用，最高权限 |
 | `SUPABASE_JWT_SECRET` | API `.env` | 旧 HS256 验签回退 | 否 | 可选；非对称项目通常不需 |
 | Supabase JWT signing keys/JWKS | Supabase 管理 | Supabase 签发；API JWKS 验签 | 公钥可见 | 当前使用 |
 | `SUPABASE_ACCESS_TOKEN` | `production-database` environment / 安全存储 | Supabase CLI 发布；旧脚本应急 | 否 | 当前 CI 使用 |
@@ -29,6 +29,8 @@
 | 服务器 SSH authorized key | 服务器 | 接受 CI/管理员连接 | 公钥 | 当前使用 |
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
+| `AZURE_SPEECH_KEY` | API `.env` / 目标生产 server env | Courses TTS 与 pronunciation assessment | 否 | adapter 已实现；生产待启用 |
+| `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
 | TLS private key / ACME account | 生产 certbot/nginx | HTTPS | 否 | 当前由服务器维护 |
@@ -95,7 +97,7 @@
    docker compose --env-file .deploy.env logs --since=5m --tail=100 api
    ```
 
-5. `/api/health` 会用 service-role 对 PostgREST 执行不读取行的 `profiles?select=id&limit=0`，并同时探测 JWKS；它能验证 key/基础连通性，但不能证明 Admin 注册写入、RLS 或真实登录完整可用。继续使用受控的临时 smoke 邮箱测试一次 `POST /api/auth/register`，随后在 Supabase Admin 中删除该账号和级联数据；同时验证普通登录和 `/api/me`。
+5. `/api/health` 只能验证 key/基础连通。继续用受控临时账号测试注册、登录、`/api/me`，并在 Courses beta 环境创建/读取/删除一门四词课程，确认 service-only RPC 和 `vocabulary-audio`（若语音已开）正常；随后删除账号和级联数据。
 6. 确认 Supabase audit/usage 显示新 key，撤销旧 key，再重复注册链路最小验证。
 
 当前 CI 不传这个 key，也不更新服务器 `.env`；不要把它新增为 Docker build arg 或 `VITE_*`。
@@ -165,7 +167,24 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 禁止把 key 送入 Web 或记录模型请求中的原始课件正文。轮换不应改变模型/提示词版本；若同时改变，评测无法隔离原因。
 
-## 11. Stripe secret/webhook secret（尚未实现）
+## 11. Azure Speech key（实现已存在，生产待启用）
+
+`AZURE_SPEECH_KEY` 只在 Nest API。region/voice 不是秘密，但必须与 key 所属 resource 一致。自动测试的 `AZURE_SPEECH_FAKE=true` 绝不能作为轮换验证。
+
+计划轮换：
+
+1. 记录 Azure resource/region、key ID（不记值）、月预算和当前错误率；确认 Azure 当前是否提供两把可交替 key。
+2. 若无安全重叠，先关闭 `FEATURE_PRONUNCIATION_ENABLED` 或打开 `AZURE_SPEECH_CIRCUIT_OPEN`；文本课程、进度和浏览器朗读继续。
+3. 生成/重置非当前 key，安全更新 `/opt/nalanda/.env` 的 key/region，`chmod 600`，force-recreate API 容器。
+4. 以专用账号和无个人数据 fixture 验证一个未缓存 TTS，再提交一个≤8 秒 16 kHz 单声道固定 WAV；确认 phoneme 结果、speech usage 预算行和用户录音未进入 DB/Storage/log。
+5. 观察 Azure usage 与 API `SPEECH_PROVIDER_*`/429；关闭 circuit 或恢复 flag。
+6. 重置/撤销旧 key，并再次验证。若供应商只支持 Key1/Key2 reset，记录哪一个现为 active，避免下次误重置正在使用的 key。
+
+泄露时立即熔断语音、重置受影响 key、检查 Azure usage/账单和 API 日志；不要删除 learning attempts 或把供应商失败记成用户错误。TTS cache 是公共合成结果，可清空重建，不需要随 key 搬迁。
+
+`COURSE_MARKET_ADMIN_USER_IDS` 变更需双人复核 Supabase UUID：先添加新管理员并验证受审计 hide/restore，再移除旧 UUID、重启 API，并确认旧账号返回 `ADMIN_REQUIRED`。不得用共享 service-role 或开放 RPC 替代管理员列表。
+
+## 12. Stripe secret/webhook secret（尚未实现）
 
 当前没有支付 controller、webhook endpoint、订单/账本表或 Stripe SDK。`infra/hybrid-2g/.env.example` 和 Caddy 注释只是目标占位。
 
@@ -176,7 +195,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 必须保留 webhook event ID 幂等、事件重放、订单/credits 账本对账与退款告警。任何 key 轮换都不能通过直接改余额来“修复”。
 
-## 12. TLS/ACME
+## 13. TLS/ACME
 
 当前 nginx TLS 由服务器 certbot 管理。证书续期通常不需要应用 `.env` 变更，但 private key/ACME 账号泄露必须重新签发/撤销。
 
@@ -190,7 +209,7 @@ systemctl reload nginx
 
 轮换/续期后从外部检查证书 subject、issuer、有效期和完整链。监控阈值见 [可观测性与告警](./OBSERVABILITY_ALERTING.md)。
 
-## 13. 紧急泄露处置
+## 14. 紧急泄露处置
 
 1. 宣布安全事件，记录发现时间、凭据类型、环境、可能暴露位置和 incident commander。
 2. 立即撤销/禁用受影响 key；若无法无损切换，暂停对应入口。
@@ -202,7 +221,7 @@ systemctl reload nginx
 8. 验证旧 key 已失效、新 key 路径正常，持续提高监控等级。
 9. 复盘根因、实际影响、轮换耗时和永久修复。
 
-## 14. 建议轮换周期（待批准）
+## 15. 建议轮换周期（待批准）
 
 | 凭据 | 建议最长周期 | 立即轮换条件 |
 |---|---:|---|
@@ -210,6 +229,7 @@ systemctl reload nginx
 | CI SSH deploy key | 180 天 | 私钥泄露、runner/账号失陷、人员变化 |
 | Supabase Personal Access Token | 90 天或按任务短期 | 设备/日志泄露、权限变化 |
 | Anthropic/Stripe secret | 90 天 | usage 异常、泄露、供应商建议 |
+| Azure Speech key | 90 天 | usage/账单异常、泄露、人员/环境变化 |
 | webhook signing secret | 180 天 | 签名异常、endpoint 泄露 |
 | JWT signing key | 按供应商能力和 session 策略 | key 泄露/算法变更/供应商通知 |
 | TLS 证书 | 自动续期；21/7/2 天告警 | private key 泄露 |
@@ -217,7 +237,7 @@ systemctl reload nginx
 
 周期是目标上限，不代表当前已经自动执行。每个 secret 必须有 owner、创建日、到期日、消费者、最近验证日和撤销证据。
 
-## 15. 轮换完成检查清单
+## 16. 轮换完成检查清单
 
 - [ ] 新凭据只存在于批准的 secret store/目标进程；
 - [ ] Web 中没有任何服务器 secret，静态 artifact 已按需重建；

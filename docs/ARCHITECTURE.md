@@ -6,15 +6,15 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-21。
+最后核对：2026-07-22。仓库包含 Courses 0011–0013 与应用实现；生产数据库状态仍是 0010，待受保护发布。
 
 ---
 
 ## 1. 当前系统结论
 
-Nalanda 当前是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳和移植的 legacy DOM 应用组成；认证与大部分真实业务 CRUD 直接使用 Supabase；NestJS 只提供注册、JWT 身份验证样例和健康检查；FastAPI AI 服务是未接入的桩。
+Nalanda 当前是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳、legacy DOM 模块和 React Courses 功能组成；认证与旧业务 CRUD 直接使用 Supabase；NestJS 提供注册、JWT、健康检查以及 Courses/学习/语音/传播接口；FastAPI AI 服务仍是未接入的桩。
 
-“真后端”在当前项目中主要表示“真实写入 Supabase 并由 RLS 保护”，不表示所有业务都已经经过 NestJS API。
+“真后端”在旧模块中主要表示“真实写入 Supabase 并由 RLS 保护”；Courses 的内容与学习事实写入必须经 NestJS + service-role 专用事务 RPC。两者都不自动证明已在生产启用。
 
 ## 2. 运行时拓扑
 
@@ -23,6 +23,9 @@ Nalanda 当前是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳�
   ├─ GET /                 → 宿主 nginx → apps/web 构建产物
   ├─ /api/auth/register    → nginx → NestJS → Supabase Admin API
   ├─ /api/me               → nginx → NestJS → Supabase JWKS 验签
+  ├─ /api/learning-*       → nginx → NestJS → owner 校验 + 事务 RPC
+  ├─ /api/pronunciation/*  → nginx → NestJS → Azure Speech（可降级/熔断）
+  ├─ /api/course-*         → nginx → NestJS → 分享/市场脱敏快照
   └─ Auth / PostgREST / Storage
                            → Supabase Cloud
 
@@ -32,11 +35,11 @@ FastAPI AI：有独立代码和通用 Docker 模板，但当前生产未部署�
 Supabase Cloud 当前承担：
 
 - Auth：邮箱密码会话与 JWT。
-- PostgreSQL/PostgREST：课程、资料、社区、计划、Profile、通知和反馈。
-- Storage：私有资料桶、公开社区媒体桶。
+- PostgreSQL/PostgREST：资料课程、学习课程、会话/尝试/复习、社区、计划、Profile、成长、传播、通知和反馈。
+- Storage：私有资料桶、公开社区媒体桶、公共合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 经受保护 plan/apply 建立 0001–0007 基线并同步至 0010；0008–0010 的安全权限、幂等 points 账本、旧 opening 冲正和发布断言已经在线生效。
+生产 migration history 已于 2026-07-21 经受保护 plan/apply 建立 0001–0007 基线并同步至 0010；0008–0010 已在线生效。仓库新增的 0011–0013 只在受保护发布、远端 lint/dry-run 与 smoke 完成后才可称为在线。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -46,11 +49,11 @@ Supabase Cloud 当前承担：
 Nalanda/
 ├─ apps/
 │  ├─ web/                 React/Vite 鉴权壳 + legacy 应用
-│  ├─ api/                 NestJS 薄 API
+│  ├─ api/                 NestJS Auth/health + Courses/语音/市场 API
 │  └─ ai/                  FastAPI 桩；不在 pnpm workspace 任务中
 ├─ packages/
 │  ├─ ui/                  CSS，不是 React 组件库
-│  └─ types/               AI 目标类型；当前未被 Web/API 消费
+│  └─ types/               Courses 共享 camelCase 契约 + 尚未接通的 AI 目标类型
 ├─ app/                    独立静态桌面/移动高保真原型
 ├─ supabase/
 │  ├─ config.toml          本地/CI Supabase 基线
@@ -93,13 +96,16 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
+| Courses | NestJS + Supabase `learning_*` + React | 仓库已实现；生产 flag/迁移待发布 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |
 | Home | `legacy/data.ts` | mock |
 | Notes/详情四 Tab | `legacy/data.ts` | mock |
 | Create | mock Materials + timeout/toast | mock |
-| Note Market | `legacy/data.ts` + toast | mock |
+| Market / Note Market | `legacy/data.ts` + toast | Note Market 仍为 mock |
+| Market / Course Market | NestJS 脱敏不可变快照 | 仓库已实现；只支持免费克隆，生产待启用 |
+| Courses 文件 AI 导入、其余类别 | 禁用入口 | 未实现 |
 
 旧的 Materials/Community/Profile/Schedule/Feedback mock 视图仍保留在 `legacy/app.ts`，运行时被文件末尾的真实挂载点覆盖，属于待清理的双实现。
 
@@ -111,11 +117,11 @@ Nalanda/
 - `sb.storage.from(...)` 上传、删除或签名访问文件。
 - 用户隔离依赖数据库 RLS，而不是前端 `.eq(user_id)`。
 
-`authedFetch()` 已能给 NestJS 请求加 Bearer token，但当前业务模块没有使用它。
+`authedFetch()` 给 NestJS 请求加 Bearer token，并由 Courses Web API 客户端使用；Supabase `{ error }` 会转换为统一可见错误，跨账号挂载会清空 Courses 单例状态。
 
 ## 5. NestJS API
 
-全局前缀：`/api`。当前只有三个 Controller：
+全局前缀：`/api`。基础接口为：
 
 | 方法 | 路径 | 认证 | 行为 |
 |---|---|---|---|
@@ -123,9 +129,9 @@ Nalanda/
 | POST | `/api/auth/register` | 无 | 用 service-role 创建 `email_confirm:true` 用户 |
 | GET | `/api/me` | Bearer | JWKS/HS256 守卫验签后回显 claims |
 
-JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目前只限制算法、没有同步验证 issuer/audience。
+JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验证配置的签名与声明边界。Courses 控制器另提供课程 CRUD、会话恢复/答题、复习日程、Profile 聚合、语音、分享、市场、克隆、举报和受配置管理员约束的审核接口，完整表见 [API 文档](guides/API.md)。
 
-当前 API 没有业务 Service、DTO/ValidationPipe、限流、队列、AI 客户端、支付、管理模块或 OpenAPI 生成。
+新接口共用 `@nalanda/types` camelCase 契约，API 显式转换数据库 snake_case，并由全局异常过滤器统一返回 `{ code, message, fieldErrors? }`。语音有 per-user/全局预算限流；市场有发布/举报限流。当前仍没有通用队列、支付模块或自动 OpenAPI 生成。
 
 ## 6. FastAPI AI 服务
 
@@ -166,6 +172,11 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 | 社区 | `posts`, `comments`, `post_likes`, `post_favorites`, `follows`, `tags` |
 | 计划 | `study_goals`, `study_tasks` |
 | 成长积分 | `point_entries`, `point_event_states` |
+| 学习内容 | `learning_courses`, `learning_course_units`, `learning_course_words` |
+| 学习事实 | `learning_sessions`, `learning_session_items`, `learning_attempts`, `learning_word_progress` |
+| 复习 | `learning_review_schedules` |
+| 分享市场 | `learning_course_shares`, `learning_course_publications`, `learning_course_reports`, `learning_course_moderation_actions` |
+| 课程徽章/语音配额 | `badge_definitions`, `user_badge_awards`, `learning_speech_usage` |
 
 完整关系、字段和策略见 [ERD](guides/ERD.md)。
 
@@ -179,11 +190,14 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 - 私有 `materials` bucket 按对象路径第一段 `user_id` 隔离。
 - `community-media` 是公开桶，写删按用户文件夹限制。
 - `point_entries` 只允许用户读取自己的条目；客户端和 service-role 都不能直接写，`point_event_states` 对客户端完全隐藏。
+- `learning_*` 私有表只允许 owner 读，客户端不能写内容、会话、尝试、progress、日程、徽章或奖励；写入经 API 调用撤销了 `public/anon/authenticated` 权限的 service-role RPC。
+- 分享/出版物/举报/审核表不向匿名 PostgREST 开放。匿名分享和市场读取只能经过 API 返回转义、脱敏快照；出版快照由 trigger 保持不可变。
 
 ### 7.3 已关闭项与剩余数据完整性边界
 
 - 0008 已关闭 Profile 敏感列写入、内部 RPC 客户端 EXECUTE，以及赞/评论/原创/转发/任务删除重做累计获分问题。
 - points 使用 append-only entries、持久 event state、稳定业务键和冲正；Profile 的 points/level 只是账本投影。迁移前缓存先作为 `legacy_opening` 留痕，再由 0009 追加 reversal 归零，无法追溯为逐笔可信历史。
+- Courses 的尝试 append-only、progress 是保护投影；复习只有在会话完成时才写入不同本地日期并累计复习次数。+20 课程奖励使用用户与规范化不同词集合的 SHA-256 业务键，删除/重建/克隆不能重复领取。
 - 帖子 `repost_of` 与 points key 已不可变，但作者仍可在 UPDATE 时修改作者快照、冗余计数和时间；INSERT 防伪造尚未覆盖这些字段的更新路径。
 - `study_goals.course_id` 缺少课程归属校验；task 没校验 material 与 course 相互匹配。
 - feedback owner policy 允许用户自行修改 `status`。
@@ -198,14 +212,16 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 
 GitHub Actions 在 runner 上：
 
-1. 运行 docs check、workspace typecheck、Vitest/jsdom 和 build。
-2. 先验证 0007→0010 历史数据升级、opening reversal 与发布断言，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points E2E。
-3. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
-4. 构建 Web 与 Git SHA API image，经预先核验 host key 的 SSH/SCP 上传。
-5. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
-6. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
+1. 运行 docs check、workspace typecheck、Vitest/jsdom/API 测试和 build。
+2. 自动暂存所有 0008 及之后迁移，先验证 0007 历史数据升级、opening reversal 与最新发布断言，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points/Courses E2E。
+3. 启动 Web/API 与 Azure fake，以固定 WAV 执行 Playwright 登录→多单元创建→纠错/排序→四阶段→刷新续学→复习安排→发布/另一用户克隆。
+4. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
+5. 构建 Web 与 Git SHA API image，经预先核验 host key 的 SSH/SCP 上传。
+6. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
+7. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
 
 服务器上宿主 nginx 托管 `/opt/nalanda/web`，把 `/api/` 反代到仅绑定 `127.0.0.1:8411` 的 API 容器。生产 compose 不启动 AI/Redis。
+Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考 server block 与 Nest body parser 都设为 10 MB；评分 multipart 仍为 2 MB。CI 不自动改 certbot 管理的现网站点，所以首次启用前必须按发布手册同步并 reload nginx。
 
 ### 8.2 通用 2G 模板
 
@@ -214,6 +230,7 @@ GitHub Actions 在 runner 上：
 ### 8.3 发布局限
 
 - API health 已验证 Supabase JWKS/PostgREST 基本 readiness，但不覆盖 Storage、注册写入、完整 RLS 或浏览器登录路径；Redis/AI 仍只看变量。
+- Azure Speech 的自动化使用 fake provider，只验证适配、限制和降级；真实供应商账号、声音、区域、费用与响应格式必须在受控 smoke 中确认。
 - 数据库 release archive 仍不含 Storage 文件字节，且 CI 不自动逆向生产数据。
 - 不可变 image/release 目前仍主要保留在单台服务器，缺少异地 registry 和自动容量策略。
 - SSH 部署用户在当前文档中为 root。
@@ -227,15 +244,15 @@ GitHub Actions 在 runner 上：
 - Web 使用 Vite；`vite build` 不等同于 TypeScript 类型检查。
 - Python AI 不属于 pnpm workspace，需要独立安装和启动。
 - 可执行测试命令和环境要求见 [测试指南](guides/TESTING.md)。
-- 默认 `pnpm test` 当前运行 9 个 Web jsdom 与 2 个 API readiness 单元测试；发布工具另有 6 个 Node 单元测试；本机未设置显式开关时 3 个 RLS/Storage/points E2E 跳过。PR/main workflow 会启动一次性本地 Supabase，先运行 0007→0010 升级夹具，再显式运行这 3 组 E2E；手工托管运行仍需隔离项目和 Ref 二次确认。
+- 默认 `pnpm test` 运行 Web jsdom、API/Courses 单元测试和发布工具测试；本机未设置显式开关时真实 RLS 套件安全跳过。PR/main workflow 启动一次性本地 Supabase，运行 0007→最新迁移升级夹具、空库重建、四组双用户 RLS/Storage/points/Courses E2E 和 Playwright Courses 流程；手工托管运行仍需隔离项目和 Ref 二次确认。
 - 历史实现笔记中的“已验证”必须能映射到仓库测试；不能复现的旧验证只能作为历史记录。
 
 ## 10. 当前优先风险
 
-1. 收紧帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等剩余授权和完整性缺口。
-2. 为 points 增加每日上限、内容审核撤销、协同滥用检测，并持续审计 0009 的 opening reversal；credits/VIP 另建商业账本。
-3. 统一 AI/前端/TS 契约，再实现真实生成链路。
-4. 补 API/FastAPI/真浏览器与托管 staging 测试，执行数据库/Storage 恢复演练和持续告警。
-5. 逐步移除 `@ts-nocheck`/legacy 双实现，增加 URL 路由、深链接与类型安全 React 组件。
+1. 让 0011–0013 通过一次性 Supabase CI 与受保护生产发布；先开启 Courses 私有 beta，再做真实 Azure smoke，最后分开开放分享与课程市场。
+2. 收紧帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等剩余授权和完整性缺口。
+3. 为 points 增加每日上限、内容审核撤销、协同滥用检测；credits/VIP 另建商业账本。
+4. 实现 Courses 文件 AI 导入前先统一模型契约、人工确认、评测集、成本和隐私留存；当前禁用入口不能算能力。
+5. 执行数据库/Storage/TTS 缓存恢复演练和告警演练，逐步移除 `@ts-nocheck`/legacy 双实现并增加 URL 深链接。
 
 处理顺序和验收门见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。

@@ -15,6 +15,7 @@
 - nginx access/error log、systemd、Docker 与主机资源命令；
 - GitHub Actions deploy 运行结果；
 - Supabase 控制台可提供平台侧 Auth/数据库/Storage 日志与指标，具体可用项取决于项目配置。
+- Courses 举报达到配置阈值时 API 输出单行 JSON `event=course_report_threshold`；speech 配额/估算成本持久在 `learning_speech_usage`，429 使用稳定 `SPEECH_QUOTA_EXCEEDED`；这些当前仍需日志/SQL 人工查看，不是完整告警链。
 
 当前缺失：
 
@@ -23,6 +24,7 @@
 - `/api/health` 尚不检查 Storage、注册写入、完整 RLS、Redis 或 AI 的连通性；
 - Web 前端异常和浏览器直连 Supabase 失败没有服务端集中信号；
 - 日常备份新鲜度、RLS/数据完整性、TLS 到期、成本、AI 质量和支付对账告警；迁移前加密恢复点已有 CI 门禁，但没有持续告警。
+- Courses route/阶段/恢复成功率、陈旧 active session、复习日程积压、课程 points/徽章异常、举报队列和 Azure latency/error/cost 尚无集中指标；`/api/health` 也不探测 learning schema、TTS cache 或 Azure。
 
 所以“deploy health ok”已证明 API→Supabase JWKS/PostgREST 基本连通，但仍不证明 Storage、浏览器直连、注册/登录写路径或核心业务全部健康。
 
@@ -37,6 +39,9 @@
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
 | FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
+| Courses API | 代码已实现，生产待 flags | 稳定 API error code、DB facts、container log | 无 route/阶段/恢复/熟练度指标；health 不查 0011–0013 |
+| Azure Speech | adapter 已实现，生产待启用 | provider error code、speech usage 预算行、熔断 flag | 无真实 latency/可用率/账单对账告警；录音不得进日志 |
+| Course Market | 代码已实现，生产待 flag | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
 | Redis/BullMQ | 未接入当前业务 | hybrid compose 有目标配置 | 无队列/worker 指标 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
 | 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
@@ -56,6 +61,10 @@
 | 私有资料 | upload + signed URL + download 合成成功率 | ≥ 99% / 1 小时，使用小型无敏感 fixture |
 | 备份 | 最近一次已验证恢复点年龄 | 数据库 < 24 小时；目标 PITR 指标按 RPO |
 | 数据保护 | 跨用户 RLS 拒绝率 | 测试应 100% 拒绝；任何成功为 P1 |
+| Courses 持久化 | 创建/答题/恢复成功率（排除合法 4xx） | ≥99% / 15 分钟；恢复必须返回同一 active session |
+| 发音合成 | Azure TTS 成功率/延迟 | ≥98% / 1 小时、p95<3 秒；失败可降级，不计文本课程不可用 |
+| 朗读评分 | 有效 WAV provider 成功率 | ≥97% / 1 小时；供应商失败不写错误次数 |
+| 复习日程 | 到期 pending 项进入/完成成功率 | ≥99%；不允许误建 `study_tasks` 或 +5 |
 
 避免合成监控污染真实指标：使用专用账号/课程/文件前缀，测试后清理，并防止触发积分、通知和社区公开内容。生产合成写测试在具备幂等清理前不得自动开启。
 
@@ -79,6 +88,10 @@
 - 最近数据库备份/恢复点 > 24 小时：P2；季度恢复演练逾期：P3；
 - CI deploy 失败：P2；发布后外部 probe 失败：P1/P2 视影响；
 - 任意安全回归测试发现 RLS 越权、service-role 泄露或高权限 RPC 可由普通用户执行：P1。
+- Courses progress/badge/points 可由客户端写、匿名 PostgREST 读到分享/市场私有表、已撤销 token 仍可克隆或 publication 内容可改：P1；
+- Azure 估算月预算 ≥80%：P3，≥95%：P2 并评估熔断，超预算/持续 429：P2；provider 5xx/timeout >10% 持续 10 分钟：P2 并打开语音 circuit，文本学习保持；
+- 同一课程完成指纹出现多条正向 +20、复习 schedule 产生 task +5、badge 重复 PK/事实不一致：P1/P2 按经济影响；
+- Course 举报达到 `COURSE_REPORT_ALERT_THRESHOLD`：信息/审核队列；24 小时无人处理升级 P3。数量本身不自动下架。
 
 所有阈值先观察两周基线再调优，保留变更记录。告警必须指向本页具体 runbook，且需要定期发送测试告警验证路由。
 
@@ -133,6 +146,11 @@ tail -n 200 /var/log/nginx/error.log
 | API health 200，但登录/业务查询失败 | 浏览器→Supabase、JWT、RLS、迁移 | Supabase logs、项目 URL、JWKS、RLS/表结构、前端 console |
 | 只上传/预览失败 | Storage policy/对象/签名 URL | bucket、路径首段、对象 policy、过期时间、浏览器错误 |
 | 发布后静态页面旧、API 新 | artifact/nginx cache/上传 | `/opt/nalanda/web` mtime、workflow artifact、浏览器 cache |
+| Courses 统一 disabled/404 | API flags/0011–0013 未发布 | 先查 production history 与服务器 `.env`，不要开放客户端 RPC/表写 |
+| 课程可学但无发音/评分 | Azure flag/key/region/circuit/预算 | 按 error code 和 speech usage 判断；保持浏览器朗读降级 |
+| 刷新后会话丢失/重复 | active unique/session RPC/API | 查同 user/course active 行、state queue/cursor、API 5xx；禁止前端造 progress |
+| 课程进度或 +20 异常 | progress/growth/fingerprint | 对账 attempts、三组日期、learned_at、point business_key 与 source；暂停 Courses 奖励写入 |
+| Course Market 课程消失 | publication status/审核 | 查 moderation actions 和管理员配置；不要仅凭举报数恢复/下架 |
 
 ## 6. 事故 runbook
 
@@ -167,6 +185,15 @@ tail -n 200 /var/log/nginx/error.log
 3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
 4. 当前生产只有 API 容器，Redis/AI 不应被误判为当前生产资源来源。
 
+### 6.5 Courses / Azure / Course Market
+
+1. 先按总开关→分享/市场/语音子开关缩小影响面；关闭语音不会阻断文本学习，关闭市场不会删除私有课程。
+2. 使用 request 时间、稳定 `code`、脱敏 user ID hash、course/session ID 定位；不得记录 token、词表正文、翻译、WAV、音素原始响应或 Azure key。
+3. Azure 异常确认 provider 与预算后打开 `AZURE_SPEECH_CIRCUIT_OPEN=true` 并重启 API；验证浏览器朗读降级和 attempt/wrong_count 未因供应商失败增加。
+4. 成长异常先关闭 Courses 总开关或相关 release，查询同一 `learning-course-completed:<user>:<fingerprint>` 的 entries/state；不得删除账本或手改 Profile 投影。
+5. 举报只触发人工核查。紧急隐藏必须由配置管理员走 API，填写原因并确认 moderation action；恢复同样留痕。
+6. 修复后依次验证 owner、会话恢复、日程、points 幂等、撤销分享和市场克隆；记录 flags 变更、影响窗口和补偿决定。
+
 ## 7. 日志规范（目标）
 
 API/AI 后续应输出单行结构化 JSON：
@@ -182,6 +209,8 @@ API/AI 后续应输出单行结构化 JSON：
 
 禁止记录：password、Authorization/cookie、Supabase access/refresh token、service-role/JWT secret、Anthropic/Stripe key、数据库连接串、签名 URL、完整课件/笔记/反馈正文、支付卡数据。对 email、文件名、IP 和 user agent 设定用途、采样与保留期。
 
+Courses 另禁止记录：分享明文 token/token hash、完整词表/翻译、用户 WAV、Azure 原始识别 payload。可记录 route template、稳定 error code、哈希用户、course/session UUID、stage、字节/时长、provider latency、聚合 score 和估算 micro-USD；音素内容只有用户请求内返回和受限学习事实需要时才保存。
+
 ## 8. 目标仪表盘
 
 最低应有：
@@ -190,10 +219,12 @@ API/AI 后续应输出单行结构化 JSON：
 2. **API**：RPS、p50/p95/p99、5xx、route/error code、restarts、CPU/memory。
 3. **Supabase**：Auth 成败、PostgREST 错误/延迟、DB 连接/CPU/storage、慢查询、Storage 错误/容量。
 4. **业务**：注册/活跃用户、资料上传成功率、任务完成、社区写入；只用聚合数据。
-5. **数据保护**：备份年龄/大小/校验、恢复演练、RLS 安全测试、异常函数权限。
-6. **发布**：Git SHA、deploy 时间、失败、变更前后错误率。
-7. **AI（启用后）**：队列深度/等待、任务成功/重试/超时、token/费用、模型/提示词版本、schema 合格率与质量评测。
-8. **支付（启用后）**：webhook 延迟/失败/重放、订单与 Stripe 对账差异、退款、账本不平。
+5. **Courses**：创建/保存、active 恢复、各阶段 attempt 成败、候补轮次、复习到期/完成、熟练词/课程、错误计数、+20 指纹唯一性、徽章发放；避免 term 高基数标签。
+6. **Speech/Market**：TTS/评分成功率与 p95、429/熔断、估算/实际账单差异、cache hit；publication/clone/report/action 与处理年龄。
+7. **数据保护**：备份年龄/大小/校验、恢复演练、RLS 安全测试、异常函数权限。
+8. **发布**：Git SHA、deploy 时间、失败、变更前后错误率。
+9. **AI（启用后）**：队列深度/等待、任务成功/重试/超时、token/费用、模型/提示词版本、schema 合格率与质量评测。
+10. **支付（启用后）**：webhook 延迟/失败/重放、订单与 Stripe 对账差异、退款、账本不平。
 
 ## 9. 值班与升级路径
 
@@ -221,3 +252,4 @@ P1 必须指定 incident commander、固定更新节奏并保留时间线；P2 �
 - `/api/health` 拆分 liveness/readiness，readiness 真正检查必要依赖且有超时；
 - 备份年龄与恢复演练已告警；
 - 新 AI/支付/审核模块的质量、成本、队列、账本告警在生产流量前完成。
+- Courses 私有 beta 前至少有 route/error、DB 容量、成长幂等和复习积压信号；真实 Azure 前有成本/429/provider 告警与一键 circuit；分享/市场前有举报阈值路由和管理员动作审计。

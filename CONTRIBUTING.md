@@ -3,7 +3,7 @@
 > **本文内容：**规定开发环境、分支与提交、代码/数据库/文档变更流程、测试要求和完成定义。  
 > **作用：**让贡献者用可复现方式交付变更，并确保代码、迁移、测试、文档和运维说明同步。  
 > **何时更新：**工具链、目录、CI 门禁、分支策略、数据库流程或评审责任变化时；发现本文命令无法执行时应立即更新。  
-> **状态基线：**2026-07-10；当前仓库仍在从原型迁移为完整产品，提交说明必须区分已实现与目标。
+> **状态基线：**2026-07-22；当前仓库仍在从原型迁移，Courses 代码已实现但生产待发布，提交说明必须区分实现、测试和上线。
 
 ## 1. 开始之前
 
@@ -30,6 +30,7 @@ pnpm build
 |---|---|---|
 | Web | `apps/web`、`packages/ui` | 覆盖桌面/窄屏、明暗主题、登录态与跨账户切换 |
 | API | `apps/api` | DTO 校验、鉴权/归属、错误契约、API 文档和集成测试 |
+| Courses | `apps/web/src/features/courses`、`apps/api/src/learning`、`packages/types`、0011+ | 解析/状态机/跨日复习、service-only RPC、Schedule/Profile、分享/市场、Speech 隐私和分层 E2E |
 | AI | `apps/ai`、`packages/types` | schema 契约、离线评测、成本/延迟预算、隐私与模型版本 |
 | 数据库 | `supabase/migrations` | 只新增迁移；RLS 双用户负向测试；发布/回滚说明 |
 | 部署 | `infra`、`.github/workflows` | 分阶段验证、健康检查、回滚、密钥/告警影响 |
@@ -69,6 +70,8 @@ PR 描述至少包含：
 - Python 输出必须通过 Pydantic schema；模型/prompt/parser 版本随结果记录，禁止用静态桩冒充真实生成。
 - 无障碍至少覆盖键盘操作、焦点、表单 label、状态提示、对比度和 reduced motion。
 - 用户可见文字默认考虑中英双语目标；当前未完成 i18n 时，不得声称已经支持双语界面。
+- Courses 文本 parser 和 API validator 都是边界：变更规则时同时更新精确错误位置、共享契约、数据库约束和测试；文件入口在真实隔离/OCR/人工确认完成前必须保持禁用。
+- 学习事实逐次持久化；不得用前端内存替代 session/attempt/progress，不得让排序/改名误清能力，也不得让供应商失败累计用户错误。
 
 ## 5. 数据库变更
 
@@ -90,6 +93,8 @@ pnpm test
 pnpm build
 ```
 
+等价的全仓门禁是 `pnpm check`。涉及 migration/Courses 还必须在一次性本地 Supabase 运行 `pnpm test:rls`；涉及完整用户路径需按测试指南配置并运行 `pnpm --filter @nalanda/web test:playwright`。普通 `pnpm test` 中 RLS skip 不是数据库通过证据。
+
 若某工作区没有相应脚本，不能把“命令不存在”记录为通过；应补齐脚本或在 PR 中明确该门禁尚未实现。按变更类型追加：
 
 - 纯函数/状态机：单元测试和边界值；
@@ -98,6 +103,7 @@ pnpm build
 - API：未认证、坏 token、越权、重复请求和上游失败；
 - Supabase：迁移重放、RLS 双用户、Storage、函数权限和触发器幂等；
 - AI：契约、固定夹具、离线评测、安全集和成本回归；
+- Speech：固定 WAV/fake adapter 覆盖格式、大小、超时、限流和不落录音；发布前另做真实 Azure smoke，不能在 PR 使用个人录音；
 - 支付：只用 Stripe test mode/CLI 夹具，覆盖重复、乱序、退款和争议 Webhook。
 
 修复 bug 时先添加能复现问题的失败测试。不得用放宽断言、永久 skip、共享生产密钥或依赖测试顺序来“修复”测试。
@@ -125,6 +131,7 @@ pnpm build
 - 测试数据使用合成内容；课件、邮箱、支付和社区导出视为机密。
 - 新数据字段需说明目的、合法基础/用户预期、留存、访问者、导出与删除行为。
 - 新社区或市场内容类型必须接入举报、审核、申诉和附件删除设计。
+- Course Market v1 只允许免费克隆；不得加入 credits/购买/分成文案或让克隆课再次传播。修改分享 token、publication 快照或审核时必须补撤销竞态、脱敏与审计测试。
 - 新 AI 能力必须说明资料是否发往第三方、保存多久、是否用于训练，以及怎样评测幻觉和提示词注入。
 - 新 credits/VIP/支付逻辑必须符合 [统一经济与支付规则](docs/product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 

@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-07-21。
+最后核对：2026-07-22。
 
 ---
 
@@ -24,15 +24,16 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ## 2. 当前基线（不是最终完成状态）
 
-截至 2026-07-21，项目是“高保真 Web 应用 + 部分真实 Supabase 业务模块 + 生产部署”：
+截至 2026-07-22，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 尚待发布的 Courses 增量”：
 
-- 已落地：邮箱密码注册/登录、课程与资料、社区、学习计划、Profile、活动积分/等级、通知、反馈、Web 生产部署。
-- 部分落地：React 只承担鉴权壳；主应用仍是 `legacy` DOM 模块。Supabase 是当前主要业务后端，NestJS 只是薄网关。
+- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API 生产部署；生产迁移停在 0010。
+- 已实现待发布：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech 适配层；0011–0013 尚未发布，生产 flags 未开启。
+- 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
-- 未实现：BullMQ/Redis 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime 订阅、Electron、React Native、完整 i18n、管理后台、官方课程。
+- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；BullMQ/Redis 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。
 - 安全基线进展：生产已应用 0008–0010，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；前端跨账号生命周期和 Supabase 错误处理也已修复。
-- 仍需优先完成：帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 每日上限、审核撤销和协同行为检测；AI 数据契约统一。
+- 仍需优先完成：让 Courses 真实 Supabase/Playwright CI 通过并按受保护流程发布；帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 每日上限、审核撤销和协同行为检测；AI 数据契约统一。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 
@@ -60,7 +61,15 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 当前差距：基础 CRUD/预览已完成；缺服务端上传约束、配额、解析状态、版本、扫描和自动清理。
 
-### 3.3 AI 创作与个人笔记（最高优先级）
+### 3.3 Courses 学习课程
+
+首版英语单词学习已经在仓库实现：文本逐单元粘贴和精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习熟练度、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；生产上线仍需 0011–0013 与 flags。
+
+当前明确未实现：PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR/解析；按英语单词/知识点/阅读理解/题库训练选择 prompt；模型结构化输出与人工确认；导入评测集、token/成本和隐私留存。入口必须保持“AI 解析即将推出”，不能接受文件或暗示已调用模型。
+
+后续顺序：先完成受保护迁移与私有 beta → 真实 Azure TTS/评分 smoke → 分享/市场分开开放 → 建文件隔离/扫描/解析管线与人工确认 → 以评测和成本门开放其他课程类别。
+
+### 3.4 AI 创作与个人笔记（最高优先级）
 
 一份生成任务可选择一种或多种产物：
 
@@ -90,25 +99,25 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 为每个生成片段保存材料来源与页码，避免无引用答案。
 - 建立幂等键、重试、取消、超时、预算上限、失败退款和质量评测。
 
-### 3.4 Home 与学习闭环
+### 3.5 Home 与学习闭环
 
 最终 Home 聚合真实的今日任务、连续学习、近期课程、待处理资料、最近笔记、生成任务和活动；不能继续混用 mock credits 与真实 points。
 
 学习闭环应记录：测验作答、薄弱知识点、复习间隔、任务完成和生成质量反馈，并用于后续计划推荐。推荐初期采用可解释规则，数据足够后再引入模型。
 
-### 3.5 社区与内容治理
+### 3.6 社区与内容治理
 
 目标能力：帖子、评论、赞、收藏、转发、关注、标签、媒体、举报、屏蔽、审核队列、申诉、频率限制和反垃圾。
 
 当前社交功能基本可用，points 删除/取消/重做已按稳定业务事件冲正去重；扩展推荐前仍须收紧作者可更新的服务端可信字段，增加奖励上限/内容质量反滥用，并治理孤儿媒体。详细规则见[内容审核](governance/CONTENT_MODERATION.md)。
 
-### 3.6 学习计划
+### 3.7 学习计划
 
 目标能力：任务/目标、资料关联、考试倒计时、提醒、重复任务、时区、日历同步、基于薄弱点的可解释排程。
 
 当前有基础任务、目标、连续学习、启发式填充和幂等任务奖励；取消/删除会冲正，同一永久业务事件重做不会再次推进 streak。后续需完成到期提醒、历史任务分页、目标外键归属校验和真正的 AI/规则推荐。
 
-### 3.7 市场、钱包、VIP 与支付
+### 3.8 市场、钱包、VIP 与支付
 
 目标能力：
 
@@ -119,7 +128,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 `points` 是不可提现的活动成长值，`credits` 是内部消费余额，两者不得互转或共用字段。完整规则见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 
-### 3.8 通知、反馈与管理端
+### 3.9 通知、反馈与管理端
 
 目标能力：
 
@@ -127,7 +136,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 反馈只允许用户创建/查看，状态由支持人员处理。
 - 管理端覆盖用户、内容、举报、反馈、订单、AI 任务、成本与审计日志。
 
-### 3.9 多平台与国际化
+### 3.10 多平台与国际化
 
 - Web 是首要交付面。
 - Electron 在 Web 核心闭环稳定后接入，提供文件选择、系统通知和安全更新。
@@ -162,6 +171,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - Identity：`profiles`、roles、preferences、consents。
 - Learning source：courses、materials、material_versions、parse_results。
 - Knowledge：notes、generated artifacts、citations、embeddings、attempts。
+- Learning courses：learning courses/units/words、sessions/items/attempts/progress、review schedules、shares/publications/reports、badge awards、speech usage。
 - Planning：goals、tasks、reminders、streak events。
 - Community：posts、comments、reactions、follows、reports、moderation actions。
 - Commerce：products、orders、payments、credit ledger、creator earnings、payouts、subscriptions。
@@ -176,7 +186,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - 有数据库迁移与回滚/前滚说明；RLS 至少用两个用户验证。
 - 有 API/契约说明，错误与状态机稳定。
 - 有单元或 jsdom 测试；关键用户路径有 E2E。
-- CI 运行 typecheck、测试和构建。
+- CI 运行 code/database lint、typecheck、测试和构建。
 - 有日志、指标和告警；涉及外部服务时有超时、重试和降级。
 - 涉及个人数据时更新隐私/删除规则；涉及内容时更新审核规则。
 - 涉及 AI 时有固定评测集、成本预算、引用和失败策略。
@@ -190,14 +200,23 @@ NestJS API（业务边界、配额、订单、任务、管理）
 目标：在继续加功能前，先让现有真实数据可信、测试可复现、发布可回滚。
 
 - **已实现：**限制 Profile 敏感列、撤销内部 definer 客户端执行权、points append-only 账本/冲正/幂等，以及对应双用户 RLS 回归。
-- **已实现：**修复跨账号 legacy 状态、迟到异步响应、resize 重挂、登录/退出 loading 和 Supabase/Storage error 处理，并补齐 9 个 jsdom 测试；API readiness 已用 JWKS/PostgREST 双探针和 2 个单元测试加固。
+- **已实现：**修复跨账号 legacy 状态、迟到异步响应、resize 重挂、登录/退出 loading 和 Supabase/Storage error 处理；现有 Web jsdom、API 单元测试、双用户 Supabase E2E 与 Courses Playwright 流程共同覆盖新旧边界。
 - **剩余：**修复帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等权限/完整性问题。
 - **已上线：**0008–0010 已完成受保护生产发布；旧 opening 以追加式等额冲正归零，生产 history、发布断言和最终 dry-run 均通过。
 - **剩余：**给 points 增加产品级每日上限、内容审核撤销和协同行为检测；继续收紧帖子/feedback/关联归属权限。
-- 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、构建、加密恢复点与应用回退门禁；继续补 API/浏览器 E2E。
+- 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、Courses 浏览器主流程、构建、加密恢复点与应用回退门禁；继续补全旧模块 API HTTP/浏览器 E2E 与 FastAPI 测试。
 - 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
 
 验收：仓库 P0 回归关闭且 production migration history 可证明已应用；默认 CI 全绿；两用户 RLS E2E 在一次性本地 Supabase 可重复执行；剩余权限项关闭；发布和恢复完成演练。
+
+### 阶段 A+：Courses 受保护发布（当前增量）
+
+- 让解析器、jsdom/API、0007 升级、空库迁移、双用户 RLS 和 Playwright 主流程在 CI 全绿。
+- 只读 migration plan → 加密恢复点 → apply 0011–0013 → remote lint/dry-run → 部署应用但保持 flags 关闭。
+- 开启私有 Courses beta，验证跨账号、会话恢复、复习跨日与 points 指纹；使用真实 Azure 合成账号做受控 TTS/评分 smoke。
+- 分别开启分享和 Course Market；观察错误率、举报阈值、语音配额/成本与数据库增长。回退只关 flags/恢复应用 release，数据库向前修复。
+
+验收：生产 migration history 到 0013；Courses 私有路径和真实 Azure smoke 有证据；分享/市场只在独立审批后开放；文件导入仍保持禁用。
 
 ### 阶段 B：AI 最小闭环
 
@@ -244,9 +263,14 @@ NestJS API（业务边界、配额、订单、任务、管理）
 |---|---|---|---|---|
 | SEC-01 | Profile 敏感列与内部 RPC 收口 | 已上线 | A | 0008–0010、RLS E2E、2026-07-21 生产发布记录 |
 | SEC-02 | 注册限流、邮箱验证、找回密码 | 未完成 | A/B | SMTP、Throttler |
-| QA-01 | jsdom、API readiness 与双用户 RLS/Storage 可执行测试 | 部分 | A | 9 jsdom + 2 API unit + CI 本地 RLS；staging/API HTTP/FastAPI/浏览器待补 |
+| QA-01 | jsdom、API、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API unit + CI 本地 Supabase + Courses Playwright；staging、旧模块 API HTTP/浏览器与 FastAPI 待补 |
 | OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
 | FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
+| LEARN-01 | 英语词表文本创建/编辑与四阶段学习 | 已实现 | A+ | React、NestJS、0011–0013；待 CI/生产发布 |
+| LEARN-02 | 复习熟练度、Schedule/Profile、徽章/+20 points | 已实现 | A+ | 跨日本地日期、指纹幂等；待 CI/生产发布 |
+| LEARN-03 | 分享、免费课程市场、举报与审核 | 已实现 | A+ | 不可变快照、flags；待分阶段开放 |
+| LEARN-04 | Azure TTS/朗读评分适配层 | 已实现 | A+ | fake 自动化；真实供应商 smoke 待执行 |
+| LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
 | AI-01 | 统一生成契约与任务模型 | 未完成 | B | OpenAPI、迁移 |
 | AI-02 | 解析、分块、引用、embedding | 桩 | B | FastAPI、pgvector |
 | AI-03 | 知识清单真实生成 | mock | B | AI-01/02 |

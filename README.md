@@ -19,30 +19,32 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除 |
 | Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；数据在 Supabase |
 | Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；“智能填充”为规则式生成 |
+| Courses / Course Market | ✅ 仓库已实现英语词表文本导入、编辑、四阶段学习、复习、熟练度、Schedule/Profile、免费分享/市场、徽章与积分；0011–0013 待受保护生产发布 |
 | Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；通知当前是查询刷新，不是 Realtime |
 | Home | 🟡 高保真 mock，统计/课程/活动不是真实聚合 |
 | Notes / AI Create | 🟡 高保真 mock；FastAPI 只是桩，未形成解析/生成/落库链路 |
-| Note Market / credits / VIP / 支付 | 🟡 UI mock 或预留字段；无账本、订单或 Stripe |
+| Note Market / credits / VIP / 支付 | 🟡 Note Market 仍为 Demo，Course Market 只支持免费克隆；无 credits 账本、订单或 Stripe |
+| Courses 文件导入 / 其他类别 | ⬜ PDF/Word/JSON/Markdown/HTML/图片仅有禁用入口；AI 解析、知识点/阅读理解/题库训练未实现 |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-这里的“真实”主要表示浏览器真实读写 Supabase 并受 RLS/列级授权保护；目前并非所有业务都经过 NestJS。生产已于 2026-07-21 应用 0008–0010，封堵 Profile 敏感列、内部 RPC 和当前 points 刷分路径，并以追加式冲正归零旧 points opening；credits/VIP 仍只是不可由客户端写的预留缓存，不是商业账本。其余边界见[当前架构](docs/ARCHITECTURE.md)。
+这里的“真实”表示代码已连接数据库/API 并有相应权限与测试边界，不等于已经发布。旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-07-21 应用 0008–0010；Courses 0011–0013 仍须按受保护流程发布并逐项开启 feature flag。credits/VIP 仍只是客户端不可写的预留缓存，不是商业账本。其余边界见[当前架构](docs/ARCHITECTURE.md)。
 
 ## 当前技术结构
 
 - Web：React 18 + Vite 鉴权壳，内部挂载 legacy DOM 应用。
 - 数据/Auth/Storage：Supabase PostgreSQL、Auth、Storage、RLS。
-- API：NestJS，目前只有 health、register、me。
+- API：NestJS，提供 health/auth/me 与 Courses、会话/复习、语音、分享、课程市场和学习 Profile 聚合接口。
 - AI：FastAPI 骨架和固定桩输出，未接入生产。
-- 共享：pnpm + Turborepo；`packages/ui` 是 CSS 包，`packages/types` 尚未被应用消费。
+- 共享：pnpm + Turborepo；`packages/ui` 是 CSS 包，Courses 的 camelCase 契约由 `packages/types` 在 Web/API 共用。
 - 生产：GitHub Actions 构建，宿主 nginx 托管 Web，Docker 运行 API，Supabase 使用云服务。
 
 ## 仓库入口
 
 - `apps/web`：生产 Web。
-- `apps/api`：当前 NestJS 薄 API。
+- `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
 - `apps/ai`：AI 桩。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：当前 10 个数据库迁移；0008 建立 points 账本并收紧 Profile/RPC 权限，0009 冲正旧 points opening，0010 执行发布断言。
+- `supabase/migrations`：当前 13 个追加式迁移；0008–0010 完成安全/points 修复，0011–0013 建立 Courses 数据、事务工作流和发布断言。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/Redis 接入时的通用部署模板。
 
@@ -65,10 +67,10 @@ pnpm --filter @nalanda/web dev
 常用校验：
 
 ```bash
-pnpm check   # docs:check + release-tool tests + typecheck + test + build
+pnpm check   # docs:check + release-tool tests + code lint + typecheck + test + build
 ```
 
-默认 `pnpm test` 运行 9 个 Web jsdom 和 2 个 API readiness 单元测试且不连接外部项目；本机结果中 3 个 RLS E2E 会安全跳过。PR/main CI 另运行 6 个发布工具单元测试，并启动一次性本地 Supabase，先验证 0007→0010 历史数据升级、旧积分归零和发布断言，再显式运行 3 个双用户 RLS/Storage/points E2E。手工连接托管项目时禁止指向生产，安全开关见[测试指南](docs/guides/TESTING.md)。
+默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，自动暂存 0008 及之后迁移来验证 0007 历史升级，再从空库重建、运行双用户 RLS/Storage/points/Courses E2E，并以 Azure fake + 固定 WAV 运行 Playwright Courses 主流程。普通 jsdom/mock 结果不能称为真实数据库 E2E；手工连接托管项目时禁止指向生产，见[测试指南](docs/guides/TESTING.md)。
 
 ## 静态设计原型
 
@@ -94,7 +96,7 @@ python3 -m http.server 8000
 
 ## 规划中的核心能力
 
-最终产品会覆盖真实 AI 解析与四类学习资产、个人笔记、真实 Home、市场/credits/Stripe、内容治理、Realtime、管理端、双语、Electron 和 React Native。它们的依赖、顺序和验收标准只以 [PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md) 为准。
+下一阶段会覆盖 Courses 文件 AI 解析与其余三类学习资产、个人笔记、真实 Home、笔记市场/credits/Stripe、完整内容治理、Realtime、管理端、双语、Electron 和 React Native。它们的依赖、顺序和验收标准只以 [PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md) 为准。
 
 ## 许可证状态
 
