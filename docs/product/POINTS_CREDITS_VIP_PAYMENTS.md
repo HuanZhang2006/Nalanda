@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-07-10。迁移 0008 已实现 points 事件账本、净额幂等/冲正、Profile 敏感列保护和内部 RPC 撤权；`credits`/VIP 仍只是客户端只读的预留缓存，真实 AI 计费、市场购买、商业账本、Stripe、VIP 权益和创作者结算均未实现。目标商业规则在对应发布门禁完成前不得对外宣称上线。
+> **状态基线：**2026-07-21。迁移 0008–0010 已在生产实现并验证 points 事件账本、净额幂等/冲正、旧 11 points 的等额 reversal、Profile 敏感列保护和内部 RPC 撤权；`credits`/VIP 仍只是客户端只读的预留缓存，真实 AI 计费、市场购买、商业账本、Stripe、VIP 权益和创作者结算均未实现。目标商业规则在对应发布门禁完成前不得对外宣称上线。
 
 ## 1. 规范用语和总原则
 
@@ -29,13 +29,13 @@
 - points 当前奖励：点赞者 +1、评论者 +2、普通发帖 +10、转发 +3、完成任务 +5；等级阈值为 0/50/150/350/700/1200。
 - 当前五类奖励均通过 `point_event_states` 和 append-style `point_entries` 激活/冲正；相同持久业务键在删除/取消后重建只恢复原净额，不再累计刷分。
 - authenticated 只能更新 `username/university/major/year/language`；`credits/points/level/vip/streak` 由列级授权和防御触发器保护。`_add_points` 已停用并对客户端/service-role 撤权，`_notify`、`_set_point_event` 及 trigger helpers 不再是客户端 RPC surface。
-- 0008 把迁移前 `profiles.points` 保存为 `legacy_opening`；2026-07-21 聚合审计确认唯一 Profile 有 11 points、credits/streak 为 0 且无 VIP，owner 决定 points 归零。0009 追加等额 reversal，不删除 opening，也不把它当成可信逐笔历史。
+- 0008 把迁移前 `profiles.points` 保存为 `legacy_opening`；2026-07-21 聚合审计确认唯一 Profile 有 11 points、credits/streak 为 0 且无 VIP，owner 决定 points 归零。0009 已在生产追加等额 `legacy_opening_reset=-11`，不删除 `legacy_opening=+11`，也不把它当成可信逐笔历史；0010 已验证每条 opening 恰有一条等额反向记录，且 Profile points/level 与账本投影一致。
 - Create、Market、Home 中的余额、价格、25 credits、70% 分成和兑换 VIP 目前是假数据/原型交互。
 - 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
 
 ### 2.2 发布限制
 
-Profile/RPC/当前 points 重做路径的 P0 已由 0008 封堵，但 credits/VIP/支付账本、对账、日上限和商业测试仍未实现。因此：
+Profile/RPC/当前 points 重做路径的 P0 已由生产迁移 0008–0010 封堵并验证，但 credits/VIP/支付账本、对账、日上限和商业测试仍未实现。因此：
 
 - 不接入 live Stripe key，不接受真实付款；
 - 不把 `profiles.credits` 当可消费余额；
