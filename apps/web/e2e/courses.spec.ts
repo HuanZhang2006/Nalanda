@@ -14,8 +14,15 @@ async function openCourses(page: Page) {
   await expect(page.getByRole("heading", { name: "学习课程", exact: true })).toBeVisible();
 }
 
-async function assessWithFixedWav(page: Page) {
-  const result = await page.evaluate(async () => {
+async function signOut(page: Page) {
+  await page.locator('[data-act="signOut"]').click();
+  // The shell delegates to an async Supabase sign-out. Wait for the auth UI so
+  // a following navigation cannot abort the request and preserve the old user.
+  await expect(page.getByRole("button", { name: "注册", exact: true })).toBeVisible();
+}
+
+async function assessWithFixedWav(page: Page, courseTitle: string) {
+  const result = await page.evaluate(async (title) => {
     const stored = Array.from({ length: localStorage.length }, (_, index) => localStorage.getItem(localStorage.key(index)!)).map((value) => {
       try { return value ? JSON.parse(value) : null; } catch { return null; }
     }).find((value) => value?.access_token);
@@ -23,7 +30,7 @@ async function assessWithFixedWav(page: Page) {
     const headers = { Authorization: `Bearer ${stored.access_token}` };
     const coursesResponse = await fetch("/api/learning-courses", { headers });
     const courses = await coursesResponse.json();
-    const course = courses.find((entry: { title: string }) => entry.title === "E2E English Vocabulary");
+    const course = courses.find((entry: { title: string }) => entry.title === title);
     if (!course?.activeSessionId) throw new Error("active learning session not found");
     const sessionResponse = await fetch(`/api/learning-sessions/${course.activeSessionId}`, { headers });
     const session = await sessionResponse.json();
@@ -40,7 +47,7 @@ async function assessWithFixedWav(page: Page) {
     form.append("audio", new Blob([buffer], { type: "audio/wav" }), "fixed.wav");
     const response = await fetch("/api/pronunciation/assess", { method: "POST", headers, body: form });
     return { status: response.status, body: await response.json() };
-  });
+  }, courseTitle);
   expect(result.status).toBe(201);
   expect(result.body).toMatchObject({ pronunciationScore: 93, accuracyScore: 92 });
 }
@@ -48,6 +55,10 @@ async function assessWithFixedWav(page: Page) {
 test("create, validate, resume, learn, schedule, publish, and clone a vocabulary course", async ({ page }) => {
   const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const password = `Nalanda-${nonce}!`;
+  // The local Supabase stack intentionally survives a Playwright retry. A
+  // unique title prevents the first attempt's immutable market publication
+  // from making retry assertions ambiguous.
+  const courseTitle = `E2E English Vocabulary ${nonce}`;
   await signUp(page, `courses-a-${nonce}@example.com`, password);
   await openCourses(page);
 
@@ -55,7 +66,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.getByRole("button", { name: /英语单词学习/ }).click();
   await expect(page.getByText("AI 解析即将推出")).toBeVisible();
   await page.getByRole("button", { name: /复制文本词表/ }).click();
-  await page.locator("#new-course-title").fill("E2E English Vocabulary");
+  await page.locator("#new-course-title").fill(courseTitle);
   await page.getByLabel("有单元").check();
   await page.getByRole("button", { name: "继续" }).click();
   await page.getByRole("button", { name: /新建单元/ }).click();
@@ -75,14 +86,14 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   // Explicit keyboard-accessible controls complement pointer/touch drag-and-drop.
   await page.getByLabel("上移单词").nth(3).click();
   await page.getByRole("button", { name: "保存课程" }).click();
-  await expect(page.getByRole("heading", { name: "E2E English Vocabulary" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: courseTitle, exact: true })).toBeVisible();
   await expect(page.getByText("0%", { exact: true })).toBeVisible();
 
   await page.getByRole("article").getByRole("button", { name: "开始学习" }).click();
   await page.locator(".modal select").selectOption({ index: 0 });
   await page.locator(".modal").getByRole("button", { name: "开始学习" }).click();
   await expect(page.locator(".course-term")).toHaveText("apple");
-  await assessWithFixedWav(page);
+  await assessWithFixedWav(page, courseTitle);
   await page.getByRole("button", { name: "认识了，继续" }).click();
 
   // A full reload returns to the shell; the course card still resumes the exact
@@ -118,7 +129,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
 
   await page.locator('#nav [data-go="schedule"]').click();
   await page.getByRole("button", { name: "全部", exact: true }).click();
-  await expect(page.getByText(/复习 E2E English Vocabulary/)).toBeVisible();
+  await expect(page.getByText(`复习 ${courseTitle}`, { exact: false })).toBeVisible();
   await openCourses(page);
 
   const dialogs = async (dialog: import("@playwright/test").Dialog) => {
@@ -131,14 +142,14 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   page.off("dialog", dialogs);
   await page.locator('#nav [data-go="market"]').click();
   await page.getByRole("button", { name: "Course Market" }).click();
-  await expect(page.getByRole("heading", { name: "E2E English Vocabulary" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: courseTitle, exact: true })).toBeVisible();
   await expect(page.getByText("免费", { exact: true })).toBeVisible();
 
-  await page.locator('[data-act="signOut"]').click();
+  await signOut(page);
   await signUp(page, `courses-b-${nonce}@example.com`, password);
   await page.locator('#nav [data-go="market"]').click();
   await page.getByRole("button", { name: "Course Market" }).click();
   await page.getByRole("button", { name: "免费克隆" }).click();
-  await expect(page.getByRole("heading", { name: "E2E English Vocabulary（副本）" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: `${courseTitle}（副本）`, exact: true })).toBeVisible();
   await expect(page.getByText("0%", { exact: true })).toBeVisible();
 });
