@@ -46,7 +46,7 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 `production-database` environment 还需 `SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 和 `DB_BACKUP_ENCRYPTION_KEY`。该 environment 已创建并只允许 `main`；当前私有仓库套餐不支持 required reviewer，升级套餐前必须只通过人工发起的 `workflow_dispatch` 发布数据库，并按[数据库发布手册](../../docs/operations/DATABASE_RELEASE_ROLLBACK.md)保存 owner 复核记录。数据库 migration history 的首次 baseline 不能由 CI 猜测。
 
-> **当前阻塞（2026-07-21）：** 已配置的旧项目 Ref `xsjlmyarvyloktoclvwn` 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 会阻止新版本激活。先在 Supabase 恢复该项目，或完成新项目的数据恢复、Secret 与服务器环境变量整体切换；不得只替换前端 URL，也不得降低 health 门禁。
+> **2026-07-21 Supabase 暂停事故：** 项目暂停期间，Ref `xsjlmyarvyloktoclvwn` 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；项目恢复后，DNS、JWKS 和服务器 service-role PostgREST 探针均已恢复。当前生产库仍未应用 0008（`point_entries` 不存在），且 `production-database` 尚未配置发布 Secrets，因此必须先完成历史值审计、migration history baseline、加密恢复点和手动数据库发布，才能合并并部署本 PR。不得因依赖暂停而降低 health 门禁。
 
 首次增加 `SERVER_SSH_KNOWN_HOSTS` 时，在可信网络取得 host key，用 `ssh-keygen -lf` 查看 fingerprint，并通过服务器控制台/云厂商记录进行第二通道核对后，才把完整 known_hosts 行写入 Secret。不要直接把未经核验的 `ssh-keyscan` 输出当作信任根。`DB_BACKUP_ENCRYPTION_KEY` 应使用密码学随机值生成，并在 GitHub 之外的受控恢复保管中保存副本。
 
