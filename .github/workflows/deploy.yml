@@ -85,26 +85,40 @@ jobs:
             base="$empty_tree"
           fi
 
-          changes="$(git diff --name-status "$base" "$GITHUB_SHA" -- supabase/migrations)"
-          if [[ -z "$changes" ]]; then
+          migration_changes="$(git diff --name-status "$base" "$GITHUB_SHA" -- supabase/migrations)"
+          release_control_changes="$(git diff --name-status "$base" "$GITHUB_SHA" -- \
+            .github/workflows/deploy.yml \
+            scripts/create-db-release-backup.sh \
+            scripts/create-db-release-backup.test.mjs \
+            scripts/restore-db-release.sh \
+            scripts/prepare-production-migration-baseline.sh \
+            scripts/verify-production-migration-baseline.mjs \
+            scripts/verify-production-migration-baseline.test.mjs)"
+          if [[ -z "$migration_changes" && -z "$release_control_changes" ]]; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
-          echo "$changes"
-          if awk '$1 != "A" { exit 1 }' <<< "$changes"; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            if [[ "${{ github.event_name }}" == "push" ]]; then
-              echo "::warning::Production release is blocked. Run workflow_dispatch with plan_database_migrations=true, review the plan, then run a separate apply_database_migrations=true execution for this main commit."
-              {
-                echo "### Production release pending"
-                echo
-                echo "New migrations passed source validation. On this main commit, run \`plan_database_migrations=true\`, review history/dry-run, then run a separate \`apply_database_migrations=true\` execution to back up and migrate production before deploying the application."
-              } >> "$GITHUB_STEP_SUMMARY"
+          if [[ -n "$migration_changes" ]]; then
+            echo "$migration_changes"
+            if ! awk '$1 != "A" { exit 1 }' <<< "$migration_changes"; then
+              echo "Existing migration files are immutable; add a new forward migration." >&2
+              exit 1
             fi
-          else
-            echo "Existing migration files are immutable; add a new forward migration." >&2
-            exit 1
+          fi
+          if [[ -n "$release_control_changes" ]]; then
+            echo "Production database release controls changed:"
+            echo "$release_control_changes"
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          if [[ "${{ github.event_name }}" == "push" ]]; then
+            echo "::warning::Production release is blocked. Run workflow_dispatch with plan_database_migrations=true, review the plan, then run a separate apply_database_migrations=true execution for this main commit."
+            {
+              echo "### Production release pending"
+              echo
+              echo "Database migrations or protected release controls changed. On this main commit, run \`plan_database_migrations=true\`, review history/dry-run, then run a separate \`apply_database_migrations=true\` execution to create a recovery point and complete the protected database release before deploying the application."
+            } >> "$GITHUB_STEP_SUMMARY"
           fi
 
       - name: Documentation checks
