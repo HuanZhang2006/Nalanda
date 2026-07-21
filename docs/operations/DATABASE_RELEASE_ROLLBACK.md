@@ -9,13 +9,14 @@
 权威迁移目录是 `supabase/migrations/`，本地 Supabase 基线是 `supabase/config.toml`。`.github/workflows/deploy.yml` 现在按以下顺序执行：
 
 1. 文档检查、TypeScript typecheck、默认测试和全部 workspace 构建；
-2. 启动完整本地 Supabase，先停在 0007 建立历史 points 夹具，再应用 0008/0009 验证回填、opening 归零与冲正；随后从空库应用全部迁移；
+2. 启动完整本地 Supabase，先停在 0007 建立历史 points 夹具，再应用 0008–0010 验证回填、opening 归零、冲正与发布断言；随后从空库应用全部迁移；
 3. 运行 `db lint`，并用本地 Auth/PostgREST/Storage 实际执行双用户 RLS/Storage/points E2E；
 4. 若 push 新增了迁移，质量与本地数据库门禁继续执行，但生产数据库和应用发布保持跳过；数据库 owner 必须先在该 `main` commit 上人工发起 `workflow_dispatch` 并选中 `plan_database_migrations`，核对 history/dry-run 后再另起一次执行选中 `apply_database_migrations`；
 5. 核对生产 Project Ref，显示远端 migration history 和 `db push --dry-run`；
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
-7. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-8. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并部署应用。
+7. 若远端 history 为空，临时只保留 0001–0007 迁移，通过 public schema 零差异和 Storage policy/bucket 核验后才将这 7 个已存在版本标记为 applied；已建立的远端 history 必须是至少包含 0001–0007 的连续本地前缀；
+8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
+9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并部署应用。
 
 已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。普通 push 永不直接修改生产数据库；`plan_database_migrations` 只读且不部署应用，只有单独选中 `apply_database_migrations` 才创建恢复点并执行数据库发布，两者同时选中会失败。
 
@@ -61,11 +62,11 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 
 ## 4. 首次启用 Supabase CLI migration history
 
-生产曾通过 SQL Editor/Management API 应用过旧文件时，不能直接让 CI 猜测历史，也不能盲目 `--include-all`。首次启用必须在维护窗口完成 baseline：
+生产曾通过 SQL Editor/Management API 应用过旧文件时，不能直接让 CI 猜测历史，也不能盲目 `--include-all`。当前受保护 apply 通过 `scripts/prepare-production-migration-baseline.sh` 自动执行一次性 baseline，但只接受两类远端状态：history 完全为空，或 history 是至少包含完整 0001–0007 的连续本地前缀。partial baseline、gap、远端未知版本一律停止。首次启用必须在维护窗口完成：
 
 1. 创建生产恢复点，并记录 Git SHA、所有现有迁移 checksum 和生产 Ref；
 2. 在 disposable/staging 从空库应用仓库全部迁移并运行 RLS E2E；
-3. 用结构、policy、function、trigger 和关键约束查询确认生产与相应旧迁移结果一致；
+3. 对空 history，脚本临时移出 0008 及之后文件，用 `db diff --linked --schema public` 要求生产 public schema 与 0001–0007 **零差异**；由于 CLI schema diff 不可靠比较 Storage bucket，另行 dump 并核对 5 条 Storage policy、`materials` 私有桶和 `community-media` 公开桶；
 4. 链接生产并查看差异：
 
    ```bash
@@ -76,14 +77,14 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
    supabase db push --linked --dry-run
    ```
 
-5. 对**已经人工执行且已逐项核对**的旧版本，逐个标记 applied，例如：
+5. 只有上述检查全通过且加密恢复点 artifact 已成功上传，脚本才将 0001–0007 一次标记 applied；人工故障处置时的单条命令示例为：
 
    ```bash
    supabase migration repair 20260620000001 --status applied
    ```
 
 6. 再次运行 `migration list` 和 `db push --dry-run`，预期只显示真正尚未发布的新迁移；
-7. 两人复核并保存 baseline 记录后，才允许生产 environment 审批 CI。
+7. 保存 baseline 的 history、零差异、Storage 检查、artifact、operator 和 Git SHA 记录；套餐支持 required reviewer 时再要求两人复核。
 
 若 CLI 提示 local/remote history 不一致，停止发布并审计；不要为了让 job 变绿而批量 repair。
 
@@ -127,7 +128,7 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 
 ```bash
 supabase start
-# 先按测试指南执行 0007→0009 seed / migration up / assert
+# 先按测试指南执行 0007→0010 seed / migration up / assert
 supabase db reset --local --no-seed
 supabase db lint --local --schema public --level error --fail-on error
 ```
@@ -142,7 +143,7 @@ supabase stop --no-backup
 
 ### 7.1 0008 首次生产发布的历史值门禁
 
-0001–0007 曾允许 owner 改写 Profile 的 points、credits、level、VIP 和 streak；仓库没有逐笔旧账，0008 无法自动区分合法值与伪造值。首次生产应用 0008/0009 前必须：
+0001–0007 曾允许 owner 改写 Profile 的 points、credits、level、VIP 和 streak；仓库没有逐笔旧账，0008 无法自动区分合法值与伪造值。首次生产应用 0008–0010 前必须：
 
 1. 在变更窗口冻结相关写入，保存加密恢复点，并导出 `id,points,credits,level,level_name,vip_until,streak,streak_date,updated_at` 到受限审计位置；
 2. 用可用的产品规则、发布时间、访问/安全日志和异常分布审查非零余额、未来 VIP、极端 streak/level；不要把原始用户数据贴入 PR/Actions 日志；
