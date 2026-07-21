@@ -95,7 +95,7 @@
    docker compose --env-file .deploy.env logs --since=5m --tail=100 api
    ```
 
-5. `/api/health` 只能验证 `SUPABASE_URL` 是否设置，不能验证 service-role。使用受控的临时 smoke 邮箱测试一次 `POST /api/auth/register`，随后在 Supabase Admin 中删除该账号和级联数据；同时验证普通登录和 `/api/me`。
+5. `/api/health` 会用 service-role 对 PostgREST 执行不读取行的 `profiles?select=id&limit=0`，并同时探测 JWKS；它能验证 key/基础连通性，但不能证明 Admin 注册写入、RLS 或真实登录完整可用。继续使用受控的临时 smoke 邮箱测试一次 `POST /api/auth/register`，随后在 Supabase Admin 中删除该账号和级联数据；同时验证普通登录和 `/api/me`。
 6. 确认 Supabase audit/usage 显示新 key，撤销旧 key，再重复注册链路最小验证。
 
 当前 CI 不传这个 key，也不更新服务器 `.env`；不要把它新增为 Docker build arg 或 `VITE_*`。
@@ -118,7 +118,7 @@
 `SUPABASE_ACCESS_TOKEN` 供受保护 CI 的 Supabase CLI 发布以及旧脚本应急使用，不是用户 access token，也不应放在 `/opt/nalanda/.env`。
 
 1. 使用专用、最小权限的运维身份创建新 token。
-2. 更新 `production-database` environment Secret；required reviewer 和 branch restriction 不得取消。
+2. 更新 `production-database` environment Secret；`main` branch restriction 不得取消。若套餐支持 required reviewer，该门禁也不得取消；当前套餐不支持时，必须保存数据库 owner 的人工复核记录后才能手动发布。
 3. 用**开发或 staging Project Ref**运行 `migration list`/dry-run，确认 token 权限；不得把生产作为试验目标。
 4. 撤销旧 token，检查近期 Management API 活动。
 5. 若持有人离职、设备丢失或 token 进日志，立即撤销并审计其可访问的全部 Supabase 项目。

@@ -80,6 +80,14 @@ jobs:
           echo "$changes"
           if awk '$1 != "A" { exit 1 }' <<< "$changes"; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
+            if [[ "${{ github.event_name }}" == "push" ]]; then
+              echo "::warning::Production database and application release are blocked until an owner runs workflow_dispatch with apply_database_migrations=true for this main commit."
+              {
+                echo "### Production release pending"
+                echo
+                echo "New migrations passed source validation. Run this workflow manually on the same main commit with \`apply_database_migrations=true\` to back up and migrate production before deploying the application."
+              } >> "$GITHUB_STEP_SUMMARY"
+            fi
           else
             echo "Existing migration files are immutable; add a new forward migration." >&2
             exit 1
@@ -197,8 +205,9 @@ jobs:
     name: Back up and migrate production database
     needs: [quality, migration_validation]
     if: >-
-      github.event_name != 'pull_request' &&
+      github.event_name == 'workflow_dispatch' &&
       github.ref == 'refs/heads/main' &&
+      inputs.apply_database_migrations == true &&
       needs.quality.outputs.migrations_changed == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -282,7 +291,10 @@ jobs:
       github.ref == 'refs/heads/main' &&
       needs.quality.result == 'success' &&
       needs.migration_validation.result == 'success' &&
-      (needs.database_release.result == 'success' || needs.database_release.result == 'skipped')
+      (
+        needs.quality.outputs.migrations_changed != 'true' ||
+        needs.database_release.result == 'success'
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 20
     environment:
@@ -385,6 +397,21 @@ jobs:
           ' <<< "$payload"
           }
 
+          # Rollback may restore an older image whose health payload predates
+          # dependency-level readiness. Verify that the previous API process
+          # and contract are back without weakening checks for the new release.
+          assert_api_process_health() {
+            local endpoint="$1"
+            local payload
+            payload="$(curl -fsS --max-time 10 "$endpoint")" || return 1
+            python3 -c '
+          import json, sys
+          value = json.load(sys.stdin)
+          assert value.get("status") == "ok"
+          assert value.get("service") == "nalanda-api"
+          ' <<< "$payload"
+          }
+
           assert_auth_guard() {
             local endpoint="$1"
             local status
@@ -394,9 +421,10 @@ jobs:
 
           wait_for_api() {
             local endpoint="$1"
+            local verifier="${2:-assert_api_health}"
             local attempt
             for attempt in $(seq 1 30); do
-              if assert_api_health "$endpoint"; then
+              if "$verifier" "$endpoint"; then
                 return 0
               fi
               sleep 2
@@ -448,8 +476,12 @@ jobs:
                 up -d --force-recreate api
               mv "$root/docker-compose.yml.rollback" "$root/docker-compose.yml"
               mv "$root/.deploy.env.rollback" "$root/.deploy.env"
-              wait_for_api http://127.0.0.1:8411/api/health || {
+              wait_for_api http://127.0.0.1:8411/api/health assert_api_process_health || {
                 echo "Previous API also failed health verification; manual intervention required." >&2
+                return 1
+              }
+              assert_auth_guard http://127.0.0.1:8411/api/me || {
+                echo "Previous API failed auth guard verification; manual intervention required." >&2
                 return 1
               }
               echo "Previous Web/API release restored."
