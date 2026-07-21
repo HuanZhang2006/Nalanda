@@ -30,7 +30,7 @@ Supabase 减少基础设施工作并提供统一身份，但 RLS 错误会直接
 ## 当前实现与目标差距
 
 - **当前：**Auth、profiles、courses/materials、notifications/feedback、community、schedule 表和两个 bucket 已通过迁移建立；多数 owner 数据有 RLS。
-- **已收口：**0008 已为 Profile 建立列级写白名单和防御触发器，撤销内部 definer/helper 的客户端 EXECUTE，并让 points 写入只经账本状态机；0009 追加 reversal 归零不可信 opening。CI 会空库重放迁移、执行 0007→0009 升级夹具、lint 和双用户 RLS/Storage E2E。
+- **已收口：**0008 已为 Profile 建立列级写白名单和防御触发器，撤销内部 definer/helper 的客户端 EXECUTE，并让 points 写入只经账本状态机；0009 追加 reversal 归零不可信 opening，0010 在发布事务中断言权限、reversal 与投影。CI 会空库重放迁移、执行 0007→0010 升级夹具、lint 和双用户 RLS/Storage E2E。
 - **当前风险：**community-media 仍是 public；feedback/notifications/帖子部分服务端字段尚未全面列级收口；注册绕过邮箱确认且无滥用控制；旧 Profile 余额只能保留为待审计 opening，无法自动证明未被旧漏洞篡改。
 - **目标：**继续完成逐字段权限审计；把 Storage 生命周期、导出/删除、审计、Realtime channel 授权和 staging 演练纳入同一模型。
 

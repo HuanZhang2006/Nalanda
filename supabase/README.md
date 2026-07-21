@@ -20,12 +20,13 @@
 | `20260625000007_schedule.sql` | study_goals、study_tasks、streak、任务完成奖励 |
 | `20260710000008_security_points_ledger.sql` | Profile 列级写保护、内部 RPC 撤权、`point_entries`/`point_event_states`、稳定业务键、冲正与幂等奖励 |
 | `20260721000009_reset_legacy_points.sql` | 以追加式 reversal 将不可信 `legacy_opening` 归零，并重建 Profile points/level 投影 |
+| `20260721000010_verify_security_points_release.sql` | 只读断言 Profile 权限、内部 RPC、opening reversal 和账本投影，失败即阻断发布 |
 
 当前共 15 张 public 业务表和两个 Storage bucket。关系、删除行为和策略见 [ERD](../docs/guides/ERD.md)。
 
 ## 应用迁移
 
-正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)。仓库已提交 `config.toml`；CI 会先验证 0007→0009 历史数据升级与 opening reversal，再从空库重建、lint、运行本地真实 RLS/Storage/points E2E。生产先用 `plan_database_migrations` 只读核对 history/dry-run，再由 owner 使用 `apply_database_migrations` 创建加密恢复点并发布。
+正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)。仓库已提交 `config.toml`；CI 会先验证 0007→0010 历史数据升级、opening reversal 和发布断言，再从空库重建、lint、运行本地真实 RLS/Storage/points E2E。生产先用 `plan_database_migrations` 只读核对 history/dry-run，再由 owner 使用 `apply_database_migrations` 创建加密恢复点；若旧项目 history 为空，只有 public schema 与 0001–0007 零差异且 Storage policy/bucket 匹配时才记录 baseline 并继续发布。
 
 本地基线：
 
@@ -76,4 +77,4 @@ RLS 只限制行，不能自动保护同一行中的敏感列。0008 因此撤�
 
 ## 验证
 
-任何 RLS/授权变更至少用用户 A/B 验证：本人允许字段成功、敏感列/RPC/ledger 写入失败、他人不可读写、外键不能指向他人对象。当前 3 组 RLS E2E 与独立 0007→0009 升级夹具会在 PR/main 的一次性本地 Supabase 实际运行；本机无显式环境时 RLS suite 安全跳过。命令见[测试指南](../docs/guides/TESTING.md)。
+任何 RLS/授权变更至少用用户 A/B 验证：本人允许字段成功、敏感列/RPC/ledger 写入失败、他人不可读写、外键不能指向他人对象。当前 3 组 RLS E2E、3 个发布工具单元测试与独立 0007→0010 升级夹具会在 PR/main 运行；本机无显式环境时 RLS suite 安全跳过。命令见[测试指南](../docs/guides/TESTING.md)。
