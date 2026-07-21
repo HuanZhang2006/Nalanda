@@ -11,7 +11,7 @@ async function signUp(page: Page, email: string, password: string) {
 
 async function openCourses(page: Page) {
   await page.locator('#nav [data-go="courses"]').click();
-  await expect(page.getByRole("heading", { name: "学习课程" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "学习课程", exact: true })).toBeVisible();
 }
 
 async function assessWithFixedWav(page: Page) {
@@ -79,7 +79,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByText("0%", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "开始学习" }).click();
-  await page.locator("select").selectOption({ label: /Unit 1/ });
+  await page.locator(".modal select").selectOption({ label: "Unit 1 · 2 词" });
   await page.getByRole("button", { name: "开始学习" }).click();
   await expect(page.locator(".course-term")).toHaveText("apple");
   await assessWithFixedWav(page);
