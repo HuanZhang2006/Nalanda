@@ -92,13 +92,18 @@ rm -f "$decrypted_archive"
 
 format="$(sed -n 's/^format=//p' "$workdir/MANIFEST")"
 source_ref="$(sed -n 's/^source_project_ref=//p' "$workdir/MANIFEST")"
+migration_history_state="$(sed -n 's/^migration_history_state=//p' "$workdir/MANIFEST")"
 if [[ "$format" != "nalanda-db-release-v1" || -z "$source_ref" ]]; then
   echo "unsupported or incomplete backup manifest" >&2
   exit 1
 fi
+if [[ -n "$migration_history_state" && "$migration_history_state" != "present" && "$migration_history_state" != "absent" ]]; then
+  echo "unsupported migration_history_state in backup manifest" >&2
+  exit 1
+fi
 
 echo "Backup verification succeeded."
-sed -n '/^created_at=/p; /^git_sha=/p; /^source_project_ref=/p; /^scope=/p; /^storage_object_bytes_included=/p' \
+sed -n '/^created_at=/p; /^git_sha=/p; /^source_project_ref=/p; /^scope=/p; /^migration_history_state=/p; /^storage_object_bytes_included=/p' \
   "$workdir/MANIFEST"
 
 if [[ "$mode" == "verify" ]]; then
