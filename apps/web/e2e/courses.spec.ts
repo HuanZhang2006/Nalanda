@@ -67,10 +67,10 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.getByRole("button", { name: "解析并进入编辑" }).click();
   await expect(page.getByRole("heading", { name: "确认课程内容" })).toBeVisible();
 
-  const bananaHandle = page.getByRole("button", { name: "拖动 banana" });
+  const pearHandle = page.getByRole("button", { name: "拖动 pear" });
   const orangeRow = page.locator(".course-word-row").filter({ has: page.locator('input[aria-label="英文"][value="orange"]') });
-  await bananaHandle.dragTo(orangeRow);
-  await expect(page.locator(".course-editor-unit").nth(1).getByLabel("英文").first()).toHaveValue("banana");
+  await pearHandle.dragTo(orangeRow);
+  await expect(page.locator(".course-editor-unit").nth(1).getByLabel("英文").first()).toHaveValue("pear");
 
   // Explicit keyboard-accessible controls complement pointer/touch drag-and-drop.
   await page.getByLabel("上移单词").nth(3).click();
@@ -79,7 +79,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByText("0%", { exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "开始学习" }).click();
-  await page.locator(".modal select").selectOption({ label: "Unit 1 · 2 词" });
+  await page.locator(".modal select").selectOption({ index: 0 });
   await page.getByRole("button", { name: "开始学习" }).click();
   await expect(page.locator(".course-term")).toHaveText("apple");
   await assessWithFixedWav(page);
