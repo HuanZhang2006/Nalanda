@@ -197,7 +197,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退目
 GitHub Actions 在 runner 上：
 
 1. 运行 docs check、workspace typecheck、Vitest/jsdom 和 build。
-2. 先验证 0007→0009 历史数据升级与 opening reversal，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points E2E。
+2. 先验证 0007→0010 历史数据升级、opening reversal 与发布断言，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points E2E。
 3. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
 4. 构建 Web 与 Git SHA API image，经预先核验 host key 的 SSH/SCP 上传。
 5. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
@@ -225,7 +225,7 @@ GitHub Actions 在 runner 上：
 - Web 使用 Vite；`vite build` 不等同于 TypeScript 类型检查。
 - Python AI 不属于 pnpm workspace，需要独立安装和启动。
 - 可执行测试命令和环境要求见 [测试指南](guides/TESTING.md)。
-- 默认 `pnpm test` 当前运行 9 个 Web jsdom 与 2 个 API readiness 单元测试；本机未设置显式开关时 3 个 RLS/Storage/points E2E 跳过。PR/main workflow 会启动一次性本地 Supabase，先运行 0007→0009 升级夹具，再显式运行这 3 组 E2E；手工托管运行仍需隔离项目和 Ref 二次确认。
+- 默认 `pnpm test` 当前运行 9 个 Web jsdom 与 2 个 API readiness 单元测试；发布工具另有 3 个 Node 单元测试；本机未设置显式开关时 3 个 RLS/Storage/points E2E 跳过。PR/main workflow 会启动一次性本地 Supabase，先运行 0007→0010 升级夹具，再显式运行这 3 组 E2E；手工托管运行仍需隔离项目和 Ref 二次确认。
 - 历史实现笔记中的“已验证”必须能映射到仓库测试；不能复现的旧验证只能作为历史记录。
 
 ## 10. 当前优先风险
