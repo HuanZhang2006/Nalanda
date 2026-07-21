@@ -49,7 +49,7 @@
 2. `_add_points` 已对客户端和 service-role 撤权；`_notify`、`_set_point_event` 及 trigger helpers 已撤销客户端 EXECUTE，并固定 `search_path`。
 3. 点赞、评论、原创/转发和任务奖励写入 append-only `point_entries`，以持久业务键和 `point_event_states` 串行化；取消/删除冲正，重做只恢复同一净额。客户端不能写账本/状态表。
 
-这些控制由双用户 RLS 回归和 0007→0008 历史数据升级夹具覆盖。生产环境只有在 migration history 确认 0008 已应用后才具备同等保护，不能只凭仓库文件推断线上状态；首次发布还必须审计旧 Profile opening/credits/VIP/streak。
+这些控制由双用户 RLS 回归和 0007→0009 历史数据升级/旧 opening 归零夹具覆盖。生产环境只有在 migration history 确认 0008/0009 已应用后才具备同等保护，不能只凭仓库文件推断线上状态；首次发布还必须保存旧 Profile opening/credits/VIP/streak 的聚合审计和处置决定。
 
 仍开放的高优先级风险：
 
@@ -98,7 +98,7 @@
 6. 生产变更先在隔离环境验证，支付使用 Stripe test mode；
 7. 高风险已知问题关闭后，才能启用相应功能 flag。
 
-当前 PR/main workflow 已执行 docs check、typecheck、9 个 Web jsdom、2 个 API readiness 单元测试和 build，并在一次性本地 Supabase 先验证 0007→0008 升级，再重建全部 migration、lint 后显式运行 3 个 RLS/Storage/points E2E。生产 migration 另经受保护 environment、dry-run、加密恢复点和远端验证；这些门禁不替代托管 staging、持续监控或人工安全评审。
+当前 PR/main workflow 已执行 docs check、typecheck、9 个 Web jsdom、2 个 API readiness 单元测试和 build，并在一次性本地 Supabase 先验证 0007→0009 升级，再重建全部 migration、lint 后显式运行 3 个 RLS/Storage/points E2E。生产 migration 先走只读 plan，再经受保护 environment、加密恢复点、apply 和远端验证；这些门禁不替代托管 staging、持续监控或人工安全评审。
 
 ## 8. 安全事件响应
 

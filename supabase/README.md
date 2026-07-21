@@ -19,12 +19,13 @@
 | `20260625000006_points_tags_notify.sql` | points、tags、公开社区媒体、互动通知和等级 |
 | `20260625000007_schedule.sql` | study_goals、study_tasks、streak、任务完成奖励 |
 | `20260710000008_security_points_ledger.sql` | Profile 列级写保护、内部 RPC 撤权、`point_entries`/`point_event_states`、稳定业务键、冲正与幂等奖励 |
+| `20260721000009_reset_legacy_points.sql` | 以追加式 reversal 将不可信 `legacy_opening` 归零，并重建 Profile points/level 投影 |
 
 当前共 15 张 public 业务表和两个 Storage bucket。关系、删除行为和策略见 [ERD](../docs/guides/ERD.md)。
 
 ## 应用迁移
 
-正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)。仓库已提交 `config.toml`；CI 会先验证 0007→0008 历史数据升级，再从空库重建、lint、运行本地真实 RLS/Storage/points E2E，然后在受保护 environment 中 dry-run、创建加密恢复点并用 migration history 发布。
+正式环境请遵循 [数据库发布与回滚](../docs/operations/DATABASE_RELEASE_ROLLBACK.md)。仓库已提交 `config.toml`；CI 会先验证 0007→0009 历史数据升级与 opening reversal，再从空库重建、lint、运行本地真实 RLS/Storage/points E2E。生产先用 `plan_database_migrations` 只读核对 history/dry-run，再由 owner 使用 `apply_database_migrations` 创建加密恢复点并发布。
 
 本地基线：
 
@@ -71,8 +72,8 @@ SQL Editor 只作为紧急/初始化兜底。手动执行后必须记录执行�
 
 RLS 只限制行，不能自动保护同一行中的敏感列。0008 因此撤销 Profile 整表 UPDATE，只向 authenticated 授予 `username/university/major/year/language` 列更新，并用防御触发器保护 `credits/points/level/vip/streak`；`_add_points` 已对所有客户端及 service-role 撤权，`_notify`、`_set_point_event` 和 trigger helpers 也不再是客户端 RPC surface。
 
-当前 points 已由 append-only `point_entries`、内部 `point_event_states` 和 Profile projection 维护；点赞、评论、原创/转发和任务取消/删除会冲正，重做只恢复同一业务事件净额。剩余边界是：迁移前余额只能作为 `legacy_opening` 导入，尚无每日奖励上限/内容质量反滥用；`credits`/`vip_until` 虽不可由客户端修改，但还没有订单、credits/VIP 事实账本，不能作为商业能力启用。
+当前 points 已由 append-only `point_entries`、内部 `point_event_states` 和 Profile projection 维护；点赞、评论、原创/转发和任务取消/删除会冲正，重做只恢复同一业务事件净额。0008 导入的迁移前余额会由 0009 追加等额 reversal 归零，不删除审计记录；仍缺每日奖励上限和内容质量反滥用。`credits`/`vip_until` 虽不可由客户端修改，但还没有订单、credits/VIP 事实账本，不能作为商业能力启用。
 
 ## 验证
 
-任何 RLS/授权变更至少用用户 A/B 验证：本人允许字段成功、敏感列/RPC/ledger 写入失败、他人不可读写、外键不能指向他人对象。当前 3 组 RLS E2E 与独立 0007→0008 升级夹具会在 PR/main 的一次性本地 Supabase 实际运行；本机无显式环境时 RLS suite 安全跳过。命令见[测试指南](../docs/guides/TESTING.md)。
+任何 RLS/授权变更至少用用户 A/B 验证：本人允许字段成功、敏感列/RPC/ledger 写入失败、他人不可读写、外键不能指向他人对象。当前 3 组 RLS E2E 与独立 0007→0009 升级夹具会在 PR/main 的一次性本地 Supabase 实际运行；本机无显式环境时 RLS suite 安全跳过。命令见[测试指南](../docs/guides/TESTING.md)。

@@ -38,6 +38,7 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0006_points_tags_notify.sql` | points、tags、社区媒体、互动通知与等级函数 |
 | `0007_schedule.sql` | study_goals / study_tasks、streak 与完成任务触发器 |
 | `0008_security_points_ledger.sql` | Profile 敏感列白名单、内部 RPC 撤权、稳定 points 业务键、`point_entries`/`point_event_states` 与冲正触发器 |
+| `0009_reset_legacy_points.sql` | 用 append-only reversal 归零不可信 opening，并重建 Profile points/level 投影 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
@@ -84,4 +85,4 @@ create policy things_all_own on public.things for all to authenticated
 - CI 已通过 CLI migration history 发布，并在生产 migration 前完成本地重建/RLS E2E、dry-run 和加密恢复点；首次生产启用仍须人工 baseline 旧历史。
 - 仍需定期 staging 演练、Storage 文件异地备份、数据库恢复演练和 schema drift 告警。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
-- 0008 将旧 `profiles.points` 导入 `legacy_opening`，只能锁住未来写入，不能证明旧余额未被漏洞篡改；生产发布必须先完成人工/业务数据审计并保存记录。
+- 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。

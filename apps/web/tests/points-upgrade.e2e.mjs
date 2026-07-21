@@ -58,6 +58,11 @@ async function profile(client, userId) {
   return must(client.from("profiles").select("points,credits,level,level_name,vip_until,streak,streak_date").eq("id", userId).single(), "read profile");
 }
 
+async function ledgerTotal(client) {
+  const entries = await must(client.from("point_entries").select("amount"), "read ledger total");
+  return entries.reduce((sum, entry) => sum + entry.amount, 0);
+}
+
 async function seedLegacyFixture() {
   const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const password = `Nalanda-Upgrade-${nonce}!`;
@@ -91,7 +96,7 @@ async function seedLegacyFixture() {
   await must(b.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", task.id), "complete legacy task");
 
   // Fixed historical values make the opening-balance and derived-level
-  // assertions deterministic after 0008 is applied. Seed them through the
+  // assertions deterministic after 0008/0009 are applied. Seed them through the
   // service role: the fixture models data that already exists before the
   // security migration, and local Supabase CLI grant defaults for 0001-0007
   // do not reliably grant an authenticated client UPDATE on public tables.
@@ -132,17 +137,25 @@ async function assertUpgradeFixture() {
 
   const profileA = await profile(a, fixture.aId);
   const profileB = await profile(b, fixture.bId);
-  assert.deepEqual({ points: profileA.points, level: profileA.level, level_name: profileA.level_name }, { points: 77, level: 2, level_name: "Learner" });
-  assert.deepEqual({ points: profileB.points, level: profileB.level, level_name: profileB.level_name }, { points: 23, level: 1, level_name: "Novice" });
+  assert.deepEqual({ points: profileA.points, level: profileA.level, level_name: profileA.level_name }, { points: 0, level: 1, level_name: "Novice" });
+  assert.deepEqual({ points: profileB.points, level: profileB.level, level_name: profileB.level_name }, { points: 0, level: 1, level_name: "Novice" });
   assert.equal(profileA.credits, 700, "legacy credits are preserved for explicit production audit");
   assert.equal(profileB.streak, 17, "legacy streak is preserved but locked from future client writes");
 
   const protectedWrite = await b.from("profiles").update({ points: 9999, credits: 9999, vip_until: null, streak: 9999 }).eq("id", fixture.bId);
   assert(protectedWrite.error, "0008 must reject protected profile updates after upgrade");
 
-  const opening = await must(admin.from("point_entries").select("user_id,amount,rule_version").in("user_id", [fixture.aId, fixture.bId]).eq("event_type", "legacy_opening"), "read opening entries");
+  const opening = await must(admin.from("point_entries").select("id,user_id,amount,rule_version").in("user_id", [fixture.aId, fixture.bId]).eq("event_type", "legacy_opening"), "read opening entries");
   assert.deepEqual(new Map(opening.map((entry) => [entry.user_id, entry.amount])), new Map([[fixture.aId, 77], [fixture.bId, 23]]));
   assert(opening.every((entry) => entry.rule_version === "legacy-import-v1"));
+  const resets = await must(admin.from("point_entries").select("user_id,amount,rule_version,reversal_of").in("user_id", [fixture.aId, fixture.bId]).eq("event_type", "legacy_opening_reset"), "read opening reset entries");
+  assert.deepEqual(new Map(resets.map((entry) => [entry.user_id, entry.amount])), new Map([[fixture.aId, -77], [fixture.bId, -23]]));
+  assert(resets.every((entry) => entry.rule_version === "legacy-reset-v1"));
+  assert.deepEqual(
+    new Map(resets.map((entry) => [entry.user_id, entry.reversal_of])),
+    new Map(opening.map((entry) => [entry.user_id, entry.id])),
+    "each reset entry must reference its append-only legacy opening",
+  );
 
   const migratedPosts = await must(admin.from("posts").select("id,repost_of,points_business_key").in("id", [...fixture.postIds, ...fixture.repostIds]), "read migrated post keys");
   const originals = migratedPosts.filter((row) => !row.repost_of);
@@ -168,35 +181,40 @@ async function assertUpgradeFixture() {
   // Each duplicate relation shares one claim: only deleting the last row reverses,
   // and recreating it restores the same net amount.
   await must(b.from("post_likes").delete().eq("post_id", fixture.postIds[0]), "delete first legacy like");
-  assert.equal((await profile(b, fixture.bId)).points, 23);
+  assert.equal(await ledgerTotal(b), 0);
   await must(b.from("post_likes").delete().eq("post_id", fixture.postIds[1]), "delete last legacy like");
-  assert.equal((await profile(b, fixture.bId)).points, 22);
+  assert.equal(await ledgerTotal(b), -1);
+  assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("post_likes").insert({ post_id: fixture.postIds[1] }), "restore legacy like claim");
-  assert.equal((await profile(b, fixture.bId)).points, 23);
+  assert.equal(await ledgerTotal(b), 0);
 
   await must(b.from("comments").delete().eq("id", fixture.commentIds[0]), "delete first legacy comment");
-  assert.equal((await profile(b, fixture.bId)).points, 23);
+  assert.equal(await ledgerTotal(b), 0);
   await must(b.from("comments").delete().eq("id", fixture.commentIds[1]), "delete last legacy comment");
-  assert.equal((await profile(b, fixture.bId)).points, 21);
+  assert.equal(await ledgerTotal(b), -2);
+  assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("comments").insert({ post_id: fixture.postIds[1], body: "restored legacy comment" }), "restore legacy comment claim");
-  assert.equal((await profile(b, fixture.bId)).points, 23);
+  assert.equal(await ledgerTotal(b), 0);
 
   await must(b.from("posts").delete().eq("id", fixture.repostIds[0]), "delete first legacy repost");
-  assert.equal((await profile(b, fixture.bId)).points, 23);
+  assert.equal(await ledgerTotal(b), 0);
   await must(b.from("posts").delete().eq("id", fixture.repostIds[1]), "delete last legacy repost");
-  assert.equal((await profile(b, fixture.bId)).points, 20);
+  assert.equal(await ledgerTotal(b), -3);
+  assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("posts").insert({ repost_of: fixture.postIds[1], kind: "experience", tags: [] }), "restore legacy repost claim");
-  assert.equal((await profile(b, fixture.bId)).points, 23);
+  assert.equal(await ledgerTotal(b), 0);
 
   await must(b.from("study_tasks").update({ done: false, done_at: null }).eq("id", fixture.taskId), "undo legacy task");
-  assert.equal((await profile(b, fixture.bId)).points, 18);
+  assert.equal(await ledgerTotal(b), -5);
+  assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", fixture.taskId), "redo legacy task");
   const afterTaskRedo = await profile(b, fixture.bId);
-  assert.equal(afterTaskRedo.points, 23);
+  assert.equal(afterTaskRedo.points, 0);
+  assert.equal(await ledgerTotal(b), 0);
   assert.equal(afterTaskRedo.streak, 17, "backfilled task redo must not advance streak");
 
   const entries = await must(b.from("point_entries").select("amount"), "read upgraded ledger");
-  assert.equal(entries.reduce((sum, entry) => sum + entry.amount, 0), 23, "profile projection must equal ledger sum");
+  assert.equal(entries.reduce((sum, entry) => sum + entry.amount, 0), 0, "profile projection must equal ledger sum");
 
   const deletedA = await admin.auth.admin.deleteUser(fixture.aId);
   const deletedB = await admin.auth.admin.deleteUser(fixture.bId);
@@ -208,7 +226,7 @@ async function assertUpgradeFixture() {
   assert.equal(entryRemnants.length, 0, "Auth deletion must cascade upgraded ledger rows");
   assert.equal(stateRemnants.length, 0, "Auth deletion must cascade upgraded event state rows");
   await unlink(fixturePath);
-  process.stdout.write("0007 -> 0008 points upgrade fixture passed.\n");
+  process.stdout.write("0007 -> 0009 points upgrade fixture passed.\n");
 }
 
 if (phase === "seed") await seedLegacyFixture();
