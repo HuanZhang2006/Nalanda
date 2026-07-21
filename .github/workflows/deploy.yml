@@ -221,9 +221,12 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
           node apps/web/tests/points-upgrade.e2e.mjs assert
 
-          # Auth/PostgREST/Storage are required by the real RLS suite. Rebuild
-          # from an empty database as a separate check after the upgrade path.
-          supabase db reset --local --no-seed
+          # Destroy the upgrade fixture stack and create a fresh empty-volume
+          # stack for RLS/browser validation. Reusing the same stack for a
+          # second db reset can leave Auth behind Kong returning 502 even after
+          # the CLI reports that container restart as complete.
+          supabase stop --no-backup
+          supabase start
 
       - name: Lint database functions
         run: supabase db lint --local --schema public --level error --fail-on error
