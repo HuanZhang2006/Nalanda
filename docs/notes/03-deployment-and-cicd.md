@@ -61,7 +61,7 @@ server {
 
 步骤逻辑：
 1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API/Courses unit）、全部 workspace build。
-2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，再做空库 reset/lint、双用户 RLS/Storage/points/Courses E2E，并以 Azure fake 跑 Playwright Courses。
+2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，再做空库 reset/lint；Auth/PostgREST 有界 readiness 通过后运行双用户 RLS/Storage/points/Courses E2E，并以 Azure fake 跑 Playwright Courses。
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
 5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
