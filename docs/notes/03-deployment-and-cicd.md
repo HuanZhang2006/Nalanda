@@ -55,11 +55,11 @@ server {
 
 ## 4. CI/CD 流水线
 
-文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 在无新 migration 时发布应用，若含新 migration 则验证后停止。数据库 owner 必须在对应 `main` commit 上手动运行 `workflow_dispatch` 并显式选中 `apply_database_migrations`，成功发布数据库后才继续应用发布。手动运行未选该开关时只重发应用。纯文档变更由 docs workflow 处理。
+文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 在无新 migration 时发布应用，若含新 migration 则验证后停止。数据库 owner 必须在对应 `main` commit 上先手动运行只读 `plan_database_migrations`，复核 history/dry-run 后再单独运行 `apply_database_migrations`；成功发布数据库后才继续应用发布。两个开关不能同时选择；都不选时只重发应用。纯文档变更由 docs workflow 处理。
 
 步骤逻辑：
 1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API readiness unit）、全部 workspace build。
-2. **数据库门**：先执行 0007→0008 历史数据升级夹具，再做完整本地 Supabase 空库重建 + lint，并实际运行双用户 RLS/Storage/points E2E。
+2. **数据库门**：先执行 0007→0009 历史数据升级、opening reversal 夹具，再做完整本地 Supabase 空库重建 + lint，并实际运行双用户 RLS/Storage/points E2E。
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
 5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
@@ -76,7 +76,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - **服务器 `/opt/nalanda/.env`**：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_JWT_SECRET`——只在服务器，不进 CI、不入库。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
-`production-database` 已限制为只允许 `main`。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 人工发起 `workflow_dispatch` 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。该 environment 当前仍缺数据库发布 Secrets，未补齐前不能执行生产 migration。
+`production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
 
 ## 5. 一次性服务器引导（已完成）
 

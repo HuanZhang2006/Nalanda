@@ -177,7 +177,7 @@ git check-ignore .env.rls.local
 
 当前未覆盖或尚未实现的重要风险：
 
-- 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；自动测试证明迁移语义，但不能证明生产历史余额未被旧漏洞篡改，发布前必须人工/业务审计；
+- 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；0009 根据 2026-07-21 产品/安全决定追加等额 reversal 归零。自动测试证明迁移与冲正语义，但生产发布仍须保存聚合审计和处置记录；
 - 帖子作者仍可在 UPDATE 时篡改 author 快照、冗余计数和时间；0008 只锁住 `repost_of` 与 points key；
 - `study_goals.course_id` 跨 owner 归属；
 - `community-media` public bucket 的写/删/对象清理；
@@ -186,7 +186,7 @@ git check-ignore .env.rls.local
 
 这些是后续安全迁移、产品治理与负向 E2E 的优先项，不属于当前套件已证明安全的范围。
 
-### 5.5 0007 → 0008 升级夹具
+### 5.5 0007 → 0009 升级夹具
 
 `apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`，因此不能对托管项目运行。`supabase start` 会自动应用目录中的所有迁移，因此 CI 在启动旧 schema 时会**临时**把 0008 移到 runner 临时目录；`trap` 保证任何失败后都放回。不要在有未提交修改的个人工作区手工照抄该移动步骤。CI 的完整顺序是：
 
@@ -219,7 +219,7 @@ ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   node apps/web/tests/points-upgrade.e2e.mjs assert
 ```
 
-夹具验证：受漏洞影响的 Profile 值被保留但未来不可由客户端写；points 生成 `legacy_opening` 且等级按账本重算；历史 duplicate post/like/comment/repost/task 获得稳定 key 和 active/transition 0 状态而不重复加分；删尽/恢复只改变一次净额；历史 task 重做不推进 streak；最终 projection 等于 ledger 并可随 Auth 删除清理。随后 CI 还会再从空库 reset 并运行常规 RLS E2E，避免升级通过掩盖空库重建失败。
+夹具验证：credits/VIP/streak 等受漏洞影响的 Profile 值被保留但未来不可由客户端写；points 先生成 `legacy_opening`，再生成引用 opening 的 `legacy_opening_reset` 等额 reversal 并归零投影；历史 duplicate post/like/comment/repost/task 获得稳定 key 和 active/transition 0 状态而不重复加分；删尽/恢复只产生一次负向/恢复分录，Profile 保持非负；历史 task 重做不推进 streak；最终 projection 等于 ledger 并可随 Auth 删除清理。随后 CI 还会再从空库 reset 并运行常规 RLS E2E，避免升级通过掩盖空库重建失败。
 
 ### 5.6 失败与清理
 
@@ -287,14 +287,14 @@ pnpm typecheck
 pnpm test
 pnpm build
 supabase start
-# 先运行上文 0007→0008 seed / migration up / assert
+# 先运行上文 0007→0009 seed / migration up / assert
 supabase db reset --local --no-seed  # 再验证完整空库重建
 supabase db lint --local --schema public --level error --fail-on error
 # 从 supabase status -o env 注入本地 URL/keys 后：
 pnpm test:rls
 ```
 
-`pull_request` 只运行质量和本地 Supabase job，不读取生产 secrets；本地 service-role 只管理 CI 创建的一次性容器。push `main` 新增 migration 时，还会经 protected environment 完成远端 dry-run、加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 里的外部 RLS suite 仍 skip，但 deploy workflow 会显式运行升级夹具和本地 RLS suite。0008 首次生产审批还必须附历史 Profile opening/credits/VIP/streak 审计记录；CI 无法从缺失的历史事件中自动判断旧值真伪。
+`pull_request` 只运行质量和本地 Supabase job，不读取生产 secrets；本地 service-role 只管理 CI 创建的一次性容器。push `main` 新增 migration 时在验证后停止。owner 必须先手动运行 `plan_database_migrations`，复核远端 history/dry-run，再单独运行 `apply_database_migrations` 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 里的外部 RLS suite 仍 skip，但 deploy workflow 会显式运行升级夹具和本地 RLS suite。0008/0009 首次生产审批必须附历史 Profile 聚合审计与归零决定；CI 无法从缺失的历史事件中自动判断旧值真伪。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 

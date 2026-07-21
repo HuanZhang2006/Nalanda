@@ -117,7 +117,7 @@ handle: settab / toggle / edit / del / addtask(带 data-date) / addgoal / delgoa
 | 完成 → 侧栏积分即时刷新 | toggleTask 调 `syncShellUser()` |
 
 ## 五、验证
-数据库 E2E 与 jsdom Schedule 回归的可执行命令见 [测试指南](../guides/TESTING.md)。覆盖首次完成、取消冲正、重做净额、删除/重建同键任务、key 不可修改、streak 不重复和 Supabase 写失败；跨账号清理/迟到响应由应用壳与 Community jsdom 回归验证同一 session-version 模式。0007→0008 夹具还验证历史已完成任务以 transition 0 回填。
+数据库 E2E 与 jsdom Schedule 回归的可执行命令见 [测试指南](../guides/TESTING.md)。覆盖首次完成、取消冲正、重做净额、删除/重建同键任务、key 不可修改、streak 不重复和 Supabase 写失败；跨账号清理/迟到响应由应用壳与 Community jsdom 回归验证同一 session-version 模式。0007→0009 夹具还验证历史已完成任务以 transition 0 回填，opening reversal 后取消/重做仍保持净额幂等。
 
 ## 六、待扩展
 - **到期提醒**需服务端定时（Supabase `pg_cron`）；现在是进应用时界面高亮逾期/今日，不主动推送。

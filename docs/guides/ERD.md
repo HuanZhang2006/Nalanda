@@ -325,13 +325,13 @@ erDiagram
 
 ### 3.6 Points 账本与事件状态
 
-`point_entries` 是当前 points 的追加式分录，`point_event_states` 是只供数据库内部使用的业务事件状态机。迁移 0008 先把旧 `profiles.points` 写为一条 `legacy_opening`，再把已有帖子、评论关系、点赞和已完成任务登记为 `transition_no=0` 的 active 状态，不重复加分。
+`point_entries` 是当前 points 的追加式分录，`point_event_states` 是只供数据库内部使用的业务事件状态机。迁移 0008 先把旧 `profiles.points` 写为一条 `legacy_opening`，再把已有帖子、评论关系、点赞和已完成任务登记为 `transition_no=0` 的 active 状态，不重复加分；0009 为每条 opening 追加 `legacy_opening_reset` reversal，并重建 Profile 投影。
 
 | 表 | 列 | 类型/约束 | 说明 |
 |---|---|---|---|
 | `point_entries` | `id` | `bigint identity` PK | 分录 ID |
 |  | `user_id` | `uuid NOT NULL` | → `auth.users.id CASCADE`；authenticated 仅能读取自己的分录 |
-|  | `event_type` | `text NOT NULL` | `legacy_opening/post_created/repost_created/like_created/comment_created/task_completed` 等 |
+|  | `event_type` | `text NOT NULL` | `legacy_opening/legacy_opening_reset/post_created/repost_created/like_created/comment_created/task_completed` 等 |
 |  | `business_key` | `text NOT NULL` | 永久业务键；与 `transition_no` 组成唯一约束 |
 |  | `amount` | `integer NOT NULL, <> 0` | 激活为正、取消/删除冲正为负 |
 |  | `rule_version` | `text NOT NULL` | 当前新事件为 `points-v1`；opening 为 `legacy-import-v1` |
@@ -349,7 +349,7 @@ erDiagram
 
 状态转换通过 `_set_point_event` 的 advisory lock、profile 行锁、状态行锁和唯一键串行化。点赞与评论按 actor + 目标帖不可变内容键、转发按 actor + 根原创内容键、原创帖按 owner + 规范化内容、任务按 owner + 规范化任务指纹去重。相同内容的重复帖子及删除后重建会复用 claim。取消/删除写负分录，重做写正分录，净额不会随循环操作累计；任务只有首次激活 `transition=1` 会推进 streak。
 
-历史边界：0008 无法判断旧宽松权限期间的 `profiles.points/credits/vip/streak` 是否曾被人为篡改。`points` opening 只用于保持升级前余额，不代表该余额已经审计；生产发布前必须按可信日志/快照核查异常账号。credits/VIP 仍没有可重建账本。
+历史边界：0008 无法判断旧宽松权限期间的 `profiles.points/credits/vip/streak` 是否曾被人为篡改。opening 只保存迁移事实，不代表余额可信；0009 根据已记录的产品/安全决定追加 reversal 归零，不删除原记录。credits/VIP 仍没有可重建账本。
 
 ## 4. 删除与生命周期规则
 
