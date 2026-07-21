@@ -11,7 +11,7 @@
 
 ```
 GitHub push → Actions（在 runner 上构建，不占服务器内存）
-  ├─ check + 0007→0008 升级夹具 + 本地 Supabase 重建/lint/RLS E2E
+  ├─ check + 0007→0009 升级夹具 + 本地 Supabase 重建/lint/RLS E2E
   ├─ 新迁移：dry-run → 加密恢复点 → protected DB push → 验证
   ├─ 前端 vite build → Git SHA release/web
   └─ 后端 docker build → nalanda-api:<git-sha> → docker save
@@ -46,15 +46,15 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 `production-database` environment 还需 `SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 和 `DB_BACKUP_ENCRYPTION_KEY`。该 environment 已创建并只允许 `main`；当前私有仓库套餐不支持 required reviewer，升级套餐前必须只通过人工发起的 `workflow_dispatch` 发布数据库，并按[数据库发布手册](../../docs/operations/DATABASE_RELEASE_ROLLBACK.md)保存 owner 复核记录。数据库 migration history 的首次 baseline 不能由 CI 猜测。
 
-> **2026-07-21 Supabase 暂停事故：** 项目暂停期间，Ref `xsjlmyarvyloktoclvwn` 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；项目恢复后，DNS、JWKS 和服务器 service-role PostgREST 探针均已恢复。当前生产库仍未应用 0008（`point_entries` 不存在），且 `production-database` 尚未配置发布 Secrets，因此必须先完成历史值审计、migration history baseline、加密恢复点和手动数据库发布，才能合并并部署本 PR。不得因依赖暂停而降低 health 门禁。
+> **2026-07-21 Supabase 暂停事故：** 项目暂停期间，Ref `xsjlmyarvyloktoclvwn` 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；项目恢复后，DNS、JWKS 和服务器 service-role PostgREST 探针均已恢复。`production-database` Secrets 已补齐；生产库仍未应用 0008/0009，必须先完成 plan、migration history baseline、加密恢复点和手动数据库发布。不得因依赖暂停而降低 health 门禁。
 
 首次增加 `SERVER_SSH_KNOWN_HOSTS` 时，在可信网络取得 host key，用 `ssh-keygen -lf` 查看 fingerprint，并通过服务器控制台/云厂商记录进行第二通道核对后，才把完整 known_hosts 行写入 Secret。不要直接把未经核验的 `ssh-keyscan` 输出当作信任根。`DB_BACKUP_ENCRYPTION_KEY` 应使用密码学随机值生成，并在 GitHub 之外的受控恢复保管中保存副本。
 
 ## 流程
 
-推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check → 0007→0008 升级夹具 → 从空库重建本地 Supabase → db lint → 本地真实 RLS/Storage/points E2E。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止，必须由 owner 手动运行 `workflow_dispatch` 并选中 `apply_database_migrations`，数据库发布成功后才继续部署应用。应用本地或外部 smoke 失败会恢复上一 Web symlink/API image，但不会危险地自动逆向数据库。
+推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check → 0007→0009 升级夹具 → 从空库重建本地 Supabase → db lint → 本地真实 RLS/Storage/points E2E。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动选中 `plan_database_migrations` 只读核对远端 history/dry-run，再单独选中 `apply_database_migrations`；数据库发布成功后才继续部署应用。应用 smoke 失败会恢复上一 Web symlink/API image，但不会危险地自动逆向数据库。
 
-手动 `workflow_dispatch` 默认只重发应用；只有显式选中 `apply_database_migrations` 才进入受保护数据库 job。部署要求 API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。
+手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求 API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。
 
 纯 Markdown 变更由 [docs workflow](../../.github/workflows/docs.yml) 校验文档定位字段和相对链接，不重新部署应用。
 

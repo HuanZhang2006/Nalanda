@@ -37,8 +37,8 @@
 ## 当前实现与目标差距
 
 - **当前：**0008 已保护 Profile 服务端字段，并为帖子/转发/评论/点赞/任务建立 `point_entries`、稳定业务键、净额幂等和冲正；`credits`、`vip_until` 仍只是只读缓存，市场、AI 和支付仍是假数据/桩。
-- **当前风险：**旧 `profiles.points` 只能作为待审计 `legacy_opening` 保存；每日上限和协同作弊未实现；credits/VIP 没有账本、订单、Webhook 或结算。
-- **目标：**完成历史 opening 审计和 points 反滥用，再实现订单/credits/订阅/应付账本，最后启用 Stripe 和商业 UI；任何阶段不得用假余额连接真实支付。
+- **当前风险：**历史 opening 已决定由 0009 追加 reversal 归零，但每日上限和协同作弊仍未实现；credits/VIP 没有账本、订单、Webhook 或结算。
+- **目标：**验证并发布 opening reversal，完成 points 反滥用，再实现订单/credits/订阅/应付账本，最后启用 Stripe 和商业 UI；任何阶段不得用假余额连接真实支付。
 
 ## 验证与复审
 

@@ -192,7 +192,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - **已实现：**限制 Profile 敏感列、撤销内部 definer 客户端执行权、points append-only 账本/冲正/幂等，以及对应双用户 RLS 回归。
 - **已实现：**修复跨账号 legacy 状态、迟到异步响应、resize 重挂、登录/退出 loading 和 Supabase/Storage error 处理，并补齐 9 个 jsdom 测试；API readiness 已用 JWKS/PostgREST 双探针和 2 个单元测试加固。
 - **剩余：**修复帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等权限/完整性问题。
-- **剩余：**给 points 增加规则版本、每日上限、内容审核撤销和协同行为检测；审计迁移前 `legacy_opening`。
+- **剩余：**发布已决定将旧 opening 归零的 0009，并给 points 增加规则版本、每日上限、内容审核撤销和协同行为检测。
 - 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、构建、加密恢复点与应用回退门禁；继续补 API/浏览器 E2E。
 - 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
 
