@@ -73,13 +73,14 @@ BACKUP_OUTPUT=/secure/offsite/nalanda-db-<git-sha>.tar.gz.enc \
 bash scripts/create-db-release-backup.sh
 ```
 
-脚本会：链接明确 Ref；按 Supabase 官方顺序导出 roles/schema/data/history；写入 manifest 和 SHA-256；加密；再解密核对全部文件。临时明文位于权限 `0700` 的临时目录，并由 `trap` 清理。
+脚本会：链接明确 Ref；按 Supabase 官方顺序导出 roles/schema/data/history；写入 manifest 和 SHA-256；加密；再解密核对全部文件。若尚未采用 CLI migration history、远端连 `supabase_migrations` schema 都不存在，只有 `pg_dump` 的精确 `no matching schemas were found` 结果会被记录为 `migration_history_state=absent`；其他 history dump 错误仍立即失败。临时明文位于权限 `0700` 的临时目录，并由 `trap` 清理。
 
 最低成功标准：
 
 - 脚本退出 0；
 - ciphertext 非空且能用离线保存的 key 验证；
 - manifest 的 source Ref、Git SHA、创建时间正确；
+- manifest 的 `migration_history_state` 与远端实际为 `present` 或 `absent` 一致；
 - artifact 已复制到不同故障域且访问受限；
 - Storage object manifest/副本有独立记录。
 
