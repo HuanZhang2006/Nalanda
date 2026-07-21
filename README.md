@@ -68,7 +68,7 @@ pnpm --filter @nalanda/web dev
 pnpm check   # docs:check + release-tool tests + typecheck + test + build
 ```
 
-默认 `pnpm test` 运行 9 个 Web jsdom 和 2 个 API readiness 单元测试且不连接外部项目；本机结果中 3 个 RLS E2E 会安全跳过。PR/main CI 另运行 5 个发布工具单元测试，并启动一次性本地 Supabase，先验证 0007→0010 历史数据升级、旧积分归零和发布断言，再显式运行 3 个双用户 RLS/Storage/points E2E。手工连接托管项目时禁止指向生产，安全开关见[测试指南](docs/guides/TESTING.md)。
+默认 `pnpm test` 运行 9 个 Web jsdom 和 2 个 API readiness 单元测试且不连接外部项目；本机结果中 3 个 RLS E2E 会安全跳过。PR/main CI 另运行 6 个发布工具单元测试，并启动一次性本地 Supabase，先验证 0007→0010 历史数据升级、旧积分归零和发布断言，再显式运行 3 个双用户 RLS/Storage/points E2E。手工连接托管项目时禁止指向生产，安全开关见[测试指南](docs/guides/TESTING.md)。
 
 ## 静态设计原型
 

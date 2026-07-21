@@ -69,7 +69,7 @@ for migration in supabase/migrations/*.sql; do
 done
 
 public_diff="$workdir/public-baseline.diff.sql"
-supabase db diff --linked --schema public --use-migra --output "$public_diff"
+supabase db diff --linked --schema public --use-migra > "$public_diff"
 if grep -Eq '[^[:space:]]' "$public_diff"; then
   echo "Production public schema differs from the reviewed 0001-0007 baseline; refusing migration-history repair." >&2
   echo "Schema diff follows:" >&2
