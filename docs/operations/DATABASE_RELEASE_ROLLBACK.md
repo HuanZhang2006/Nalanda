@@ -197,6 +197,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 后续发布仍沿用相同失败边界：关闭最窄 flag；应用恢复上一 release；数据库不执行 down/drop，只新增 forward-fix。
 
+### 8.3 2026-07-23 Courses 0014 发布记录
+
+- 发布提交：`02ba1b682c104947aa0b80707c143b8e921870f0`。
+- [只读 plan run `29939798432`](https://github.com/1590703336/Nalanda/actions/runs/29939798432) 显示远端 0001–0013 与本地一致，唯一待应用迁移为 `20260723000014_learning_feedback_flow.sql`；所有恢复点、apply 和 deploy 步骤均跳过。
+- [受保护 apply/deploy run `29940292716`](https://github.com/1590703336/Nalanda/actions/runs/29940292716) 先重复通过 0007→0014、空库重建、database lint、真实 RLS/Storage 与 Courses Playwright，再创建 14 天加密恢复点 artifact `8538123165` 并应用 0014。
+- 迁移后 local/remote history 均到 0014，远端 dry-run 与 lint 通过；真实 Azure gate、API Supabase readiness、鉴权守卫和公网 Web/API smoke 通过，release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` 健康激活。
+- 数据库回退继续只允许 forward-fix；应用问题恢复上一不可变 release，语音问题优先关闭 `FEATURE_PRONUNCIATION_ENABLED`。
+
 ## 9. 失败处置
 
 ### 9.1 本地重建、lint 或 RLS E2E 失败
