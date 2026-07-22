@@ -262,9 +262,46 @@
 
 .course-option:hover { border-color: var(--accent-line); background: var(--accent-tint); }
 .course-option.selected { border-color: var(--accent); background: var(--accent-tint); }
+.course-option.picked-correct {
+  border-color: color-mix(in srgb, var(--good) 58%, var(--border));
+  background: color-mix(in srgb, var(--good) 12%, var(--card));
+  color: var(--good);
+  animation: course-correct-pulse .36s cubic-bezier(.2,.8,.2,1);
+}
 .course-match { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; width: 100%; margin-top: 22px; text-align: left; }
 .course-match button { width: 100%; margin-bottom: 8px; justify-content: center; }
 .course-match button.active { border-color: var(--accent); background: var(--accent-tint); }
+.course-match button.selected { border-color: var(--accent); background: var(--accent-tint); }
+
+.course-option.is-correct,
+.course-match button.is-correct,
+.course-spelling-answer.is-correct {
+  border-color: var(--good);
+  background: color-mix(in srgb, var(--good) 16%, var(--card));
+  color: var(--good);
+  animation: course-correct-pulse .52s cubic-bezier(.2,.8,.2,1);
+}
+
+.course-option.is-wrong,
+.course-match button.is-wrong,
+.course-spelling-answer.is-wrong {
+  border-color: var(--pink);
+  background: color-mix(in srgb, var(--pink) 14%, var(--card));
+  color: var(--pink);
+  animation: course-wrong-shake .48s ease-in-out;
+}
+
+@keyframes course-correct-pulse {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 color-mix(in srgb, var(--good) 35%, transparent); }
+  45% { transform: scale(1.025); box-shadow: 0 0 0 7px color-mix(in srgb, var(--good) 0%, transparent); }
+  100% { transform: scale(1); box-shadow: none; }
+}
+
+@keyframes course-wrong-shake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-6px); }
+  40%, 80% { transform: translateX(6px); }
+}
 
 .course-feedback {
   width: 100%;
@@ -276,6 +313,7 @@
 }
 
 .course-feedback.wrong { border-color: color-mix(in srgb, var(--pink) 35%, var(--border)); background: color-mix(in srgb, var(--pink) 12%, var(--card)); color: var(--pink); }
+.course-feedback.is-correct { border-color: color-mix(in srgb, var(--good) 42%, var(--border)); background: color-mix(in srgb, var(--good) 12%, var(--card)); color: var(--good); }
 .course-diff-bad { background: color-mix(in srgb, var(--pink) 25%, transparent); color: var(--pink); text-decoration: underline; }
 .course-phonemes { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
 .course-phoneme { padding: 4px 7px; border-radius: 7px; background: var(--shade-2); font-family: var(--font-mono); }
@@ -306,4 +344,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .course-choice, .course-word-row { transition: none; }
+  .course-option.picked-correct, .course-option.is-correct, .course-option.is-wrong,
+  .course-match button.is-correct, .course-match button.is-wrong,
+  .course-spelling-answer.is-correct, .course-spelling-answer.is-wrong { animation: none; }
 }

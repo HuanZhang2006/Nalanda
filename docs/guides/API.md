@@ -230,7 +230,7 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 }
 ```
 
-发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。服务端以 session 当前 queue/cursor 校验 active word、记录 append-only attempt、更新候补池并逐次提交；客户端不能跳阶段或自报正确。发音错配时 `expected` 返回目标英文词，其它测试返回对应正确答案；该字段只用于当前错误反馈。
+发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。服务端以 session 当前 queue/cursor 校验 active word、记录 append-only attempt、更新候补池并逐次提交；客户端不能跳阶段或自报正确。发音错配时 `expected` 返回目标英文词，其它测试返回对应正确答案；该字段只用于当前错误反馈。Web 的发音匹配/翻译选择会在点击后立即发此请求并自动推进；拼写以 Enter/单次提交确定输入边界，三者都不再需要第二次 Continue。
 
 ### 4.3 发音合成与朗读评分
 
@@ -239,7 +239,9 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 | GET | `/api/pronunciation/audio/:wordId` | owner 课程中的 word ID | `audio/mpeg`；测试 fake 为 `audio/wav`，`Cache-Control: private, max-age=86400` |
 | POST | `/api/pronunciation/assess` | `multipart/form-data`：`audio`, `sessionId`, `wordId` | `PronunciationAssessment` |
 
-评分只接受当前用户 active session 中的词。`audio` 必须是 ≤2 MB、≤8 秒、16 kHz/16-bit/单声道 PCM WAV；参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,errorType,phonemes[]`，每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。用户录音不落库；只有评分 JSON 写 attempt。常见错误：`AUDIO_REQUIRED`、`INVALID_AUDIO(_FORMAT)`、`AUDIO_TOO_LONG/LARGE`、`WORD_NOT_IN_SESSION`、`SPEECH_QUOTA_EXCEEDED`、`SPEECH_PROVIDER_*`。
+评分只接受当前用户 active session 中的词；认单词阶段还要求 `wordId` 是当前卡片，避免迟到/伪造请求改变其它词的候补池。`audio` 必须是 ≤2 MB、≤8 秒、16 kHz/16-bit/单声道 PCM WAV；参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,errorType,phonemes[]`。整体 `pronunciationScore` 默认达到 70 才通过：低分原子加入 recognition `nextQueue`，对同一当前词重新评分达标会移除；阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
+
+用户录音不落库；只有评分 JSON 写 append-only attempt。TTS 的私有 Storage 对象只是可丢弃缓存：Supabase 可能以 HTTP 400 + JSON 404 表示缓存未命中，API 会继续调用 Azure；缓存读取或写入故障也不能把已经生成的音频变成请求失败。常见错误：`AUDIO_REQUIRED`、`INVALID_AUDIO(_FORMAT)`、`AUDIO_TOO_LONG/LARGE`、`WORD_NOT_IN_SESSION`、`SPEECH_QUOTA_EXCEEDED`、`SPEECH_PROVIDER_*`。
 
 ### 4.4 分享、免费课程市场和举报
 

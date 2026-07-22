@@ -44,7 +44,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 - `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
 - `apps/ai`：AI 桩。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：当前 13 个追加式迁移；0008–0010 完成安全/points 修复，0011–0013 建立 Courses 数据、事务工作流和发布断言。
+- `supabase/migrations`：当前 14 个追加式迁移；0008–0010 完成安全/points 修复，0011–0013 建立 Courses 数据、事务工作流和发布断言，0014 补齐朗读阈值候补池与认词候补轮推进。生产是否已应用 0014 必须以受保护发布记录为准。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/Redis 接入时的通用部署模板。
 

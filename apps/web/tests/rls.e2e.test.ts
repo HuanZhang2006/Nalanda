@@ -618,6 +618,8 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.from("learning_speech_usage").select("id").limit(1)).error).not.toBeNull();
     expect((await a.rpc("learning_upsert_course", { p_user_id: aId, p_payload: payload })).error).not.toBeNull();
     expect((await a.rpc("learning_record_attempt", { p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id, p_skill: "spelling", p_answer: { text: terms[0].term } })).error).not.toBeNull();
+    expect((await a.rpc("learning_record_speech_assessment", { p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
+      p_assessment: { accuracyScore: 100, pronunciationScore: 100, passThreshold: 70 } })).error).not.toBeNull();
     expect((await a.rpc("learning_profile_summary", { p_user_id: aId })).error).not.toBeNull();
     expect((await a.rpc("learning_publish_course", { p_user_id: aId, p_course_id: courseId, p_description: "forged",
       p_author_name: aName, p_rights_declared: true, p_daily_limit: 5 })).error).not.toBeNull();
@@ -635,6 +637,35 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(concurrentStarts.every((result) => result.error == null)).toBe(true);
     expect(concurrentStarts[0].data).toBe(concurrentStarts[1].data);
     expect((await admin.from("learning_sessions").delete().eq("id", concurrentStarts[0].data)).error).toBeNull();
+
+    // Optional speech scoring uses the visible overall PronScore threshold.
+    // A low score is persisted in recognition's retry pool, a successful
+    // reread removes it, and the pool must be consumed before stage advance.
+    const recognitionSession = await rpc<string>("learning_start_session", {
+      p_user_id: aId, p_course_id: courseId, p_unit_id: unitId, p_mode: "initial",
+      p_skills: ["pronunciation", "translation", "spelling"], p_scope: "all", p_schedule_id: null,
+    });
+    const assess = (pronunciationScore: number) => rpc<any>("learning_record_speech_assessment", {
+      p_user_id: aId, p_session_id: recognitionSession, p_word_id: terms[0].id,
+      p_assessment: { accuracyScore: pronunciationScore, pronunciationScore, passThreshold: 70, phonemes: [] },
+    });
+    expect(await assess(69)).toMatchObject({ correct: false, retryQueued: true, passThreshold: 70 });
+    expect((await admin.from("learning_sessions").select("state").eq("id", recognitionSession).single()).data!.state)
+      .toMatchObject({ nextQueue: [terms[0].id] });
+    expect(await assess(70)).toMatchObject({ correct: true, retryQueued: false, passThreshold: 70 });
+    expect((await admin.from("learning_sessions").select("state").eq("id", recognitionSession).single()).data!.state)
+      .toMatchObject({ nextQueue: [] });
+    await assess(40);
+    for (const term of terms) await rpc("learning_mark_recognition", {
+      p_user_id: aId, p_session_id: recognitionSession, p_word_id: term.id,
+    });
+    const recognitionRetry = await admin.from("learning_sessions").select("stage,state").eq("id", recognitionSession).single();
+    expect(recognitionRetry.data).toMatchObject({ stage: "recognition", state: {
+      queue: [terms[0].id], cursor: 0, nextQueue: [], round: 2,
+    } });
+    await rpc("learning_mark_recognition", { p_user_id: aId, p_session_id: recognitionSession, p_word_id: terms[0].id });
+    expect((await admin.from("learning_sessions").select("stage").eq("id", recognitionSession).single()).data!.stage).toBe("pronunciation");
+    expect((await admin.from("learning_sessions").delete().eq("id", recognitionSession)).error).toBeNull();
 
     const tasksBefore = await a.from("study_tasks").select("id", { count: "exact", head: true });
     const sourceSessionId = randomUUID();

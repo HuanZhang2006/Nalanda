@@ -1,9 +1,9 @@
 import {
-  BadGatewayException, BadRequestException, Injectable, ServiceUnavailableException,
+  BadGatewayException, BadRequestException, Injectable, Logger, ServiceUnavailableException,
 } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type { PronunciationAssessment, PronunciationPhoneme } from "@nalanda/types";
-import { positiveEnvironmentNumber } from "./environment";
+import { boundedEnvironmentNumber, positiveEnvironmentNumber } from "./environment";
 import { FeatureFlagsService } from "./feature-flags.service";
 import { LearningService } from "./learning.service";
 import { assertUuid, normalizeTerm } from "./learning.util";
@@ -62,6 +62,8 @@ export function validateAssessmentWav(bytes: Buffer) {
 
 @Injectable()
 export class PronunciationService {
+  private readonly logger = new Logger(PronunciationService.name);
+
   constructor(
     private readonly db: SupabaseAdminService,
     private readonly learning: LearningService,
@@ -80,7 +82,10 @@ export class PronunciationService {
     const word = await this.ownedWord(userId, wordId);
     const normalized = normalizeTerm(word.term);
     const path = `${createHash("sha256").update(normalized).digest("hex")}.mp3`;
-    const cached = await this.db.storageGet("vocabulary-audio", path);
+    const cached = await this.db.storageGet("vocabulary-audio", path).catch((error: unknown) => {
+      this.logger.warn(`TTS cache read failed; continuing without cache (${error instanceof Error ? error.name : "unknown"})`);
+      return null;
+    });
     if (cached) return cached;
 
     if (process.env.AZURE_SPEECH_FAKE === "true") {
@@ -103,8 +108,23 @@ export class PronunciationService {
     if (!response.ok) throw new BadGatewayException({ code: "SPEECH_PROVIDER_ERROR", message: "发音服务暂不可用" });
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!bytes.length) throw new BadGatewayException({ code: "SPEECH_PROVIDER_ERROR", message: "发音服务返回空音频" });
-    await this.db.storagePut("vocabulary-audio", path, bytes, "audio/mpeg");
+    // Cache availability must not decide whether an already generated lesson
+    // can be heard. A later request may retry the cache write.
+    await this.db.storagePut("vocabulary-audio", path, bytes, "audio/mpeg").catch((error: unknown) => {
+      this.logger.warn(`TTS cache write failed; returning generated audio (${error instanceof Error ? error.name : "unknown"})`);
+    });
     return bytes;
+  }
+
+  private async persistAssessment(userId: string, sessionId: string, wordId: string, result: Omit<PronunciationAssessment, "passThreshold" | "passed" | "queuedForRetry">) {
+    const passThreshold = boundedEnvironmentNumber("AZURE_SPEECH_PRONUNCIATION_PASS_SCORE", 70, 1, 100);
+    const assessed = { ...result, passThreshold, passed: result.pronunciationScore >= passThreshold };
+    const recorded = await this.learning.recordSpeechAssessment(userId, sessionId, wordId, assessed);
+    return {
+      ...assessed,
+      passed: recorded?.correct ?? assessed.passed,
+      queuedForRetry: Boolean(recorded?.retryQueued),
+    } satisfies PronunciationAssessment;
   }
 
   async assess(userId: string, sessionId: string, wordId: string, file?: Express.Multer.File): Promise<PronunciationAssessment> {
@@ -115,10 +135,9 @@ export class PronunciationService {
     const word = await this.learning.ownedWordInSession(userId, sessionId, wordId);
     if (process.env.AZURE_SPEECH_FAKE === "true") {
       await this.learning.reserveSpeechQuota(userId, "assessment", 1);
-      const result: PronunciationAssessment = { accuracyScore: 92, fluencyScore: 90, completenessScore: 100,
+      const result = { accuracyScore: 92, fluencyScore: 90, completenessScore: 100,
         pronunciationScore: 93, errorType: null, phonemes: [{ phoneme: word.term.slice(0, 1).toLowerCase(), accuracyScore: 92, needsPractice: false }] };
-      await this.learning.recordSpeechAssessment(userId, sessionId, wordId, result);
-      return result;
+      return this.persistAssessment(userId, sessionId, wordId, result);
     }
     const { key, region } = this.config();
     await this.learning.reserveSpeechQuota(userId, "assessment",
@@ -157,7 +176,7 @@ export class PronunciationService {
         return { phoneme: String(phoneme.Phoneme || ""), accuracyScore: score, needsPractice: score < 70 };
       });
     }).filter((entry: PronunciationPhoneme) => entry.phoneme);
-    const result: PronunciationAssessment = {
+    const result = {
       accuracyScore: accuracy,
       fluencyScore: num(assessment.FluencyScore),
       completenessScore: num(assessment.CompletenessScore),
@@ -166,8 +185,7 @@ export class PronunciationService {
         .find((value: unknown) => value && value !== "None") || null,
       phonemes,
     };
-    await this.learning.recordSpeechAssessment(userId, sessionId, wordId, result);
-    return result;
+    return this.persistAssessment(userId, sessionId, wordId, result);
   }
 
   private async ownedWord(userId: string, wordId: string) {

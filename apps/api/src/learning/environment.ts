@@ -11,3 +11,14 @@ export function positiveEnvironmentNumber(name: string, fallback: number, intege
   }
   return value;
 }
+
+export function boundedEnvironmentNumber(name: string, fallback: number, minimum: number, maximum: number) {
+  const value = positiveEnvironmentNumber(name, fallback);
+  if (value < minimum || value > maximum) {
+    throw new ServiceUnavailableException({
+      code: "SERVER_MISCONFIG",
+      message: `Configuration ${name} must be between ${minimum} and ${maximum}`,
+    });
+  }
+  return value;
+}
