@@ -76,7 +76,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 ### Secrets / 密钥分层
 - **repository Actions Secrets（当前实际位置）**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`；`production` environment 会在部署 job 中使用这些仓库级 Secrets。后续如迁移为 environment Secrets，应一次性迁移整组并验证。
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
-- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与 Azure key/region/配额——只在服务器，不进 Web/仓库；production flags 在迁移/smoke 前保持关闭。
+- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与 Azure key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses 四项 flags 已开启，Azure fake=false。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
@@ -113,6 +113,17 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - `https://nalanda.online` HTTPS 200、HTTP→HTTPS 301；既有站点（sub2api/lobe）不受影响。
 - 真实登录令牌打 `/api/me` → 200；CI run = success；自检通过。
 - 文档类提交（`docs/**`、`*.md`）因 `paths-ignore` 不再触发重新部署。
+
+### 2026-07-22 Courses 生产发布
+
+- main SHA：`53d0eabf767725b6e9ca83367c0e17c47a479eca`。
+- [只读 migration plan](https://github.com/1590703336/Nalanda/actions/runs/29889201210)：本地/远端 history 从 0001 到 0013 逐项一致，`db push --dry-run` 为 `Remote database is up to date`。
+- [受保护 apply/deploy](https://github.com/1590703336/Nalanda/actions/runs/29889669272)：创建并保留新的加密恢复点，验证远端 history/functions，构建并启动最终精简 API image，再激活不可变 Web/API release。
+- 真实 Azure Speech gate：生产主机 mode-600 `.env`，region `japaneast`、voice `en-US-JennyNeural`、fake=false；无个人数据 fixture 得到 MP3 10,656 bytes、assessment WAV 55,084 bytes、识别成功、accuracy 98、pronunciation 98.8、4 个音素。
+- 激活结果：`/opt/nalanda/releases/53d0eabf767725b6e9ca83367c0e17c47a479eca-29889669272-1/web` 与 `nalanda-api:53d0eabf767725b6e9ca83367c0e17c47a479eca`；API 容器 running。
+- 独立公网复核：`/api/health` 返回 `status=ok`、`deps.supabase=ok`；`/api/me` 与未认证私有 Courses 均为 401；公开 Course Market 为 200；首页包含 React root。
+- Nginx 生产站点已设置 `client_max_body_size 10m` 并通过 `nginx -t`。人工排障产生的临时环境副本和 smoke 脚本已安全擦除。
+- 明确未随本次上线的能力：PDF/DOC/DOCX/JSON/Markdown/HTML/图片 OCR/AI 导入、其他三类课程、FastAPI 生成闭环、credits/VIP/支付。
 
 ## 8. 运维速查
 

@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-07-22。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter 已实现语音合成/评分与估算预算，但生产待启用，且不能冒充生成式 AI/文件解析闭环。
+> **状态基线：**2026-07-22。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter 的语音合成/评分与估算预算已生产启用，但不能冒充生成式 AI/文件解析闭环。
 
 ## 1. 范围和非目标
 
@@ -22,7 +22,7 @@
 - TypeScript 与 Python 的请求字段命名存在 camelCase/snake_case 差异，Web 也没有真实消费该契约；
 - 当前生产 compose 不包含 AI 服务，NestJS 没有 AI 模块、job 或服务间调用。
 - Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
-- Azure Speech 的 Nest adapter、fake tests、WAV 限制、配额/估算成本和熔断已经存在；它只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits，生产 flag 仍关闭。
+- Azure Speech 的 Nest adapter、fake tests、WAV 限制、配额/估算成本和熔断已经存在并在生产启用；它只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
 
 因此当前不得：收费扣 credits；把 placeholder 或文件入口标为已生成/已解析；把 Azure TTS 当成课程 AI 导入；把 health/key/fake 当真实供应商可用；用真实私有课件/录音做非受控测试；公开承诺准确率/成本/延迟。
 
@@ -60,7 +60,7 @@
 
 Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的≤8 秒 PCM WAV；不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
 
-当前持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。生产启用前需真实账号 smoke、区域/留存/DPA 审批和估算↔账单对账告警。Azure fake 只验证代码路径，不参与质量或供应商可用率报告。
+当前持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。2026-07-22 Japan East 真实账号发布 gate 已通过；区域/留存/DPA 复核和估算↔账单对账告警仍需持续完成。Azure fake 只验证代码路径，不参与质量或供应商可用率报告。
 
 ## 3. 可追溯生成记录
 
