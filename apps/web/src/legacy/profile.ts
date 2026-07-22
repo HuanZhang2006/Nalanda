@@ -31,7 +31,7 @@ async function fetchProfile() {
     sb.from("materials").select("id", { count: "exact", head: true }),
     sb.from("courses").select("id", { count: "exact", head: true }),
     sb.from("feedback").select("id", { count: "exact", head: true }),
-    apiJson("/api/profile/learning-summary")
+    apiJson("/api/profile/learning-summary", {}, true, false)
       .then((data) => ({ data, error: "" }))
       .catch((error) => ({ data: { ...EMPTY_LEARNING }, error: error?.message || "课程学习统计加载失败" })),
   ]);

@@ -27,7 +27,7 @@ export function encodePcmWav(samples: Float32Array, sampleRate = 16_000) {
 }
 
 export async function beginWavRecording(onAutoStop: (blob: Blob) => void) {
-  if (!navigator.mediaDevices?.getUserMedia) throw new Error("此浏览器不支持麦克风录音");
+  if (!navigator.mediaDevices?.getUserMedia) throw new Error(localize("This browser does not support microphone recording.", "此浏览器不支持麦克风录音"));
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false } });
   const context = new AudioContext();
   const source = context.createMediaStreamSource(stream);
@@ -48,3 +48,4 @@ export async function beginWavRecording(onAutoStop: (blob: Blob) => void) {
   const timeout = window.setTimeout(async () => { const blob = await stop(); if (blob) onAutoStop(blob); }, 8_000);
   return async () => { window.clearTimeout(timeout); return stop(); };
 }
+import { localize } from "../../i18n";
