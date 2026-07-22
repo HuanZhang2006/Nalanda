@@ -4,6 +4,9 @@ import { localize } from "../../i18n";
 
 export type VocabularyParseErrorCode =
   | "EMPTY_UNIT"
+  | "MISSING_UNIT_HEADER"
+  | "INVALID_UNIT_HEADER"
+  | "TOO_MANY_UNITS"
   | "MISSING_SEPARATOR"
   | "EMPTY_TERM"
   | "EMPTY_TRANSLATION"
@@ -13,6 +16,7 @@ export type VocabularyParseErrorCode =
   | "TRANSLATION_TOO_LONG"
   | "TOO_MANY_TRANSLATIONS"
   | "DUPLICATE_TRANSLATION"
+  | "DUPLICATE_EXISTING_TERM"
   | "DUPLICATE_TERM";
 
 export interface VocabularyParseError {
@@ -31,6 +35,17 @@ export interface VocabularyParseResult {
   nonEmptyLines: number;
 }
 
+export interface VocabularyParseOptions {
+  existingTerms?: Iterable<string>;
+  lineOffset?: number;
+}
+
+export interface MultiUnitVocabularyParseResult {
+  units: Array<{ id: string; name: string; words: VocabularyWordInput[] }>;
+  errors: VocabularyParseError[];
+  nonEmptyLines: number;
+}
+
 export function vocabularyParseErrorMessage(entry: VocabularyParseError, locale?: Locale) {
   const relatedTranslation = entry.relatedLine == null ? "" : localize(
     `Duplicates line ${entry.relatedLine}`,
@@ -39,6 +54,9 @@ export function vocabularyParseErrorMessage(entry: VocabularyParseError, locale?
   );
   const messages: Record<VocabularyParseErrorCode, string> = {
     EMPTY_UNIT: localize("The unit vocabulary list cannot be empty.", "单元词表不能为空", locale),
+    MISSING_UNIT_HEADER: localize("Start the list with a unit heading such as Unit 1, Starter Unit 1, [Custom name], or # Custom name.", "请先填写单元标题，例如 Unit 1、Starter Unit 1、[自定义名称] 或 # 自定义名称", locale),
+    INVALID_UNIT_HEADER: localize("Unit names must contain 1–80 characters.", "单元名称需为 1–80 个字符", locale),
+    TOO_MANY_UNITS: localize("A course can contain at most 100 units.", "一门课程最多包含 100 个单元", locale),
     MISSING_SEPARATOR: localize("Add one ASCII space between the English term and its translation.", "英文与翻译之间缺少 ASCII 空格", locale),
     EMPTY_TERM: localize("The English word or phrase cannot be empty.", "英文词或短语不能为空", locale),
     EMPTY_TRANSLATION: localize("A translation cannot be empty.", "翻译不能为空", locale),
@@ -48,6 +66,7 @@ export function vocabularyParseErrorMessage(entry: VocabularyParseError, locale?
     TRANSLATION_TOO_LONG: localize("Each translation cannot exceed 120 characters.", "单个翻译不能超过 120 个字符", locale),
     TOO_MANY_TRANSLATIONS: localize("Each term can have at most 10 translations.", "每个词最多包含 10 个翻译", locale),
     DUPLICATE_TRANSLATION: localize("This translation is duplicated on the same line.", "此翻译与同一行中的翻译重复", locale),
+    DUPLICATE_EXISTING_TERM: localize("This term already exists in the unit.", "此词已存在于当前单元", locale),
     DUPLICATE_TERM: relatedTranslation,
   };
   return messages[entry.code] || entry.message;
@@ -72,13 +91,14 @@ function error(
   errors.push({ code, message, line, column: Math.max(1, column), length: Math.max(1, length), source, relatedLine });
 }
 
-export function parseVocabularyText(input: string): VocabularyParseResult {
+export function parseVocabularyText(input: string, options: VocabularyParseOptions = {}): VocabularyParseResult {
   const words: VocabularyWordInput[] = [];
   const errors: VocabularyParseError[] = [];
   const firstLineByTerm = new Map<string, number>();
+  const existingTerms = new Set(Array.from(options.existingTerms || [], normalizeVocabularyTerm));
   let nonEmptyLines = 0;
   input.replace(/\r\n?/g, "\n").split("\n").forEach((source, index) => {
-    const line = index + 1;
+    const line = index + 1 + (options.lineOffset || 0);
     if (!source.trim()) return;
     nonEmptyLines += 1;
     const leading = source.length - source.trimStart().length;
@@ -151,7 +171,11 @@ export function parseVocabularyText(input: string): VocabularyParseResult {
 
     const normalized = normalizeVocabularyTerm(term);
     const relatedLine = firstLineByTerm.get(normalized);
-    if (normalized && relatedLine != null) {
+    if (normalized && existingTerms.has(normalized)) {
+      error(errors, "DUPLICATE_EXISTING_TERM", "This term already exists in the unit.", line,
+        leading + 1, Math.max(1, rawTerm.length), source);
+      invalid = true;
+    } else if (normalized && relatedLine != null) {
       error(errors, "DUPLICATE_TERM", `Duplicates line ${relatedLine}.`, line, leading + 1, Math.max(1, rawTerm.length), source, relatedLine);
       invalid = true;
     } else if (normalized) {
@@ -160,4 +184,73 @@ export function parseVocabularyText(input: string): VocabularyParseResult {
     if (!invalid) words.push({ id: randomCourseId(), term, translations, ipa: null });
   });
   return { words, errors, nonEmptyLines };
+}
+
+function multiUnitHeadingName(source: string) {
+  const value = source.trim();
+  const bracketed = value.match(/^\[([^\]]*)\]$/);
+  if (bracketed) return bracketed[1].trim();
+  const markdown = value.match(/^#{1,6}\s+(.+)$/);
+  if (markdown) return markdown[1].trim();
+  const numberedEnglish = /(?:^|\s)(?:unit|lesson|chapter|module|section)\s*(?:\d+|[A-Za-z]|[IVXLCDM]+)\s*$/i;
+  const numberedChinese = /(?:^|\s)(?:单元|课时|章节)\s*(?:\d+|[一二三四五六七八九十百]+)\s*$|^第\s*(?:\d+|[一二三四五六七八九十百]+)\s*(?:单元|课|章节)$/;
+  return numberedEnglish.test(value) || numberedChinese.test(value) ? value : null;
+}
+
+/**
+ * Parses one document containing multiple named units. Common numbered
+ * headings (for example `Starter Unit 1`) work without markers; arbitrary
+ * names use `[Name]` or Markdown's `# Name` so vocabulary rows remain
+ * unambiguous.
+ */
+export function parseMultiUnitVocabularyText(input: string): MultiUnitVocabularyParseResult {
+  const lines = input.replace(/\r\n?/g, "\n").split("\n");
+  const errors: VocabularyParseError[] = [];
+  const sections: Array<{ name: string; headerIndex: number; wordIndexes: number[] }> = [];
+  const beforeFirstHeader: number[] = [];
+  let active: { name: string; headerIndex: number; wordIndexes: number[] } | null = null;
+
+  lines.forEach((source, index) => {
+    if (!source.trim()) return;
+    const heading = multiUnitHeadingName(source);
+    if (heading != null) {
+      if (active) sections.push(active);
+      active = { name: heading, headerIndex: index, wordIndexes: [] };
+      return;
+    }
+    if (active) active.wordIndexes.push(index);
+    else beforeFirstHeader.push(index);
+  });
+  if (active) sections.push(active);
+
+  if (beforeFirstHeader.length) {
+    const index = beforeFirstHeader[0];
+    error(errors, "MISSING_UNIT_HEADER", "A unit heading is required before its vocabulary.", index + 1, 1,
+      Math.max(1, lines[index].length), lines[index]);
+  } else if (!sections.length) {
+    error(errors, "MISSING_UNIT_HEADER", "A unit heading is required before its vocabulary.", 1, 1, 1, lines[0] || "");
+  }
+  if (sections.length > 100) {
+    const section = sections[100];
+    error(errors, "TOO_MANY_UNITS", "A course can contain at most 100 units.", section.headerIndex + 1, 1,
+      Math.max(1, lines[section.headerIndex].length), lines[section.headerIndex]);
+  }
+
+  const units = sections.slice(0, 100).map((section) => {
+    const headerSource = lines[section.headerIndex];
+    if (!section.name || section.name.length > 80) {
+      error(errors, "INVALID_UNIT_HEADER", "Unit names must contain 1–80 characters.", section.headerIndex + 1, 1,
+        Math.max(1, headerSource.length), headerSource);
+    }
+    if (!section.wordIndexes.length) {
+      error(errors, "EMPTY_UNIT", "The unit vocabulary list cannot be empty.", section.headerIndex + 1, 1,
+        Math.max(1, headerSource.length), headerSource);
+    }
+    const wordIndexes = new Set(section.wordIndexes);
+    const result = parseVocabularyText(lines.map((line, index) => wordIndexes.has(index) ? line : "").join("\n"));
+    errors.push(...result.errors);
+    return { id: randomCourseId(), name: section.name, words: result.words };
+  });
+
+  return { units, errors, nonEmptyLines: lines.filter((line) => line.trim()).length };
 }
