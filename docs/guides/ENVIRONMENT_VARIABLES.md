@@ -113,7 +113,7 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | `DB_BACKUP_ENCRYPTION_KEY` | 有新迁移时必需 | **最高机密** | 加密 14 天保留的 release recovery artifact；副本须离线保存。 |
 | `PUBLIC_ORIGIN` | workflow 非秘密 env | 公开配置 | 公网 smoke 的规范 origin；API 分享 URL 仍从服务器 `.env` 读取，二者必须一致。 |
 
-服务器 `/opt/nalanda/.env` 至少需要 Supabase 两项才能支持注册；启用 Courses 还必须写总/子 flags 和 `PUBLIC_ORIGIN`，启用语音再写 Azure key/region/配额。`SUPABASE_JWT_SECRET` 仅作旧 HS256 回退。当前 CI**不会**创建或更新这个文件；API image Git SHA 位于非秘密 `.deploy.env` 并由 CI 原子更新。
+服务器 `/opt/nalanda/.env` 至少需要 Supabase 两项才能支持注册；启用 Courses 还必须写总/子 flags 和 `PUBLIC_ORIGIN`，启用语音再写 Azure key/region/配额。`SUPABASE_JWT_SECRET` 仅作旧 HS256 回退。CI**不会**创建、下载或更新这个文件；它只上传无密钥 smoke 脚本，并在生产主机内用该 `.env` 和新 API image 执行真实 Azure gate。API image Git SHA 位于非秘密 `.deploy.env` 并由 CI 原子更新。
 
 ## 7. Supabase RLS E2E 变量
 

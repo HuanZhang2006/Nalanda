@@ -70,7 +70,7 @@ pnpm --filter @nalanda/web dev
 pnpm check   # docs:check + release-tool tests + code lint + typecheck + test + build
 ```
 
-默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，自动暂存 0008 及之后迁移来验证 0007 历史升级，再从空库重建、运行双用户 RLS/Storage/points/Courses E2E，并以 Azure fake + 固定 WAV 运行 Playwright Courses 主流程。普通 jsdom/mock 结果不能称为真实数据库 E2E；手工连接托管项目时禁止指向生产，见[测试指南](docs/guides/TESTING.md)。
+默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，自动暂存 0008 及之后迁移来验证 0007 历史升级，再从空库重建、运行双用户 RLS/Storage/points/Courses E2E，并以 Azure fake + 固定 WAV 运行 Playwright Courses 主流程；生产发布还会在新镜像激活前用服务器 mode-600 `.env` 执行真实 Azure TTS/评分 gate。普通 jsdom/mock 结果不能称为真实数据库 E2E，fake 也不能称为供应商验证；手工连接托管项目时禁止指向生产，见[测试指南](docs/guides/TESTING.md)。
 
 ## 静态设计原型
 

@@ -16,10 +16,11 @@
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
 | 发布工具单元 | 6 个 Node 内置 test 验证 production migration history 状态机、Storage policy/bucket dump 解析、migration-history schema 不存在/其他 dump 错误的恢复点分支，以及 schema diff 的 CLI 调用 | 否 | `pnpm test:release` |
 | NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、CMUdict、Azure adapter/格式/超时/隐私 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
+| Azure Speech 供应商 smoke | 无个人数据的 `apple` fixture 验证 MP3/PCM TTS、scripted assessment、分数和音素；拒绝 fake | 是，产生少量 Azure 用量 | `node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs` |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
 | 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure fake 运行 Courses 主流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
-重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest 和本地 Supabase，但 Azure 是 fake。任何一层都不能单独证明生产数据库、真实 Azure 或完整产品已经可用。
+重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest 和本地 Supabase，但 Azure 是 fake。真实 provider smoke 证明 key/region/TTS/评分响应，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
 
 ## 2. 首次准备
 
@@ -351,15 +352,21 @@ pnpm --filter @nalanda/web exec playwright install --with-deps chromium
 pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + Azure fake env
 ```
 
-`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure 是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。Courses 生产发布后还必须由受控真实 Azure 账号 smoke；CI fake 不能代替。
+真实供应商 smoke 必须显式加载只含后端配置、已被 Git 忽略且权限为 600 的文件；脚本拒绝 `AZURE_SPEECH_FAKE=true`，不会打印 key 或完整供应商响应：
+
+```bash
+node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
+```
+
+`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure 是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布会把无密钥脚本上传到主机，并在新 image 激活前从服务器 `.env` 运行真实 provider gate；CI fake 不能代替该结果，provider gate 也不能代替 Playwright。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
 目标 CI 分层：
 
-- PR 已跑：docs check、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、升级/空库 migrations/database lint、双用户 RLS/Storage/Courses E2E、Playwright Courses；FastAPI contract 与真实 Azure 待补；
+- PR 已跑：docs check、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、升级/空库 migrations/database lint、双用户 RLS/Storage/Courses E2E、Playwright Courses；FastAPI contract 待补；
 - 受保护 staging 目标：近生产数据规模与配置漂移 E2E；
-- 发布前：恢复点、迁移/回滚演练、真实 Azure 合成账号 smoke；
+- 发布前：恢复点、迁移/回滚演练；应用激活前由生产主机强制运行真实 Azure 合成账号 smoke；
 - 定时：RLS 安全回归、依赖/secret scan、备份恢复、AI 评测/成本（接入后）。
 
 高权限 E2E runner 必须使用独立 test project、受保护 environment approval 和短期/可轮换 secret，不能把 service-role 暴露给不受信任 fork PR。

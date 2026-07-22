@@ -45,6 +45,25 @@ describe("pronunciation adapter", () => {
     expect(learning.recordSpeechAssessment.mock.calls[0][3]).not.toHaveProperty("audio");
   });
 
+  it("maps the flattened pronunciation response returned by the live REST endpoint", async () => {
+    process.env.AZURE_SPEECH_KEY = "test"; process.env.AZURE_SPEECH_REGION = "japaneast";
+    const { service, learning } = harness();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ RecognitionStatus: "Success", NBest: [{
+      AccuracyScore: 97, FluencyScore: 94, CompletenessScore: 100, PronScore: 96,
+      Words: [{ Word: "apple", AccuracyScore: 97, ErrorType: "None", Phonemes: [
+        { Phoneme: "æ", AccuracyScore: 96 }, { Phoneme: "p", AccuracyScore: 98 },
+      ] }],
+    }] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+    const result = await service.assess("user", "session", "word", { buffer: wav(), size: wav().length } as any);
+    expect(result).toMatchObject({ accuracyScore: 97, fluencyScore: 94, completenessScore: 100,
+      pronunciationScore: 96, errorType: null });
+    expect(result.phonemes).toEqual([
+      { phoneme: "æ", accuracyScore: 96, needsPractice: false },
+      { phoneme: "p", accuracyScore: 98, needsPractice: false },
+    ]);
+    expect(learning.recordSpeechAssessment).toHaveBeenCalledWith("user", "session", "word", result);
+  });
+
   it("does not record an attempt when the provider times out", async () => {
     process.env.AZURE_SPEECH_KEY = "test"; process.env.AZURE_SPEECH_REGION = "westus";
     const { service, learning } = harness(); vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("timeout")));

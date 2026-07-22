@@ -217,8 +217,9 @@ GitHub Actions 在 runner 上：
 3. 启动 Web/API 与 Azure fake，以固定 WAV 执行 Playwright 登录→多单元创建→纠错/排序→四阶段→刷新续学→复习安排→发布/另一用户克隆。
 4. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
 5. 构建 Web 与 Git SHA API image，经预先核验 host key 的 SSH/SCP 上传。
-6. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
-7. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
+6. 生产主机以仅存服务器 mode-600 `.env` 的 Azure key，在新 image 中执行真实 MP3/PCM TTS 与 pronunciation assessment gate；失败不激活 release。
+7. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
+8. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
 
 服务器上宿主 nginx 托管 `/opt/nalanda/web`，把 `/api/` 反代到仅绑定 `127.0.0.1:8411` 的 API 容器。生产 compose 不启动 AI/Redis。
 Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考 server block 与 Nest body parser 都设为 10 MB；评分 multipart 仍为 2 MB。CI 不自动改 certbot 管理的现网站点，所以首次启用前必须按发布手册同步并 reload nginx。
