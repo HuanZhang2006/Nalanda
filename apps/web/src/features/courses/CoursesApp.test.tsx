@@ -63,6 +63,53 @@ describe("Courses React UI", () => {
     expect(container.querySelectorAll('[aria-label="单元名称"]')).toHaveLength(2);
   });
 
+  it("imports a complete multi-unit document and renders each translation as its own editable block", async () => {
+    setLocale("zh");
+    vi.stubGlobal("fetch", vi.fn(() => response([])));
+    await settle(() => root.render(<CoursesApp />));
+    await settle(() => clickText(container, "创建第一门课程")); await settle(() => clickText(container, "英语单词学习"));
+    await settle(() => clickText(container, "复制文本词表"));
+    await settle(() => {
+      setValue(container.querySelector("#new-course-title") as HTMLInputElement, "整表导入课程");
+      (container.querySelectorAll('input[type="radio"]')[1] as HTMLInputElement).click();
+    });
+    const documentMode = [...container.querySelectorAll("label")].find((label) => label.textContent?.includes("整份多单元词表"))?.querySelector("input") as HTMLInputElement;
+    await settle(() => documentMode.click());
+    await settle(() => clickText(container, "继续"));
+    const document = container.querySelector('[aria-label="整份多单元词表"]') as HTMLTextAreaElement;
+    await settle(() => {
+      setValue(document, "Starter Unit 1\nunit 单元\nsection 部分\nother 另外的/其他的\neach 每个/各自\nStarter Unit 2\nbottle 瓶子\nkey 钥匙/关键");
+      clickText(container, "解析并进入编辑");
+    });
+    expect(container.textContent).toContain("确认课程内容");
+    expect([...container.querySelectorAll('[aria-label="单元名称"]')].map((entry) => (entry as HTMLInputElement).value)).toEqual(["Starter Unit 1", "Starter Unit 2"]);
+    const otherInput = [...container.querySelectorAll('[aria-label="英文"]')].find((entry) => (entry as HTMLInputElement).value === "other") as HTMLInputElement;
+    const otherRow = otherInput.closest(".course-word-row")!;
+    expect([...otherRow.querySelectorAll(".course-translation-item input")].map((entry) => (entry as HTMLInputElement).value)).toEqual(["另外的", "其他的"]);
+  });
+
+  it("bulk-appends a pasted unit in the editor and rejects terms already in that unit", async () => {
+    setLocale("zh");
+    const initial: LearningCourseInput = { id: ids[0], title: "Course", category: "english_vocabulary", hasUnits: true, locale: "en-US",
+      units: [{ id: ids[1], name: "Unit 1", isSystem: false, words: [
+        { id: ids[2], term: "apple", translations: ["苹果", "水果"], ipa: null },
+        { id: ids[3], term: "pear", translations: ["梨"], ipa: null },
+        { id: ids[4], term: "orange", translations: ["橙子"], ipa: null },
+        { id: ids[5], term: "banana", translations: ["香蕉"], ipa: null },
+      ] }] };
+    await settle(() => root.render(<CourseEditor initial={initial} existing onCancel={() => {}} onSave={vi.fn()} />));
+    expect(container.querySelectorAll(".course-word-row")[0].querySelectorAll(".course-translation-item")).toHaveLength(2);
+    await settle(() => clickText(container, "批量粘贴单词"));
+    const paste = container.querySelector('[aria-label="Unit 1 批量词表"]') as HTMLTextAreaElement;
+    await settle(() => { setValue(paste, "apple 水果\ngrape 葡萄"); clickText(container, "添加粘贴的单词"); });
+    expect(container.textContent).toContain("DUPLICATE_EXISTING_TERM");
+    await settle(() => { setValue(paste, "grape 葡萄\nwatermelon 西瓜"); clickText(container, "添加粘贴的单词"); });
+    expect([...container.querySelectorAll('[aria-label="英文"]')].map((entry) => (entry as HTMLInputElement).value)).toEqual([
+      "apple", "pear", "orange", "banana", "grape", "watermelon",
+    ]);
+    expect(container.querySelector('[aria-label="Unit 1 批量词表"]')).toBeNull();
+  });
+
   it("provides keyboard ordering controls and surfaces save failures", async () => {
     setLocale("zh");
     const initial: LearningCourseInput = { id: ids[0], title: "Course", category: "english_vocabulary", hasUnits: false, locale: "en-US",

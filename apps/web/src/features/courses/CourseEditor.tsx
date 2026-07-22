@@ -6,9 +6,10 @@ import {
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import type { LearningCourseInput, VocabularyUnitInput, VocabularyWordInput } from "@nalanda/types";
-import { randomCourseId } from "./parser";
+import { parseVocabularyText, randomCourseId, type VocabularyParseError } from "./parser";
 import { useI18n } from "../../i18n";
 import { CourseLocaleButton } from "./CourseLocaleButton";
+import { VocabularyErrorList } from "./VocabularyErrorList";
 
 const TERM = /^[A-Za-z0-9][A-Za-z0-9 .'’\-]*$/;
 
@@ -43,6 +44,10 @@ function SortableWord({
 }) {
   const { l } = useI18n();
   const sortable = useSortable({ id: `word:${word.id}`, data: { unitId, wordId: word.id } });
+  const updateTranslation = (index: number, value: string) => onChange({
+    translations: word.translations.map((translation, translationIndex) => translationIndex === index ? value : translation),
+  });
+  const removeTranslation = (index: number) => onChange({ translations: word.translations.filter((_, translationIndex) => translationIndex !== index) });
   return <div ref={sortable.setNodeRef} style={{ transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition }}
     className={`course-word-row ${sortable.isDragging ? "is-dragging" : ""}`}>
     <button className="course-drag" type="button" aria-label={l(`Drag ${word.term}`, `拖动 ${word.term}`)} {...sortable.attributes} {...sortable.listeners}>⠿</button>
@@ -50,8 +55,16 @@ function SortableWord({
       onChange={(event) => onChange({ term: event.target.value, ipa: null })} />
     <input className="course-form-field" aria-label={l("IPA", "音标")} value={word.ipa || ""} maxLength={120} placeholder={l("IPA not available", "音标待补充")}
       onChange={(event) => onChange({ ipa: event.target.value || null })} />
-    <input className="course-form-field course-translations" aria-label={l("Translations", "翻译")} value={word.translations.join("/")}
-      onChange={(event) => onChange({ translations: event.target.value.split("/").map((value) => value.trim()) })} />
+    <div className="course-translations" role="group" aria-label={l("Translations", "翻译")}>
+      {word.translations.map((translation, index) => <div className="course-translation-item" key={index}>
+        <input className="course-form-field" aria-label={l(`Translation ${index + 1}`, `翻译 ${index + 1}`)} value={translation} maxLength={120}
+          onChange={(event) => updateTranslation(index, event.target.value)} />
+        <button type="button" disabled={word.translations.length === 1} aria-label={l(`Remove translation ${index + 1}`, `删除翻译 ${index + 1}`)}
+          onClick={() => removeTranslation(index)}>×</button>
+      </div>)}
+      <button className="course-translation-add" type="button" disabled={word.translations.length >= 10}
+        onClick={() => onChange({ translations: [...word.translations, ""] })}>＋ {l("Translation", "翻译")}</button>
+    </div>
     <div className="course-icon-actions">
       <button type="button" aria-label={l("Move word up", "上移单词")} onClick={() => onStep(-1)}>↑</button>
       <button type="button" aria-label={l("Move word down", "下移单词")} onClick={() => onStep(1)}>↓</button>
@@ -99,6 +112,7 @@ export function CourseEditor({ initial, existing, onCancel, onSave }: {
   const [course, setCourse] = useState<LearningCourseInput>(() => structuredClone(initial));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [bulk, setBulk] = useState<{ unitId: string; text: string; errors: VocabularyParseError[]; message: string } | null>(null);
   const sensors = useSensors(useSensor(PointerSensor), useSensor(TouchSensor), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
   const wordIds = useMemo(() => course.units.flatMap((unit) => unit.words.map((word) => `word:${word.id}`)), [course]);
 
@@ -110,6 +124,22 @@ export function CourseEditor({ initial, existing, onCancel, onSave }: {
   }));
   const moveWord = (wordId: string, fromUnitId: string, toUnitId: string, toIndex?: number) =>
     setCourse((current) => moveCourseWord(current, wordId, fromUnitId, toUnitId, toIndex));
+  const appendPastedWords = (unitId: string) => {
+    if (!bulk || bulk.unitId !== unitId) return;
+    const unit = course.units.find((entry) => entry.id === unitId);
+    if (!unit) return;
+    const result = parseVocabularyText(bulk.text, { existingTerms: unit.words.map((word) => word.term) });
+    const errors = result.errors.length ? result.errors : result.nonEmptyLines === 0
+      ? [{ code: "EMPTY_UNIT", message: "The pasted vocabulary list cannot be empty.", line: 1, column: 1, length: 1, source: "" } satisfies VocabularyParseError]
+      : [];
+    if (errors.length) return setBulk({ ...bulk, errors, message: l("Fix the highlighted errors first.", "请先修正标红位置") });
+    const currentCount = course.units.reduce((sum, entry) => sum + entry.words.length, 0);
+    if (currentCount + result.words.length > 2_000) {
+      return setBulk({ ...bulk, errors: [], message: l("A course can contain at most 2,000 words or phrases.", "整门课程最多包含 2,000 个词或短语") });
+    }
+    updateUnit(unitId, (current) => ({ ...current, words: [...current.words, ...result.words] }));
+    setBulk(null); setError("");
+  };
   const onDragEnd = ({ active, over }: DragEndEvent) => {
     if (!over || active.id === over.id) return;
     const activeId = String(active.id).replace(/^word:/, "");
@@ -155,7 +185,7 @@ export function CourseEditor({ initial, existing, onCancel, onSave }: {
             <div className="row">
               {course.hasUnits && <><button className="btn btn-sm" disabled={unitIndex === 0} onClick={() => stepUnit(unitIndex, -1)}>{l("Move unit up", "单元上移")}</button>
                 <button className="btn btn-sm" disabled={unitIndex === course.units.length - 1} onClick={() => stepUnit(unitIndex, 1)}>{l("Move unit down", "单元下移")}</button></>}
-              {course.hasUnits && course.units.length > 1 && <button className="btn btn-sm" onClick={() => setCourse((current) => ({ ...current, units: current.units.filter((entry) => entry.id !== unit.id) }))}>{l("Delete unit", "删除单元")}</button>}
+              {course.hasUnits && course.units.length > 1 && <button className="btn btn-sm" onClick={() => { setCourse((current) => ({ ...current, units: current.units.filter((entry) => entry.id !== unit.id) })); if (bulk?.unitId === unit.id) setBulk(null); }}>{l("Delete unit", "删除单元")}</button>}
             </div>
           </div>
           {unit.words.map((word, wordIndex) => <SortableWord key={word.id} word={word} unitId={unit.id} units={course.units}
@@ -164,8 +194,20 @@ export function CourseEditor({ initial, existing, onCancel, onSave }: {
             onStep={(delta) => updateUnit(unit.id, (current) => ({ ...current, words: arrayMove(current.words, wordIndex,
               Math.max(0, Math.min(current.words.length - 1, wordIndex + delta))) }))}
             onDelete={() => updateUnit(unit.id, (current) => ({ ...current, words: current.words.filter((entry) => entry.id !== word.id) }))} />)}
-          <button className="btn btn-sm mt-12" onClick={() => updateUnit(unit.id, (current) => ({ ...current,
+          <div className="row wrap-flex mt-12"><button className="btn btn-sm" onClick={() => updateUnit(unit.id, (current) => ({ ...current,
             words: [...current.words, { id: randomCourseId(), term: "", translations: [""], ipa: null }] }))}>＋ {l("Add word", "添加单词")}</button>
+            <button className="btn btn-sm" onClick={() => setBulk((current) => current?.unitId === unit.id ? null : { unitId: unit.id, text: "", errors: [], message: "" })}>⌨ {l("Paste multiple words", "批量粘贴单词")}</button></div>
+          {bulk?.unitId === unit.id && <div className="course-bulk-paste mt-12">
+            <label className="course-label" htmlFor={`bulk-${unit.id}`}>{l(`Paste words into ${unit.name}`, `批量添加到 ${unit.name}`)}</label>
+            <p className="muted">{l("Use one word or phrase per line. Separate multiple translations with /.", "每行一个词或短语，多个翻译用 / 分隔。")}</p>
+            <textarea id={`bulk-${unit.id}`} className="course-form-field course-paste mt-8" aria-label={l(`${unit.name} bulk vocabulary`, `${unit.name} 批量词表`)}
+              value={bulk.text} onChange={(event) => setBulk({ ...bulk, text: event.target.value, errors: [], message: "" })}
+              placeholder={'apple 苹果\ntake part in 参加/参与'} />
+            <VocabularyErrorList errors={bulk.errors} />
+            {bulk.message && <div className="course-feedback wrong" role="alert">{bulk.message}</div>}
+            <div className="row mt-12"><button className="btn btn-sm" onClick={() => setBulk(null)}>{l("Cancel", "取消")}</button>
+              <button className="btn btn-primary btn-sm" onClick={() => appendPastedWords(unit.id)}>{l("Add pasted words", "添加粘贴的单词")}</button></div>
+          </div>}
         </section>)}
       </SortableContext>
     </DndContext>

@@ -108,6 +108,8 @@
   line-height: 1.7;
 }
 
+.course-document-paste { min-height: 390px; }
+
 .course-errors {
   margin-top: 10px;
   padding: 10px;
@@ -156,6 +158,53 @@
 .course-word-row.is-dragging { opacity: .5; box-shadow: var(--shadow-md); }
 .course-drag { border: 0; background: transparent; color: var(--ink-faint); font-size: 18px; touch-action: none; }
 .course-icon-actions { display: flex; gap: 4px; }
+
+.course-translations {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+  min-width: 0;
+}
+
+.course-translation-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 30px;
+  min-width: 0;
+}
+
+.course-translation-item .course-form-field { border-radius: 10px 0 0 10px; }
+
+.course-translation-item button,
+.course-translation-add {
+  border: 1px solid var(--border-strong);
+  background: var(--card);
+  color: var(--ink-soft);
+}
+
+.course-translation-item button {
+  border-left: 0;
+  border-radius: 0 10px 10px 0;
+}
+
+.course-translation-add {
+  min-height: 38px;
+  padding: 7px 10px;
+  border-style: dashed;
+  border-radius: 10px;
+  font-size: calc(12px * var(--fs));
+}
+
+.course-translation-item button:hover,
+.course-translation-add:hover { background: var(--card-2); color: var(--ink); }
+
+.course-bulk-paste {
+  padding: calc(16px * var(--u));
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--card-2);
+}
+
+.course-bulk-paste .course-paste { min-height: 170px; background: var(--card); }
 
 .course-icon-actions button {
   width: 30px;
@@ -245,7 +294,9 @@
   .course-category-grid, .course-list, .course-market-grid, .course-options, .course-match { grid-template-columns: 1fr; }
   .course-word-row { grid-template-columns: 28px minmax(0, 1fr); }
   .course-word-row > * { grid-column: 2; }
-  .course-word-row > .course-drag { grid-column: 1; grid-row: 1 / 5; }
+  .course-word-row > .course-drag { grid-column: 1; grid-row: 1 / 6; }
+  .course-translations { grid-template-columns: 1fr; }
+  .course-document-paste { min-height: 330px; }
   .course-stage-track { grid-template-columns: repeat(2, 1fr); }
   .course-study-card { min-height: 320px; padding: 24px 18px; }
   .course-public-page { padding: 20px; }

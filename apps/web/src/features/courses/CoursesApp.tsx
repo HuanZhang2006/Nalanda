@@ -7,11 +7,13 @@ import { coursesApi } from "./api";
 import { CourseEditor } from "./CourseEditor";
 import { LearningView } from "./LearningView";
 import { CourseLocaleButton } from "./CourseLocaleButton";
-import { parseVocabularyText, randomCourseId, vocabularyParseErrorMessage, type VocabularyParseError } from "./parser";
+import { VocabularyErrorList } from "./VocabularyErrorList";
+import { parseMultiUnitVocabularyText, parseVocabularyText, randomCourseId, type VocabularyParseError } from "./parser";
 import { useI18n } from "../../i18n";
 import "./courses.css";
 
 type WizardStep = "category" | "source" | "setup" | "paste";
+type UnitPasteMode = "separate" | "document";
 type PasteUnit = { id: string; name: string; isSystem: boolean; text: string; errors: VocabularyParseError[] };
 
 const CATEGORIES = [
@@ -23,30 +25,33 @@ const CATEGORIES = [
 
 function apiMessage(error: unknown, fallback: string) { return error instanceof Error ? error.message : fallback; }
 
-function ErrorLines({ errors }: { errors: VocabularyParseError[] }) {
-  const { l, locale } = useI18n();
-  if (!errors.length) return null;
-  return <div className="course-errors" role="alert">{errors.map((entry, index) => {
-    const start = Math.max(0, entry.column - 1); const end = start + entry.length;
-    return <div className="course-error-line" key={`${entry.line}-${entry.code}-${index}`}><b>{l(`Line ${entry.line}`, `第 ${entry.line} 行`)}</b><div>
-      <span>{entry.source.slice(0, start)}</span><mark>{entry.source.slice(start, end) || "␠"}</mark><span>{entry.source.slice(end)}</span>
-      <div style={{ color: "var(--pink)" }}>{entry.code}: {vocabularyParseErrorMessage(entry, locale)}</div>
-    </div></div>;
-  })}</div>;
-}
-
 function Wizard({ onCancel, onReady }: { onCancel: () => void; onReady: (value: LearningCourseInput) => void }) {
   const { l } = useI18n();
   const [step, setStep] = useState<WizardStep>("category");
   const [title, setTitle] = useState("");
   const [hasUnits, setHasUnits] = useState(false);
+  const [unitPasteMode, setUnitPasteMode] = useState<UnitPasteMode>("separate");
   const [units, setUnits] = useState<PasteUnit[]>([]);
+  const [documentText, setDocumentText] = useState("");
+  const [documentErrors, setDocumentErrors] = useState<VocabularyParseError[]>([]);
   const [error, setError] = useState("");
 
   const beginPaste = () => {
     if (!title.trim()) return setError(l("Enter a course name.", "请填写课程名称"));
     setUnits([{ id: randomCourseId(), name: hasUnits ? "Unit 1" : l("Default unit", "默认单元"), isSystem: !hasUnits, text: "", errors: [] }]);
+    setDocumentText(""); setDocumentErrors([]);
     setError(""); setStep("paste");
+  };
+  const readyWithUnits = (readyUnits: VocabularyUnitInput[]) => {
+    const words = readyUnits.flatMap((unit) => unit.words);
+    const distinct = new Set(words.map((word) => word.term.trim().replace(/\s+/g, " ").toLowerCase()));
+    if (words.length > 2_000 || distinct.size < 4) {
+      setError(l("A course must contain 4–2,000 distinct words or phrases.", "整门课程需包含 4–2,000 个不同词或短语"));
+      return false;
+    }
+    setError("");
+    onReady({ id: randomCourseId(), title: title.trim(), category: "english_vocabulary", hasUnits, locale: "en-US", units: readyUnits });
+    return true;
   };
   const parseAll = (override?: PasteUnit[]) => {
     const source = override || units;
@@ -54,13 +59,14 @@ function Wizard({ onCancel, onReady }: { onCancel: () => void; onReady: (value: 
     const next = parsed.map(({ unit, result }) => ({ ...unit, errors: result.errors.length ? result.errors
       : result.nonEmptyLines === 0 ? [{ code: "EMPTY_UNIT", message: "The unit vocabulary list cannot be empty.", line: 1, column: 1, length: 1, source: "" } satisfies VocabularyParseError] : [] }));
     setUnits(next);
-    const words = parsed.flatMap(({ result }) => result.words);
-    const distinct = new Set(words.map((word) => word.term.trim().replace(/\s+/g, " ").toLowerCase()));
     if (next.some((unit) => unit.errors.length)) return setError(l("Fix the highlighted errors first.", "请先修正标红位置"));
-    if (words.length > 2_000 || distinct.size < 4) return setError(l("A course must contain 4–2,000 distinct words or phrases.", "整门课程需包含 4–2,000 个不同词或短语"));
-    setError("");
-    onReady({ id: randomCourseId(), title: title.trim(), category: "english_vocabulary", hasUnits, locale: "en-US",
-      units: parsed.map(({ unit, result }): VocabularyUnitInput => ({ id: unit.id, name: unit.name.trim(), isSystem: unit.isSystem, words: result.words })) });
+    readyWithUnits(parsed.map(({ unit, result }): VocabularyUnitInput => ({ id: unit.id, name: unit.name.trim(), isSystem: unit.isSystem, words: result.words })));
+  };
+  const parseDocument = (text = documentText) => {
+    const result = parseMultiUnitVocabularyText(text);
+    setDocumentErrors(result.errors);
+    if (result.errors.length) return setError(l("Fix the highlighted errors first.", "请先修正标红位置"));
+    readyWithUnits(result.units.map((unit) => ({ ...unit, isSystem: false })));
   };
   const updatePaste = (id: string, text: string, auto = false) => {
     const next = units.map((unit) => unit.id === id ? { ...unit, text, errors: [] } : unit); setUnits(next);
@@ -70,6 +76,10 @@ function Wizard({ onCancel, onReady }: { onCancel: () => void; onReady: (value: 
       if (!result.errors.length && distinct.size >= 4 && result.words.length <= 2_000) parseAll(next);
       else setUnits(next.map((unit) => unit.id === id ? { ...unit, errors: result.errors } : unit));
     }, 0);
+  };
+  const updateDocument = (text: string, auto = false) => {
+    setDocumentText(text); setDocumentErrors([]);
+    if (auto) window.setTimeout(() => parseDocument(text), 0);
   };
 
   return <div className="wrap courses-root"><div className="page-head"><div><div className="eyebrow">{l("Create course", "创建课程")}</div>
@@ -84,12 +94,28 @@ function Wizard({ onCancel, onReady }: { onCancel: () => void; onReady: (value: 
     </div><button className="btn mt-16" onClick={() => setStep("category")}>{l("Back", "上一步")}</button></>}
     {step === "setup" && <div className="card card-pad">
       <label className="course-label" htmlFor="new-course-title">{l("Course name *", "课程名称 *")}</label><input id="new-course-title" className="course-form-field" maxLength={80} value={title} onChange={(event) => setTitle(event.target.value)} placeholder={l("Example: Core Academic English", "例如：学术英语核心词汇")} />
-      <div className="course-label">{l("Vocabulary structure", "词表结构")}</div><div className="row wrap-flex"><label className="chip chip-outline"><input type="radio" checked={!hasUnits} onChange={() => setHasUnits(false)} /> {l("No units", "无单元")}</label>
+      <div className="course-label">{l("Vocabulary structure", "词表结构")}</div><div className="row wrap-flex"><label className="chip chip-outline"><input type="radio" checked={!hasUnits} onChange={() => { setHasUnits(false); setUnitPasteMode("separate"); }} /> {l("No units", "无单元")}</label>
         <label className="chip chip-outline"><input type="radio" checked={hasUnits} onChange={() => setHasUnits(true)} /> {l("Use units", "有单元")}</label></div>
+      {hasUnits && <><div className="course-label">{l("How would you like to paste it?", "选择粘贴方式")}</div><div className="row wrap-flex">
+        <label className="chip chip-outline"><input type="radio" name="unit-paste-mode" checked={unitPasteMode === "separate"} onChange={() => setUnitPasteMode("separate")} /> {l("One unit at a time", "逐个单元粘贴")}</label>
+        <label className="chip chip-outline"><input type="radio" name="unit-paste-mode" checked={unitPasteMode === "document"} onChange={() => setUnitPasteMode("document")} /> {l("One full multi-unit list", "整份多单元词表")}</label>
+      </div></>}
       {error && <div role="alert" className="course-feedback wrong">{error}</div>}
       <div className="row mt-24"><button className="btn" onClick={() => setStep("source")}>{l("Back", "上一步")}</button><button className="btn btn-primary" onClick={beginPaste}>{l("Continue", "继续")}</button></div>
     </div>}
-    {step === "paste" && <><div className="card card-pad"><div className="row between wrap-flex"><div><h2 style={{ fontSize: 19 }}>{l("Paste vocabulary", "粘贴词表")}</h2><p className="muted mt-4">{l("Example:", "示例：")} <code>take part in 参加/参与</code></p></div>
+    {step === "paste" && hasUnits && unitPasteMode === "document" && <div className="card card-pad"><div><h2 style={{ fontSize: 19 }}>{l("Paste a full multi-unit list", "粘贴整份多单元词表")}</h2>
+      <p className="muted mt-4">{l("Use numbered headings such as Starter Unit 1, or wrap any custom unit name in [brackets] or prefix it with #. Put each vocabulary item on the following lines.", "单元标题可使用 Starter Unit 1 这类带序号名称；任意自定义名称可写成 [名称] 或 # 名称，词条写在标题后的各行。")}</p></div>
+      <textarea className="course-form-field course-paste course-document-paste mt-12" aria-label={l("Full multi-unit vocabulary list", "整份多单元词表")} value={documentText}
+        onChange={(event) => updateDocument(event.target.value)} onPaste={(event) => {
+          const pasted = event.clipboardData.getData("text"); if (!pasted) return;
+          event.preventDefault(); const target = event.currentTarget; const text = documentText.slice(0, target.selectionStart) + pasted + documentText.slice(target.selectionEnd);
+          updateDocument(text, true);
+        }} placeholder={'Starter Unit 1\nunit 单元\nsection 部分\nother 另外的/其他的\n\nStarter Unit 2\nbottle 瓶子\nkey 钥匙/关键'} />
+      <VocabularyErrorList errors={documentErrors} />
+      {error && <div role="alert" className="course-feedback wrong">{error}</div>}
+      <div className="row mt-16"><button className="btn" onClick={() => setStep("setup")}>{l("Back", "上一步")}</button><button className="btn btn-primary" onClick={() => parseDocument()}>{l("Parse and edit", "解析并进入编辑")}</button></div>
+    </div>}
+    {step === "paste" && (!hasUnits || unitPasteMode === "separate") && <><div className="card card-pad"><div className="row between wrap-flex"><div><h2 style={{ fontSize: 19 }}>{l("Paste vocabulary", "粘贴词表")}</h2><p className="muted mt-4">{l("Example:", "示例：")} <code>take part in 参加/参与</code></p></div>
       {hasUnits && units.length < 100 && <button className="btn btn-sm" onClick={() => setUnits((current) => [...current, { id: randomCourseId(), name: `Unit ${current.length + 1}`, isSystem: false, text: "", errors: [] }])}>＋ {l("New unit", "新建单元")}</button>}</div>
       {units.map((unit, index) => <div className="course-editor-unit" key={unit.id}><div className="row between">
         {hasUnits ? <input className="course-form-field" style={{ maxWidth: 330 }} aria-label={l("Unit name", "单元名称")} value={unit.name} onChange={(event) => setUnits((current) => current.map((entry) => entry.id === unit.id ? { ...entry, name: event.target.value } : entry))} /> : <b>{l("Vocabulary", "词表")}</b>}
@@ -102,7 +128,7 @@ function Wizard({ onCancel, onReady }: { onCancel: () => void; onReady: (value: 
             event.preventDefault(); const target = event.currentTarget; const text = unit.text.slice(0, target.selectionStart) + pasted + unit.text.slice(target.selectionEnd);
             updatePaste(unit.id, text, true);
           }} placeholder={'apple 苹果\ntake part in 参加/参与'} />
-        <ErrorLines errors={unit.errors} /></div>)}
+        <VocabularyErrorList errors={unit.errors} /></div>)}
       {error && <div role="alert" className="course-feedback wrong">{error}</div>}
       <div className="row mt-16"><button className="btn" onClick={() => setStep("setup")}>{l("Back", "上一步")}</button><button className="btn btn-primary" onClick={() => parseAll()}>{l("Parse and edit", "解析并进入编辑")}</button></div>
     </div></>}
