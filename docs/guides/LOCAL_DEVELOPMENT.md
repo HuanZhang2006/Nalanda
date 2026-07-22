@@ -214,13 +214,49 @@ curl -I http://localhost:5173
 3. 创建课程并上传一个小型资料，确认 `materials` 私有桶路径以用户 UUID 开头。
 4. 创建学习任务并切换完成状态，确认任务与个人资料可重新加载。
 5. 发布一条无敏感内容的测试帖，再删除测试数据。
-6. 打开 Courses，创建“英语单词学习”；粘贴至少四个词，先制造一行格式错误确认精确标红，再修正并保存。
+6. 打开 Courses，创建“英语单词学习”；选择逐单元粘贴或整份多单元词表，先制造一行格式错误确认精确标红，再修正并进入 Review Course Content。
 7. 完成一个单元四阶段，刷新页面确认从 active session 恢复；建立 3 天复习并在 Schedule 看见独立复习项。
 8. 创建分享、撤销后确认旧链接失效；上架免费 Course Market，用第二个开发账号克隆并确认副本进度为 0、不能再次传播。
 
 本地当日无法验证“两次不同日期复习即熟练”时，不要手改生产数据；使用一次性本地 Supabase RLS fixture，测试会按 profile 时区生成两个不同 `local_date`。
 
 这些步骤会写入数据；不要对生产项目执行。自动化命令和测试分层见 [可执行测试指南](./TESTING.md)。
+
+### 7.3 Courses 文本导入与长页面回归
+
+有单元课程提供两种互斥输入方式：
+
+- **逐个单元粘贴**：手工新建/重命名单元，再分别粘贴词表；
+- **整份多单元词表**：一次粘贴含标题的完整文本，例如：
+
+```text
+Starter Unit 1
+unit 单元
+section 部分
+other 另外的/其他的
+each 每个/各自
+each other 互相/彼此
+
+Starter Unit 2
+bottle 瓶子
+You're welcome. 不客气。
+key 钥匙/关键
+thing 东西/事情
+need 需要
+eraser 橡皮
+```
+
+编号标题可以使用 `Starter Unit 1`、`Lesson 2`、`Chapter 3`、`Module A`、`Section IV` 或对应的中文编号形式。任意自定义标题使用 `[Travel phrases]` 或 `# Travel phrases`；没有显式标记的普通文本行会按词条解析。词条仍是“每行一个英文词/短语 + 一个 ASCII 空格 + 翻译”，多个翻译以 `/` 分隔。
+
+开发验收时确认：
+
+1. 整份文本拆成正确的单元，解析错误显示整份原文的行/列而非单元内相对位置。
+2. Review/Edit Course 把 `东西/事情` 显示为两个独立可编辑翻译输入；可分别删除并新增翻译。
+3. 每个现有单元的“批量粘贴单词”可追加多行，若包含已有词会显示 `DUPLICATE_EXISTING_TERM` 且不部分追加。
+4. 在至少足以超出一屏的词表中，`.content` 能滚到最底部，“添加单词”“批量粘贴单词”“添加单元”和保存按钮均可到达。
+5. 无单元模式仍使用隐藏默认单元，不把第一条词误识别为单元标题。
+
+文件入口只展示 AI 解析占位；不要选择真实材料或期待 PDF、Word、JSON、Markdown、HTML、图片上传/解析。
 
 ## 8. 常见问题
 
@@ -257,6 +293,10 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。评分要求 feature flag、key/region、当前 active session 和 16 kHz/16-bit/单声道 PCM WAV；供应商超时不应记为学习错误。
 
+### Courses 创建/编辑页看不到底部操作
+
+当前应用壳要求共享 `.main` 与 `.content` 都有 `min-height: 0`，并由 `.content` 的 `overflow-y: auto` 承担纵向滚动。先在浏览器开发工具中确认 `.content` 的 `scrollHeight > clientHeight` 且能改变 `scrollTop`；若不能，检查 `@nalanda/ui/nalanda.css` 是否实际加载，以及上层 flex/grid 子项是否覆盖了这些属性。不要用 Courses 专属固定高度、`100vh` 或额外 `overflow: hidden` 绕过共享滚动模型；弹窗内部滚动才是独立例外。
+
 ### `pnpm --filter @nalanda/api start` 找不到 `dist/main.js`
 
 先执行 `pnpm --filter @nalanda/api build`。当前 start 脚本只运行编译产物。
@@ -265,7 +305,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；Azure 使用 fake，仍缺真实供应商自动 smoke、FastAPI contract 和 ESLint/格式化规则。
+- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；浏览器流程覆盖整份多单元导入、错误修正和真实滚动容器。Playwright 的 Azure 使用 fake；生产发布另有真实供应商自动 gate，仍缺 PR 中的真实供应商测试、FastAPI contract 和 ESLint/格式化规则。
 - **目标**：接入 Redis/BullMQ、API→AI 内部调用、真实解析/Claude 生成。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 
