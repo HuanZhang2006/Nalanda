@@ -139,6 +139,9 @@ jobs:
       - name: Build all workspaces
         run: pnpm build
 
+      - name: Build production API image
+        run: docker build -f infra/hybrid-2g/api.Dockerfile -t nalanda-api:ci .
+
   migration_validation:
     name: Rebuild, lint, and RLS-test local Supabase
     needs: quality
