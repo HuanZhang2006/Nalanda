@@ -9,6 +9,7 @@ import { initCommunity, mountCommunity, mountPost } from "./community";
 import { initSchedule, mountSchedule } from "./schedule";
 import { mountCourses } from "../features/courses/mount";
 import { mountCourseMarket } from "../features/courses/CourseMarket";
+import { localize, toggleLocale } from "../i18n";
 
 const VIEWS: any = {};
 let _root: any = null;
@@ -226,6 +227,7 @@ const ACTIONS = {
   toggleTask(t){ t.classList.toggle("done"); },
   signOut(){ if(_opts && _opts.onSignOut) _opts.onSignOut(); },
   notifications(){ openNotifications(); },
+  courseLocale(){ toggleLocale(); go(S.route); },
 };
 
 /* ---------- modal + toast ---------- */
@@ -704,9 +706,9 @@ ACTIONS.upload = function(){ toast("Upload — choose a course to file it under"
 /* ---------------- NOTE MARKET ---------------- */
 VIEWS.market = function(){
   if(S.marketTab==="courses") return `<div class="wrap wrap-wide">
-    <div class="page-head"><div><div class="eyebrow">Marketplace</div><h1 class="page-title">Market</h1>
-      <p class="page-sub">Note Market 保留演示数据；Course Market 提供真实、免费、独立快照克隆。</p></div></div>
-    <div class="tabs"><button class="tab" data-act="marketTab" data-market-tab="notes">Note Market · Demo</button><button class="tab active" data-act="marketTab" data-market-tab="courses">Course Market</button></div>
+    <div class="page-head"><div><div class="eyebrow">${localize("Marketplace", "市场")}</div><h1 class="page-title">${localize("Market", "市场")}</h1>
+      <p class="page-sub">${localize("Note Market keeps demo data; Course Market provides real, free clones from independent snapshots.", "Note Market 保留演示数据；Course Market 提供真实、免费、独立快照克隆。")}</p></div><button class="btn btn-sm" data-act="courseLocale" aria-label="${localize("Switch to Chinese", "切换为英文")}">${localize("中文", "EN")}</button></div>
+    <div class="tabs"><button class="tab" data-act="marketTab" data-market-tab="notes">${localize("Note Market · Demo", "笔记市场 · 演示")}</button><button class="tab active" data-act="marketTab" data-market-tab="courses">${localize("Course Market", "课程市场")}</button></div>
     <div id="course-market-root"></div></div>`;
   const cats = ["All","Free","Top rated","Sciences","CS & Math","Premium"];
   let list = DB.market.slice();
@@ -714,7 +716,7 @@ VIEWS.market = function(){
   if(S.marketFilter==="Top rated") list = list.slice().sort((a,b)=>b.rating-a.rating);
   if(S.marketFilter==="Premium") list = list.filter(m=>m.price>=110);
   return `<div class="wrap wrap-wide">
-    <div class="tabs"><button class="tab active" data-act="marketTab" data-market-tab="notes">Note Market · Demo</button><button class="tab" data-act="marketTab" data-market-tab="courses">Course Market</button></div>
+    <div class="tabs"><button class="tab active" data-act="marketTab" data-market-tab="notes">Note Market · Demo</button><button class="tab" data-act="marketTab" data-market-tab="courses">${localize("Course Market", "课程市场")}</button></div>
     <div class="page-head">
       <div><div class="eyebrow">Marketplace</div><h1 class="page-title">Note Market</h1>
         <p class="page-sub">Buy and sell exam-ready notes. Purchases drop straight into your library; creators earn credits.</p></div>

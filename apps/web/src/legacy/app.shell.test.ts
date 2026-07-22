@@ -38,7 +38,7 @@ describe("legacy 应用壳", () => {
       ["home", "Good morning"],
       ["notes", "My Notes"],
       ["materials", "Materials"],
-      ["courses", "学习课程"],
+      ["courses", "Learning courses"],
       ["schedule", "学习计划"],
       ["market", "Note Market"],
       ["community", "学习社区"],
@@ -59,10 +59,10 @@ describe("legacy 应用壳", () => {
     deepLink.dataset.unitId = learningDetail.units[0].id; deepLink.dataset.scheduleId = "33333333-3333-4333-8333-333333333333";
     root.appendChild(deepLink);
     await act(async () => { click(deepLink); await flush(20); });
-    expect(root.textContent).toContain("开始复习");
+    expect(root.textContent).toContain("Start review");
     await act(async () => { click(root.querySelector('#nav [data-go="home"]')); await flush(8); click(root.querySelector('#nav [data-go="courses"]')); await flush(20); });
-    expect(root.textContent).toContain("还没有学习课程");
-    expect(root.querySelector(".modal")?.textContent || "").not.toContain("开始复习");
+    expect(root.textContent).toContain("No learning courses yet");
+    expect(root.querySelector(".modal")?.textContent || "").not.toContain("Start review");
 
     await act(async () => { click(root.querySelector('[data-go="create"]')); await flush(4); });
     expect(root.textContent).toContain("Create a note");
