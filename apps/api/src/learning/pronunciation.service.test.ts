@@ -12,14 +12,14 @@ function wav(seconds = 0.1) {
 }
 
 function harness() {
-  const db = { storageGet: vi.fn().mockResolvedValue(null), storagePut: vi.fn(), select: vi.fn() };
+  const db = { storageGet: vi.fn().mockResolvedValue(null), storagePut: vi.fn(), select: vi.fn().mockResolvedValue([{ id: "word", term: "apple" }]) };
   const learning = { ownedWordInSession: vi.fn().mockResolvedValue({ id: "w", term: "apple" }),
-    reserveSpeechQuota: vi.fn(), recordSpeechAssessment: vi.fn() };
+    reserveSpeechQuota: vi.fn(), recordSpeechAssessment: vi.fn().mockResolvedValue({ recorded: true, correct: true, retryQueued: false, passThreshold: 70 }) };
   const flags = { pronunciation: vi.fn() };
   return { db, learning, flags, service: new PronunciationService(db as any, learning as any, flags as any) };
 }
 
-afterEach(() => { vi.unstubAllGlobals(); delete process.env.AZURE_SPEECH_KEY; delete process.env.AZURE_SPEECH_REGION; delete process.env.AZURE_SPEECH_FAKE; delete process.env.AZURE_SPEECH_TIMEOUT_MS; });
+afterEach(() => { vi.unstubAllGlobals(); delete process.env.AZURE_SPEECH_KEY; delete process.env.AZURE_SPEECH_REGION; delete process.env.AZURE_SPEECH_FAKE; delete process.env.AZURE_SPEECH_TIMEOUT_MS; delete process.env.AZURE_SPEECH_PRONUNCIATION_PASS_SCORE; });
 
 describe("pronunciation adapter", () => {
   it("accepts only 16 kHz mono PCM WAV up to 8 seconds", () => {
@@ -41,7 +41,10 @@ describe("pronunciation adapter", () => {
     expect(result.phonemes[0]).toEqual({ phoneme: "æ", accuracyScore: 62, needsPractice: true });
     expect(learning.reserveSpeechQuota).toHaveBeenCalledOnce();
     expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ signal: expect.any(AbortSignal) }));
-    expect(learning.recordSpeechAssessment).toHaveBeenCalledWith("user", "session", "word", result);
+    expect(result).toMatchObject({ passThreshold: 70, passed: true, queuedForRetry: false });
+    expect(learning.recordSpeechAssessment).toHaveBeenCalledWith("user", "session", "word", expect.objectContaining({
+      pronunciationScore: 84, passThreshold: 70, passed: true,
+    }));
     expect(learning.recordSpeechAssessment.mock.calls[0][3]).not.toHaveProperty("audio");
   });
 
@@ -61,7 +64,33 @@ describe("pronunciation adapter", () => {
       { phoneme: "æ", accuracyScore: 96, needsPractice: false },
       { phoneme: "p", accuracyScore: 98, needsPractice: false },
     ]);
-    expect(learning.recordSpeechAssessment).toHaveBeenCalledWith("user", "session", "word", result);
+    expect(learning.recordSpeechAssessment).toHaveBeenCalledWith("user", "session", "word", expect.objectContaining({
+      pronunciationScore: 96, passThreshold: 70, passed: true,
+    }));
+  });
+
+  it("returns the configured overall score threshold and persisted retry decision", async () => {
+    process.env.AZURE_SPEECH_KEY = "test"; process.env.AZURE_SPEECH_REGION = "japaneast";
+    process.env.AZURE_SPEECH_PRONUNCIATION_PASS_SCORE = "75";
+    const { service, learning } = harness();
+    learning.recordSpeechAssessment.mockResolvedValue({ recorded: true, correct: false, retryQueued: true, passThreshold: 75 });
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ NBest: [{
+      AccuracyScore: 72, FluencyScore: 70, CompletenessScore: 100, PronScore: 74, Words: [],
+    }] }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(service.assess("user", "session", "word", { buffer: wav(), size: wav().length } as any)).resolves.toMatchObject({
+      pronunciationScore: 74, passThreshold: 75, passed: false, queuedForRetry: true,
+    });
+  });
+
+  it("returns generated TTS even when the optional cache write fails", async () => {
+    process.env.AZURE_SPEECH_KEY = "test"; process.env.AZURE_SPEECH_REGION = "japaneast";
+    const { service, db } = harness();
+    db.storagePut.mockRejectedValue(new Error("cache unavailable"));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Uint8Array([73, 68, 51, 4]), { status: 200 })));
+
+    await expect(service.audio("user", "11111111-1111-4111-8111-111111111111"))
+      .resolves.toEqual(new Uint8Array([73, 68, 51, 4]));
   });
 
   it("does not record an attempt when the provider times out", async () => {

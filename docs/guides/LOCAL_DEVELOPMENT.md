@@ -147,7 +147,7 @@ FEATURE_COURSE_MARKET_ENABLED=true
 FEATURE_PRONUNCIATION_ENABLED=false
 ```
 
-非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音始终默认关闭。要测真实 Azure，再填写 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke。
+非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音始终默认关闭。要测真实 Azure，再填写 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70，可用 `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 在 1–100 内调整。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke。
 
 `/api/health` 会探测 JWKS 与 PostgREST profiles 空查询，失败返回 503；`REDIS_URL`/`AI_SERVICE_URL` 仍只影响状态展示。API 的 service-role key 还会调用 Courses 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
 
@@ -287,11 +287,11 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到 0013，而不是仍停在旧 migration history。
+- 确认本地数据库已 reset 到仓库最新迁移（当前为 0014），而不是仍停在旧 migration history。
 
 ### 发音按钮降级或评分不可用
 
-这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。评分要求 feature flag、key/region、当前 active session 和 16 kHz/16-bit/单声道 PCM WAV；供应商超时不应记为学习错误。
+这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。评分要求 feature flag、key/region、当前 active session/当前认词卡片和 16 kHz/16-bit/单声道 PCM WAV；供应商超时不应记为学习错误。若 API 返回 500，先查看响应码和 API 日志：私有 TTS 缓存不存在可能表现为 Storage HTTP 400 + JSON 404，当前实现必须把它当 cache miss，而不是停止在 Azure 调用之前。
 
 ### Courses 创建/编辑页看不到底部操作
 

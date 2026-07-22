@@ -10,6 +10,19 @@ export class SupabaseRequestError extends Error {
   }
 }
 
+function storageObjectMissing(status: number, text: string) {
+  if (status === 404) return true;
+  if (status !== 400 || !text) return false;
+  try {
+    const body = JSON.parse(text) as { statusCode?: unknown; error?: unknown; message?: unknown };
+    return String(body.statusCode || "") === "404"
+      || String(body.error || "").toLowerCase() === "not_found"
+      || /object not found/i.test(String(body.message || ""));
+  } catch {
+    return false;
+  }
+}
+
 @Injectable()
 export class SupabaseAdminService {
   private config() {
@@ -79,8 +92,15 @@ export class SupabaseAdminService {
     const response = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
     }).catch(() => null);
-    if (!response || response.status === 404) return null;
-    if (!response.ok) throw new SupabaseRequestError("Storage read failed", response.status, null);
+    if (!response) return null;
+    if (!response.ok) {
+      const text = await response.text();
+      // Supabase Storage currently reports a missing private object as HTTP
+      // 400 with a JSON statusCode of 404. Treat both wire shapes as a normal
+      // cache miss; otherwise the first TTS request never reaches Azure.
+      if (storageObjectMissing(response.status, text)) return null;
+      throw new SupabaseRequestError("Storage read failed", response.status, text || null);
+    }
     return new Uint8Array(await response.arrayBuffer());
   }
 

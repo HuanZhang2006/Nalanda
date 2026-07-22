@@ -285,6 +285,9 @@ export interface PronunciationAssessment {
   fluencyScore: number | null;
   completenessScore: number | null;
   pronunciationScore: number;
+  passThreshold: number;
+  passed: boolean;
+  queuedForRetry: boolean;
   errorType: string | null;
   phonemes: PronunciationPhoneme[];
 }

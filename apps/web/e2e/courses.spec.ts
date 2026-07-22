@@ -52,7 +52,8 @@ async function assessWithFixedWav(page: Page, courseTitle: string) {
     return { status: response.status, body: await response.json() };
   }, courseTitle);
   expect(result.status).toBe(201);
-  expect(result.body).toMatchObject({ pronunciationScore: 93, accuracyScore: 92 });
+  expect(result.body).toMatchObject({ pronunciationScore: 93, accuracyScore: 92,
+    passThreshold: 70, passed: true, queuedForRetry: false });
 }
 
 test("create, validate, resume, learn, schedule, publish, and clone a vocabulary course", async ({ page }) => {
@@ -115,20 +116,23 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
     const term = (await audio.getAttribute("aria-label"))!.replace(/^播放 /, "");
     await audio.click();
     await page.locator(".course-match > div").nth(1).getByRole("button", { name: term, exact: true }).click();
-    await expect(page.getByText("回答正确")).toBeVisible();
-    await page.getByRole("button", { name: "继续", exact: true }).click();
+    await expect(page.locator(".course-match button.is-correct").first()).toBeVisible();
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   }
   for (const [term, translation] of [["apple", "苹果"], ["banana", "香蕉"]] as const) {
     await expect(page.locator(".course-term")).toHaveText(term);
     await page.getByRole("button", { name: translation, exact: true }).click();
-    await page.getByRole("button", { name: "确认答案" }).click();
-    await expect(page.getByText("回答正确")).toBeVisible();
-    await page.getByRole("button", { name: "继续", exact: true }).click();
+    await expect(page.locator(".course-option.is-correct")).toHaveText(translation);
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   }
   for (const term of ["apple", "banana"]) {
     await page.getByLabel("拼写答案").fill(term);
-    await page.getByRole("button", { name: "提交拼写" }).click();
-    if (term === "apple") await page.getByRole("button", { name: "继续", exact: true }).click();
+    await page.getByLabel("拼写答案").press("Enter");
+    await expect(page.locator(".course-spelling-answer.is-correct")).toBeVisible();
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   }
   await expect(page.getByRole("heading", { name: /首次学习完成/ })).toBeVisible();
   await page.getByLabel("3 天后").check();

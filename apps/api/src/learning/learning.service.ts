@@ -370,7 +370,7 @@ export class LearningService {
 
   async recordSpeechAssessment(userId: string, sessionId: string, wordId: string, assessment: unknown) {
     assertUuid(sessionId, "sessionId"); assertUuid(wordId, "wordId");
-    return this.call(() => this.db.rpc("learning_record_speech_assessment", {
+    return this.call(() => this.db.rpc<{ recorded: boolean; correct: boolean; retryQueued: boolean; passThreshold: number }>("learning_record_speech_assessment", {
       p_user_id: userId, p_session_id: sessionId, p_word_id: wordId,
       p_assessment: assessment,
     }));

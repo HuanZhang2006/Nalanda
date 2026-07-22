@@ -80,6 +80,7 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 | `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
 | `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、逐单元与整份多单元纠错、独立翻译字段、编辑器批量追加/已有词重复、排序、保存失败、进度切换、会话恢复和 API error |
+| `apps/web/src/features/courses/LearningView.test.tsx` | 单选即时判错、多翻译逐项确认/自动提交、发音匹配即时提交、无 Check/Continue 自动推进，以及朗读阈值/候补状态/显式重读 |
 
 ### 4.2 mock 的边界
 
@@ -181,7 +182,7 @@ git check-ignore .env.rls.local
 - study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
 - 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
 - Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage，也不能执行特权 RPC；Profile timezone 只接受 IANA 名称；
-- 候补池、同日本地日期去重、两次不同本地日期三能力熟练、错误/复习次数、schedule 完成且不创建普通 task；
+- 测试答题候补池、低于/达到朗读 `PronScore` 阈值时 recognition 候补项的加入/移除、认词候补轮完成后才能推进，以及同日本地日期去重、两次不同本地日期三能力熟练、错误/复习次数、schedule 完成且不创建普通 task；
 - 九级徽章的达标持久发放、20 词课程 +20、规范化词集合指纹防删除/克隆重复奖励；
 - 分享 token hash、撤销后事务克隆失败、匿名 PostgREST 拒绝、市场快照不可变、独立零进度克隆/禁止再传播、举报事务。
 
