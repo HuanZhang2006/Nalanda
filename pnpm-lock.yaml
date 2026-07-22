@@ -32,6 +32,9 @@ importers:
       cmu-pronouncing-dictionary:
         specifier: ^3.0.0
         version: 3.0.0
+      express:
+        specifier: ^4.22.1
+        version: 4.22.1
       jose:
         specifier: ^5.9.6
         version: 5.10.0
