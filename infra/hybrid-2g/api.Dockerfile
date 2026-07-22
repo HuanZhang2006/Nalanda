@@ -1,7 +1,7 @@
 # NestJS 后端 —— pnpm monorepo 多阶段构建
 # 构建上下文 = monorepo 根目录（见 docker-compose.yml: api.build.context = ../..）
 # 产物入口：apps/api/dist/main.js（包名 @nalanda/api）
-# apps/api 已存在并可构建；当前业务仍主要直连 Supabase，本镜像只是薄 API。
+# 旧业务模块仍多为浏览器直连 Supabase；Courses、分享/市场与语音走本 API。
 
 FROM node:20-alpine AS build
 RUN corepack enable

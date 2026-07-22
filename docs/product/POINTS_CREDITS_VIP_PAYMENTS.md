@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-07-21。迁移 0008–0010 已在生产实现并验证 points 事件账本、净额幂等/冲正、旧 11 points 的等额 reversal、Profile 敏感列保护和内部 RPC 撤权；`credits`/VIP 仍只是客户端只读的预留缓存，真实 AI 计费、市场购买、商业账本、Stripe、VIP 权益和创作者结算均未实现。目标商业规则在对应发布门禁完成前不得对外宣称上线。
+> **状态基线：**2026-07-22。0008–0010 points 安全已生产验证；0011–0013 在仓库新增课程 +20 与九级徽章但尚未生产发布。Course Market v1 永久按“免费克隆”实现，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
 
 ## 1. 规范用语和总原则
 
@@ -26,12 +26,13 @@
 ### 2.1 当前可验证事实
 
 - `profiles` 有 `credits`、`vip_until`、`level`，迁移 0006/0007 增加 `points`、`streak`；迁移 0008 把 points 改为 `point_entries` 的只读 projection。
-- points 当前奖励：点赞者 +1、评论者 +2、普通发帖 +10、转发 +3、完成任务 +5；等级阈值为 0/50/150/350/700/1200。
+- 生产 points 当前奖励：点赞 +1、评论 +2、普通发帖 +10、转发 +3、完成任务 +5。仓库 0011–0013 另实现合格英语词表课程首次熟练 +20，待生产发布；等级阈值仍为 0/50/150/350/700/1200。
 - 当前五类奖励均通过 `point_event_states` 和 append-style `point_entries` 激活/冲正；相同持久业务键在删除/取消后重建只恢复原净额，不再累计刷分。
-- authenticated 只能更新 `username/university/major/year/language`；`credits/points/level/vip/streak` 由列级授权和防御触发器保护。`_add_points` 已停用并对客户端/service-role 撤权，`_notify`、`_set_point_event` 及 trigger helpers 不再是客户端 RPC surface。
+- authenticated 只能更新资料白名单和合法 IANA `timezone`；经济/等级/VIP/streak 受保护。Courses 奖励/徽章/progress 也不能由客户端写或 RPC 调用。
 - 0008 把迁移前 `profiles.points` 保存为 `legacy_opening`；2026-07-21 聚合审计确认唯一 Profile 有 11 points、credits/streak 为 0 且无 VIP，owner 决定 points 归零。0009 已在生产追加等额 `legacy_opening_reset=-11`，不删除 `legacy_opening=+11`，也不把它当成可信逐笔历史；0010 已验证每条 opening 恰有一条等额反向记录，且 Profile points/level 与账本投影一致。
 - Create、Market、Home 中的余额、价格、25 credits、70% 分成和兑换 VIP 目前是假数据/原型交互。
 - 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
+- Course Market 的 publication/clone/report 表不是商业市场账本；卡片只显示“免费”，不会产生购买、销量分成、credits debit 或 creator payable。
 
 ### 2.2 发布限制
 
@@ -43,6 +44,7 @@ Profile/RPC/当前 points 重做路径的 P0 已由生产迁移 0008–0010 封�
 - 不允许创作者提现或显示“可提现”金额；
 - 不用客户端调用 `_add_points`/改 profile 进行客服补偿；
 - 原型中的价格/余额必须标注 demo，或在商业入口上线前移除。
+- Note Market 继续标注 Demo；Course Market 只能免费克隆。任何给课程加 credits/法币、销量或分成的改动都必须先走本文商业阶段和新 ADR。
 
 ## 3. Points：成长信誉规则
 
@@ -61,12 +63,27 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 | 发布有效评论 | +2 | `comment:{target-post-business-key}:{actor}` | 同一 actor/目标内容只有一个有效奖励 claim；删尽时 -2 | 每日计分 10 条 |
 | 首次点赞 | +1 | `like:{target-post-business-key}:{actor}` | 同一 actor/目标内容只有一个有效奖励 claim；取消后 -1 | 每日计分 20 个不同帖子 |
 | 首次完成任务 | +5 | `task:{owner}:{normalized-task-sha256}:completed:v1` | 最后一个同键任务取消/删除时 -5；重做只恢复净额 | 每日计分 10 个任务 |
+| 首次熟练合格词表 | +20 | `learning-course-completed:{user}:{sha256(sorted distinct normalized terms)}` | 历史成就不因删课程冲正；相同词集合的重建/克隆永不重复奖励 | 每个用户/不同词集合永久一次；至少 20 个不同词 |
 
 自赞、自评、自关注、同一内容重复关系、被系统判定为垃圾/协同行为的事件不奖励。上限按用户主时区自然日计算并记录时区快照；换时区不能重置。达到上限不阻止正常使用，只是不再加 points，并向用户清楚提示。
 
 运营若调整数值/上限，只影响新事件，不重写历史；大规模补算必须创建带活动/规则版本的批次和可冲正记录。
 
-### 3.3 账本与等级
+课程奖励的“100%”只看熟练度，不看首次四阶段完成度：每个词的发音、翻译、拼写都必须在至少两个不同本地日期的**已完成复习会话**中最终答对，三项均达标后才有 `learned_at`。同日重复、未完成会话、供应商/麦克风失败不推进。课程还须至少 20 个不同规范化英文词/短语。服务端在 `_refresh_learning_growth` 内用词集合 fingerprint 调现有 points 状态机并写 `points_claimed_at`；客户端不能自报完成。
+
+### 3.3 Courses 徽章（非经济权益）
+
+徽章是历史成长展示，不可购买、消费、转让、兑换或提现，也不赋予 VIP/市场/审核特权。阈值：
+
+| 家族 | 铜 / 银 / 金 | 计数语义 |
+|---|---|---|
+| 词汇行者 `vocab_words` | 20 / 200 / 1000 | 所有私有课程中规范化去重且 `learned_at` 非空的英文词/短语 |
+| 课程毕业生 `vocab_courses` | 1 / 5 / 20 | 至少 20 个不同词且全部熟练的英语词表课程 |
+| 复习坚持者 `vocab_review_days` | 3 / 15 / 50 | 已完成 review session 的不同 attempt `local_date` |
+
+`(user_id,badge_code)` 唯一且只追加发放；删课或后来编辑导致统计回落不撤销、不重新发同一枚。删除整个 Auth 账户按隐私流程级联用户 award。Profile 只显示聚合/奖章，不能修改事实。
+
+### 3.4 账本与等级
 
 `point_entries` 至少包含 `id,user_id,event_type,business_key,amount,rule_version,source_id,reversal_of,created_at,metadata`。`business_key` + 生效方向有唯一约束；金额为有符号整数；禁止 UPDATE/DELETE 已入账记录，纠错新增冲正。
 
@@ -116,6 +133,8 @@ AI 请求在用户确认前展示 credits 价格/估算、产物、资料和可�
 模型供应商 token 成本与用户 credits 价格分开：产品价格包含解析、模型、存储、失败率和运营，不随着供应商账单事后篡改用户已确认价格。VIP 可提供月度 included credits/折扣，但应创建清晰 lot/price adjustment，而非绕过账本。
 
 ### 4.4 市场购买
+
+本节只适用于未来 Note Market/付费数字内容，**不适用于 Course Market v1**。Course Market publication 标价恒为“免费”，克隆只创建独立私有内容/零进度，不创建 credit hold/debit、purchase/license、creator earning、销量分成、订单或支付事实；克隆课保留来源署名且不能再次分享/上架。未来若课程收费，必须设计独立版本授权/退款/版权/分成，不得把 clone_count 当销量账本。
 
 市场商品使用整数 credits 定价。发布版本、预览、许可范围、AI 标识、作者和内容 hash 在购买时快照。购买必须在数据库事务内：锁定/验证 listing → 检查买家与作者/重复购买 → hold/commit credits → 创建唯一 purchase/license → 创建 creator payable pending → 返回用户库引用。
 
@@ -259,6 +278,8 @@ Webhook 必须：使用原始 body 验签；检查 live/test mode 和账户；�
 - [x] 审计旧漏洞期间的 opening points/credits/VIP/streak，并记录 2026-07-21 points 归零决定与 0009 append-only reversal；
 - [ ] 收紧 feedback `status` 等仍由 owner 整行策略暴露的服务端字段；
 - [x] 原型商业入口保持 demo/feature flag，不接真实支付。
+- [x] Course Market v1 与商业域隔离：只免费克隆，不读写 credits/订单/应付；克隆课禁止再次传播。
+- [x] Courses +20 使用用户+排序去重词集合 SHA-256 永久键，徽章以用户+code 唯一；0011–0013 仍待生产发布。
 
 ### Phase 1：无真实支付的账本
 

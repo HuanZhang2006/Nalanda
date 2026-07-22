@@ -1,10 +1,12 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { click, createSupabaseMock, flush } from "../test/supabase-mock";
 import { initNotifications, openNotifications, refreshNotifBadge } from "./notifications";
 import { initFeedback, mountFeedback } from "./feedback";
 import { initProfile, mountProfile } from "./profile";
 
 const user = { id: "u1", email: "alice@example.edu" };
+
+afterEach(() => vi.unstubAllGlobals());
 
 describe("通知、反馈与个人资料", () => {
   it("处理通知未读状态、反馈提交和个人资料同步", async () => {
@@ -81,5 +83,32 @@ describe("通知、反馈与个人资料", () => {
     await flush(12);
     expect(supabase.tables.notifications[0].read).toBe(false);
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("notification denied"));
+  });
+
+  it("聚合学习统计、持久课程徽章并允许保存 IANA 时区", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      courses: 3, learnedWords: 25, reviewDays: 4, badges: [{ code: "vocab_words_bronze", family: "vocab_words",
+        tier: 1, name: "词汇行者", description: "熟练掌握 20 个不同英文词或短语", threshold: 20, icon: "🧭",
+        awardedAt: "2026-07-22T00:00:00.000Z" }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } }))));
+    const supabase = createSupabaseMock(); const root = document.createElement("div"); document.body.appendChild(root);
+    initProfile(supabase, user, vi.fn()); mountProfile(root); await flush(20);
+    expect(root.textContent).toContain("学习课程数"); expect(root.textContent).toContain("25");
+    expect(root.textContent).toContain("词汇行者 · 铜");
+
+    click(root.querySelector('[data-pf="edit"]'));
+    const timezone = document.querySelector("#pf-timezone") as HTMLInputElement; timezone.value = "Asia/Shanghai";
+    click(document.querySelector('[data-ed="save"]')); await flush(24);
+    expect(supabase.tables.profiles[0].timezone).toBe("Asia/Shanghai");
+  });
+
+  it("学习统计 API 失败时保留基础 Profile 并明确显示降级状态", async () => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response(JSON.stringify({
+      code: "COURSES_DISABLED", message: "课程统计服务暂不可用",
+    }), { status: 503, headers: { "Content-Type": "application/json" } }))));
+    const supabase = createSupabaseMock(); const root = document.createElement("div"); document.body.appendChild(root);
+    initProfile(supabase, user, vi.fn()); mountProfile(root); await flush(20);
+    expect(root.textContent).toContain("Alice");
+    expect(root.querySelector('[role="alert"]')?.textContent).toContain("课程统计服务暂不可用");
   });
 });

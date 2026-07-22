@@ -20,5 +20,6 @@
 | [08-通知 / 反馈 / 个人资料](08-notifications-feedback-profile.md) | 通知面板、反馈、Profile 真数据、受保护 points projection + 分级徽章 |
 | [09-社区](09-community.md) | 发帖/评论/点赞/收藏/转发/关注、媒体、points 稳定业务键/冲正和通知联动 |
 | [10-学习计划](10-schedule.md) | 任务/目标、幂等完成奖励 + 连续学习、关联课程资料、智能填充 |
+| [11-Courses 英语单词学习](11-learning-courses.md) | 独立学习课程、文本解析/编辑、四阶段学习、复习熟练度、分享市场、Azure Speech |
 
-> 状态：已接 Supabase 真数据 —— 注册/登录、**Materials、社区、学习计划、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API 生产部署。剩余 mock：Home / AI 笔记生成（Create + Notes）/ 笔记市场 / 支付。PR/main 已有本地升级/空库迁移/RLS 门禁，生产新增迁移经受保护 environment、加密恢复点和 CLI history 发布；数据库失败采用阻断/forward-fix/隔离恢复，应用 smoke 失败自动回退上一 release。
+> 状态：已接 Supabase 真数据 —— 注册/登录、**Materials、社区、学习计划、Courses、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API 部署代码。Courses 的 0011–0013 与应用功能已实现但尚待受保护生产发布。剩余 mock/占位：Home / AI 笔记生成（Create + Notes）/ 笔记市场 / 支付，以及 Courses 文件 AI 导入和其余类别。PR/main 使用升级/空库迁移/RLS/Playwright 门禁；数据库失败采用阻断/forward-fix/隔离恢复，应用 smoke 失败自动回退上一 release。

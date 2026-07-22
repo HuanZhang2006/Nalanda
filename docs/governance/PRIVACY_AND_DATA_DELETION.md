@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-07-10。本文不是法律意见，也不是已发布的对外隐私政策；“当前”描述代码事实，“目标”是上线前必须实现的控制。
+> **状态基线：**2026-07-22。本文不是法律意见或已发布隐私政策；Courses 代码/0011–0013 已实现但尚未生产启用。
 
 ## 1. 原则与责任
 
@@ -23,6 +23,13 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 社区 | `posts`、`comments`、互动、关注、`tags` | 已认证用户公共交流 | 账户删除级联内容；公共作者快照/全局标签需单独评估 |
 | 社区附件 | public `community-media` bucket | 图片/音频展示 | URL 可被外部持有；删帖不保证对象同步删除 |
 | 学习计划 | `study_goals`、`study_tasks` | 私有目标、任务、完成时间 | owner-only；账户删除级联 |
+| 学习课程内容 | `learning_courses/units/words` | 私有课程名、单元、英文/翻译/IPA；克隆来源署名 | owner 只读、API 写；删课程级联私有内容，但已发 points/徽章历史不因删课回退 |
+| 学习行为 | `learning_sessions/items/attempts/word_progress` | 阶段/队列、答案、正确性、错误次数、不同本地日期熟练度 | owner 只读、API 写；Auth 删除级联；attempt 是事实，不应在普通编辑时改写 |
+| 复习 | `learning_review_schedules`、Profile `timezone` | 到期日期、技能/范围、完成时间与本地日期解释 | owner 私有；日程可取消，时区变化不重写历史 attempt local_date |
+| 分享/课程市场 | `learning_course_shares/publications` | bearer-link 当前课程、不可变公开版本、作者显示名/来源、clone count | token 明文只返回一次且 DB 只存 hash；撤销分享；出版物公开读取经 API；Auth 删除按 FK 删除作者版本 |
+| 举报/审核 | `learning_course_reports/moderation_actions` | 类别/说明、举报人、状态、管理员理由 | 举报人只能读自己的报告；动作客户端不可见；管理员/举报人删除后按 FK 删除或去标识 |
+| 课程徽章/成长 | `badge_definitions/user_badge_awards` + points | 熟练词/课程/复习日期成就和 +20 事实 | award 持久防重；删课程不回退，删 Auth 用户级联；不是商业权益 |
+| Speech | 请求内 WAV、`learning_attempts.provider_details`、`learning_speech_usage`、`vocabulary-audio` | Azure 朗读评分、分数/音素教学反馈、配额/估算成本、公共 TTS cache | 用户 WAV 仅内存转发后丢弃，不进 DB/Storage/log/backup；cache 只含合成英文；评分/用量随规则删除/去标识 |
 | 通知/反馈 | `notifications`、`feedback` | 互动通知、用户工单 | owner-only；无运维端正式工单留存/删除流程 |
 | 原型/假数据 | 前端 bundle/内存 | 演示 Home、Notes、Market、AI | 不是用户事实源，不应进入用户导出 |
 | AI 数据 | 当前无真实模型调用/产物表 | FastAPI 仅桩 | 未来需纳入 prompt、解析块、embedding、输出和 usage |
@@ -42,6 +49,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 - **访问：**用户可在 UI 查看部分 profile、课程、资料、社区和计划；这不是完整数据访问包。
 - **更正：**Profile 已以列级权限区分用户资料与内部成长/经济字段；其它内容可编辑范围不一，feedback status、帖子冗余字段等仍待逐表收口。
 - **删除：**可删除自己的部分资料/帖子/评论/任务；没有“一键删除账户”、跨 Storage/AI/备份/支付的编排和完成证明。
+- **Courses：**用户可编辑/删除私有课程、取消日程和撤销分享；删除课程不删除已经发生的 points/徽章历史。当前无完整数据导出、一键账号删除、作者自助撤回全部 publication/举报历史的统一流程。
 - **导出：**当前没有机器可读的完整导出。
 - **限制/反对/撤回：**当前没有统一工单状态与自动化执行。
 
@@ -61,7 +69,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ### 5.2 导出包
 
-目标导出包括：账户/profile JSON；课程/资料元数据；原始资料文件；笔记/AI 结果及其来源/版本；社区内容和互动；计划；通知/反馈；points/credits/VIP/订单/退款的用户可读账单。内部风控规则、他人 PII、secret、哈希、完整安全日志和第三方专有数据应剔除或脱敏。
+目标导出包括：账户/profile JSON；Materials；学习课程/单元/词、session/attempt/progress/复习日程、自己的分享/publication/report/徽章和评分反馈；原始资料文件；笔记/AI 结果；社区、计划、通知/反馈；经济账单。分享 token/hash、内部队列/审核证据、他人 PII、secret、完整安全日志和第三方专有数据应剔除或脱敏；用户 WAV 从未保存，导出中不存在。
 
 导出包须加密存储、短时有效、下载审计，到期自动删除。创建导出不能绕过 RLS：由后端逐资源授权并记录清单和行数。
 
@@ -74,9 +82,10 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 3. 取消 Stripe 订阅/未来续费，处理退款、争议、创作者应付和法定财务保留；不直接删除不可变账本；
 4. 删除/匿名化社区正文、评论、互动、关注、通知、反馈、课程、任务、个人笔记与 AI 产物；
 5. 枚举并删除 `materials/{user_id}/...`、`community-media/{user_id}/...` 及未来导出/AI bucket 对象，处理孤儿和历史版本；
-6. 删除解析块、embedding、prompt/cache、队列 payload、搜索索引和第三方供应商保存副本；
-7. 删除 Supabase Auth 用户，让受约束表级联；随后做反向验证，不能仅以 job 成功状态作为证据；
-8. 保留不含直接 PII 的最小删除凭证（request ID、完成时间、系统/行数/对象数、异常），并通知用户完成和备份限制。
+6. 删除学习课程、会话/attempt/progress/日程、shares、本人 publication/report/badges；核对 moderation actor 和 speech usage 按 FK 去标识。`vocabulary-audio` 是跨用户规范化英文公共 cache，不因单个用户删除而清空；
+7. 删除解析块、embedding、prompt/cache、队列 payload、搜索索引和第三方供应商保存副本；
+8. 删除 Supabase Auth 用户，让受约束表级联；随后反向验证学习/private/public/成长事实和对象，不能只看 job 状态；
+9. 保留不含直接 PII 的最小删除凭证，并通知用户完成和备份限制。
 
 删除失败必须进入重试和告警；部分成功时不得发送“已全部删除”。
 
@@ -90,6 +99,10 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 | 社区内容 | 发布至用户删除/审核移除 | 主系统 30 天内删除或匿名化 | 违规证据只保存最小必要内容与期限 |
 | 社区/资料孤儿对象 | 无有效元数据引用 | 7 天内清理 | public URL 可能被外部缓存，需向用户说明 |
 | AI 临时输入/cache | 完成任务所需 | 默认 24 小时内清除 | 原始资料事实源仍按用户内容留存 |
+| 用户朗读 WAV | 单次评分请求 | Azure 响应/失败后立即从内存丢弃 | 不落盘、DB、Storage、日志或备份；最长 8 秒/2 MB |
+| 朗读评分/学习 attempts | 账户存续期/学习反馈 | 随课程或账户删除；必要安全证据另审批 | 只存分数、错误类型、音素反馈和本地日期 |
+| TTS 公共 cache | 性能/成本 | 可随时清空并懒重建 | 只有合成规范化英文，不含 user ID/录音 |
+| Course publication/report/action | 公开传播与治理 | 作者/账户删除按当前 FK 删除或去标识；目标政策可要求受限证据保留 | v1 无法承诺法定长期审核保留，需上线地区审批 |
 | AI 产物与来源映射 | 账户存续期 | 随内容/账户删除 | usage 指标去标识化后可聚合保留 |
 | 应用/安全日志 | 运行与安全 | 默认 30 天；安全审计最多 90 天 | 不记录原文/令牌；延长需审批 |
 | 支持工单 | 处理与复盘 | 关闭后 24 个月或法定更短期限 | 删除非必要附件和敏感正文 |
@@ -105,9 +118,11 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机和 Supabase；未来候选包括 Anthropic/其他模型供应商、Stripe、邮件、监控和视频服务。接入前必须记录：实体与地区、处理目的、数据字段、传输/静态加密、供应商留存与训练设置、子处理者、删除 API/SLA、事件通知、跨境机制和退出/迁移方案。
+当前运行依赖 GitHub、部署主机和 Supabase；Azure Speech adapter 已实现但 production flag 尚未开启。启用前必须记录 Azure resource 区域、DPA/子处理者、WAV/识别结果留存、训练使用、删除/事件 SLA、跨境机制和退出方案，并在用户触发评分前给出告知。Anthropic/Stripe/邮件/监控仍是未来处理者。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
+
+Speech 只向 Azure 发送当前词的 reference text 和用户主动录制的短 WAV；不得发送课程标题、翻译、邮箱、学校、user ID 或分享 token。TTS 只发送英文 term。供应商失败后内存 buffer 仍必须释放，且不写用户错误次数。
 
 ## 9. 未成年人和敏感资料
 

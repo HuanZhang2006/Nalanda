@@ -10,15 +10,16 @@
 flowchart LR
     Browser["Web 浏览器"] -->|"/api/*"| Nest["NestJS API"]
     Browser -->|"Auth / PostgREST / Storage"| Supabase["Supabase Cloud"]
-    Nest -->|"Admin Auth / JWKS"| Supabase
+    Nest -->|"Admin Auth / JWKS / Courses 事务 RPC"| Supabase
+    Nest -->|"TTS / pronunciation assessment"| Azure["Azure Speech（可选）"]
     Nest -. "尚未调用" .-> AI["FastAPI AI 桩"]
 ```
 
 - 生产 Web/API 同源基址：`https://nalanda.online`；本文示例默认本地 `http://localhost:3000`。
 - NestJS 全局前缀：`/api`。
 - FastAPI 默认本地基址：`http://localhost:8000`，目标上只允许内网访问；当前没有 API→AI 调用代码。
-- 当前没有 OpenAPI 文件、API 版本号、请求 ID、统一业务错误 envelope、速率限制或分页规范。
-- NestJS 当前 `enableCors()` 使用默认宽松 CORS；生产安全策略尚未收紧。
+- 当前没有 OpenAPI 文件、API 版本号、请求 ID 或通用分页规范。Nest 全局错误已统一为 `{ code, message, fieldErrors? }`；Courses 语音、发布和举报有专用限流，但注册/其它旧接口仍没有统一限流。
+- NestJS 跨域许可来自 `CORS_ALLOWED_ORIGINS`，未设置时复用 `PUBLIC_ORIGIN`；生产两者都缺失时不返回跨域许可，同源 nginx `/api` 不受影响，且当前不启用 credential cookie。
 
 ## 2. 认证约定
 
@@ -32,13 +33,23 @@ flowchart LR
 Authorization: Bearer <supabase-access-token>
 ```
 
-4. API 优先从 `<SUPABASE_URL>/auth/v1/.well-known/jwks.json` 获取公钥，校验 issuer 和 `audience=authenticated`；旧 HS256 项目可用 `SUPABASE_JWT_SECRET` 回退。
+4. API 优先从 `<SUPABASE_URL>/auth/v1/.well-known/jwks.json` 获取公钥，只接受 ES256/RS256，并校验 issuer、`audience=authenticated`、UUID `sub` 与 `role=authenticated`；旧 HS256 项目可用 `SUPABASE_JWT_SECRET` 回退，声明校验相同。
 
-当前除 `/api/me` 外没有 NestJS 受保护业务接口。Web 的资料库、社区、学习计划、Profile、反馈和通知主要通过 `supabase-js` 直连，授权由数据库 RLS 承担。
+Courses、会话、复习、Profile 学习聚合、语音、分享克隆、市场发布/克隆/举报都是 bearer 接口；公共分享预览和市场列表除外。Web 的 Materials、社区、普通计划、旧 Profile、反馈和通知仍主要通过 `supabase-js` 直连。
 
 ### 2.2 错误格式
 
-业务注册错误是包含 `code` 的 JSON。NestJS 框架级错误通常包含 `statusCode`、`message` 和 `error`；调用方不能假定所有错误完全同形。FastAPI 请求校验失败使用其标准 `422` detail 数组。
+NestJS 全局错误格式：
+
+```json
+{
+  "code": "INVALID_COURSE",
+  "message": "课程内容校验失败",
+  "fieldErrors": { "units.0.words.1.term": "同一单元内不能重复" }
+}
+```
+
+`fieldErrors` 可选；未知 4xx 映射为 `INVALID_REQUEST`，413 为 `PAYLOAD_TOO_LARGE`，未知 5xx 为 `INTERNAL_ERROR`。常见状态：400 参数/契约，401 token，403 owner/管理员，404 不存在或功能隐藏，409 冲突，413 multipart 上限，429 配额，502 供应商，503 feature flag/依赖不可用。FastAPI 桩仍使用标准 `422 detail`，不属于这个 envelope。
 
 ## 3. NestJS API（当前实现）
 
@@ -146,7 +157,120 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. FastAPI AI（当前桩接口）
+## 4. Courses API（仓库已实现，生产待启用）
+
+所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
+
+### 4.1 课程内容
+
+| 方法 | 路径 | 请求 | 成功响应 |
+|---|---|---|---|
+| GET | `/api/learning-courses` | — | `LearningCourseSummary[]`，按 `updatedAt` 倒序 |
+| POST | `/api/learning-courses` | `LearningCourseInput` | `LearningCourseDetail`，整课单事务创建 |
+| GET | `/api/learning-courses/:id` | — | owner 的 `LearningCourseDetail` |
+| PUT | `/api/learning-courses/:id` | `LearningCourseInput`；路径 ID 覆盖 body ID | 更新后的 `LearningCourseDetail`；增删单元/词或修改词内容会终止旧队列，改名、排序、移动不终止 |
+| PATCH | `/api/learning-courses/:id` | `{ "title": "..." }` | 改名后的 detail；不重置学习能力/会话 |
+| DELETE | `/api/learning-courses/:id` | — | `{ "ok": true }` |
+
+创建/整课保存请求：
+
+```json
+{
+  "id": "11111111-1111-4111-8111-111111111111",
+  "title": "CET-6 词汇",
+  "category": "english_vocabulary",
+  "hasUnits": true,
+  "locale": "en-US",
+  "units": [
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Unit 1",
+      "isSystem": false,
+      "words": [
+        {
+          "id": "33333333-3333-4333-8333-333333333333",
+          "term": "take part in",
+          "translations": ["参加", "参与"],
+          "ipa": null
+        }
+      ]
+    }
+  ]
+}
+```
+
+契约限制：课程名 1–80；1–100 个单元；每单元至少一词；整课 4–2,000 个不同规范化英文词/短语；term 1–120 且只接受英文、数字、空格、点、连字符和直/弯撇号并至少含一个字母；每词 1–10 个不重复非空翻译，每项≤120；IPA≤120。无单元模式必须是一项 `isSystem=true` 的隐藏单元。首版拒绝其它 category/locale。缺省 IPA 由服务端 CMUdict 尝试补全，查不到保持 null。
+
+API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏情况；超出后返回统一的 413。朗读评分是独立 multipart 边界，仍严格限制为 2 MB。
+
+`LearningCourseSummary` 字段：`id,title,category,hasUnits,locale,unitCount,wordCount,learnedCount,progressPercent,activeSessionId,canRepublish,originPublicationId,originShareId,originAuthorName,updatedAt`。两个 origin ID 只出现在克隆者自己的私有响应中，公共预览不会暴露；Detail 另含按 position 排序的 units/words 和每词 `progress`：初次四阶段、三组复习日期、累计错误、复习次数与 `learnedAt`。
+
+### 4.2 学习会话、答题和复习
+
+| 方法 | 路径 | 请求 | 成功响应 |
+|---|---|---|---|
+| POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review", skills?, scope?, scheduleId? }` | 新建或恢复唯一 active `LearningSession` |
+| GET | `/api/learning-sessions/:id` | — | 当前 owner 的完整 session/items/state |
+| POST | `/api/learning-sessions/:id/recognition` | `{ wordId }` | 更新后的阶段/队列状态 JSON |
+| POST | `/api/learning-sessions/:id/attempts` | `LearningAttemptRequest` | `{ correct, stage, completed, expected }` |
+| GET | `/api/learning-review-schedules` | — | `ReviewSchedule[]`，含课程/单元名、source/completed session ID |
+| POST | `/api/learning-units/:id/review-schedules` | `{ sourceSessionId, offsets: number[] }`，source 必须是本人该单元已完成的 initial session；offset 仅 3/7/15/30 | 当前用户全部 schedule |
+| DELETE | `/api/learning-review-schedules/:id` | — | `{ "ok": true }`，状态改 cancelled |
+| GET | `/api/profile/learning-summary` | — | `{ courses, learnedWords, reviewDays, badges }` |
+
+复习 `skills` 是 `pronunciation/translation/spelling` 的 1–3 项，`scope` 是 `all/unlearned`。带 `scheduleId` 启动时，服务端忽略客户端自报的 skills/scope，改用日程保存值；完成后原子写入 `completedSessionId/completedAt`。attempt 形状：
+
+active session 的 `unitId` 一定指向现存单元；若课程编辑删除了该单元，历史 session 会被终止并保留，其 `unitId` 可为 `null`，客户端应把它渲染为不可继续的历史记录。
+
+```json
+{
+  "wordId": "33333333-3333-4333-8333-333333333333",
+  "skill": "translation",
+  "answer": { "translations": ["参加", "参与"] }
+}
+```
+
+发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。服务端以 session 当前 queue/cursor 校验 active word、记录 append-only attempt、更新候补池并逐次提交；客户端不能跳阶段或自报正确。发音错配时 `expected` 返回目标英文词，其它测试返回对应正确答案；该字段只用于当前错误反馈。
+
+### 4.3 发音合成与朗读评分
+
+| 方法 | 路径 | 请求 | 成功响应 |
+|---|---|---|---|
+| GET | `/api/pronunciation/audio/:wordId` | owner 课程中的 word ID | `audio/mpeg`；测试 fake 为 `audio/wav`，`Cache-Control: private, max-age=86400` |
+| POST | `/api/pronunciation/assess` | `multipart/form-data`：`audio`, `sessionId`, `wordId` | `PronunciationAssessment` |
+
+评分只接受当前用户 active session 中的词。`audio` 必须是 ≤2 MB、≤8 秒、16 kHz/16-bit/单声道 PCM WAV；参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,errorType,phonemes[]`，每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。用户录音不落库；只有评分 JSON 写 attempt。常见错误：`AUDIO_REQUIRED`、`INVALID_AUDIO(_FORMAT)`、`AUDIO_TOO_LONG/LARGE`、`WORD_NOT_IN_SESSION`、`SPEECH_QUOTA_EXCEEDED`、`SPEECH_PROVIDER_*`。
+
+### 4.4 分享、免费课程市场和举报
+
+| 方法 | 路径 | 认证 | 请求/响应 |
+|---|---|---|---|
+| POST | `/api/course-shares` | bearer | `{ courseId }` → `{ id, token, url }`；token 只在创建响应出现 |
+| GET | `/api/course-shares?courseId=:id` | bearer | 当前课程 active 分享元数据，不返回 token/hash |
+| DELETE | `/api/course-shares/:id` | bearer | `{ ok:true }`，立即撤销 |
+| GET | `/api/public/course-shares/:token` | 公开 | 当前课程的 `PublicCoursePreview` 脱敏快照 |
+| POST | `/api/course-shares/:token/clone` | bearer | 免费克隆后的私有 `LearningCourseDetail` |
+| POST | `/api/learning-courses/:id/publications` | bearer | `{ description, rightsDeclared:true }` → publication preview |
+| GET | `/api/course-market` | 公开 | 最多 100 个 published `PublicCoursePreview`，按新到旧 |
+| POST | `/api/course-publications/:id/clone` | bearer | 免费克隆后的私有 detail |
+| POST | `/api/course-reports` | bearer | `{ publicationId|shareId, category, details }` → `{ id,status }` |
+| PATCH | `/api/course-publications/:id/moderation` | bearer + 配置管理员 | `{ action:"hide"|"restore"|"withdraw", reason }` → 审核结果 |
+
+公共 preview 只包含 publication/share ID、标题、简介、作者显示名、英语类别/locale、版本、单元/词数、cloneCount、创建时间，以及 `units[{name,position,isSystem,words[{term,translations,ipa}]}]`；不含 owner ID、进度、尝试、日程、token hash 或经济字段。分享读取源课当前内容；publication 是不可变快照。克隆随机生成所有 course/unit/word ID、进度归零并设 `canRepublish=false`。
+
+举报 category：`abuse/copyright/privacy/spam/academic_integrity/other`，details≤1000；publicationId/shareId 必须恰好一个。举报达到阈值只写结构化告警，不自动下架。发布/举报超过日限额分别返回 429 `PUBLISH_LIMIT`/`REPORT_LIMIT`。
+
+### 4.5 功能开关错误
+
+| 条件 | HTTP/code |
+|---|---|
+| Courses 总开关关闭 | 503 `COURSES_DISABLED` |
+| 分享关闭 | 404 `SHARING_DISABLED` |
+| 市场关闭 | 404 `MARKET_DISABLED` |
+| 语音关闭、熔断或缺配置 | 503 `PRONUNCIATION_UNAVAILABLE` |
+| Courses 配额/成本变量不是有限正数 | 503 `SERVER_MISCONFIG` |
+
+## 5. FastAPI AI（当前桩接口）
 
 实现入口：`apps/ai/app/main.py`；请求模型：`apps/ai/app/schemas.py`。当前所有路由无认证、无限流，所以部署时必须保持内网可达，不能直接暴露公网。
 
@@ -277,11 +401,11 @@ curl -fsS http://localhost:8000/generate/quiz \
   --data '{"material_id":"demo","text":"hello","lang":"zh"}'
 ```
 
-## 5. Supabase 数据面（当前实现）
+## 6. Supabase 数据面（当前实现）
 
 Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgREST/Storage。这里记录应用实际依赖的能力，而不是承诺固定的原始 REST URL。
 
-### 5.1 Auth
+### 6.1 Auth
 
 | 客户端操作 | 当前用途 |
 |---|---|
@@ -292,11 +416,11 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 当前没有 OAuth、重置密码、MFA、账号导出/删除的应用接口。
 
-### 5.2 PostgREST 表能力
+### 6.2 PostgREST 表能力
 
 | 领域 | 表 | Web 当前使用的主要操作 | 授权边界摘要 |
 |---|---|---|---|
-| 个人资料 | `profiles` | 本人 select；只更新 username/university/major/year/language | 0008 的列级 GRANT + 防御触发器保护 points/credits/level/VIP/streak |
+| 个人资料 | `profiles` | 本人 select；只更新 username/university/major/year/language/timezone | 0008/0011 的列级 GRANT、IANA 校验与防御触发器保护 points/credits/level/VIP/streak |
 | Points | `point_entries` | 本人只读账本 | 客户端不可 insert/update/delete；`point_event_states` 对客户端完全隐藏 |
 | 资料库 | `courses`, `materials` | owner CRUD | materials 写入额外校验课程 owner |
 | 通知 | `notifications` | owner select/insert/update | 用户可标已读；当前 policy 也允许改其它 own 字段 |
@@ -305,41 +429,45 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 | 社区关系 | `post_likes`, `post_favorites`, `follows` | 当前用户增删/查询关系 | 复合主键防同时重复关系 |
 | 标签 | `tags` | authenticated 读/插入 | 无更新/删除；无 kind 白名单约束 |
 | 计划 | `study_goals`, `study_tasks` | owner CRUD | task 关联实体由 RLS 检查 owner |
+| Courses 私有读取 | `learning_courses/units/words/sessions/items/attempts/progress/review_schedules/shares` | Web 当前经 Nest API 读取；数据库允许 owner SELECT | authenticated 无写权限；API service-role 写事务 RPC |
+| Courses 传播/成长 | publications/reports/badges | 作者/举报人/本人只读；公共读取经 API | 匿名 PostgREST 不开放；speech usage/审核动作对客户端隐藏 |
 
 字段、FK、级联和完整 RLS 矩阵见 [ERD 与数据库字典](./ERD.md)。Web 不应使用 service-role key；所有直连请求都必须在 anon key + 用户 session + RLS 下运行。
 
-### 5.3 Storage
+### 6.3 Storage
 
 | Bucket | 当前调用 | URL/时效 |
 |---|---|---|
 | `materials`（private） | upload、remove、createSignedUrl | 下载签名 URL 120 秒；预览签名 URL 600 秒；路径首段为用户 UUID |
 | `community-media`（public） | upload、getPublicUrl | 公开长期 URL；路径首段为用户 UUID |
+| `vocabulary-audio`（private） | 仅 API get/put | 规范化英文 SHA-256 缓存；不开放客户端策略，不保存用户录音 |
 
 表行与 Storage 对象不是同一事务。资料上传在表插入失败时尝试删除对象，但进程/网络中断仍可能产生孤儿；删除帖子也不会自动删除社区媒体。
 
-### 5.4 数据库函数/RPC 暴露面
+### 6.4 数据库函数/RPC 暴露面
 
-前端当前没有显式调用 `rpc()`。迁移 0008 已停用 `_add_points`，撤销 `_add_points`、`_notify`、`_set_point_event` 以及内部 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`/`_set_point_event` 只保留受信 service-role 调用能力。RLS E2E 会以普通用户尝试这三条 RPC 并验证失败，也验证普通用户与 service-role 都不能直接写 ledger/state。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界。RLS E2E 会以普通用户尝试伪造 progress/badge/points/发布并验证失败。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 
-## 6. 尚未实现的目标 API
+## 7. 尚未实现的目标 API
 
 以下能力属于最终产品路线，不是当前可调用接口：
 
 - 资料解析、AI 生成任务提交/排队/状态/取消/重试；
 - 笔记与四类生成产物的版本化 CRUD；
-- 市场发布、购买、授权、搜索和创作者结算；
+- 笔记市场购买、credits 授权、搜索和创作者结算；Courses 只有免费发布/克隆，不提供购买或分成；
 - points 规则版本/每日上限/反滥用与管理调整 API；credits 不可变账本、余额、VIP entitlement；
 - Stripe checkout/payment intent/webhook/refund；
-- 内容举报、审核、管理员处置与申诉；
+- 社区/笔记的内容举报、审核、管理员处置与申诉；Courses 已有最小举报和隐藏/恢复接口但无通用队列/申诉；
+- Courses 文件上传解析：PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR、类别 prompt、结构化词表与人工确认；当前无可调用 endpoint；
 - 用户数据导出、删除请求与进度；
 - Realtime 通知、设备推送；
 - 管理、审计、监控和内部运维 API。
 
 目标 API 落地前必须先确定版本策略、鉴权/角色、幂等键、分页、统一错误码、审计、限流、OpenAPI 与契约测试；不能仅按蓝图路由名直接上线。
 
-## 7. 接口变更检查清单
+## 8. 接口变更检查清单
 
 1. 更新实现、共享类型与本文，避免 snake_case/camelCase 漂移。
 2. 为新增 endpoint 明确认证、授权、输入上限、错误码和日志脱敏。

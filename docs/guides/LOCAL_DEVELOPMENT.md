@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS API、FastAPI AI 桩服务。业务数据、认证与文件存储使用 Supabase；仓库已有 `supabase/config.toml`，推荐启动本地 Supabase，也可连接一个**独立的开发 Supabase 项目**。Redis、BullMQ、Stripe、真实 Claude 生成管线均不是本地基本链路的一部分。
+当前可本地运行：React/Vite Web、NestJS Auth/Courses API、FastAPI AI 桩服务。业务数据、认证与文件存储使用 Supabase；仓库已有 `supabase/config.toml`，推荐启动本地 Supabase，也可连接一个**独立的开发项目**。Courses 文件 AI 导入仍未实现；英语词表文本学习不需要 FastAPI、Redis、BullMQ、Stripe 或 Claude。
 
 ## 2. 前置条件
 
@@ -52,7 +52,7 @@ pnpm typecheck
 pnpm build
 ```
 
-根 `pnpm lint` 目前没有对应的 package lint 实现，不能把“命令退出 0”解释为代码已通过 ESLint。
+根 `pnpm lint` 会对 API、Web 和共享类型运行带 `noUnusedLocals`、`noUnusedParameters` 与 `noFallthroughCasesInSwitch` 的严格 TypeScript 静态检查；它不是 ESLint，也不替代正常 typecheck/test。
 
 ## 4. 准备 Supabase
 
@@ -140,9 +140,16 @@ SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<development-service-role-key>
 # 仅旧 HS256 项目需要；使用 JWKS 的项目可以留空
 SUPABASE_JWT_SECRET=
+PUBLIC_ORIGIN=http://localhost:5173
+FEATURE_LEARNING_COURSES_ENABLED=true
+FEATURE_COURSE_SHARING_ENABLED=true
+FEATURE_COURSE_MARKET_ENABLED=true
+FEATURE_PRONUNCIATION_ENABLED=false
 ```
 
-`/api/health` 会用以上 Supabase 配置探测 JWKS 与 PostgREST profiles 空查询，配置/连通失败时返回 503；`REDIS_URL` 和 `AI_SERVICE_URL` 当前仍只影响 `configured/unset` 展示，API 不会连接这两个依赖。
+非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音始终默认关闭。要测真实 Azure，再填写 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke。
+
+`/api/health` 会探测 JWKS 与 PostgREST profiles 空查询，失败返回 503；`REDIS_URL`/`AI_SERVICE_URL` 仍只影响状态展示。API 的 service-role key 还会调用 Courses 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
 
 所有 `.env`/`.env.local` 已被 `.gitignore` 排除。提交前仍应运行 `git status --short`，确认没有密钥文件进入暂存区。
 
@@ -207,6 +214,11 @@ curl -I http://localhost:5173
 3. 创建课程并上传一个小型资料，确认 `materials` 私有桶路径以用户 UUID 开头。
 4. 创建学习任务并切换完成状态，确认任务与个人资料可重新加载。
 5. 发布一条无敏感内容的测试帖，再删除测试数据。
+6. 打开 Courses，创建“英语单词学习”；粘贴至少四个词，先制造一行格式错误确认精确标红，再修正并保存。
+7. 完成一个单元四阶段，刷新页面确认从 active session 恢复；建立 3 天复习并在 Schedule 看见独立复习项。
+8. 创建分享、撤销后确认旧链接失效；上架免费 Course Market，用第二个开发账号克隆并确认副本进度为 0、不能再次传播。
+
+本地当日无法验证“两次不同日期复习即熟练”时，不要手改生产数据；使用一次性本地 Supabase RLS fixture，测试会按 profile 时区生成两个不同 `local_date`。
 
 这些步骤会写入数据；不要对生产项目执行。自动化命令和测试分层见 [可执行测试指南](./TESTING.md)。
 
@@ -234,6 +246,17 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 依次确认迁移已全部应用、用户有对应 `profiles`、请求携带有效会话，以及写入的 `user_id`/关联课程归属符合 RLS。完整关系和策略见 [ERD 与数据库字典](./ERD.md)。
 
+### Courses 返回 `COURSES_DISABLED` 或 404
+
+- 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
+- production 模式必须显式设总开关，分享/市场还需各自子开关；
+- sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
+- 确认本地数据库已 reset 到 0013，而不是仍停在旧 migration history。
+
+### 发音按钮降级或评分不可用
+
+这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。评分要求 feature flag、key/region、当前 active session 和 16 kHz/16-bit/单声道 PCM WAV；供应商超时不应记为学习错误。
+
 ### `pnpm --filter @nalanda/api start` 找不到 `dist/main.js`
 
 先执行 `pnpm --filter @nalanda/api build`。当前 start 脚本只运行编译产物。
@@ -242,7 +265,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前**：CI 已强制 docs/typecheck、Web jsdom、API readiness unit、build、数据库升级/lint/重建和本地 RLS/Storage E2E；仍缺 API HTTP/FastAPI unit/contract、浏览器 E2E 和通用代码 lint。
+- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；Azure 使用 fake，仍缺真实供应商自动 smoke、FastAPI contract 和 ESLint/格式化规则。
 - **目标**：接入 Redis/BullMQ、API→AI 内部调用、真实解析/Claude 生成。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 

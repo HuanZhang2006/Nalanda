@@ -2,10 +2,12 @@
 // Profile：真数据（profiles 表 + 实时计数），可编辑；显示活动积分(points)与分级徽章；同步顶栏/侧栏。
 import { ICON } from "./icons";
 import { DB } from "./data";
+import { apiJson } from "../lib/api";
 
 let sb = null, USER = null, toastFn = () => {};
 let rootEl = null;
-const state = { loading: true, error: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 } };
+const EMPTY_LEARNING = { courses: 0, learnedWords: 0, reviewDays: 0, badges: [] };
+const state = { loading: true, error: "", learningError: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 }, learning: { ...EMPTY_LEARNING } };
 let sessionVersion = 0;
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -18,28 +20,32 @@ export function initProfile(supabase, user, toast) {
   sessionVersion++;
   sb = supabase; USER = user; toastFn = toast || (() => {});
   rootEl = null;
-  Object.assign(state, { loading: true, error: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 } });
+  Object.assign(state, { loading: true, error: "", learningError: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 }, learning: { ...EMPTY_LEARNING } });
 }
 export function mountProfile(el) { rootEl = el; if (!rootEl) return; render(); load(); }
 
 async function fetchProfile() {
-  const [p, pc, mc, cc, fc] = await Promise.all([
+  const [p, pc, mc, cc, fc, learning] = await Promise.all([
     sb.from("profiles").select("*").eq("id", USER.id).single(),
     sb.from("posts").select("id", { count: "exact", head: true }).eq("user_id", USER.id).is("repost_of", null),
     sb.from("materials").select("id", { count: "exact", head: true }),
     sb.from("courses").select("id", { count: "exact", head: true }),
     sb.from("feedback").select("id", { count: "exact", head: true }),
+    apiJson("/api/profile/learning-summary")
+      .then((data) => ({ data, error: "" }))
+      .catch((error) => ({ data: { ...EMPTY_LEARNING }, error: error?.message || "课程学习统计加载失败" })),
   ]);
   const failed = [p, pc, mc, cc, fc].find((result) => result.error);
   if (failed) throw failed.error;
-  return { profile: p.data, counts: { posts: pc.count || 0, materials: mc.count || 0, courses: cc.count || 0, feedback: fc.count || 0 } };
+  return { profile: p.data, counts: { posts: pc.count || 0, materials: mc.count || 0, courses: cc.count || 0, feedback: fc.count || 0 },
+    learning: learning.data, learningError: learning.error };
 }
 
 async function load() {
   const currentVersion = sessionVersion;
   if (!sb) { state.loading = false; state.error = "未配置 Supabase"; render(); return; }
   state.loading = true; render();
-  try { const r = await fetchProfile(); if (currentVersion !== sessionVersion) return; state.profile = r.profile; state.counts = r.counts; state.error = ""; }
+  try { const r = await fetchProfile(); if (currentVersion !== sessionVersion) return; state.profile = r.profile; state.counts = r.counts; state.learning = r.learning; state.learningError = r.learningError; state.error = ""; }
   catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
   if (currentVersion !== sessionVersion) return;
   state.loading = false; render();
@@ -56,7 +62,7 @@ function render() {
   if (!rootEl) return;
   if (state.loading) { rootEl.innerHTML = `<div class="wrap"><div class="card card-pad muted">加载中…</div></div>`; return; }
   if (state.error || !state.profile) { rootEl.innerHTML = `<div class="wrap"><div class="card card-pad" style="color:var(--pink)">出错了：${esc(state.error || "无资料")}</div></div>`; return; }
-  const u = state.profile, c = state.counts;
+  const u = state.profile, c = state.counts, learning = state.learning;
   const points = u.points || 0;
   const vip = u.vip_until && new Date(u.vip_until) > new Date();
   const name = u.username || (u.email || "").split("@")[0] || "用户";
@@ -65,13 +71,15 @@ function render() {
   const badges = [
     { name: "发帖手", icon: "✍️", val: c.posts, th: [1, 10, 50], desc: "发布帖子" },
     { name: "创作者", icon: "📚", val: c.materials, th: [1, 10, 30], desc: "上传资料" },
-    { name: "建课人", icon: "🏗️", val: c.courses, th: [1, 3, 8], desc: "创建课程" },
+    { name: "学科建课人", icon: "🏗️", val: c.courses, th: [1, 3, 8], desc: "创建 Materials 学科课程" },
     { name: "学者", icon: "🎓", val: points, th: [50, 350, 1200], desc: "累积积分" },
     { name: "反馈者", icon: "💡", val: c.feedback, th: [1, 3, 10], desc: "提交反馈" },
   ];
-  const stats = [["notes", "发帖", c.posts], ["folder", "资料", c.materials], ["chart", "课程", c.courses], ["coin", "积分", points]];
+  const stats = [["notes", "发帖", c.posts], ["folder", "资料", c.materials], ["chart", "学习课程", learning.courses], ["coin", "积分", points]];
+  const courseBadges = learning.badges || [];
 
   rootEl.innerHTML = `<div class="wrap wrap-wide">
+    ${state.learningError ? `<div role="alert" class="course-feedback wrong" style="margin-bottom:16px">课程学习统计暂不可用：${esc(state.learningError)}</div>` : ""}
     <div class="card card-pad" style="background:linear-gradient(120deg,var(--accent-tint),var(--card));border-color:var(--accent-line);margin-bottom:24px">
       <div class="row between wrap-flex gap-20">
         <div class="row gap-16">
@@ -108,7 +116,12 @@ function render() {
         <div class="card card-pad mt-16">
           <div class="row gap-12"><div class="stat-ic" style="margin:0">${ICON("sparkles")}</div>
             <div class="fill"><div style="font-weight:700;font-size:14px">积分怎么来</div>
-              <div class="muted" style="font-size:12.5px">发帖 +10、转发 +3、评论 +2、点赞 +1；积分到阈值自动升级。积分≠钱包 credit（充值后用）。</div></div></div>
+              <div class="muted" style="font-size:12.5px">发帖 +10、转发 +3、评论 +2、点赞 +1、普通任务首次有效完成 +5；至少 20 个不同词且 100% 熟练的词表首次 +20。所有奖励按业务键幂等。积分≠钱包 credits。</div></div></div>
+        </div>
+        <div class="grid g-3 mt-16">
+          <div class="stat"><div class="stat-n" style="font-size:22px">${Number(learning.courses || 0).toLocaleString()}</div><div class="stat-l">学习课程数</div></div>
+          <div class="stat"><div class="stat-n" style="font-size:22px">${Number(learning.learnedWords || 0).toLocaleString()}</div><div class="stat-l">熟练的不同英文词</div></div>
+          <div class="stat"><div class="stat-n" style="font-size:22px">${Number(learning.reviewDays || 0).toLocaleString()}</div><div class="stat-l">不同复习日期</div></div>
         </div>
       </div>
       <div>
@@ -126,6 +139,13 @@ function render() {
             </div>`;
           }).join("")}
         </div>
+        <div class="sec-h"><h2 class="serif" style="font-size:18px">课程徽章</h2><span class="faint" style="font-size:12px">由服务端持久发放</span></div>
+        ${courseBadges.length ? `<div class="grid g-3">${courseBadges.map((badge) => `<div class="badge-tile">
+          <div class="badge-medal" style="background:${TIER_BG[badge.tier]}">${esc(badge.icon)}</div>
+          <div style="font-weight:650;font-size:13px">${esc(badge.name)} · ${TIER_NAME[badge.tier]}</div>
+          <div class="faint" style="font-size:11px;margin-top:3px">${esc(badge.description)}</div>
+          <div class="faint" style="font-size:10.5px;margin-top:5px">获得于 ${new Date(badge.awardedAt).toLocaleDateString()}</div>
+        </div>`).join("")}</div>` : `<div class="card card-pad muted">完成跨日期复习后，可获得词汇行者、课程毕业生与复习坚持者徽章。</div>`}
       </div>
     </div>
   </div>`;
@@ -152,6 +172,7 @@ function editModal() {
       <option value="zh" ${u.language === "zh" ? "selected" : ""}>中文</option>
       <option value="en" ${u.language === "en" ? "selected" : ""}>English</option>
     </select>
+    ${field("pf-timezone", "时区（IANA）", u.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC", "如 Asia/Shanghai")}
     <div class="row gap-8" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-ed="cancel">取消</button><button class="btn btn-primary" data-ed="save">保存</button></div>
   </div></div>`;
   document.body.appendChild(scrim);
@@ -168,6 +189,7 @@ function editModal() {
       major: scrim.querySelector("#pf-major").value.trim() || null,
       year: scrim.querySelector("#pf-year").value.trim() || null,
       language: scrim.querySelector("#pf-language").value,
+      timezone: scrim.querySelector("#pf-timezone").value.trim() || "UTC",
     };
     saving = true; saveBtn.disabled = true; saveBtn.textContent = "保存中…";
     try {

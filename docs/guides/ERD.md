@@ -6,10 +6,10 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260710000008_security_points_ledger.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260722000013_verify_learning_courses_release.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。0011–0013 是仓库目标结构，生产仍停在 0010，不能据此推断远端已经存在这些对象。
 
-- **当前实现**：15 张 `public` 业务表、`auth.users` 外部身份表、2 个 Storage bucket，以及相关 RLS/函数/触发器。
-- **未实现目标**：AI 笔记产物、生成任务、市场、credits 钱包账本、订单/支付、订阅/VIP 权益、审核、审计等实体。它们可能出现在架构蓝图中，但当前数据库不存在。
+- **仓库最终结构**：30 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
+- **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
 
 ## 2. 当前 ERD
 
@@ -27,6 +27,7 @@ erDiagram
         text major
         text year
         text language
+        text timezone
         integer credits
         integer points
         integer level
@@ -205,6 +206,36 @@ erDiagram
 
 `auth.users` 由 Supabase Auth 管理；图中只展示应用实际引用的 `id` 和概念性 `email`，不是对 Auth 内部表的完整定义。
 
+### 2.1 Courses 子域 ERD
+
+```mermaid
+erDiagram
+    AUTH_USERS ||--o{ LEARNING_COURSES : owns
+    LEARNING_COURSES ||--o{ LEARNING_UNITS : contains
+    LEARNING_UNITS ||--o{ LEARNING_WORDS : contains
+    AUTH_USERS ||--o{ LEARNING_SESSIONS : studies
+    LEARNING_COURSES ||--o{ LEARNING_SESSIONS : resumes
+    LEARNING_UNITS ||--o{ LEARNING_SESSIONS : scopes
+    LEARNING_SESSIONS ||--o{ LEARNING_SESSION_ITEMS : snapshots
+    LEARNING_WORDS ||--o{ LEARNING_SESSION_ITEMS : includes
+    LEARNING_SESSIONS ||--o{ LEARNING_ATTEMPTS : records
+    LEARNING_WORDS ||--o{ LEARNING_ATTEMPTS : answers
+    AUTH_USERS ||--o{ LEARNING_WORD_PROGRESS : owns
+    LEARNING_WORDS ||--o| LEARNING_WORD_PROGRESS : projects
+    LEARNING_UNITS ||--o{ LEARNING_REVIEW_SCHEDULES : schedules
+    LEARNING_COURSES ||--o{ LEARNING_SHARES : shares
+    LEARNING_COURSES o|--o{ LEARNING_PUBLICATIONS : versions
+    LEARNING_PUBLICATIONS o|--o{ LEARNING_COURSES : cloned_origin
+    LEARNING_PUBLICATIONS ||--o{ LEARNING_REPORTS : reported
+    LEARNING_SHARES ||--o{ LEARNING_REPORTS : reported
+    LEARNING_PUBLICATIONS o|--o{ LEARNING_MODERATION_ACTIONS : audited
+    BADGE_DEFINITIONS ||--o{ USER_BADGE_AWARDS : awards
+    AUTH_USERS ||--o{ USER_BADGE_AWARDS : earns
+    AUTH_USERS o|--o{ LEARNING_SPEECH_USAGE : reserves
+```
+
+`learning_attempts` 是追加事实，`learning_word_progress` 是受保护投影；市场 publication 是不可变快照，source 课程删除时只把 `source_course_id` 置空。分享读取当前课程，不保存内容副本。
+
 ## 3. 表字典
 
 ### 3.1 `profiles`
@@ -218,6 +249,7 @@ erDiagram
 | `email` | `text` | 可空 | Auth 邮箱快照，不是认证权威字段 |
 | `university`, `major`, `year` | `text` | 可空 | 用户资料 |
 | `language` | `text` | 非空，`'zh'` | 当前无 check constraint |
+| `timezone` | `text` | 非空，`'UTC'` | 0011 增加；插入/更新 trigger 必须在 `pg_timezone_names` 中存在，历史 attempt `local_date` 不随修改重写 |
 | `credits` | `integer` | 非空，`0` | 尚无钱包账本/支付闭环 |
 | `points` | `integer` | 非空，`0` | 迁移 0006 增加；0008 起由 ledger 总和投影并 clamp 到 `0..2147483647` |
 | `level` | `integer` | 非空，`1` | `_set_point_event` 根据 points 投影计算 |
@@ -351,17 +383,46 @@ erDiagram
 
 历史边界：0008 无法判断旧宽松权限期间的 `profiles.points/credits/vip/streak` 是否曾被人为篡改。opening 只保存迁移事实，不代表余额可信；0009 根据已记录的产品/安全决定追加 reversal 归零，不删除原记录。credits/VIP 仍没有可重建账本。
 
+### 3.7 Courses 内容、学习、传播与成长
+
+以下列清单覆盖 0011 的全部新增表。`uuid` 默认均为 `gen_random_uuid()`（复合键/identity 除外），时间列未特别注明时默认 `now()`。
+
+| 表 | 全部列 | 关键约束与关系 |
+|---|---|---|
+| `learning_courses` | `id`, `user_id`, `title`, `category`, `has_units`, `locale`, `origin_publication_id`, `origin_share_id`, `origin_author_name`, `can_republish`, `points_claimed_at`, `created_at`, `updated_at` | owner → Auth CASCADE；标题 1–80；四类 category 但 v1 API 只接受英语词表；locale=`en-US`；`(id,user_id)` 唯一；克隆来源 → publication/share SET NULL，来源记录消失后仍保留作者署名 |
+| `learning_course_units` | `id`, `course_id`, `user_id`, `name`, `position`, `is_system`, `created_at`, `updated_at` | course/Auth CASCADE；复合 FK `(course_id,user_id)` 防跨 owner；名 1–80；position≥0；`(course_id,position)` 延迟唯一 |
+| `learning_course_words` | `id`, `course_id`, `unit_id`, `user_id`, `term`, `normalized_term`, `translations`, `ipa`, `position`, `content_version`, `created_at`, `updated_at` | `normalized_term` 为 `_points_normalize_text(term)` stored generated；term 1–120；1–10 translations；IPA≤120；复合 unit/course/owner FK；单元内 normalized term 与 position 延迟唯一 |
+| `learning_sessions` | `id`, `user_id`, `course_id`, `unit_id`, `mode`, `scope`, `selected_skills`, `stage`, `active`, `state`, `started_at`, `last_activity_at`, `completed_at` | course CASCADE、unit 删除 SET NULL；mode=`initial/review`；scope=`all/unlearned`；skill 为 pronunciation/translation/spelling 的 1–3 项；stage 为 recognition/pronunciation/translation/spelling/completed；每用户每课程最多一个 active 会话 |
+| `learning_session_items` | `session_id`, `word_id`, `position`, `recognition_seen`, `pronunciation_passed`, `translation_passed`, `spelling_passed`, `wrong_count` | `(session_id,word_id)` PK；会话/词删除 CASCADE；position 每会话延迟唯一；pass 字段是当前会话投影 |
+| `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `created_at` | bigint identity；course/session/user CASCADE，word 删除 SET NULL；skill 另含 recognition 和 speech_assessment；允许 `is_correct=null` 表达非判分事实；保存发生时本地日期，不保存录音；service_role 也无直接 UPDATE/DELETE，普通内容编辑不会删历史 attempt，课程删除仍按产品规则级联 |
+| `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `learned_at`, `updated_at` | `(user_id,word_id)` PK；三组 date[] 去重由工作流保证；三项均有至少两个不同完成复习日期才设置 learned_at |
+| `learning_review_schedules` | `id`, `user_id`, `course_id`, `unit_id`, `source_session_id`, `due_date`, `skills`, `scope`, `status`, `completed_session_id`, `completed_at`, `created_at` | user/course/unit/source initial session CASCADE，completed review session SET NULL；只有本人该单元已完成 initial session 才能创建 3/7/15/30 偏移；status=`pending/completed/cancelled`；`(user_id,unit_id,due_date)` 唯一 |
+| `learning_speech_usage` | `id`, `user_id`, `kind`, `cost_microusd`, `local_date`, `created_at` | bigint identity；user 删除 SET NULL 以保留预算事实；kind=`tts/assessment`；成本必须 >0；没有音频/参考文本 |
+| `learning_course_shares` | `id`, `user_id`, `course_id`, `token_hash`, `active`, `author_name`, `created_at`, `revoked_at` | owner/course CASCADE；只存 token SHA-256；token hash 唯一，每课程最多一个 active 分享 |
+| `learning_course_publications` | `id`, `author_id`, `source_course_id`, `title`, `description`, `author_name`, `category`, `locale`, `version`, `snapshot`, `content_fingerprint`, `status`, `rights_declared_at`, `clone_count`, `created_at`, `updated_at` | author CASCADE、source SET NULL；英语/en-US；status=`published/hidden/withdrawn`；同 author/source/version 唯一；trigger 禁止内容快照/署名/指纹/权利声明变更，只允许生命周期、clone_count、source 置空和 updated_at |
+| `learning_course_reports` | `id`, `reporter_id`, `publication_id`, `share_id`, `category`, `details`, `status`, `created_at` | reporter CASCADE，目标 CASCADE；publication/share 必须且只能有一个；六类举报；details≤1000；status=`open/reviewing/resolved/dismissed` |
+| `learning_course_moderation_actions` | `id`, `publication_id`, `actor_id`, `action`, `reason`, `created_at` | bigint identity；publication/actor 删除 SET NULL，审计行保留；action=`hide/restore/withdraw`；reason 1–1000 |
+| `badge_definitions` | `code`, `family`, `tier`, `name`, `description`, `threshold`, `icon` | code PK；family+tier 唯一；tier 1–3；0011 固定种入 vocab_words/vocab_courses/vocab_review_days 共九级 |
+| `user_badge_awards` | `user_id`, `badge_code`, `awarded_at`, `metadata` | 复合 PK；user CASCADE；badge definition DELETE RESTRICT；`ON CONFLICT DO NOTHING` 保证历史只发一次 |
+
+内容保存约束由单个 `learning_upsert_course` 事务补充：课程 4–2,000 个不同规范化词/短语、最多 100 单元、每词翻译非空且去重。数据库可存四类 category 是为兼容未来，但当前 API/UI 明确拒绝非 `english_vocabulary`。
+
 ## 4. 删除与生命周期规则
 
 | 父实体删除 | 当前结果 |
 |---|---|
-| `auth.users` | 级联删除 profile、课程、资料、通知、反馈、帖子、评论、点赞、收藏、关注关系、目标、任务、points 分录与事件状态；Storage 文件是否删除不由这些 FK 保证。 |
+| `auth.users` | 级联删除 profile、资料课程、私有学习课程/会话/尝试/progress/日程/分享、本人出版物/举报和 badge awards；points 分录/事件状态也级联。speech usage/moderation actor 改为 NULL。Storage 文件是否删除不由 FK 保证。 |
 | `courses` | 资料 CASCADE；目标/任务的 `course_id` SET NULL。 |
 | `materials` | 任务的 `material_id` SET NULL；Storage 对象不会由表 FK 自动删除。 |
 | `study_goals` | 任务的 `goal_id` SET NULL。 |
 | `posts` | 评论/点赞/收藏 CASCADE；引用它的转发帖也 CASCADE；相关 active points 事件会按 trigger 冲正。媒体对象不会自动删除。 |
+| `learning_courses` | 单元、词、会话、尝试、progress、复习日程和源课分享级联；publication 的 source SET NULL，克隆课的 `origin_share_id` 随被删分享 SET NULL。已发 points 分录没有 source FK，不删除；用户徽章也不因删课程回退。 |
+| `learning_course_shares` | 来源克隆课的 `origin_share_id` SET NULL；针对该分享的举报 CASCADE。 |
+| `learning_course_units/words/sessions` | 下游词、session items、attempts/progress 按 FK 级联；删除只能通过课程事务 API，客户端不能直接执行。 |
+| `learning_course_publications` | 来源克隆课的 `origin_publication_id` SET NULL；举报 CASCADE；审核动作 publication_id SET NULL 保留。 |
+| `learning_course_shares` | 关联举报 CASCADE；撤销通常只写 `active=false/revoked_at` 而不删除。 |
 
-删除账号尚无仓库内编排来清理 Storage 孤儿对象或验证级联完整性；隐私删除流程必须单独实现并测试。
+双用户 RLS E2E 在清理阶段验证 Auth 删除后的关系表级联；仓库仍没有生产级账号删除编排来先清理 Storage 对象、导出/冷却或生成删除凭证，因此完整隐私删除流程仍须单独实现。
 
 ## 5. RLS 矩阵
 
@@ -369,7 +430,7 @@ erDiagram
 
 | 表 | SELECT | INSERT | UPDATE | DELETE |
 |---|---|---|---|---|
-| `profiles` | 本人 | 无客户端 policy（由 Auth trigger 建档） | 本人仅 `username/university/major/year/language`；受保护列由 grant + trigger 双重禁止 | 无客户端 policy |
+| `profiles` | 本人 | 无客户端 policy（由 Auth trigger 建档） | 本人仅 `username/university/major/year/language/timezone`；受保护列由 grant + trigger 双重禁止 | 无客户端 policy |
 | `courses` | owner | owner | owner | owner |
 | `materials` | owner | owner + 关联课程 owner | owner + 关联课程 owner | owner |
 | `notifications` | owner | owner | owner | owner |
@@ -383,8 +444,16 @@ erDiagram
 | `study_tasks` | owner | owner + 所有关联实体 owner | 同左 | owner |
 | `point_entries` | 本人 | 无客户端权限/policy | 无客户端权限/policy | 无客户端权限/policy |
 | `point_event_states` | 无客户端权限/policy | 无 | 无 | 无 |
+| `learning_courses/units/words` | owner | 无 | 无 | 无 |
+| `learning_sessions/items/attempts/progress/review_schedules` | owner（items 经 session） | 无 | 无 | 无 |
+| `learning_course_shares` | owner | 无 | 无 | 无 |
+| `learning_course_publications` | 仅 author 自己 | 无 | 无 | 无 |
+| `learning_course_reports` | 仅 reporter 自己 | 无 | 无 | 无 |
+| `learning_speech_usage`, `learning_course_moderation_actions` | 无客户端读取 | 无 | 无 | 无 |
+| `badge_definitions` | 所有 authenticated | 无 | 无 | 无 |
+| `user_badge_awards` | 本人 | 无 | 无 | 无 |
 
-迁移 0008 已修复 Profile 整行更新缺口：表级 UPDATE 从 authenticated 撤销后只授予资料列，并以 `_guard_profile_managed_fields` 做防御。剩余边界是 `notifications`/`feedback` 的 `for all` owner policy 仍允许 owner 改写部分本应由服务端管理的字段，例如 feedback status；帖子作者也仍能更新快照和冗余计数字段，除 `repost_of` 与 points key 已锁定外，尚未形成完整列级白名单。
+迁移 0008 已修复 Profile 整行更新缺口：表级 UPDATE 从 authenticated 撤销后只授予资料列；0011 只额外授予合法 `timezone`。Courses 表虽然有 owner SELECT policy，但 authenticated 的 INSERT/UPDATE/DELETE 表权限全部撤销；所有公开读取也不靠匿名 RLS。剩余旧模块边界是 `notifications`/`feedback` 的 `for all` owner policy 仍允许 owner 改写部分服务端字段，帖子作者列级白名单也不完整。
 
 ## 6. Storage 模型
 
@@ -392,6 +461,7 @@ erDiagram
 |---|---|---|---|---|
 | `materials` | private | authenticated 仅可 SELECT/INSERT/DELETE 自己 UUID 首段路径 | `{auth.uid()}/...` | `materials.storage_path` 是文本引用；表和对象间无 FK/事务 |
 | `community-media` | public | authenticated 仅可 INSERT/DELETE 自己 UUID 首段路径；公共读取由 public bucket 提供 | `{auth.uid()}/...` | `posts.image_url/audio_url` 是 URL 文本；删除帖子不会自动删对象 |
+| `vocabulary-audio` | private | 没有客户端 Storage policy；仅 API service-role 读写 | 规范化英文的服务端缓存键 | 只允许 Azure 合成公共语音；不存用户录音，也不与 word 行做 FK |
 
 Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路径或显式设计安全策略。
 
@@ -418,8 +488,20 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_on_post` / `posts_award` | post AFTER INSERT/DELETE | 原创 +10 / 转发 +3；最后一个同业务键删除时冲正，并按需通知 |
 | `_on_follow` / `follows_notify` | follow AFTER INSERT | 通知被关注者 |
 | `_on_task_done` / `task_points_update`,`task_points_delete` | task `done` AFTER UPDATE 或 DELETE | 首次完成 +5；取消/最后一个同键任务删除冲正；仅首次激活更新 streak |
+| `_guard_profile_timezone` / `profiles_guard_timezone`、`profiles_guard_timezone_insert` | profile BEFORE INSERT / timezone BEFORE UPDATE | 只接受 PostgreSQL `pg_timezone_names` 中的 IANA 名称 |
+| `_guard_learning_publication_snapshot` / `learning_publications_preserve_snapshot` | publication BEFORE UPDATE | 阻止已发布版本内容、署名、指纹和权利声明被改写 |
+| `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helper | 固化尝试本地日期、词集合 SHA-256 与服务端内部课程快照；公开 API 另经 `publicSnapshot` 删除私有 ID/进度 |
+| `_refresh_learning_growth` | 完成学习/复习 | 发放课程 +20 points 和九级徽章；持久业务键/award PK 防重复 |
+| `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPC | owner 校验下原子保存、精确能力重置、改名和级联删除 |
+| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、候补池循环与完成推进 |
+| `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
+| `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；持久化用户频率和全局预算预留 |
+| `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPC | token hash 生命周期和撤销竞态内的事务克隆 |
+| `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPC | 不可变发布版本、免费独立克隆、限频举报与受审计隐藏/恢复 |
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
+
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 会逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链。API 传入的 user ID 必须来自已验证 JWT，不能接受请求体自报用户。
 
 ## 8. 索引清单
 
@@ -438,6 +520,17 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `point_entries_user_created_idx(user_id, created_at DESC)`
 - `point_event_states_user_idx(user_id, updated_at DESC)`
 - `point_entries UNIQUE(business_key, transition_no)`
+- `learning_courses_user_updated_idx(user_id, updated_at DESC)`
+- `learning_course_units_owner_idx(user_id, course_id, position)`
+- `learning_course_words_course_idx(course_id, unit_id, position)`、`learning_course_words_owner_term_idx(user_id, normalized_term)`
+- `learning_sessions_one_active_course_idx(user_id, course_id) WHERE active`、`learning_sessions_owner_activity_idx(user_id, last_activity_at DESC)`
+- `learning_attempts_owner_created_idx(user_id, created_at DESC)`、`learning_attempts_course_idx(course_id, created_at DESC)`、`learning_attempts_word_idx(word_id, created_at DESC)`
+- `learning_speech_usage_user_rate_idx(user_id, kind, created_at DESC)`、`learning_speech_usage_budget_idx(created_at DESC)`
+- `learning_word_progress_learned_idx(user_id, learned_at) WHERE learned_at IS NOT NULL`
+- `learning_review_schedules_owner_due_idx(user_id, due_date, status)`
+- `learning_course_shares_one_active_idx(course_id) WHERE active`
+- `learning_course_publications_market_idx(status, created_at DESC)`、`learning_course_publications_author_idx(author_id, created_at DESC)`、author/source/version 条件唯一索引
+- `learning_course_reports_target_idx(publication_id, share_id, status, created_at DESC)`
 - 主键/唯一约束自动提供的索引：所有单列主键及 likes、favorites、follows、tags 的复合主键。
 
 ## 9. 目标模型（尚不存在）
@@ -446,10 +539,10 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 - `notes`、结构化知识点、题库、知识图谱、模拟考试与版本；
 - `generation_jobs`、解析结果、AI 模型/提示词版本、失败与重试状态；
-- 市场商品、授权/购买关系、创作者分成；
+- 通用笔记市场商品、credits 授权/购买关系、创作者分成；Courses 免费分享/市场快照已存在；
 - credits 钱包账本、余额投影和经过审批的管理员调整；points 账本已存在，但仍需反滥用上限、对账与运营工具；
 - VIP entitlement/订阅、订单、支付 intent、webhook 幂等记录、退款；
-- 内容举报、审核队列、处置与申诉；
+- 社区/笔记内容举报、审核队列、处置与申诉；Courses 已有举报与管理员动作，但没有通用队列/申诉；
 - 用户同意、数据导出/删除任务、保留期限；
 - 管理员角色、审计日志、系统配置。
 

@@ -37,7 +37,7 @@ env:
 
 jobs:
   quality:
-    name: Typecheck, tests, and build
+    name: Lint, typecheck, tests, and build
     runs-on: ubuntu-latest
     outputs:
       migrations_changed: ${{ steps.migration_changes.outputs.changed }}
@@ -127,6 +127,9 @@ jobs:
       - name: Production release tooling tests
         run: pnpm test:release
 
+      - name: Code lint
+        run: pnpm lint
+
       - name: Typecheck
         run: pnpm typecheck
 
@@ -159,19 +162,20 @@ jobs:
         with:
           version: ${{ env.SUPABASE_CLI_VERSION }}
 
-      - name: Exercise the 0007 to 0010 data upgrade, then rebuild from scratch
+      - name: Exercise the 0007 to latest data upgrade, then rebuild from scratch
         shell: bash
         run: |
           set -Eeuo pipefail
 
-          # `supabase start` eagerly applies every migration. Stage 0008-0010
-          # outside the migrations directory first so the fixture genuinely
-          # creates 0007-era rows, then restore and apply all forward changes.
-          upgrade_migrations=(
-            "supabase/migrations/20260710000008_security_points_ledger.sql"
-            "supabase/migrations/20260721000009_reset_legacy_points.sql"
-            "supabase/migrations/20260721000010_verify_security_points_release.sql"
+          # `supabase start` eagerly applies every migration. Discover and stage
+          # every migration from 0008 onward so future 0011+ files cannot leak
+          # into the 0007 fixture before the upgrade assertion runs.
+          mapfile -t upgrade_migrations < <(
+            find supabase/migrations -maxdepth 1 -type f -name '*.sql' -print \
+              | LC_ALL=C sort \
+              | awk -F/ '$NF >= "20260710000008"'
           )
+          [[ "${#upgrade_migrations[@]}" -gt 0 ]] || { echo "No 0008+ migrations found" >&2; exit 2; }
           staged_upgrade_dir="$RUNNER_TEMP/nalanda-points-upgrade"
           mkdir -p "$staged_upgrade_dir"
           restore_upgrade_migrations() {
@@ -217,9 +221,12 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
           node apps/web/tests/points-upgrade.e2e.mjs assert
 
-          # Auth/PostgREST/Storage are required by the real RLS suite. Rebuild
-          # from an empty database as a separate check after the upgrade path.
-          supabase db reset --local --no-seed
+          # Destroy the upgrade fixture stack and create a fresh empty-volume
+          # stack for RLS/browser validation. Reusing the same stack for a
+          # second db reset can leave Auth behind Kong returning 502 even after
+          # the CLI reports that container restart as complete.
+          supabase stop --no-backup
+          supabase start
 
       - name: Lint database functions
         run: supabase db lint --local --schema public --level error --fail-on error
@@ -233,11 +240,48 @@ jobs:
           set -a
           source "$status_file"
           set +a
+          for attempt in $(seq 1 30); do
+            if curl -fsS --max-time 2 -o /dev/null "$API_URL/auth/v1/health" && \
+               curl -fsS --max-time 2 -o /dev/null -H "apikey: $ANON_KEY" "$API_URL/rest/v1/"; then
+              break
+            fi
+            if [[ "$attempt" == "30" ]]; then
+              echo "Local Supabase Auth/PostgREST did not become ready after database reset." >&2
+              exit 1
+            fi
+            sleep 2
+          done
           SUPABASE_URL="$API_URL" \
           SUPABASE_ANON_KEY="$ANON_KEY" \
           SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
           SUPABASE_RLS_E2E_CONFIRM_REF="127" \
           pnpm test:rls
+
+      - name: Install Playwright Chromium
+        run: pnpm --filter @nalanda/web exec playwright install --with-deps chromium
+
+      - name: Run browser course workflow against local Supabase
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          status_file="$RUNNER_TEMP/supabase-status.env"
+          supabase status -o env > "$status_file"
+          set -a
+          source "$status_file"
+          set +a
+          SUPABASE_URL="$API_URL" \
+          SUPABASE_ANON_KEY="$ANON_KEY" \
+          SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+          SUPABASE_JWT_SECRET="$JWT_SECRET" \
+          VITE_SUPABASE_URL="$API_URL" \
+          VITE_SUPABASE_ANON_KEY="$ANON_KEY" \
+          FEATURE_LEARNING_COURSES_ENABLED=true \
+          FEATURE_COURSE_SHARING_ENABLED=true \
+          FEATURE_COURSE_MARKET_ENABLED=true \
+          FEATURE_PRONUNCIATION_ENABLED=true \
+          AZURE_SPEECH_FAKE=true \
+          PUBLIC_ORIGIN=http://127.0.0.1:5173 \
+          pnpm --filter @nalanda/web test:playwright
 
       - name: Stop local Supabase
         if: always()
@@ -417,7 +461,7 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
             "$SERVER_USER@$SERVER_HOST" "install -d -m 700 /opt/nalanda/incoming/${GITHUB_SHA}"
           scp -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
-            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
+            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml scripts/smoke-azure-speech.mjs \
             "$SERVER_USER@$SERVER_HOST:/opt/nalanda/incoming/${GITHUB_SHA}/"
 
       - name: Activate release and automatically roll back application on failure
@@ -552,6 +596,7 @@ jobs:
           [[ -s "$incoming/nalanda-api.tar.gz" ]]
           [[ -s "$incoming/web.tgz" ]]
           [[ -s "$incoming/docker-compose.yml" ]]
+          [[ -s "$incoming/smoke-azure-speech.mjs" ]]
           gzip -t "$incoming/nalanda-api.tar.gz"
           tar -tzf "$incoming/web.tgz" >/dev/null
 
@@ -560,6 +605,18 @@ jobs:
           cp "$incoming/docker-compose.yml" "$next_compose"
           printf 'NALANDA_API_IMAGE=nalanda-api:%s\n' "$sha" > "$next_env"
           gunzip -c "$incoming/nalanda-api.tar.gz" | docker load
+
+          # The live Azure credential remains only in the production host's
+          # mode-600 .env. Validate TTS + pronunciation assessment from the new
+          # runtime before switching either the API container or Web symlink.
+          if ! docker run --rm \
+            --env-file "$root/.env" \
+            --entrypoint node \
+            -v "$incoming/smoke-azure-speech.mjs:/tmp/smoke-azure-speech.mjs:ro" \
+            "nalanda-api:$sha" /tmp/smoke-azure-speech.mjs; then
+            echo "Real Azure Speech smoke failed; the new release was not activated." >&2
+            exit 1
+          fi
 
           if ! docker compose --env-file "$next_env" -f "$next_compose" up -d --force-recreate api; then
             rollback_application "docker compose failed" || true

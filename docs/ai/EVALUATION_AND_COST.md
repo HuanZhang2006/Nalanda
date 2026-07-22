@@ -3,11 +3,11 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-07-10。当前 `/parse` 返回空内容，四个 `/generate/*` 返回固定 placeholder；未调用 Claude、未部署 RAG/队列、未记录 token/cost，也没有生产 AI 结果。
+> **状态基线：**2026-07-22。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter 已实现语音合成/评分与估算预算，但生产待启用，且不能冒充生成式 AI/文件解析闭环。
 
 ## 1. 范围和非目标
 
-范围包括 PPT/PPTX、DOC/DOCX、PDF、Markdown、HTML、TXT 的解析，以及知识清单、测验、知识图谱、模拟试卷；未来推荐功能接入前需扩展本文。评测既覆盖模型，也覆盖 parser、OCR、chunking、retrieval、schema validator、post-processing 和用户可见渲染。
+范围包括 PPT/PPTX、DOC/DOCX、PDF、JSON、Markdown、HTML、TXT、图片 OCR 的解析；Courses 按英语单词/知识点/阅读理解/题库训练选择 prompt 和结构化输出；以及知识清单、测验、知识图谱、模拟试卷。评测覆盖模型、parser/OCR、chunk/retrieval、schema validator、post-processing、人工确认和渲染。Azure Speech 作为独立供应商适配层单列治理。
 
 本文不承诺模型绝对正确，不用单一“准确率”掩盖不同错误，也不把供应商基准当 Nalanda 产品评测。费用数字来自运行时价格快照与账单，而不是写死在本文的易过期网页价格。
 
@@ -21,8 +21,46 @@
 - generation 函数忽略资料正文并返回固定 Pydantic 对象；
 - TypeScript 与 Python 的请求字段命名存在 camelCase/snake_case 差异，Web 也没有真实消费该契约；
 - 当前生产 compose 不包含 AI 服务，NestJS 没有 AI 模块、job 或服务间调用。
+- Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
+- Azure Speech 的 Nest adapter、fake tests、WAV 限制、配额/估算成本和熔断已经存在；它只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits，生产 flag 仍关闭。
 
-因此当前不得：收费扣 credits；把 placeholder 标为“AI 已生成”；把 health configured 当供应商可用；用真实私有课件做非受控测试；公开承诺准确率/成本/延迟；将目标 AI 文档写成已上线。
+因此当前不得：收费扣 credits；把 placeholder 或文件入口标为已生成/已解析；把 Azure TTS 当成课程 AI 导入；把 health/key/fake 当真实供应商可用；用真实私有课件/录音做非受控测试；公开承诺准确率/成本/延迟。
+
+### 2.1 Courses 文件导入的目标闭环（未实现）
+
+目标输入：PDF、DOC/DOCX、JSON、Markdown、HTML 和受控图片。文件先进入按用户隔离的 quarantine，服务端检查扩展名、MIME、magic bytes、大小/页数/像素、压缩炸弹和恶意内容，再解析/OCR；浏览器不能把原文直接送供应商，也不能让模型使用 service-role 或任意网络工具。
+
+类别路由必须显式版本化，不能用一个含糊 prompt 兼容四类：
+
+| 类别 | 首个结构化目标 | prompt/评测重点 |
+|---|---|---|
+| `english_vocabulary` | units → `term/translations[]`，可选 source/confidence；IPA 仍优先由 CMUdict/人工补 | 不拆坏短语、多义翻译、单元边界、重复、来源忠实 |
+| `knowledge_points` | 知识点、定义、标签、顺序、来源 | groundedness、遗漏、依赖顺序 |
+| `reading_comprehension` | 原文段落、问题、答案/证据、难度 | 引文范围、答案唯一性、版权展示 |
+| `question_bank` | 题干、题型、选项、答案、解析、来源 | 答案一致、干扰项、重复与学术诚信 |
+
+英语词表建议的版本化 JSON Schema 至少包含：`schemaVersion,category,sourceFileId,units[{suggestedName,sourceRange,words[{term,translations,sourceRange,confidence,warnings[]}]}],parseWarnings`。模型不得生成数据库 ID、owner、progress、points、publication 或可执行 HTML。输出先通过 schema、产品上限、重复/Unicode/XSS、来源对齐检查，再进入与文本导入相同的结构化编辑器；用户逐项确认后才调用整课保存事务。无人工确认不得创建课程、排日程、发布市场或发成长奖励。
+
+文件原文、OCR 临时图、prompt 和模型输出按 job 使用最短留存；普通日志只留 hash/内部 ID/版本/计量。删除课程或账号时必须覆盖 quarantine、临时文件、OCR、模型 cache、job payload 和供应商副本。任何把用户文件加入 eval/golden set 的行为都需要单独、可撤回授权。
+
+### 2.2 Courses 导入评测与成本门
+
+固定评测集按格式、数字/扫描、单元有无、表格/多栏/图片、词/短语、多翻译、中英混排、坏格式和恶意提示词分层。核心指标：
+
+- term 精确率/召回率/F1、phrase 边界、translation 集合精确/召回、unit boundary F1；
+- source range 有效/支持率、无来源新增词/翻译率、规范化重复率、schema/产品上限通过率；
+- 人工接受/编辑/删除率、每百词严重错误、按格式失败率、XSS/提示词注入成功数；
+- 每成功导入文件/页/图片/千字/确认词的 token、OCR/vision、重试、存储/egress 成本和 P50/P95 延迟。
+
+初版上线门：schema 与安全边界 100%；跨用户/secret 泄露和成功 prompt injection 为 0；无来源新增严重词义为 0；term F1 与 translation F1 的正式阈值必须由授权 golden baseline 后写入版本化配置；成本估算需覆盖 token、OCR/vision 页和重试，P90 相对账单误差≤20%。未建立样本量/阈值前只能内部 alpha，不能通过“看起来不错”开放文件按钮。
+
+运行时先估算最大页/图片/token/费用，让用户确认；超限拒绝或缩小范围，不事后无限扣 credits。v1 文本手工导入免费，未来 AI 导入是否收费须先接 credits hold/commit/release 和失败退款，points 绝不用于支付。
+
+### 2.3 Azure Speech 当前边界
+
+Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的≤8 秒 PCM WAV；不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
+
+当前持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。生产启用前需真实账号 smoke、区域/留存/DPA 审批和估算↔账单对账告警。Azure fake 只验证代码路径，不参与质量或供应商可用率报告。
 
 ## 3. 可追溯生成记录
 
@@ -218,6 +256,7 @@ job 状态至少：`queued/running/validating/succeeded/failed/canceled/expired`
 - 每种格式独立 parser、页/块来源、错误语义；
 - golden parse set 和按格式 baseline；
 - Storage 授权下载、临时文件清理和删除联动。
+- Courses 按四类选择版本化 prompt/schema；先实现英语词表的 PDF/DOCX/JSON/MD/HTML/图片 OCR，强制进入人工确认编辑器，其他类别继续禁用。
 
 ### Phase 2：单产物模型生成（不收费 beta）
 
@@ -241,8 +280,8 @@ job 状态至少：`queued/running/validating/succeeded/failed/canceled/expired`
 
 - [ADR-0004：核心 API 与 AI 分离](../adr/0004-core-api-and-ai-service-split.md)
 - [ADR-0007：第三方 AI 许可证](../adr/0007-third-party-ai-reference-licensing.md)
+- [ADR-0008：独立学习课程与 Azure Speech](../adr/0008-independent-learning-courses-and-azure-speech.md)
 - [安全策略](../../SECURITY.md)
 - [隐私与数据删除](../governance/PRIVACY_AND_DATA_DELETION.md)
 - [内容审核](../governance/CONTENT_MODERATION.md)
 - [points/credits/VIP/支付规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md)
-
