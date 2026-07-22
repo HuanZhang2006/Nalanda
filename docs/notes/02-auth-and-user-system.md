@@ -25,12 +25,12 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 
 ## 2. 数据层：profiles + RLS + 触发器
 
-迁移文件：`supabase/migrations/20260620000001_profiles.sql`（建表/RLS）与 `20260710000008_security_points_ledger.sql`（敏感列收口）。
+迁移文件：`supabase/migrations/20260620000001_profiles.sql`（建表/RLS）、`20260710000008_security_points_ledger.sql`（敏感列收口）与 `20260722000011_learning_courses.sql`（IANA 时区）。
 
-- 表 `public.profiles`：`id uuid PK → auth.users(id) ON DELETE CASCADE`，外加 `username/email/university/major/year/language/credits/points/level/level_name/vip_until/streak/streak_date/created_at/updated_at`。
+- 表 `public.profiles`：`id uuid PK → auth.users(id) ON DELETE CASCADE`，外加 `username/email/university/major/year/language/timezone/credits/points/level/level_name/vip_until/streak/streak_date/created_at/updated_at`；`timezone` 由数据库触发器校验为合法 IANA 名称。
 - **RLS**（数据库层强制，绕不过去）：
   - `profiles_select_own`：`auth.uid() = id` 才能 select。
-  - `profiles_update_own`：`auth.uid() = id` 才能 update 该行（`using` + `with check`）；表级 UPDATE 已从 authenticated 撤销，只授予 `username/university/major/year/language` 五列，防御触发器再次保护 points/credits/level/VIP/streak。
+  - `profiles_update_own`：`auth.uid() = id` 才能 update 该行（`using` + `with check`）；表级 UPDATE 已从 authenticated 撤销，只授予 `username/university/major/year/language/timezone` 六列，防御触发器再次保护 points/credits/level/VIP/streak。
 - **注册自动建档**：函数 `handle_new_user()`（`security definer`）在 `auth.users` 插入后，向 `profiles` 插一行（`username` 取邮箱 `@` 前缀）；触发器 `on_auth_user_created`。
 - **维护 `updated_at`**：`touch_updated_at()` + before-update 触发器。
 
@@ -43,8 +43,8 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 ### SupabaseAuthGuard（验签）
 - 从 `Authorization: Bearer` 取令牌。
 - **首选 JWKS**：`createRemoteJWKSet(<SUPABASE_URL>/auth/v1/.well-known/jwks.json)`，`jwtVerify(token, jwks, { issuer, audience:"authenticated" })`，支持 ES256/RS256。
-- **回退 HS256**：若 JWKS 验不过且配了 `SUPABASE_JWT_SECRET`，用密钥验 HS256（兼容旧项目）。
-- **要求 `sub`**：无 `sub` 一律 401（anon/service_role 这类无 sub 的 key 不会被当成用户）。
+- **回退 HS256**：若 JWKS 验不过且配了 `SUPABASE_JWT_SECRET`，只允许 HS256，并与 JWKS 路径一致校验 `issuer=<SUPABASE_URL>/auth/v1` 和 `audience=authenticated`。
+- **要求用户 claims**：`sub` 必须是 UUID 且 `role=authenticated`，否则一律 401（anon/service_role key 不会被当成用户）。
 - 通过后写入 `req.user = { id: sub, email, role }`。
 
 ### 接口
@@ -53,7 +53,7 @@ NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = 
 
 > **关键认知**：本项目 Supabase 用**非对称密钥（ES256）**签发用户令牌（令牌头 `alg:ES256, kid:...`）。最初守卫只做 HS256 + JWT secret，导致真实用户令牌验不过、`/api/me` 401。改用 JWKS 后通过。教训：先看令牌头的 `alg` 再决定验签方式。
 
-当前 HS256 回退只限制算法/签名，没有与 JWKS 路径一样校验 issuer/audience；如继续保留回退，应补齐一致验证。
+HS256 回退已有错误 issuer/audience 的单元回归；真实 JWKS 拉取、密钥轮换与完整登录链路仍由一次性 Supabase/线上 smoke 验证。
 
 ## 4. 前端：客户端 + 带令牌请求 + 登录界面
 

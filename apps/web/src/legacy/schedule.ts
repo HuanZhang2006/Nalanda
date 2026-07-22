@@ -3,16 +3,25 @@
 // 关联课程/资料(联动 Materials)，从课程一键智能填充复习任务。Supabase 直连 + RLS。
 import { ICON } from "./icons";
 import { syncShellUser } from "./profile";
+import { apiJson } from "../lib/api";
 
 let sb = null, USER = null, toastFn = () => {};
 let rootEl = null;
-const state = { loading: true, error: "", tab: "today", tasks: [], goals: [], courses: [], materials: [], streak: 0 };
+const DEVICE_TIMEZONE = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+const state = { loading: true, error: "", reviewError: "", tab: "today", tasks: [], reviews: [], goals: [], courses: [], materials: [], streak: 0, timezone: DEVICE_TIMEZONE };
 let sessionVersion = 0;
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const pad = (n) => String(n).padStart(2, "0");
 const dstr = (d) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-const todayStr = () => dstr(new Date());
+const todayStr = () => {
+  try {
+    const parts = Object.fromEntries(new Intl.DateTimeFormat("en-US", {
+      timeZone: state.timezone, year: "numeric", month: "2-digit", day: "2-digit",
+    }).formatToParts(new Date()).map((part) => [part.type, part.value]));
+    return `${parts.year}-${parts.month}-${parts.day}`;
+  } catch { return dstr(new Date()); }
+};
 const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate() + n); return x; };
 const WK = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
 const courseById = (id) => state.courses.find((c) => c.id === id);
@@ -22,7 +31,7 @@ export function initSchedule(supabase, user, toast) {
   sessionVersion++;
   sb = supabase; USER = user; toastFn = toast || (() => {});
   rootEl = null;
-  Object.assign(state, { loading: true, error: "", tab: "today", tasks: [], goals: [], courses: [], materials: [], streak: 0 });
+  Object.assign(state, { loading: true, error: "", reviewError: "", tab: "today", tasks: [], reviews: [], goals: [], courses: [], materials: [], streak: 0, timezone: DEVICE_TIMEZONE });
 }
 export function mountSchedule(el) { rootEl = el; if (!rootEl) return; render(); load(); }
 
@@ -32,18 +41,24 @@ async function load() {
   state.loading = true; render();
   try {
     const since = dstr(addDays(new Date(), -14));
-    const [t, g, c, m, p] = await Promise.all([
+    const [t, g, c, m, p, reviews] = await Promise.all([
       sb.from("study_tasks").select("*").gte("due_date", since).order("due_date", { ascending: true }),
       sb.from("study_goals").select("*").order("exam_date", { ascending: true }),
       sb.from("courses").select("id,code,name,color").order("created_at", { ascending: true }),
       sb.from("materials").select("id,name,course_id,type").order("created_at", { ascending: false }),
-      sb.from("profiles").select("streak").eq("id", USER.id).single(),
+      sb.from("profiles").select("streak,timezone").eq("id", USER.id).single(),
+      apiJson("/api/learning-review-schedules")
+        .then((data) => ({ data, error: "" }))
+        .catch((error) => ({ data: [], error: error?.message || "课程复习日程加载失败" })),
     ]);
     if (currentVersion !== sessionVersion) return;
     const failed = [t, g, c, m, p].find((result) => result.error);
     if (failed) throw failed.error;
     state.tasks = t.data || []; state.goals = g.data || []; state.courses = c.data || []; state.materials = m.data || [];
+    state.reviews = (reviews.data || []).filter((review) => review.status !== "cancelled");
+    state.reviewError = reviews.error;
     state.streak = (p.data && p.data.streak) || 0;
+    state.timezone = (p.data && p.data.timezone) || DEVICE_TIMEZONE;
     state.error = "";
   } catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
   if (currentVersion !== sessionVersion) return;
@@ -52,11 +67,13 @@ async function load() {
 
 function stats() {
   const today = todayStr();
-  const wkEnd = dstr(addDays(new Date(), 6));
+  const wkEnd = dstr(addDays(new Date(`${today}T12:00:00`), 6));
   const wk = state.tasks.filter((t) => t.due_date >= today && t.due_date <= wkEnd);
-  const wkDone = wk.filter((t) => t.done).length;
-  const overdue = state.tasks.filter((t) => !t.done && t.due_date < today).length;
-  return { wkTotal: wk.length, wkDone, overdue };
+  const wkReviews = state.reviews.filter((review) => review.dueDate >= today && review.dueDate <= wkEnd);
+  const wkDone = wk.filter((t) => t.done).length + wkReviews.filter((review) => review.status === "completed").length;
+  const overdue = state.tasks.filter((t) => !t.done && t.due_date < today).length
+    + state.reviews.filter((review) => review.status === "pending" && review.dueDate < today).length;
+  return { wkTotal: wk.length + wkReviews.length, wkDone, overdue };
 }
 
 function goalsBar() {
@@ -93,36 +110,53 @@ function taskRow(t) {
   </div>`;
 }
 
+function reviewRow(review) {
+  const done = review.status === "completed";
+  const labels = (review.skills || []).map((skill) => skill === "pronunciation" ? "发音" : skill === "translation" ? "翻译" : "拼写").join(" · ");
+  return `<div class="row gap-10" style="padding:9px 10px;border-radius:10px;border:1px solid var(--accent-line);background:var(--accent-tint);margin-bottom:8px;${done ? "opacity:.6" : ""}">
+    <div style="width:20px;height:20px;border-radius:6px;display:grid;place-items:center;background:${done ? "var(--good)" : "var(--accent)"};color:var(--on-accent)">${done ? ICON("check") : ICON("clock")}</div>
+    <div class="fill"><div style="font-size:13.5px;font-weight:650;${done ? "text-decoration:line-through" : ""}">复习 ${esc(review.courseTitle || "英语单词课程")} · ${esc(review.unitName || "词表")}</div>
+      <div class="faint" style="font-size:11.5px;margin-top:3px">独立课程复习 · ${esc(labels)} · ${review.scope === "all" ? "全部单词" : "尚未熟练"} · 不触发普通任务积分</div></div>
+    ${done ? `<span class="chip">已完成</span>` : `<button class="btn btn-primary btn-sm" data-go="courses" data-course-id="${review.courseId}" data-unit-id="${review.unitId}" data-schedule-id="${review.id}">${ICON("play")}<span>开始复习</span></button>`}
+  </div>`;
+}
+
 function body() {
   if (state.loading) return `<div class="card card-pad muted">加载中…</div>`;
   if (state.error) return `<div class="card card-pad" style="color:var(--pink)">出错了：${esc(state.error)}</div>`;
   const today = todayStr();
   if (state.tab === "today") {
     const overdue = state.tasks.filter((t) => !t.done && t.due_date < today);
+    const overdueReviews = state.reviews.filter((review) => review.status === "pending" && review.dueDate < today);
     const todays = state.tasks.filter((t) => t.due_date === today);
-    return `${overdue.length ? `<div class="sec-h" style="margin-top:0"><h2 class="serif" style="font-size:16px;color:var(--pink)">逾期 ${overdue.length}</h2></div>${overdue.map(taskRow).join("")}` : ""}
-      <div class="sec-h" style="margin-top:${overdue.length ? 18 : 0}px"><h2 class="serif" style="font-size:16px">今天</h2><button class="btn btn-sm" data-sc="addtask" data-date="${today}">${ICON("plus")}<span>加任务</span></button></div>
-      ${todays.length ? todays.map(taskRow).join("") : `<div class="card card-pad muted" style="text-align:center">今天没有任务，享受或加点学习目标。</div>`}`;
+    const todayReviews = state.reviews.filter((review) => review.dueDate === today);
+    return `${overdue.length || overdueReviews.length ? `<div class="sec-h" style="margin-top:0"><h2 class="serif" style="font-size:16px;color:var(--pink)">逾期 ${overdue.length + overdueReviews.length}</h2></div>${overdue.map(taskRow).join("")}${overdueReviews.map(reviewRow).join("")}` : ""}
+      <div class="sec-h" style="margin-top:${overdue.length || overdueReviews.length ? 18 : 0}px"><h2 class="serif" style="font-size:16px">今天</h2><button class="btn btn-sm" data-sc="addtask" data-date="${today}">${ICON("plus")}<span>加任务</span></button></div>
+      ${todays.length || todayReviews.length ? todays.map(taskRow).join("") + todayReviews.map(reviewRow).join("") : `<div class="card card-pad muted" style="text-align:center">今天没有任务或课程复习。</div>`}`;
   }
   if (state.tab === "week") {
     const days = [];
-    for (let i = 0; i < 7; i++) { const d = addDays(new Date(), i); days.push(dstr(d)); }
+    for (let i = 0; i < 7; i++) { const d = addDays(new Date(`${today}T12:00:00`), i); days.push(dstr(d)); }
     return `<div class="grid" style="grid-template-columns:repeat(7,1fr);gap:10px">${days.map((ds, i) => {
       const dt = new Date(ds);
       const list = state.tasks.filter((t) => t.due_date === ds);
+      const reviews = state.reviews.filter((review) => review.dueDate === ds);
       return `<div class="day-col" style="min-height:140px">
         <div class="row between" style="margin-bottom:6px"><b style="font-size:12.5px">${i === 0 ? "今天" : WK[dt.getDay()]}</b><span class="faint" style="font-size:11px">${dt.getMonth() + 1}/${dt.getDate()}</span></div>
         ${list.map((t) => `<div data-sc="toggle" data-id="${t.id}" class="task ${t.done ? "done" : ""}" style="cursor:pointer">${esc(t.title)}</div>`).join("")}
+        ${reviews.map((review) => `<div class="task ${review.status === "completed" ? "done" : ""}" data-go="courses" data-course-id="${review.courseId}" data-unit-id="${review.unitId}" data-schedule-id="${review.id}" style="cursor:pointer;border-left-color:var(--good)">复习 ${esc(review.courseTitle || "英语词汇")}</div>`).join("")}
         <button class="btn btn-sm" data-sc="addtask" data-date="${ds}" style="width:100%;justify-content:center;margin-top:8px">${ICON("plus")}</button>
       </div>`;
     }).join("")}</div>`;
   }
   // all
   const upcoming = state.tasks.filter((t) => !t.done || t.due_date >= today).sort((a, b) => a.due_date.localeCompare(b.due_date));
-  if (!upcoming.length) return `<div class="card card-pad muted" style="text-align:center">还没有任务。</div>`;
+  const upcomingReviews = state.reviews.filter((review) => review.status !== "completed" || review.dueDate >= today);
+  if (!upcoming.length && !upcomingReviews.length) return `<div class="card card-pad muted" style="text-align:center">还没有任务或课程复习。</div>`;
   const byDate = {};
   upcoming.forEach((t) => { (byDate[t.due_date] = byDate[t.due_date] || []).push(t); });
-  return Object.keys(byDate).sort().map((d) => `<div class="sec-h" style="margin-top:14px"><h2 class="serif" style="font-size:15px">${d === today ? "今天" : d}</h2></div>${byDate[d].map(taskRow).join("")}`).join("");
+  const reviewsByDate = {}; upcomingReviews.forEach((review) => { (reviewsByDate[review.dueDate] = reviewsByDate[review.dueDate] || []).push(review); });
+  return [...new Set([...Object.keys(byDate), ...Object.keys(reviewsByDate)])].sort().map((d) => `<div class="sec-h" style="margin-top:14px"><h2 class="serif" style="font-size:15px">${d === today ? "今天" : d}</h2></div>${(byDate[d] || []).map(taskRow).join("")}${(reviewsByDate[d] || []).map(reviewRow).join("")}`).join("");
 }
 
 function render() {
@@ -132,7 +166,7 @@ function render() {
   rootEl.innerHTML = `<div class="wrap wrap-wide">
     <div class="page-head">
       <div><div class="eyebrow">Study plan</div><h1 class="page-title">学习计划</h1>
-        <p class="page-sub">安排每日任务，关联课程与资料；完成任务积累积分与连续学习天数。</p></div>
+        <p class="page-sub">普通学习任务与 Courses 独立复习日程合并展示；只有普通任务使用任务积分规则。</p></div>
       <div class="row gap-8">
         <button class="btn" data-sc="autoplan">${ICON("sparkles")}<span>智能填充</span></button>
         <button class="btn" data-sc="addgoal">${ICON("exam")}<span>新建目标</span></button>
@@ -145,6 +179,8 @@ function render() {
       <div class="stat"><div class="stat-ic">${ICON("flame")}</div><div class="stat-n" style="font-size:22px">${state.streak}</div><div class="stat-l">连续学习(天)</div></div>
       <div class="stat"><div class="stat-ic">${ICON("clock")}</div><div class="stat-n" style="font-size:22px;${st.overdue ? "color:var(--pink)" : ""}">${st.overdue}</div><div class="stat-l">逾期</div></div>
     </div>
+
+    ${state.reviewError ? `<div role="alert" class="course-feedback wrong" style="margin-bottom:16px">课程复习日程暂不可用：${esc(state.reviewError)}</div>` : ""}
 
     ${goalsBar()}
     <div class="tabs">${tabs.map(([k, l]) => `<button class="tab ${state.tab === k ? "active" : ""}" data-sc="settab" data-t="${k}">${l}</button>`).join("")}</div>
@@ -269,7 +305,7 @@ async function autoplan() {
   if (!state.courses.length) { toastFn("先在 Materials 建课程，才能智能填充"); return; }
   toastFn("生成复习任务中…");
   try {
-    const rows = state.courses.slice(0, 6).map((c, i) => ({ title: `复习 ${c.code || c.name}`, due_date: dstr(addDays(new Date(), i)), course_id: c.id }));
+    const rows = state.courses.slice(0, 6).map((c, i) => ({ title: `复习 ${c.code || c.name}`, due_date: dstr(addDays(new Date(`${todayStr()}T12:00:00`), i)), course_id: c.id }));
     const { error } = await client.from("study_tasks").insert(rows);
     if (error) throw error;
     if (currentVersion !== sessionVersion) return;

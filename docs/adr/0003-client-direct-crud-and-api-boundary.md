@@ -34,10 +34,10 @@ NestJS 必须再次验证 JWT、对象归属、DTO 和幂等键，不得因为�
 
 ## 当前实现与目标差距
 
-- **当前：**Web 直连 Supabase 实现多项业务；NestJS 只有 health/register/me。
+- **当前：**旧模块继续由 Web 直连 Supabase；NestJS 除 health/register/me 外，已承担 Courses 内容写入、会话/成长、Speech、分享/市场和公开脱敏读取。该增量生产待启用。
 - **已收口：**Profile 只允许资料列更新，points/credits/level/VIP/streak 与内部 RPC 已封闭；Materials、Community、Schedule、Notifications、Feedback、Profile 的主要请求会检查 Supabase `{ error }`，并用会话版本阻止跨账号迟到响应；CI 已有双用户 RLS 权限矩阵。
 - **当前违规风险：**feedback status、notifications 服务端字段和帖子快照/冗余计数仍受过宽 owner policy 影响；商业/AI/审核/删除流程仍不能沿用普通直连 CRUD。
-- **目标：**继续做列级权限/受限服务入口；新增 AI、支付、审核、删除编排 API；生成 OpenAPI SDK，并扩展 API 权限/契约测试。
+- **目标：**继续做旧表列级收口；把 AI、支付、通用审核和删除编排进入 API；为现有 Courses 契约生成 OpenAPI/SDK，并扩展 HTTP/权限测试。
 
 ## 验证与复审
 

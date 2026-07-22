@@ -41,6 +41,7 @@ server {
     server_name nalanda.online;
     root /opt/nalanda/web; index index.html;
     location /api/ {                       # NestJS 全局前缀 /api
+        client_max_body_size 10m;           # 合法的 2,000 词课程 JSON
         proxy_pass http://127.0.0.1:8411;
         proxy_set_header Host $host;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
@@ -51,6 +52,7 @@ server {
 ```
 
 - 只**新增文件**，从不改既有站点；每次 `nginx -t` 通过后 `systemctl reload`（不 restart）。
+- API/Nest JSON 与 nginx 都使用 10 MB 上限，避免 nginx 默认 1 MB 提前拒绝合法大词表；朗读 multipart 仍由 API 单独限制为 2 MB。
 - TLS：`certbot --nginx -d nalanda.online`（DNS 已指向本机），自动加 443 + 跳转，自动续期。
 
 ## 4. CI/CD 流水线
@@ -58,13 +60,14 @@ server {
 文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 在无新 migration 时发布应用，若含新 migration 则验证后停止。数据库 owner 必须在对应 `main` commit 上先手动运行只读 `plan_database_migrations`，复核 history/dry-run 后再单独运行 `apply_database_migrations`；成功发布数据库后才继续应用发布。两个开关不能同时选择；都不选时只重发应用。纯文档变更由 docs workflow 处理。
 
 步骤逻辑：
-1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API readiness unit）、全部 workspace build。
-2. **数据库门**：先执行 0007→0010 历史数据升级、opening reversal 与发布断言夹具，再做完整本地 Supabase 空库重建 + lint，并实际运行双用户 RLS/Storage/points E2E。
+1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API/Courses unit）、全部 workspace build。
+2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，随后销毁 fixture 栈并从全新空卷启动 latest/lint；Auth/PostgREST 有界 readiness 通过后运行双用户 RLS/Storage/points/Courses E2E，并以 Azure fake 跑 Playwright Courses。
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
 5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
-6. **激活**：API 本地 health 的 Supabase JWKS/PostgREST 双探针通过后原子切换 Web symlink，再从公网验证 Web/API。
-7. **应用回退**：任一 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；新 release 始终要求 Supabase 双探针为 `ok`，回退验证只要求旧 API 进程契约可用且 `/api/me` 未认证返回 401，以兼容尚未提供依赖级 health 的旧 image；数据库不自动逆向。
+6. **真实 Azure gate**：生产主机从 mode-600 `.env` 向新 image 注入 key/region，用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment 与音素结果；失败时尚未切换 release。
+7. **激活**：API 本地 health 的 Supabase JWKS/PostgREST 双探针通过后原子切换 Web symlink，再从公网验证 Web/API。
+8. **应用回退**：任一激活后 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；新 release 始终要求 Supabase 双探针为 `ok`，回退验证只要求旧 API 进程契约可用且 `/api/me` 未认证返回 401，以兼容尚未提供依赖级 health 的旧 image；数据库不自动逆向。
 
 Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
 
@@ -73,7 +76,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 ### Secrets / 密钥分层
 - **repository Actions Secrets（当前实际位置）**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`；`production` environment 会在部署 job 中使用这些仓库级 Secrets。后续如迁移为 environment Secrets，应一次性迁移整组并验证。
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
-- **服务器 `/opt/nalanda/.env`**：`SUPABASE_URL`、`SUPABASE_SERVICE_ROLE_KEY`、`SUPABASE_JWT_SECRET`——只在服务器，不进 CI、不入库。
+- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与 Azure key/region/配额——只在服务器，不进 Web/仓库；production flags 在迁移/smoke 前保持关闭。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。

@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
+import { createHash, randomUUID } from "node:crypto";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import WebSocket from "ws";
 
@@ -84,14 +85,22 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       if (deleted.error) cleanupErrors.push(`User B cleanup: ${deleted.error.message}`);
     }
     if (admin && aId && bId) {
-      const [entryRemnants, stateRemnants] = await Promise.all([
+      const [entryRemnants, stateRemnants, courseRemnants, attemptRemnants, badgeRemnants, usageRemnants] = await Promise.all([
         admin.from("point_entries").select("id").in("user_id", [aId, bId]),
         admin.from("point_event_states").select("business_key").in("user_id", [aId, bId]),
+        admin.from("learning_courses").select("id").in("user_id", [aId, bId]),
+        admin.from("learning_attempts").select("id").in("user_id", [aId, bId]),
+        admin.from("user_badge_awards").select("badge_code").in("user_id", [aId, bId]),
+        admin.from("learning_speech_usage").select("id").in("user_id", [aId, bId]),
       ]);
       if (entryRemnants.error) cleanupErrors.push(`Ledger cleanup check: ${entryRemnants.error.message}`);
       else if (entryRemnants.data.length) cleanupErrors.push(`Ledger cleanup check: ${entryRemnants.data.length} rows remain`);
       if (stateRemnants.error) cleanupErrors.push(`Point state cleanup check: ${stateRemnants.error.message}`);
       else if (stateRemnants.data.length) cleanupErrors.push(`Point state cleanup check: ${stateRemnants.data.length} rows remain`);
+      for (const [label, result] of [["Learning courses", courseRemnants], ["Learning attempts", attemptRemnants], ["Badge awards", badgeRemnants], ["Speech user links", usageRemnants]] as const) {
+        if (result.error) cleanupErrors.push(`${label} cleanup check: ${result.error.message}`);
+        else if (result.data.length) cleanupErrors.push(`${label} cleanup check: ${result.data.length} rows remain`);
+      }
     }
     if (cleanupErrors.length) throw new Error(cleanupErrors.join("; "));
   }, 30_000);
@@ -553,4 +562,234 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(allEntries.error).toBeNull();
     expect(allEntries.data!.reduce((sum, entry) => sum + entry.amount, 0)).toBe(projectedProfile.data!.points);
   }, 60_000);
+
+  it("验证学习课程隔离、候补池、跨日熟练、复习日程、徽章和 +20 指纹幂等", async () => {
+    const courseId = randomUUID();
+    const unitId = randomUUID();
+    const terms = Array.from({ length: 20 }, (_, index) => ({
+      id: randomUUID(), term: `word-${String(index + 1).padStart(2, "0")}`, translations: [`翻译${index + 1}`], ipa: null,
+    }));
+    const payload = {
+      id: courseId, title: "RLS Vocabulary", category: "english_vocabulary", hasUnits: false, locale: "en-US",
+      units: [{ id: unitId, name: "默认单元", isSystem: true, words: terms }],
+    };
+    const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
+      const result = await admin.rpc(name, args);
+      expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
+      return result.data as T;
+    };
+    const startReview = (targetCourseId: string, targetUnitId: string, skills: string[], scheduleId: string | null = null) => rpc<string>("learning_start_session", {
+      p_user_id: aId, p_course_id: targetCourseId, p_unit_id: targetUnitId, p_mode: "review",
+      p_skills: skills, p_scope: "all", p_schedule_id: scheduleId,
+    });
+    const answer = (sessionId: string, word: { id: string; term: string; translations: string[] }, skill: string, correct = true) => rpc("learning_record_attempt", {
+      p_user_id: aId, p_session_id: sessionId, p_word_id: word.id, p_skill: skill,
+      p_answer: skill === "pronunciation" ? { wordId: correct ? word.id : terms.find((entry) => entry.id !== word.id)!.id }
+        : skill === "translation" ? { translations: correct ? word.translations : ["错误"] }
+          : { text: correct ? word.term : "wrong" },
+    });
+    const finishReview = async (sessionId: string, words: typeof terms, skills: string[], firstWrong = false) => {
+      for (const skill of skills) {
+        if (skill === "pronunciation" && firstWrong) {
+          await answer(sessionId, words[0], skill, false);
+          for (const word of words.slice(1)) await answer(sessionId, word, skill);
+          const queued = await admin.from("learning_sessions").select("state,stage").eq("id", sessionId).single();
+          expect(queued.error).toBeNull(); expect(queued.data!.stage).toBe("pronunciation");
+          expect(queued.data!.state).toMatchObject({ queue: [words[0].id], cursor: 0, nextQueue: [], round: 2 });
+          await answer(sessionId, words[0], skill);
+        } else {
+          for (const word of words) await answer(sessionId, word, skill);
+        }
+      }
+      const completed = await admin.from("learning_sessions").select("stage,active,completed_at").eq("id", sessionId).single();
+      expect(completed.data).toMatchObject({ stage: "completed", active: false });
+      expect(completed.data!.completed_at).toBeTruthy();
+    };
+
+    expect(await rpc<string>("learning_upsert_course", { p_user_id: aId, p_payload: payload })).toBe(courseId);
+    expect((await a.from("learning_courses").select("id,title").eq("id", courseId)).data).toEqual([{ id: courseId, title: "RLS Vocabulary" }]);
+    expect((await b.from("learning_courses").select("id").eq("id", courseId)).data).toEqual([]);
+    expect((await b.from("learning_course_words").select("id").eq("course_id", courseId)).data).toEqual([]);
+
+    // Every mutation and transactional helper remains server-only.
+    expect((await a.from("learning_courses").insert({ title: "forged", category: "english_vocabulary" })).error).not.toBeNull();
+    expect((await a.from("learning_word_progress").update({ learned_at: new Date().toISOString() }).eq("user_id", aId)).error).not.toBeNull();
+    expect((await a.from("user_badge_awards").insert({ user_id: aId, badge_code: "vocab_words_gold" })).error).not.toBeNull();
+    expect((await a.from("learning_speech_usage").select("id").limit(1)).error).not.toBeNull();
+    expect((await a.rpc("learning_upsert_course", { p_user_id: aId, p_payload: payload })).error).not.toBeNull();
+    expect((await a.rpc("learning_record_attempt", { p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id, p_skill: "spelling", p_answer: { text: terms[0].term } })).error).not.toBeNull();
+    expect((await a.rpc("learning_profile_summary", { p_user_id: aId })).error).not.toBeNull();
+    expect((await a.rpc("learning_publish_course", { p_user_id: aId, p_course_id: courseId, p_description: "forged",
+      p_author_name: aName, p_rights_declared: true, p_daily_limit: 5 })).error).not.toBeNull();
+
+    const validTimezone = await a.from("profiles").update({ timezone: "Pacific/Kiritimati" }).eq("id", aId);
+    expect(validTimezone.error).toBeNull();
+    expect((await a.from("profiles").update({ timezone: "Not/A_Timezone" }).eq("id", aId)).error).not.toBeNull();
+
+    const concurrentStartArgs = { p_user_id: aId, p_course_id: courseId, p_unit_id: unitId, p_mode: "review",
+      p_skills: ["spelling"], p_scope: "all", p_schedule_id: null };
+    const concurrentStarts = await Promise.all([
+      admin.rpc("learning_start_session", concurrentStartArgs),
+      admin.rpc("learning_start_session", concurrentStartArgs),
+    ]);
+    expect(concurrentStarts.every((result) => result.error == null)).toBe(true);
+    expect(concurrentStarts[0].data).toBe(concurrentStarts[1].data);
+    expect((await admin.from("learning_sessions").delete().eq("id", concurrentStarts[0].data)).error).toBeNull();
+
+    const tasksBefore = await a.from("study_tasks").select("id", { count: "exact", head: true });
+    const sourceSessionId = randomUUID();
+    expect((await admin.from("learning_sessions").insert({ id: sourceSessionId, user_id: aId, course_id: courseId, unit_id: unitId,
+      mode: "initial", scope: "all", selected_skills: ["pronunciation", "translation", "spelling"], stage: "completed",
+      active: false, completed_at: new Date().toISOString() })).error).toBeNull();
+    const schedules = await rpc<any[]>("learning_schedule_reviews", { p_user_id: aId, p_unit_id: unitId,
+      p_source_session_id: sourceSessionId, p_offsets: [3, 7] });
+    expect(schedules).toHaveLength(2);
+    expect(schedules.every((schedule) => schedule.source_session_id === sourceSessionId)).toBe(true);
+    expect((await a.from("learning_review_schedules").select("id").eq("unit_id", unitId)).data).toHaveLength(2);
+    expect((await b.from("learning_review_schedules").select("id").eq("unit_id", unitId)).data).toEqual([]);
+    expect((await a.from("learning_review_schedules").insert({ user_id: aId, course_id: courseId, unit_id: unitId, due_date: "2030-01-01" })).error).not.toBeNull();
+
+    const beforePoints = await a.from("profiles").select("points").eq("id", aId).single();
+    const first = await startReview(courseId, unitId, ["pronunciation", "translation", "spelling"], schedules[0].id);
+    await finishReview(first, terms, ["pronunciation", "translation", "spelling"], true);
+    expect((await a.from("learning_review_schedules").select("status,completed_session_id").eq("id", schedules[0].id).single()).data)
+      .toEqual({ status: "completed", completed_session_id: first });
+    let dates = await a.from("learning_word_progress").select("pronunciation_review_dates,translation_review_dates,spelling_review_dates,learned_at,review_count").eq("word_id", terms[0].id).single();
+    expect(dates.data?.pronunciation_review_dates).toHaveLength(1); expect(dates.data?.learned_at).toBeNull();
+
+    // Completing another review on the same local date raises review_count but
+    // never adds a second mastery date.
+    const sameDay = await startReview(courseId, unitId, ["pronunciation", "translation", "spelling"]);
+    await finishReview(sameDay, terms, ["pronunciation", "translation", "spelling"]);
+    dates = await a.from("learning_word_progress").select("pronunciation_review_dates,translation_review_dates,spelling_review_dates,learned_at,review_count").eq("word_id", terms[0].id).single();
+    expect(dates.data?.pronunciation_review_dates).toHaveLength(1); expect(dates.data?.review_count).toBe(2); expect(dates.data?.learned_at).toBeNull();
+
+    // UTC+14 and UTC-11 are one calendar day apart at the same instant. The
+    // second review therefore proves local-date persistence without waiting.
+    expect((await a.from("profiles").update({ timezone: "Pacific/Pago_Pago" }).eq("id", aId)).error).toBeNull();
+    const secondDate = await startReview(courseId, unitId, ["pronunciation", "translation", "spelling"]);
+    await finishReview(secondDate, terms, ["pronunciation", "translation", "spelling"]);
+    dates = await a.from("learning_word_progress").select("pronunciation_review_dates,translation_review_dates,spelling_review_dates,learned_at,review_count").eq("word_id", terms[0].id).single();
+    expect(new Set(dates.data?.pronunciation_review_dates)).toHaveProperty("size", 2);
+    expect(dates.data?.translation_review_dates).toHaveLength(2); expect(dates.data?.spelling_review_dates).toHaveLength(2);
+    expect(dates.data?.learned_at).toBeTruthy(); expect(dates.data?.review_count).toBe(3);
+
+    const profileAfter = await a.from("profiles").select("points").eq("id", aId).single();
+    expect(profileAfter.data!.points).toBe(beforePoints.data!.points + 20);
+    const learningSummary = await rpc<any>("learning_profile_summary", { p_user_id: aId });
+    expect(learningSummary).toMatchObject({ courses: expect.any(Number), learnedWords: expect.any(Number), reviewDays: 2 });
+    expect(learningSummary.learnedWords).toBeGreaterThanOrEqual(20);
+    expect(learningSummary.badges.map((badge: any) => badge.code)).toEqual(expect.arrayContaining(["vocab_words_bronze", "vocab_courses_bronze"]));
+    expect((await b.from("user_badge_awards").select("badge_code").eq("user_id", aId)).data).toEqual([]);
+    expect((await a.from("study_tasks").select("id", { count: "exact", head: true })).count).toBe(tasksBefore.count);
+
+    // Sharing/market records are not anonymous PostgREST surfaces.
+    const shareToken = "active-share-token-for-rls-e2e";
+    const shareHash = createHash("sha256").update(shareToken).digest("hex");
+    const shareId = await rpc<string>("learning_create_share", { p_user_id: aId, p_course_id: courseId,
+      p_token_hash: shareHash, p_author_name: aName });
+    expect((await b.from("learning_course_shares").select("id").eq("id", shareId)).data).toEqual([]);
+    const guest = createClient(url, anonKey, clientOptions);
+    expect((await guest.from("learning_course_shares").select("id").eq("id", shareId)).error).not.toBeNull();
+    const publication = await rpc<any>("learning_publish_course", { p_user_id: aId, p_course_id: courseId,
+      p_description: "A free RLS course", p_author_name: aName, p_rights_declared: true, p_daily_limit: 5 });
+    expect((await guest.from("learning_course_publications").select("id").eq("id", publication.id)).error).not.toBeNull();
+    expect((await admin.from("learning_course_publications").update({ title: "mutable?" }).eq("id", publication.id)).error).not.toBeNull();
+    expect((await a.from("learning_course_reports").insert({ reporter_id: aId, publication_id: publication.id, category: "spam" })).error).not.toBeNull();
+    const report = await rpc<any>("learning_create_report", { p_user_id: aId, p_publication_id: publication.id,
+      p_share_id: null, p_category: "spam", p_details: "test report", p_daily_limit: 20, p_alert_threshold: 3 });
+    expect(report).toMatchObject({ status: "open", openCount: 1, thresholdReached: false });
+
+    const shareCloneId = randomUUID(); const shareCloneUnitId = randomUUID();
+    const shareClonePayload = { ...payload, id: shareCloneId, title: "Shared clone", units: [{ ...payload.units[0],
+      id: shareCloneUnitId, words: terms.map((word) => ({ ...word, id: randomUUID() })) }] };
+    expect(await rpc<string>("learning_clone_share", { p_user_id: aId, p_payload: shareClonePayload, p_token_hash: shareHash })).toBe(shareCloneId);
+    expect((await a.from("learning_courses").select("can_republish,origin_share_id,origin_author_name").eq("id", shareCloneId).single()).data)
+      .toMatchObject({ can_republish: false, origin_share_id: shareId, origin_author_name: aName });
+    await rpc("learning_revoke_share", { p_user_id: aId, p_share_id: shareId });
+    const revokedClone = await admin.rpc("learning_clone_share", { p_user_id: aId,
+      p_payload: { ...shareClonePayload, id: randomUUID() }, p_token_hash: shareHash });
+    expect(revokedClone.error).not.toBeNull();
+
+    // A marketplace clone is an independent private snapshot with zero
+    // progress and no right to republish. Its same vocabulary fingerprint can
+    // never create a second +20 ledger entry.
+    const cloneId = randomUUID(); const cloneUnitId = randomUUID();
+    const cloneTerms = terms.map((word) => ({ ...word, id: randomUUID() }));
+    const clonePayload = { ...payload, id: cloneId, title: "RLS Vocabulary clone",
+      units: [{ ...payload.units[0], id: cloneUnitId, words: cloneTerms }] };
+    expect(await rpc<string>("learning_clone_course", { p_user_id: aId, p_payload: clonePayload,
+      p_origin_publication_id: publication.id, p_origin_author_name: aName })).toBe(cloneId);
+    const cloned = await a.from("learning_courses").select("can_republish,origin_publication_id,origin_author_name").eq("id", cloneId).single();
+    expect(cloned.data).toMatchObject({ can_republish: false, origin_publication_id: publication.id, origin_author_name: aName });
+    expect((await admin.from("learning_course_publications").select("clone_count").eq("id", publication.id).single()).data?.clone_count).toBe(1);
+    const cloneProgress = await a.from("learning_word_progress").select("word_id,learned_at,wrong_count,review_count").in("word_id", cloneTerms.map((word) => word.id));
+    expect(cloneProgress.data).toHaveLength(20); expect(cloneProgress.data!.every((row) => row.learned_at == null && row.wrong_count === 0 && row.review_count === 0)).toBe(true);
+
+    expect((await admin.from("learning_word_progress").update({ pronunciation_review_dates: ["2026-01-01", "2026-01-02"],
+      translation_review_dates: ["2026-01-01", "2026-01-02"], spelling_review_dates: ["2026-01-01", "2026-01-02"],
+      learned_at: new Date().toISOString() }).eq("user_id", aId).in("word_id", cloneTerms.map((word) => word.id))).error).toBeNull();
+    const cloneSession = await startReview(cloneId, cloneUnitId, ["pronunciation"]);
+    await finishReview(cloneSession, cloneTerms, ["pronunciation"]);
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(beforePoints.data!.points + 20);
+    const completionEntries = await a.from("point_entries").select("id,source_id,amount").eq("event_type", "learning_course_completed");
+    expect(completionEntries.data).toHaveLength(1); expect(completionEntries.data![0].amount).toBe(20);
+
+    const masterySeed = { initial_recognition_seen: true, initial_pronunciation_passed: true,
+      initial_translation_passed: true, initial_spelling_passed: true,
+      pronunciation_review_dates: ["2026-01-01", "2026-01-02"], translation_review_dates: ["2026-01-01", "2026-01-02"],
+      spelling_review_dates: ["2026-01-01", "2026-01-02"], learned_at: new Date().toISOString() };
+    const progressForFirst = () => a.from("learning_word_progress")
+      .select("initial_recognition_seen,initial_pronunciation_passed,initial_translation_passed,initial_spelling_passed,pronunciation_review_dates,translation_review_dates,spelling_review_dates,learned_at,review_count")
+      .eq("word_id", terms[0].id).single();
+
+    // Editing resets exactly the affected learning abilities while preserving
+    // historical error/review counters. Rename and reordering reset nothing.
+    expect((await admin.from("learning_word_progress").update(masterySeed).eq("word_id", terms[0].id)).error).toBeNull();
+    const activeForEdit = await startReview(courseId, unitId, ["spelling"]);
+    await answer(activeForEdit, terms[0], "spelling");
+    const translationEdited: any = structuredClone(payload);
+    translationEdited.units[0].words[0].translations = ["新翻译"];
+    await rpc("learning_upsert_course", { p_user_id: aId, p_payload: translationEdited });
+    expect((await admin.from("learning_sessions").select("active,state").eq("id", activeForEdit).single()).data)
+      .toMatchObject({ active: false, state: { abortedReason: "course_content_updated" } });
+    expect((await admin.from("learning_attempts").select("id", { count: "exact", head: true }).eq("session_id", activeForEdit)).count).toBe(1);
+    let editedProgress = await progressForFirst();
+    expect(editedProgress.data).toMatchObject({ initial_recognition_seen: true, initial_pronunciation_passed: true,
+      initial_translation_passed: false, initial_spelling_passed: true, pronunciation_review_dates: ["2026-01-01", "2026-01-02"],
+      translation_review_dates: [], spelling_review_dates: ["2026-01-01", "2026-01-02"], learned_at: null, review_count: 3 });
+
+    expect((await admin.from("learning_word_progress").update(masterySeed).eq("word_id", terms[0].id)).error).toBeNull();
+    const stableSession = await startReview(courseId, unitId, ["spelling"]);
+    await rpc("learning_rename_course", { p_user_id: aId, p_course_id: courseId, p_title: "Renamed vocabulary" });
+    const reordered = structuredClone(translationEdited); reordered.units[0].words.reverse();
+    await rpc("learning_upsert_course", { p_user_id: aId, p_payload: reordered });
+    expect((await admin.from("learning_sessions").select("active").eq("id", stableSession).single()).data?.active).toBe(true);
+    editedProgress = await progressForFirst();
+    expect(editedProgress.data).toMatchObject({ initial_pronunciation_passed: true, initial_translation_passed: true,
+      initial_spelling_passed: true, pronunciation_review_dates: ["2026-01-01", "2026-01-02"],
+      translation_review_dates: ["2026-01-01", "2026-01-02"], spelling_review_dates: ["2026-01-01", "2026-01-02"], review_count: 3 });
+
+    const ipaEdited = structuredClone(translationEdited); ipaEdited.units[0].words[0].ipa = "/wɝd/";
+    await rpc("learning_upsert_course", { p_user_id: aId, p_payload: ipaEdited });
+    expect((await admin.from("learning_sessions").select("active").eq("id", stableSession).single()).data?.active).toBe(false);
+    editedProgress = await progressForFirst();
+    expect(editedProgress.data).toMatchObject({ initial_pronunciation_passed: false, initial_translation_passed: true,
+      initial_spelling_passed: true, pronunciation_review_dates: [], translation_review_dates: ["2026-01-01", "2026-01-02"],
+      spelling_review_dates: ["2026-01-01", "2026-01-02"], learned_at: null, review_count: 3 });
+
+    expect((await admin.from("learning_word_progress").update(masterySeed).eq("word_id", terms[0].id)).error).toBeNull();
+    const termEdited = structuredClone(ipaEdited); termEdited.units[0].words[0].term = "changed-word";
+    await rpc("learning_upsert_course", { p_user_id: aId, p_payload: termEdited });
+    editedProgress = await progressForFirst();
+    expect(editedProgress.data).toMatchObject({ initial_recognition_seen: false, initial_pronunciation_passed: false,
+      initial_translation_passed: false, initial_spelling_passed: false, pronunciation_review_dates: [],
+      translation_review_dates: [], spelling_review_dates: [], learned_at: null, review_count: 3 });
+
+    // The already-cloned snapshot is independent from every source edit.
+    expect((await a.from("learning_course_words").select("term").eq("course_id", cloneId).eq("position", 0).single()).data?.term).toBe(terms[0].term);
+    expect((await admin.from("learning_courses").delete().eq("id", courseId)).error).toBeNull();
+    expect((await a.from("point_entries").select("id").eq("event_type", "learning_course_completed")).data).toHaveLength(1);
+    expect((await a.from("user_badge_awards").select("badge_code").in("badge_code", ["vocab_words_bronze", "vocab_courses_bronze"])).data).toHaveLength(2);
+  }, 120_000);
 });

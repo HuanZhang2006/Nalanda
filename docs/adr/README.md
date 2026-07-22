@@ -3,7 +3,7 @@
 > **本文内容：**列出 Nalanda 的架构决策记录、状态、编号约定和维护流程。  
 > **作用：**保存“为什么这样选”的上下文，使后续开发能区分已接受决策、待验证提案与已被替代方案。  
 > **何时更新：**新增、接受、否决、废弃或替代 ADR 时；ADR 状态或所有者变化时。  
-> **状态基线：**2026-07-10；ADR 记录决策，不证明目标能力已经实现。
+> **状态基线：**2026-07-22；ADR 记录决策，不证明目标能力已经在生产启用。
 
 ## 决策索引
 
@@ -16,6 +16,7 @@
 | [0005](0005-economy-domain-separation.md) | points、credits、VIP 与法币/创作者应付分账 | Accepted | 产品规则已定，目标账本与 Stripe 未实现 |
 | [0006](0006-production-topology.md) | 当前生产采用 nginx + Web/API 容器 + Supabase Cloud | Accepted | 当前已实现；2G/完整 AI 拓扑仍是候选 |
 | [0007](0007-third-party-ai-reference-licensing.md) | 未获商业许可前不复制 NC 许可 AI 代码 | Accepted | 持续约束 |
+| [0008](0008-independent-learning-courses-and-azure-speech.md) | 独立学习课程模型 + 服务端 Azure Speech 适配层 | Accepted | 代码/0011–0013 已实现，待受保护生产发布 |
 
 ## 状态定义
 
@@ -36,4 +37,3 @@
 3. 涉及安全、隐私、支付、AI 或数据迁移时，由相应负责人参与评审。
 4. Accepted 后不改写历史结论；若结论变化，新建 ADR 并把旧 ADR 标为 Superseded。
 5. 允许补充勘误、实现链接和状态，但必须保留原决定与日期。
-
