@@ -48,7 +48,7 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 `production-database` environment 还需 `SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 和 `DB_BACKUP_ENCRYPTION_KEY`。该 environment 已创建并只允许 `main`；当前私有仓库套餐不支持 required reviewer，升级套餐前必须只通过人工发起的 `workflow_dispatch` 发布数据库，并按[数据库发布手册](../../docs/operations/DATABASE_RELEASE_ROLLBACK.md)保存 owner 复核记录。数据库 migration history 的首次 baseline 不能由 CI 猜测。
 
-> **2026-07-21 Supabase 暂停事故与恢复：** 项目暂停期间，Ref `xsjlmyarvyloktoclvwn` 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；恢复后 DNS、JWKS 和服务器 service-role PostgREST 探针恢复。随后 0008–0010 已按受保护流程发布；0011–0013 仍是待发布增量。不得因依赖暂停而降低 health 门禁。
+> **2026-07-21 Supabase 暂停事故与恢复：** 项目暂停期间，生产 Ref 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；恢复后 DNS、JWKS 和服务器 service-role PostgREST 探针恢复。0008–0010 随后发布，0011–0013 又于 2026-07-22 按受保护流程发布。不得因依赖暂停而降低 health 门禁。
 
 首次增加 `SERVER_SSH_KNOWN_HOSTS` 时，在可信网络取得 host key，用 `ssh-keygen -lf` 查看 fingerprint，并通过服务器控制台/云厂商记录进行第二通道核对后，才把完整 known_hosts 行写入 Secret。不要直接把未经核验的 `ssh-keyscan` 输出当作信任根。`DB_BACKUP_ENCRYPTION_KEY` 应使用密码学随机值生成，并在 GitHub 之外的受控恢复保管中保存副本。
 
@@ -58,7 +58,7 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求真实 Azure gate 成功、API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。
 
-仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。CI 不覆盖 certbot 管理的生产站点文件；首次开放 Courses 前必须人工同步这一行、执行 `nginx -t` 后 reload，否则 nginx 默认 1 MB 会拒绝一部分合法大词表。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
+仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。CI 不覆盖 certbot 管理的生产站点文件；生产站点已于 2026-07-22 同步该值并通过 `nginx -t`。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
 
 纯 Markdown 变更由 [docs workflow](../../.github/workflows/docs.yml) 校验文档定位字段和相对链接，不重新部署应用。
 

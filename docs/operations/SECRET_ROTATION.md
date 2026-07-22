@@ -29,7 +29,7 @@
 | 服务器 SSH authorized key | 服务器 | 接受 CI/管理员连接 | 公钥 | 当前使用 |
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
-| `AZURE_SPEECH_KEY` | API `.env` / 目标生产 server env | Courses TTS 与 pronunciation assessment | 否 | adapter 已实现；生产待启用 |
+| `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses TTS 与 pronunciation assessment | 否 | 生产当前使用；2026-07-22 Japan East gate 已通过 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
@@ -167,11 +167,11 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 禁止把 key 送入 Web 或记录模型请求中的原始课件正文。轮换不应改变模型/提示词版本；若同时改变，评测无法隔离原因。
 
-## 11. Azure Speech key（实现已存在，生产待启用）
+## 11. Azure Speech key（生产当前使用）
 
 `AZURE_SPEECH_KEY` 只在 Nest API。region/voice 不是秘密，但必须与 key 所属 resource 一致。自动测试的 `AZURE_SPEECH_FAKE=true` 绝不能作为轮换验证。
 
-计划轮换：
+当前生产 region 为 `japaneast`、voice 为 `en-US-JennyNeural`，fake=false；密钥值不得写入本文或日志。计划轮换：
 
 1. 记录 Azure resource/region、key ID（不记值）、月预算和当前错误率；确认 Azure 当前是否提供两把可交替 key。
 2. 若无安全重叠，先关闭 `FEATURE_PRONUNCIATION_ENABLED` 或打开 `AZURE_SPEECH_CIRCUIT_OPEN`；文本课程、进度和浏览器朗读继续。

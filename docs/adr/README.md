@@ -16,7 +16,7 @@
 | [0005](0005-economy-domain-separation.md) | points、credits、VIP 与法币/创作者应付分账 | Accepted | 产品规则已定，目标账本与 Stripe 未实现 |
 | [0006](0006-production-topology.md) | 当前生产采用 nginx + Web/API 容器 + Supabase Cloud | Accepted | 当前已实现；2G/完整 AI 拓扑仍是候选 |
 | [0007](0007-third-party-ai-reference-licensing.md) | 未获商业许可前不复制 NC 许可 AI 代码 | Accepted | 持续约束 |
-| [0008](0008-independent-learning-courses-and-azure-speech.md) | 独立学习课程模型 + 服务端 Azure Speech 适配层 | Accepted | 代码/0011–0013 已实现，待受保护生产发布 |
+| [0008](0008-independent-learning-courses-and-azure-speech.md) | 独立学习课程模型 + 服务端 Azure Speech 适配层 | Accepted | 0011–0013 与应用已于 2026-07-22 受保护发布 |
 
 ## 状态定义
 

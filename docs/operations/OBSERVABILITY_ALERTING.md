@@ -39,9 +39,9 @@
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
 | FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
-| Courses API | 代码已实现，生产待 flags | 稳定 API error code、DB facts、container log | 无 route/阶段/恢复/熟练度指标；health 不查 0011–0013 |
-| Azure Speech | adapter 已实现，生产待启用 | provider error code、speech usage 预算行、熔断 flag | 无真实 latency/可用率/账单对账告警；录音不得进日志 |
-| Course Market | 代码已实现，生产待 flag | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
+| Courses API | 生产已启用 | 稳定 API error code、DB facts、container log | 无 route/阶段/恢复/熟练度指标；health 不查 learning schema |
+| Azure Speech | 生产已启用（Japan East） | provider error code、speech usage 预算行、熔断 flag、发布前真实 gate | 无持续 latency/可用率/账单对账告警；录音不得进日志 |
+| Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
 | Redis/BullMQ | 未接入当前业务 | hybrid compose 有目标配置 | 无队列/worker 指标 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
 | 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
@@ -146,7 +146,7 @@ tail -n 200 /var/log/nginx/error.log
 | API health 200，但登录/业务查询失败 | 浏览器→Supabase、JWT、RLS、迁移 | Supabase logs、项目 URL、JWKS、RLS/表结构、前端 console |
 | 只上传/预览失败 | Storage policy/对象/签名 URL | bucket、路径首段、对象 policy、过期时间、浏览器错误 |
 | 发布后静态页面旧、API 新 | artifact/nginx cache/上传 | `/opt/nalanda/web` mtime、workflow artifact、浏览器 cache |
-| Courses 统一 disabled/404 | API flags/0011–0013 未发布 | 先查 production history 与服务器 `.env`，不要开放客户端 RPC/表写 |
+| Courses 统一 disabled/404 | flag/circuit 配置漂移或 release 回退 | 先查 production history、当前 image 与服务器 `.env`；不要开放客户端 RPC/表写 |
 | 课程可学但无发音/评分 | Azure flag/key/region/circuit/预算 | 按 error code 和 speech usage 判断；保持浏览器朗读降级 |
 | 刷新后会话丢失/重复 | active unique/session RPC/API | 查同 user/course active 行、state queue/cursor、API 5xx；禁止前端造 progress |
 | 课程进度或 +20 异常 | progress/growth/fingerprint | 对账 attempts、三组日期、learned_at、point business_key 与 source；暂停 Courses 奖励写入 |
