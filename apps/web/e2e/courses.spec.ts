@@ -71,15 +71,19 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.getByRole("button", { name: /复制文本词表/ }).click();
   await page.locator("#new-course-title").fill(courseTitle);
   await page.getByLabel("有单元").check();
+  await page.getByLabel("整份多单元词表").check();
   await page.getByRole("button", { name: "继续" }).click();
-  await page.getByRole("button", { name: /新建单元/ }).click();
-  await page.getByLabel("Unit 1 词表").fill("apple 苹果\napple 水果");
-  await page.getByLabel("Unit 2 词表").fill("orange 橙子\npear 梨");
+  await page.getByLabel("整份多单元词表").fill("Starter Unit 1\napple 苹果\napple 水果\nStarter Unit 2\norange 橙子\npear 梨");
   await page.getByRole("button", { name: "解析并进入编辑" }).click();
   await expect(page.getByText(/DUPLICATE_TERM/)).toBeVisible();
-  await page.getByLabel("Unit 1 词表").fill("apple 苹果\nbanana 香蕉");
+  await page.getByLabel("整份多单元词表").fill("Starter Unit 1\napple 苹果\nbanana 香蕉\nStarter Unit 2\norange 橙子\npear 梨");
   await page.getByRole("button", { name: "解析并进入编辑" }).click();
   await expect(page.getByRole("heading", { name: "确认课程内容" })).toBeVisible();
+
+  const content = page.locator(".content");
+  await expect.poll(() => content.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await content.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+  await expect(page.getByRole("button", { name: /添加单元/ })).toBeInViewport();
 
   const pearHandle = page.getByRole("button", { name: "拖动 pear" });
   const orangeRow = page.locator(".course-word-row").filter({ has: page.locator('input[aria-label="英文"][value="orange"]') });
