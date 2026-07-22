@@ -125,6 +125,16 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - Nginx 生产站点已设置 `client_max_body_size 10m` 并通过 `nginx -t`。人工排障产生的临时环境副本和 smoke 脚本已安全擦除。
 - 明确未随本次上线的能力：PDF/DOC/DOCX/JSON/Markdown/HTML/图片 OCR/AI 导入、其他三类课程、FastAPI 生成闭环、credits/VIP/支付。
 
+### 2026-07-22 Courses 视觉、文本导入与滚动修复
+
+- main SHA：`d31af905b44ca4df39c70e271a7c7a51612916e3`；包含此前 Courses/Course Market 的共享设计 token 与中英文 locale 收敛，以及本次整份多单元导入、编辑器单元批量追加、独立翻译字段和共享滚动修复。
+- [PR #14 quality/database/browser run](https://github.com/1590703336/Nalanda/actions/runs/29932310309) 通过 docs/lint/typecheck、Web/API tests、build、0007→latest、latest 空库重建/database lint、一次性本地 Supabase 双用户 RLS/Storage/Courses E2E 和 Chromium Playwright；浏览器流程使用 Azure fake。
+- [main apply/deploy run](https://github.com/1590703336/Nalanda/actions/runs/29932840103) 重复全部门禁，在无新增 migration 的情况下跳过生产数据库变更，并发布不可变 release `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`。本次没有修改 API、环境变量、业务规则或安全边界。
+- main 发布仍在新 image 激活前执行服务器 `.env` 驱动的真实 Azure Speech gate；这证明当次既有供应商路径可用，但不改变“PR Playwright 使用 fake”以及“本次 UI 功能未修改语音”的边界。
+- 独立公网 smoke：Web `/` 为 200，`/api/health` 返回 `status=ok`、`service=nalanda-api`、`deps.supabase=ok`，未认证 `/api/me` 为 401。生产 Chromium 用用户给出的完整文本成功生成 `Starter Unit 1` 与 `Starter Unit 2`，Review/Edit 显示独立翻译输入并可批量追加。
+- 滚动实测：应用 `.content` 为 `overflow-y:auto`，`clientHeight=1127`、`scrollHeight=1632`，可滚到底并操作“添加单词/批量粘贴单词/添加单元”；修复位于共享 `.main/.content` flex 高度链，因此也覆盖其他使用同一应用壳的长页面。
+- 后续只修改 Markdown 的同步提交走独立 docs workflow，不产生新的 Web/API release；不得把文档合并本身描述为再次部署应用。
+
 ## 8. 运维速查
 
 ```bash
