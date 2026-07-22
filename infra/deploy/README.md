@@ -19,9 +19,10 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
         │ scp / ssh
         ▼
 服务器 /opt/nalanda/
+  ├─ 新 image + 服务器 .env → 真实 Azure TTS/评分 gate
   ├─ docker compose（.deploy.env 选择不可变 API image）
   ├─ releases/<release-id>/web + web 原子 symlink
-  └─ .env（Supabase 密钥，仅服务器持有，不入库/不进 CI）
+  └─ .env（Supabase/Azure 密钥，仅服务器持有，不入库/不进 CI）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
 ```
 
@@ -53,9 +54,9 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 ## 流程
 
-推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check → 自动暂存 0008 及以后迁移并验证 0007→最新升级 → 空库重建 → db lint → 本地真实 RLS/Storage/points/Courses E2E → Azure fake Playwright Courses 主流程。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动选中 `plan_database_migrations` 只读核对远端 history/dry-run，再单独选中 `apply_database_migrations`；数据库发布成功后才继续部署应用。应用 smoke 失败会恢复上一 Web symlink/API image，但不会危险地自动逆向数据库。
+推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check → 自动暂存 0008 及以后迁移并验证 0007→最新升级 → 空库重建 → db lint → 本地真实 RLS/Storage/points/Courses E2E → Azure fake Playwright Courses 主流程。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动选中 `plan_database_migrations` 只读核对远端 history/dry-run，再单独选中 `apply_database_migrations`；数据库发布成功后才继续部署应用。上传完成后，生产主机用自己的 mode-600 `.env` 在新 image 中运行 `scripts/smoke-azure-speech.mjs`，真实 TTS/评分失败时不会切换 API/Web；后续应用 smoke 失败会恢复上一 Web symlink/API image，数据库不会危险地自动逆向。
 
-手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求 API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。
+手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求真实 Azure gate 成功、API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。
 
 仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。CI 不覆盖 certbot 管理的生产站点文件；首次开放 Courses 前必须人工同步这一行、执行 `nginx -t` 后 reload，否则 nginx 默认 1 MB 会拒绝一部分合法大词表。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
 

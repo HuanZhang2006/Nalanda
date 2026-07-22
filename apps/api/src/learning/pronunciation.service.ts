@@ -139,7 +139,10 @@ export class PronunciationService {
     const payload = await response.json().catch(() => null) as any;
     if (!response.ok || !payload) throw new BadGatewayException({ code: "SPEECH_PROVIDER_ERROR", message: "朗读评分服务暂不可用" });
     const best = payload.NBest?.[0];
-    const assessment = best?.PronunciationAssessment;
+    // Microsoft documents scores below `PronunciationAssessment`, while the
+    // live REST response in some regions also returns the same fields directly
+    // on NBest/Word/Phoneme. Accept both provider shapes explicitly.
+    const assessment = best?.PronunciationAssessment || best;
     const accuracy = num(assessment?.AccuracyScore);
     const pronunciationScore = num(assessment?.PronScore);
     if (accuracy == null || pronunciationScore == null) {
@@ -149,7 +152,8 @@ export class PronunciationService {
       const direct = Array.isArray(entry.Phonemes) ? entry.Phonemes : [];
       const nested = (entry.Syllables || []).flatMap((syllable: any) => syllable.Phonemes || []);
       return (direct.length ? direct : nested).map((phoneme: any) => {
-        const score = num(phoneme.PronunciationAssessment?.AccuracyScore) ?? 0;
+        const phonemeAssessment = phoneme.PronunciationAssessment || phoneme;
+        const score = num(phonemeAssessment.AccuracyScore) ?? 0;
         return { phoneme: String(phoneme.Phoneme || ""), accuracyScore: score, needsPractice: score < 70 };
       });
     }).filter((entry: PronunciationPhoneme) => entry.phoneme);
@@ -158,7 +162,7 @@ export class PronunciationService {
       fluencyScore: num(assessment.FluencyScore),
       completenessScore: num(assessment.CompletenessScore),
       pronunciationScore,
-      errorType: (best.Words || []).map((entry: any) => entry.PronunciationAssessment?.ErrorType)
+      errorType: (best.Words || []).map((entry: any) => (entry.PronunciationAssessment || entry).ErrorType)
         .find((value: unknown) => value && value !== "None") || null,
       phonemes,
     };

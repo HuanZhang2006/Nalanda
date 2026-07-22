@@ -461,7 +461,7 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
             "$SERVER_USER@$SERVER_HOST" "install -d -m 700 /opt/nalanda/incoming/${GITHUB_SHA}"
           scp -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
-            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
+            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml scripts/smoke-azure-speech.mjs \
             "$SERVER_USER@$SERVER_HOST:/opt/nalanda/incoming/${GITHUB_SHA}/"
 
       - name: Activate release and automatically roll back application on failure
@@ -596,6 +596,7 @@ jobs:
           [[ -s "$incoming/nalanda-api.tar.gz" ]]
           [[ -s "$incoming/web.tgz" ]]
           [[ -s "$incoming/docker-compose.yml" ]]
+          [[ -s "$incoming/smoke-azure-speech.mjs" ]]
           gzip -t "$incoming/nalanda-api.tar.gz"
           tar -tzf "$incoming/web.tgz" >/dev/null
 
@@ -604,6 +605,18 @@ jobs:
           cp "$incoming/docker-compose.yml" "$next_compose"
           printf 'NALANDA_API_IMAGE=nalanda-api:%s\n' "$sha" > "$next_env"
           gunzip -c "$incoming/nalanda-api.tar.gz" | docker load
+
+          # The live Azure credential remains only in the production host's
+          # mode-600 .env. Validate TTS + pronunciation assessment from the new
+          # runtime before switching either the API container or Web symlink.
+          if ! docker run --rm \
+            --env-file "$root/.env" \
+            --entrypoint node \
+            -v "$incoming/smoke-azure-speech.mjs:/tmp/smoke-azure-speech.mjs:ro" \
+            "nalanda-api:$sha" /tmp/smoke-azure-speech.mjs; then
+            echo "Real Azure Speech smoke failed; the new release was not activated." >&2
+            exit 1
+          fi
 
           if ! docker compose --env-file "$next_env" -f "$next_compose" up -d --force-recreate api; then
             rollback_application "docker compose failed" || true
