@@ -73,13 +73,13 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | 测试文件 | 当前覆盖 |
 |---|---|
 | `apps/web/src/App.auth.test.ts` | 登录会话切换、登出/登录 loading 复位与认证错误恢复 |
-| `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、8 个导航模块、Create、退出、resize listener 重挂与跨账号清理 |
+| `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、9 个导航模块、Create、退出、resize listener 重挂与跨账号清理 |
 | `apps/web/src/legacy/account-modules.test.ts` | 通知未读/已读、错误处理、反馈提交、Profile 加载/编辑/壳同步 |
 | `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功 |
 | `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
-| `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS 和上限 |
-| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、多单元纠错、排序、保存失败、进度切换、会话恢复和 API error |
+| `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
+| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、逐单元与整份多单元纠错、独立翻译字段、编辑器批量追加/已有词重复、排序、保存失败、进度切换、会话恢复和 API error |
 
 ### 4.2 mock 的边界
 
@@ -280,7 +280,11 @@ PUBLIC_ORIGIN=http://127.0.0.1:5173 \
 pnpm --filter @nalanda/web test:playwright
 ```
 
-确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元粘贴→重复错误修正→指针拖动与键盘排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%。当前不覆盖真实麦克风/Azure、两个真实日期的复习、分享撤销 UI 或全部治理操作；这些由 API/RLS/供应商 smoke 分层验证。
+确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→粘贴整份多单元文本→触发并修正单元内重复错误→进入 Review Course Content→断言共享 `.content` 的 `scrollHeight > clientHeight`→滚到最底并断言“添加单元”处于 viewport→指针拖动与键盘排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%。这是真 Chromium 布局/滚动断言，不是 jsdom 视觉模拟；但它不是截图视觉回归，也未覆盖所有桌面/移动、深浅色组合。
+
+同一修复的 jsdom 层分别断言：整份导入生成预期单元、多个翻译渲染为独立输入、编辑器批量追加成功，以及与已有词重复时出现 `DUPLICATE_EXISTING_TERM` 且不追加。jsdom 不计算真实尺寸，所以“底部操作是否可达”必须保留在 Playwright 层。
+
+当前不覆盖真实麦克风/Azure、两个真实日期的复习、分享撤销 UI 或全部治理操作；这些由 API/RLS/供应商 smoke 分层验证。
 
 失败时保留 Playwright trace/screenshot/video artifact，先区分 UI selector、API envelope、migration/RLS 和 webServer 启动问题。CI 会自动安装带系统依赖的 Chromium；本地只需当前平台浏览器包。
 
@@ -361,6 +365,14 @@ node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 `pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure 是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布会把无密钥脚本上传到主机，并在新 image 激活前从服务器 `.env` 运行真实 provider gate；CI fake 不能代替该结果，provider gate 也不能代替 Playwright。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
+
+### 9.1 2026-07-22 Courses 导入/滚动修复证据
+
+- PR run `29932310309` 通过 quality、0007→latest upgrade、latest clean rebuild/database lint、一次性本地 Supabase 双用户 RLS/Storage/Courses E2E，以及 Chromium Playwright Courses workflow。
+- main run `29932840103` 重复同一套门禁后完成不可变应用发布 `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`。
+- 当次本地全量 `pnpm check` 通过；Web Vitest 为 32 passed、4 个外部 RLS suite 在默认模式正确 skip，API Vitest 为 28 passed。计数是该提交的执行快照，不是永久测试清单。
+- PR/Playwright 的 Azure 是 fake，真实数据库边界只来自一次性本地 Supabase job。main 发布在激活前另执行既有真实 Azure gate，但本次 UI 修复没有改变语音代码；不得把任一 fake/jsdom 结果描述为真实供应商或真实数据库 E2E。
+- 发布后独立 smoke 得到 Web 200、`/api/health` 的 `deps.supabase=ok` 和未认证 `/api/me` 401；真浏览器另验证用户示例拆为两个 Starter Unit、多个翻译独立显示、编辑器批量追加及底部操作可达。
 
 目标 CI 分层：
 

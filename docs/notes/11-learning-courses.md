@@ -4,7 +4,7 @@
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech、分享市场或测试边界变化时。
-> - **状态基线**：2026-07-22。0011–0013 与应用已通过受保护 plan/apply 上线；文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-07-22。0011–0013 已上线，Courses 文本导入与滚动修复已随 main `d31af90` 发布；文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -12,16 +12,23 @@ Courses 使用 `learning_*` 独立模型，不复用 Materials 的 `courses/mate
 
 Courses、学习/复习、公开分享与 Course Market 共用 Web 的 `nalanda-locale` 状态：未保存偏好时默认英文，可在顶栏切换中文并持久化到浏览器。课程专属 CSS 只定义编辑器、卡片网格和学习状态机布局；字体、色彩、基础按钮/表单/卡片/弹窗、深浅主题和交互状态均复用 `@nalanda/ui/nalanda.css` 的设计 token，不能另建品牌主题。
 
-文件入口列出 PDF、DOC/DOCX、JSON、Markdown、HTML 与图片，但只显示“AI 解析即将推出”，不会上传、解析或调用模型。当前可靠输入只有逐单元粘贴文本。
+文件入口列出 PDF、DOC/DOCX、JSON、Markdown、HTML 与图片，但只显示“AI 解析即将推出”，不会上传、解析或调用模型。当前可靠输入只有**手工粘贴文本**，可以逐单元粘贴，也可以一次粘贴整份多单元词表。
 
 ## 2. 文本解析与结构化编辑
 
 - 规则：忽略空行，用每行最后一个 ASCII 空格切分英文与翻译，翻译再以 `/` 分隔；`take part in 参加/参与` 是合法短语。
 - 解析器返回行、列、错误码和消息，覆盖缺少分隔符、空翻译、连续 `/`、重复翻译、非法英文、超长、单元内规范化重复及 XSS/Unicode 边界；任一错误都会阻止保存并标红原位置。
+- 有单元课程可选择“逐个单元粘贴”或“整份多单元词表”。整份模式自动识别末尾带编号、字母或罗马数字的 `Unit`、`Lesson`、`Chapter`、`Module`、`Section` 标题（例如 `Starter Unit 1`），以及带编号的“单元/课时/章节”；任意自定义名称必须写成 `[Custom name]` 或 Markdown 标题 `# Custom name`，否则会被当作词条。该显式规则用于消除“任意一行究竟是标题还是词条”的歧义。
+- 整份模式要求第一条词汇前已有单元标题，并校验空单元、1–80 字符单元名和最多 100 个单元；词条错误的行列仍指向整份原文，不会重置为单元内相对位置。
 - 课程名必填；每课 4–2,000 个不同规范化词/短语、最多 100 单元、每词最多 10 个翻译。无单元模式仍保存一个隐藏默认单元。
-- 编辑器可改课程名、单元名、英文、翻译和手工 IPA，可删除、跨单元移动，并用 dnd-kit 鼠标/触摸/键盘排序；同时提供显式上移/下移按钮。
+- 编辑器可改课程名、单元名、英文、独立翻译文本块和手工 IPA，可删除、跨单元移动，并用 dnd-kit 鼠标/触摸/键盘排序；同时提供显式上移/下移按钮。每个翻译都有独立输入框和删除按钮，并可逐项新增到最多 10 个，不再把 `东西/事情` 当成一个不可拆分字段显示。
+- Review/Edit Course 的每个单元既可逐个添加词，也可打开“批量粘贴单词”面板追加整段词表。追加时使用同一解析规则，若与该单元已有规范化英文重复则返回 `DUPLICATE_EXISTING_TERM`，存在任一错误或会超过全课 2,000 词时不会部分写入编辑状态。
 - CMUdict 在 API 内完成美式 ARPAbet→IPA；短语逐词组合。无法解析时保存 `null` 并显示“音标待补充”。
 - 整门课程通过 `learning_upsert_course` 单事务保存。英文变化重置三项能力，翻译变化只重置翻译，IPA 变化只重置发音；排序、移动和改名不重置，也不终止 active session。增删单元/词或修改词内容时，事务会把旧 active session 标为终止并保留已有 attempts，而不是删除答题事实；用户随后从新内容开始新会话。
+
+### 2.1 长内容滚动约定
+
+生产应用壳固定为一屏高，`.main` 与 `.content` 都必须保留 `min-height: 0`，由 `.content { overflow-y: auto; }` 统一负责页面纵向滚动。Courses 创建、Review/Edit、学习和市场页面不得再建立冲突的全屏高度或外层 `overflow: hidden`；页面较长时，底部“添加单词”“批量粘贴单词”“添加单元”和保存操作必须可通过同一滚动容器到达。弹窗仍使用自身受限高度和内部滚动，不能把背景页滚动误当作弹窗滚动。
 
 ## 3. 学习与恢复
 
@@ -69,7 +76,11 @@ TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参�
 
 ## 9. 验收边界
 
-仓库测试覆盖解析器、编辑器、排序、状态恢复、候补池、跨日熟练度、编辑重置、积分指纹、API 鉴权/限流/Azure fake/公开脱敏、双用户 RLS、Playwright 主流程及 0007 升级夹具。复习日程必须引用本人该单元已完成的 initial session；由日程启动时服务端固定使用其 skills/scope，并在 review session 完成事务里写回 completed session。普通 Vitest/jsdom 不等于真实数据库 E2E；本地无 Supabase CLI/Docker 时 RLS 和 Playwright 会跳过或无法启动，只有一次性 Supabase CI 成功后才能称真实 E2E 已通过。
+仓库测试覆盖逐单元/整份多单元解析、全局错误行列、编辑器批量追加与已有词重复、独立翻译字段、排序、状态恢复、候补池、跨日熟练度、编辑重置、积分指纹、API 鉴权/限流/Azure fake/公开脱敏、双用户 RLS、Playwright 主流程及 0007 升级夹具。Chromium 流程会实际断言 `.content` 可滚动、滚到底后“添加单元”进入 viewport，再继续保存和完整学习流程；这项布局验证不能由 jsdom 的零布局模型替代。
+
+2026-07-22 的 PR run `29932310309` 与 main run `29932840103` 均通过 quality、0007→latest、空库重建、数据库 lint、一次性本地 Supabase 的双用户 RLS/Storage/Courses E2E 和 Chromium Playwright。Playwright 使用 Azure fake；main 发布另在激活前运行生产主机的真实 Azure gate，但本次 UI/文本导入变更没有修改语音行为。最终不可变 release 为 `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`，公网复核包含 Web 200、`deps.supabase=ok`、未认证 `/api/me` 401，以及用户示例成功拆成 `Starter Unit 1`/`Starter Unit 2`、独立翻译输入和底部操作可达。
+
+复习日程必须引用本人该单元已完成的 initial session；由日程启动时服务端固定使用其 skills/scope，并在 review session 完成事务里写回 completed session。普通 Vitest/jsdom 不等于真实数据库 E2E；本地无 Supabase CLI/Docker 时 RLS 和 Playwright 会跳过或无法启动，只有一次性 Supabase CI 成功后才能称真实 E2E 已通过。
 
 ## 10. 明确未实现
 
