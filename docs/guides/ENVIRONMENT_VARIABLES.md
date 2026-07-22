@@ -54,6 +54,7 @@
 | `AZURE_SPEECH_REGION` | 语音启用时必需 | 受限配置 | Azure region，同时组成 TTS/STT endpoint。 |
 | `AZURE_SPEECH_VOICE` | 可选，`en-US-JennyNeural` | 公开配置 | en-US TTS voice 名称。 |
 | `AZURE_SPEECH_TIMEOUT_MS` | 可选，10,000 | 公开配置 | 单次 Azure TTS/评分硬超时；实现限制在 1,000–60,000 ms，超时降级且不记学习错误。 |
+| `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` | 可选，70 | 公开产品配置 | 整体 `PronScore` 达标线，允许 1–100；低于该值的认词阶段朗读加入持久候补池，达标重读会移除。API 必须把实际值返回给 UI。 |
 | `AZURE_SPEECH_ASSESSMENTS_PER_MINUTE` | 可选，30 | 公开配置 | 单用户评分每分钟持久限额。 |
 | `AZURE_SPEECH_ASSESSMENTS_PER_DAY` | 可选，300 | 公开配置 | 按用户 IANA 时区本地日期的每日评分限额。 |
 | `AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD` | 可选，5,000,000 | 受限配置 | 所有 API 实例共享的月度估算预算，单位 micro-USD。 |
@@ -65,7 +66,7 @@
 | `COURSE_REPORT_ALERT_THRESHOLD` | 可选，3 | 受限配置 | 同一目标 open 举报达到该值写结构化告警；不会自动下架。 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | 逗号分隔的 Supabase user UUID；授权隐藏/恢复/撤回市场版本，应纳入审批与轮换。 |
 
-所有 `*_LIMIT`、`*_BUDGET*` 与 `*_COST*` 必须是有限正数，其中次数和 micro-USD 预算必须是安全整数。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额。
+所有 `*_LIMIT`、`*_BUDGET*` 与 `*_COST*` 必须是有限正数，其中次数和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
 
 ## 4. FastAPI AI 运行时变量
 
@@ -150,7 +151,7 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 | `AI_SERVICE_URL` | API health 读取，业务未连接 | 内部配置 | compose 中覆盖为 `http://ai:8000`。 |
 | `PUBLIC_ORIGIN`、`CORS_ALLOWED_ORIGINS`、`FEATURE_*` | API 已读取 | 公开配置 | Courses 分享 URL、浏览器跨域 allowlist 和分阶段开关；hybrid 示例默认全部 production flag 为 false。 |
 | `AZURE_SPEECH_KEY` | 语音启用时 API 读取 | **最高机密** | 只注入 API；不得注入 Web/AI。 |
-| `AZURE_SPEECH_REGION/VOICE/TIMEOUT_MS/CIRCUIT_OPEN` | API 已读取 | 受限配置 | Azure endpoint、voice、单次硬超时与紧急熔断。 |
+| `AZURE_SPEECH_REGION/VOICE/TIMEOUT_MS/PRONUNCIATION_PASS_SCORE/CIRCUIT_OPEN` | API 已读取 | 受限配置 | Azure endpoint、voice、单次硬超时、整体评分通过线与紧急熔断。 |
 | `AZURE_SPEECH_*LIMIT/BUDGET/COST*` | API 已读取 | 受限配置 | 持久配额与成本估算，实际变量名见 3.1。 |
 | `COURSE_MARKET_*`、`COURSE_REPORT_*` | API 已读取 | 管理 ID 为敏感授权，其余受限 | 市场发布、举报和管理员控制。 |
 

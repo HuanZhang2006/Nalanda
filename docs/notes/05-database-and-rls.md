@@ -43,6 +43,7 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0011_learning_courses.sql` | Courses 内容/学习/复习/传播/徽章/speech usage、timezone 与 TTS cache；客户端只读私有数据 |
 | `0012_learning_course_workflows.sql` | service-role-only 原子保存/会话/答题/成长/分享/市场/审核 RPC |
 | `0013_verify_learning_courses_release.sql` | Courses RLS、写权限/RPC、badge/timezone/owner 链发布断言 |
+| `0014_learning_feedback_flow.sql` | 朗读整体分数阈值的 recognition 候补池加入/移除，以及认词候补轮推进；重申评分 RPC 仅 service-role 可执行 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
