@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260722000013_verify_learning_courses_release.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。0011–0013 是仓库目标结构，生产仍停在 0010，不能据此推断远端已经存在这些对象。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260722000013_verify_learning_courses_release.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-22 同步到 0013。
 
 - **仓库最终结构**：30 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。

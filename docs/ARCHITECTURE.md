@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-22。仓库包含 Courses 0011–0013 与应用实现；生产数据库状态仍是 0010，待受保护发布。
+最后核对：2026-07-22。生产数据库已通过受保护 plan/apply 发布到 0013；Courses、分享、免费课程市场和 Japan East Azure Speech 已在线。
 
 ---
 
@@ -14,7 +14,7 @@
 
 Nalanda 当前是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳、legacy DOM 模块和 React Courses 功能组成；认证与旧业务 CRUD 直接使用 Supabase；NestJS 提供注册、JWT、健康检查以及 Courses/学习/语音/传播接口；FastAPI AI 服务仍是未接入的桩。
 
-“真后端”在旧模块中主要表示“真实写入 Supabase 并由 RLS 保护”；Courses 的内容与学习事实写入必须经 NestJS + service-role 专用事务 RPC。两者都不自动证明已在生产启用。
+“真后端”在旧模块中主要表示“真实写入 Supabase 并由 RLS 保护”；Courses 的内容与学习事实写入必须经 NestJS + service-role 专用事务 RPC。当前两条路径均已部署，但这仍不把 Home/Notes/AI Create 等 mock 变成真实能力。
 
 ## 2. 运行时拓扑
 
@@ -39,7 +39,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、公共合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 经受保护 plan/apply 建立 0001–0007 基线并同步至 0010；0008–0010 已在线生效。仓库新增的 0011–0013 只在受保护发布、远端 lint/dry-run 与 smoke 完成后才可称为在线。
+生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，并于 2026-07-22 经独立 plan/apply 同步至 0013。远端 history、lint/dry-run、加密恢复点、真实 Azure gate、候选 API readiness 和公网 smoke 均通过。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -96,7 +96,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 仓库已实现；生产 flag/迁移待发布 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；0011–0013 与生产 flags 已发布 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |
@@ -104,7 +104,7 @@ Nalanda/
 | Notes/详情四 Tab | `legacy/data.ts` | mock |
 | Create | mock Materials + timeout/toast | mock |
 | Market / Note Market | `legacy/data.ts` + toast | Note Market 仍为 mock |
-| Market / Course Market | NestJS 脱敏不可变快照 | 仓库已实现；只支持免费克隆，生产待启用 |
+| Market / Course Market | NestJS 脱敏不可变快照 | 真实；只支持免费克隆，生产已启用 |
 | Courses 文件 AI 导入、其余类别 | 禁用入口 | 未实现 |
 
 旧的 Materials/Community/Profile/Schedule/Feedback mock 视图仍保留在 `legacy/app.ts`，运行时被文件末尾的真实挂载点覆盖，属于待清理的双实现。
@@ -231,7 +231,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 ### 8.3 发布局限
 
 - API health 已验证 Supabase JWKS/PostgREST 基本 readiness，但不覆盖 Storage、注册写入、完整 RLS 或浏览器登录路径；Redis/AI 仍只看变量。
-- Azure Speech 的自动化使用 fake provider，只验证适配、限制和降级；真实供应商账号、声音、区域、费用与响应格式必须在受控 smoke 中确认。
+- Azure Speech 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。2026-07-22 Japan East smoke 已确认 TTS、scripted assessment 与音素结果，但持续可用率、费用和账单仍需监控。
 - 数据库 release archive 仍不含 Storage 文件字节，且 CI 不自动逆向生产数据。
 - 不可变 image/release 目前仍主要保留在单台服务器，缺少异地 registry 和自动容量策略。
 - SSH 部署用户在当前文档中为 root。
@@ -250,10 +250,10 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 
 ## 10. 当前优先风险
 
-1. 让 0011–0013 通过一次性 Supabase CI 与受保护生产发布；先开启 Courses 私有 beta，再做真实 Azure smoke，最后分开开放分享与课程市场。
-2. 收紧帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等剩余授权和完整性缺口。
-3. 为 points 增加每日上限、内容审核撤销、协同滥用检测；credits/VIP 另建商业账本。
-4. 实现 Courses 文件 AI 导入前先统一模型契约、人工确认、评测集、成本和隐私留存；当前禁用入口不能算能力。
-5. 执行数据库/Storage/TTS 缓存恢复演练和告警演练，逐步移除 `@ts-nocheck`/legacy 双实现并增加 URL 深链接。
+1. 收紧帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等剩余授权和完整性缺口。
+2. 为 points 增加每日上限、内容审核撤销、协同滥用检测；credits/VIP 另建商业账本。
+3. 实现 Courses 文件 AI 导入前先统一模型契约、人工确认、评测集、成本和隐私留存；当前禁用入口不能算能力。
+4. 为已上线 Courses/Azure/市场建立持续指标、成本对账和审核工作台；执行数据库/Storage/TTS 缓存恢复与告警演练。
+5. 逐步移除 `@ts-nocheck`/legacy 双实现并增加 URL 深链接，补全旧模块 API HTTP/浏览器 E2E。
 
 处理顺序和验收门见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。

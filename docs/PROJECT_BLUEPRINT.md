@@ -24,16 +24,16 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ## 2. 当前基线（不是最终完成状态）
 
-截至 2026-07-22，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 尚待发布的 Courses 增量”：
+截至 2026-07-22，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses”：
 
-- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API 生产部署；生产迁移停在 0010。
-- 已实现待发布：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech 适配层；0011–0013 尚未发布，生产 flags 未开启。
+- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API 生产部署；生产 migration history 已到 0013。
+- 已上线：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech；生产 flags 已开启，fake 未进入生产。
 - 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
 - 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；BullMQ/Redis 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。
-- 安全基线进展：生产已应用 0008–0010，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；前端跨账号生命周期和 Supabase 错误处理也已修复。
-- 仍需优先完成：让 Courses 真实 Supabase/Playwright CI 通过并按受保护流程发布；帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 每日上限、审核撤销和协同行为检测；AI 数据契约统一。
+- 安全基线进展：生产已应用 0008–0013，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；Courses 私有写入/RPC/传播边界也通过双用户 RLS 与发布断言。
+- 仍需优先完成：帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 每日上限、审核撤销和协同行为检测；AI 数据契约统一与文件导入闭环。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 
@@ -63,11 +63,11 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ### 3.3 Courses 学习课程
 
-首版英语单词学习已经在仓库实现：文本逐单元粘贴和精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习熟练度、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；生产上线仍需 0011–0013 与 flags。
+首版英语单词学习已经上线：文本逐单元粘贴和精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习熟练度、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；生产已发布 0011–0013 并开启对应 flags。
 
 当前明确未实现：PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR/解析；按英语单词/知识点/阅读理解/题库训练选择 prompt；模型结构化输出与人工确认；导入评测集、token/成本和隐私留存。入口必须保持“AI 解析即将推出”，不能接受文件或暗示已调用模型。
 
-后续顺序：先完成受保护迁移与私有 beta → 真实 Azure TTS/评分 smoke → 分享/市场分开开放 → 建文件隔离/扫描/解析管线与人工确认 → 以评测和成本门开放其他课程类别。
+后续顺序：持续观察 Courses/分享/市场/Azure 的错误率与成本 → 建文件隔离/扫描/解析管线与人工确认 → 以评测、成本和隐私门开放其他课程类别。
 
 ### 3.4 AI 创作与个人笔记（最高优先级）
 
@@ -209,14 +209,14 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 验收：仓库 P0 回归关闭且 production migration history 可证明已应用；默认 CI 全绿；两用户 RLS E2E 在一次性本地 Supabase 可重复执行；剩余权限项关闭；发布和恢复完成演练。
 
-### 阶段 A+：Courses 受保护发布（当前增量）
+### 阶段 A+：Courses 受保护发布（2026-07-22 已完成）
 
-- 让解析器、jsdom/API、0007 升级、空库迁移、双用户 RLS 和 Playwright 主流程在 CI 全绿。
-- 只读 migration plan → 加密恢复点 → apply 0011–0013 → remote lint/dry-run → 部署应用但保持 flags 关闭。
-- 开启私有 Courses beta，验证跨账号、会话恢复、复习跨日与 points 指纹；使用真实 Azure 合成账号做受控 TTS/评分 smoke。
-- 分别开启分享和 Course Market；观察错误率、举报阈值、语音配额/成本与数据库增长。回退只关 flags/恢复应用 release，数据库向前修复。
+- 解析器、jsdom/API、0007 升级、空库迁移、双用户 RLS 和 Playwright 主流程已在 CI 全绿。
+- 已完成只读 migration plan、加密恢复点、0011–0013 apply、remote history/lint/dry-run 和不可变应用发布。
+- 已开启私有 Courses，并验证跨账号、会话恢复、复习跨日与 points 指纹；真实 Japan East Azure 合成/评分 smoke 成功。
+- 分享和免费 Course Market 已开放。后续继续观察错误率、举报阈值、语音配额/成本与数据库增长；回退只关 flags/恢复应用 release，数据库向前修复。
 
-验收：生产 migration history 到 0013；Courses 私有路径和真实 Azure smoke 有证据；分享/市场只在独立审批后开放；文件导入仍保持禁用。
+验收结果：生产 migration history 到 0013；Courses 私有路径、真实 Azure smoke、分享/市场和公网 readiness 均有发布记录；文件导入仍保持禁用。
 
 ### 阶段 B：AI 最小闭环
 
@@ -266,10 +266,10 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | QA-01 | jsdom、API、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API unit + CI 本地 Supabase + Courses Playwright；staging、旧模块 API HTTP/浏览器与 FastAPI 待补 |
 | OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
 | FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
-| LEARN-01 | 英语词表文本创建/编辑与四阶段学习 | 已实现 | A+ | React、NestJS、0011–0013；待 CI/生产发布 |
-| LEARN-02 | 复习熟练度、Schedule/Profile、徽章/+20 points | 已实现 | A+ | 跨日本地日期、指纹幂等；待 CI/生产发布 |
-| LEARN-03 | 分享、免费课程市场、举报与审核 | 已实现 | A+ | 不可变快照、flags；待分阶段开放 |
-| LEARN-04 | Azure TTS/朗读评分适配层 | 已实现 | A+ | fake 自动化；真实供应商 smoke 待执行 |
+| LEARN-01 | 英语词表文本创建/编辑与四阶段学习 | 已上线 | A+ | React、NestJS、0011–0013；CI/生产已验证 |
+| LEARN-02 | 复习熟练度、Schedule/Profile、徽章/+20 points | 已上线 | A+ | 跨日本地日期、指纹幂等；生产已发布 |
+| LEARN-03 | 分享、免费课程市场、举报与审核 | 已上线 | A+ | 不可变快照、flags；免费市场已开放 |
+| LEARN-04 | Azure TTS/朗读评分适配层 | 已上线 | A+ | fake 自动化 + Japan East 真实供应商 gate |
 | LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
 | AI-01 | 统一生成契约与任务模型 | 未完成 | B | OpenAPI、迁移 |
 | AI-02 | 解析、分块、引用、embedding | 桩 | B | FastAPI、pgvector |

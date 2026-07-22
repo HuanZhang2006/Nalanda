@@ -19,7 +19,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除 |
 | Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；数据在 Supabase |
 | Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；“智能填充”为规则式生成 |
-| Courses / Course Market | ✅ 仓库已实现英语词表文本导入、编辑、四阶段学习、复习、熟练度、Schedule/Profile、免费分享/市场、徽章与积分；0011–0013 待受保护生产发布 |
+| Courses / Course Market | ✅ 已上线英语词表文本导入、编辑、四阶段学习、复习、熟练度、Schedule/Profile、免费分享/市场、徽章与积分；生产迁移已到 0013 |
 | Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；通知当前是查询刷新，不是 Realtime |
 | Home | 🟡 高保真 mock，统计/课程/活动不是真实聚合 |
 | Notes / AI Create | 🟡 高保真 mock；FastAPI 只是桩，未形成解析/生成/落库链路 |
@@ -27,7 +27,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | Courses 文件导入 / 其他类别 | ⬜ PDF/Word/JSON/Markdown/HTML/图片仅有禁用入口；AI 解析、知识点/阅读理解/题库训练未实现 |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-这里的“真实”表示代码已连接数据库/API 并有相应权限与测试边界，不等于已经发布。旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-07-21 应用 0008–0010；Courses 0011–0013 仍须按受保护流程发布并逐项开启 feature flag。credits/VIP 仍只是客户端不可写的预留缓存，不是商业账本。其余边界见[当前架构](docs/ARCHITECTURE.md)。
+旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-07-22 通过独立 plan/apply 发布 0011–0013，并开启 Courses、分享、免费课程市场和真实 Azure Speech；文件 AI 导入仍是禁用入口。credits/VIP 仍只是客户端不可写的预留缓存，不是商业账本。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
 
 ## 当前技术结构
 
