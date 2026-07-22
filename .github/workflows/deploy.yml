@@ -139,8 +139,38 @@ jobs:
       - name: Build all workspaces
         run: pnpm build
 
-      - name: Build production API image
-        run: docker build -f infra/hybrid-2g/api.Dockerfile -t nalanda-api:ci .
+      - name: Build and boot production API image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image=nalanda-api:ci
+          container=nalanda-api-ci
+          health_file="$RUNNER_TEMP/nalanda-api-ci-health.json"
+          cleanup() {
+            docker rm -f "$container" >/dev/null 2>&1 || true
+          }
+          trap cleanup EXIT
+
+          docker build -f infra/hybrid-2g/api.Dockerfile -t "$image" .
+          docker run --rm --entrypoint node "$image" -e \
+            "require.resolve('express'); require.resolve('@nalanda/types')"
+          docker run -d --name "$container" -p 127.0.0.1:18411:3000 "$image"
+
+          for attempt in $(seq 1 30); do
+            if curl -sS --max-time 2 -o "$health_file" http://127.0.0.1:18411/api/health && \
+              node -e '
+                const fs = require("node:fs");
+                const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+                if (value.status !== "error" || value.service !== "nalanda-api" || value.deps?.supabase !== "unavailable") process.exit(1);
+              ' "$health_file" 2>/dev/null; then
+              exit 0
+            fi
+            if [[ "$attempt" == "30" ]]; then
+              docker logs "$container" >&2
+              exit 1
+            fi
+            sleep 1
+          done
 
   migration_validation:
     name: Rebuild, lint, and RLS-test local Supabase
