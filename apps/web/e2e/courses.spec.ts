@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function signUp(page: Page, email: string, password: string) {
+  // The full business-flow fixture stays in Chinese; default-English and live
+  // locale switching are covered by the focused Courses component tests.
+  await page.addInitScript(() => localStorage.setItem("nalanda-locale", "zh"));
   await page.goto("/");
   await page.getByRole("button", { name: "注册", exact: true }).click();
   await page.getByPlaceholder("you@school.edu").fill(email);

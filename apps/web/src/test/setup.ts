@@ -1,4 +1,5 @@
 import { afterEach, vi } from "vitest";
+import { setLocale } from "../i18n";
 
 // React 18 uses this flag to verify that stateful tests are wrapped in act().
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
@@ -40,6 +41,7 @@ afterEach(() => {
     document.body.innerHTML = "";
     document.documentElement.removeAttribute("data-rail");
     localStorage.clear();
+    setLocale("en", { persist: false });
   }
   vi.useRealTimers();
 });
