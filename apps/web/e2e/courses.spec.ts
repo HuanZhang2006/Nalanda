@@ -1,6 +1,9 @@
 import { expect, test, type Page } from "@playwright/test";
 
 async function signUp(page: Page, email: string, password: string) {
+  // The full business-flow fixture stays in Chinese; default-English and live
+  // locale switching are covered by the focused Courses component tests.
+  await page.addInitScript(() => localStorage.setItem("nalanda-locale", "zh"));
   await page.goto("/");
   await page.getByRole("button", { name: "注册", exact: true }).click();
   await page.getByPlaceholder("you@school.edu").fill(email);
@@ -141,14 +144,14 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByText(/课程版本已上架/)).toBeVisible();
   page.off("dialog", dialogs);
   await page.locator('#nav [data-go="market"]').click();
-  await page.getByRole("button", { name: "Course Market" }).click();
+  await page.getByRole("button", { name: "课程市场" }).click();
   await expect(page.getByRole("heading", { name: courseTitle, exact: true })).toBeVisible();
   await expect(page.getByText("免费", { exact: true })).toBeVisible();
 
   await signOut(page);
   await signUp(page, `courses-b-${nonce}@example.com`, password);
   await page.locator('#nav [data-go="market"]').click();
-  await page.getByRole("button", { name: "Course Market" }).click();
+  await page.getByRole("button", { name: "课程市场" }).click();
   await page.getByRole("button", { name: "免费克隆" }).click();
   await expect(page.getByRole("heading", { name: `${courseTitle}（副本）`, exact: true })).toBeVisible();
   await expect(page.getByText("0%", { exact: true })).toBeVisible();

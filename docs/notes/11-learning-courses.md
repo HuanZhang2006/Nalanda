@@ -10,6 +10,8 @@
 
 Courses 使用 `learning_*` 独立模型，不复用 Materials 的 `courses/materials`。侧栏 Courses 默认显示空状态和“创建课程”；类别选择器保留英语单词、知识点、阅读理解、题库训练四类，首版仅英语单词可创建。Market 包含仍为 Demo 的 Note Market 与读取真实快照的 Course Market。
 
+Courses、学习/复习、公开分享与 Course Market 共用 Web 的 `nalanda-locale` 状态：未保存偏好时默认英文，可在顶栏切换中文并持久化到浏览器。课程专属 CSS 只定义编辑器、卡片网格和学习状态机布局；字体、色彩、基础按钮/表单/卡片/弹窗、深浅主题和交互状态均复用 `@nalanda/ui/nalanda.css` 的设计 token，不能另建品牌主题。
+
 文件入口列出 PDF、DOC/DOCX、JSON、Markdown、HTML 与图片，但只显示“AI 解析即将推出”，不会上传、解析或调用模型。当前可靠输入只有逐单元粘贴文本。
 
 ## 2. 文本解析与结构化编辑

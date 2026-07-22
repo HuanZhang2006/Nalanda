@@ -47,7 +47,7 @@ async function load() {
       sb.from("courses").select("id,code,name,color").order("created_at", { ascending: true }),
       sb.from("materials").select("id,name,course_id,type").order("created_at", { ascending: false }),
       sb.from("profiles").select("streak,timezone").eq("id", USER.id).single(),
-      apiJson("/api/learning-review-schedules")
+      apiJson("/api/learning-review-schedules", {}, true, false)
         .then((data) => ({ data, error: "" }))
         .catch((error) => ({ data: [], error: error?.message || "课程复习日程加载失败" })),
     ]);

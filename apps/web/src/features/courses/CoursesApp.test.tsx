@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningCourseInput } from "@nalanda/types";
 import { CoursesApp } from "./CoursesApp";
 import { CourseEditor, moveCourseWord } from "./CourseEditor";
+import { setLocale } from "../../i18n";
 
 const ids = [
   "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
@@ -33,6 +34,9 @@ describe("Courses React UI", () => {
   it("renders the empty state and disables the three future categories and AI file import", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response([])));
     await settle(() => root.render(<CoursesApp />));
+    expect(container.textContent).toContain("No learning courses yet");
+    await settle(() => clickText(container, "中文"));
+    expect(localStorage.getItem("nalanda-locale")).toBe("zh");
     expect(container.textContent).toContain("还没有学习课程");
     await settle(() => clickText(container, "创建第一门课程"));
     expect(container.querySelectorAll(".course-choice")).toHaveLength(4);
@@ -43,6 +47,7 @@ describe("Courses React UI", () => {
   });
 
   it("marks exact paste errors red, supports multiple units, and enters the structured editor only after fixing", async () => {
+    setLocale("zh");
     vi.stubGlobal("fetch", vi.fn(() => response([])));
     await settle(() => root.render(<CoursesApp />));
     await settle(() => clickText(container, "创建第一门课程")); await settle(() => clickText(container, "英语单词学习"));
@@ -59,6 +64,7 @@ describe("Courses React UI", () => {
   });
 
   it("provides keyboard ordering controls and surfaces save failures", async () => {
+    setLocale("zh");
     const initial: LearningCourseInput = { id: ids[0], title: "Course", category: "english_vocabulary", hasUnits: false, locale: "en-US",
       units: [{ id: ids[1], name: "默认单元", isSystem: true, words: ["apple", "pear", "orange", "banana"].map((term, index) => ({ id: ids[index + 2], term, translations: [`译${index}`], ipa: null })) }] };
     const save = vi.fn().mockRejectedValue(new Error("数据库保存失败"));
@@ -92,6 +98,7 @@ describe("Courses React UI", () => {
   });
 
   it("moves words across units and clears a stale IPA when the English spelling changes", async () => {
+    setLocale("zh");
     const initial: LearningCourseInput = { id: ids[0], title: "Course", category: "english_vocabulary", hasUnits: true, locale: "en-US",
       units: [
         { id: ids[1], name: "Unit 1", isSystem: false, words: [
@@ -121,6 +128,7 @@ describe("Courses React UI", () => {
   });
 
   it("toggles mastery counts and resumes the unique persisted session", async () => {
+    setLocale("zh");
     const summary = { id: ids[0], title: "Resume me", category: "english_vocabulary", hasUnits: false, locale: "en-US", unitCount: 1,
       wordCount: 4, learnedCount: 1, progressPercent: 25, activeSessionId: ids[5], canRepublish: true,
       originPublicationId: null, originShareId: null, originAuthorName: null, updatedAt: new Date().toISOString() };
@@ -144,6 +152,6 @@ describe("Courses React UI", () => {
   it("shows standardized API errors instead of silently treating them as empty data", async () => {
     vi.stubGlobal("fetch", vi.fn(() => response({ code: "DATABASE_ERROR", message: "课程数据库不可用" }, 503)));
     await settle(() => root.render(<CoursesApp />));
-    expect(container.querySelector('[role="alert"]')?.textContent).toContain("课程数据库不可用");
+    expect(container.querySelector('[role="alert"]')?.textContent).toContain("course database is temporarily unavailable");
   });
 });
