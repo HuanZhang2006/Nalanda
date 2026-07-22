@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-22。生产数据库已通过受保护 plan/apply 发布到 0013；Courses、分享、免费课程市场和 Japan East Azure Speech 已在线。
+最后核对：2026-07-23。生产数据库已通过受保护 plan/apply 发布到 0014；Courses、分享、免费课程市场和 Japan East Azure Speech 已在线。
 
 ---
 
@@ -39,7 +39,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、公共合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，并于 2026-07-22 经独立 plan/apply 同步至 0013。远端 history、lint/dry-run、加密恢复点、真实 Azure gate、候选 API readiness 和公网 smoke 均通过。
+生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013，并于 2026-07-23 经独立 plan/apply 同步至 0014。远端 history、lint/dry-run、加密恢复点、真实 Azure gate、候选 API readiness 和公网 smoke 均通过。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -96,7 +96,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；0011–0013 与生产 flags 已发布 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；0011–0014 与生产 flags 已发布 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |

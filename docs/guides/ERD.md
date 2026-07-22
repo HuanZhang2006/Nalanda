@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260723000014_learning_feedback_flow.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。仓库最新为 0014；生产 migration history 在本变更发布前仍为 0013，不得把未完成的 plan/apply 描述为已上线。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260723000014_learning_feedback_flow.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。仓库与生产 migration history 均已通过受保护 plan/apply 同步到 0014。
 
 - **仓库最终结构**：30 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
@@ -501,7 +501,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权并断言评分 RPC 权限。API 传入的 user ID 和评分阈值来自已验证/受控服务端上下文，不能接受浏览器自报用户或直接执行 RPC。
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权，并同时断言两个 RPC 只允许 service_role。API 传入的 user ID 和评分阈值来自已验证/受控服务端上下文，不能接受浏览器自报用户或直接执行 RPC。
 
 ## 8. 索引清单
 

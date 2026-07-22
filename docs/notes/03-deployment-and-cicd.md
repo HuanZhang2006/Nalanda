@@ -135,6 +135,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 滚动实测：应用 `.content` 为 `overflow-y:auto`，`clientHeight=1127`、`scrollHeight=1632`，可滚到底并操作“添加单词/批量粘贴单词/添加单元”；修复位于共享 `.main/.content` flex 高度链，因此也覆盖其他使用同一应用壳的长页面。
 - 后续只修改 Markdown 的同步提交走独立 docs workflow，不产生新的 Web/API release；不得把文档合并本身描述为再次部署应用。
 
+### 2026-07-23 Courses 学习反馈与 Azure 缓存修复
+
+- main SHA：`02ba1b682c104947aa0b80707c143b8e921870f0`；PR #16 的 quality、0007→0014、空库重建/database lint、真实 RLS/Storage 和 Courses Playwright 均通过。
+- [只读 migration plan](https://github.com/1590703336/Nalanda/actions/runs/29939798432) 显示远端已到 0013，唯一待应用项为 `20260723000014_learning_feedback_flow.sql`；写入步骤全部跳过。
+- [受保护 apply/deploy](https://github.com/1590703336/Nalanda/actions/runs/29940292716) 创建并保留 14 天加密恢复点 artifact `8538123165`，应用 0014 后确认 local/remote history 一致、dry-run 无待办且 remote lint 通过。
+- 激活前真实 Azure gate 使用 `japaneast`/`en-US-JennyNeural` 成功返回 MP3 10,656 bytes、accuracy 98、pronunciation 98.8 和 4 个音素；不可变 release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` 健康激活。
+- 独立公网复核：`/api/health` 为 `status=ok`、`deps.supabase=ok`，未认证 `/api/me` 为 401，首页加载新资产，生产 API image 为同 SHA；容器内随机缺失 TTS 缓存探针返回 `null`，确认首次发音不再因 Storage 的 HTTP 400/JSON-404 提前失败。
+
 ## 8. 运维速查
 
 ```bash

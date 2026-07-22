@@ -91,6 +91,6 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 ## 7. 待改进
 - CI 已通过 CLI migration history 发布，并在生产 migration 前完成本地重建/RLS E2E、dry-run 和加密恢复点；首次生产启用仍须人工 baseline 旧历史。
 - 仍需定期 staging 演练、Storage 文件异地备份、数据库恢复演练和 schema drift 告警。
-- 0011–0013 已于 2026-07-22 通过受保护 plan/apply 发布；私有 Courses、真实 Azure、分享和免费市场均已开启，回退仍使用 flags/上一应用 release/数据库 forward-fix。
+- 0011–0013 已于 2026-07-22、0014 已于 2026-07-23 通过受保护 plan/apply 发布；私有 Courses、真实 Azure、分享和免费市场均已开启，回退仍使用 flags/上一应用 release/数据库 forward-fix。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。
