@@ -23,8 +23,8 @@
 | **Notes 笔记库 + 详情** | 🟡 mock | 4 Tab（知识清单/测验/图谱/试卷）；依赖 **AI 生成**：notes/generated_note/knowledge_point/quiz… 表 + AI 微服务 |
 | **Create 创作流** | 🟡 mock | 选资料 → 勾产物 → 生成；接 Materials 资料 → AI 微服务异步生成 → 落库 |
 | **Market / Note Market** | 🟡 mock | 笔记卡片/购买弹窗；未来依赖上架/购买、credits 账本和创作者分成 |
-| **Market / Course Market** | ✅ 仓库真后端，生产待启用 | 英语词表不可变版本、举报、免费克隆；不接 credits/支付，见 [11](11-learning-courses.md) |
-| Courses 英语单词学习 | ✅ 仓库真后端，生产待启用 | 文本创建/编辑/学习/复习/分享；文件 AI 导入和其余类别仍禁用 |
+| **Market / Course Market** | ✅ 生产真后端 | 英语词表不可变版本、举报、免费克隆；不接 credits/支付，见 [11](11-learning-courses.md) |
+| Courses 英语单词学习 | ✅ 生产真后端 | 文本创建/编辑/学习/复习/分享已上线；文件 AI 导入和其余类别仍禁用 |
 | Materials 资料库 | ✅ 真后端 | 见 [06](06-materials.md) |
 | Community 社区 | ✅ 真后端 | 见 [09](09-community.md) |
 | Schedule 学习计划 | ✅ 真后端 | 见 [10](10-schedule.md) |

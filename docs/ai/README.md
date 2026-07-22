@@ -3,7 +3,7 @@
 > **本文内容：**汇总 Nalanda 的 AI 契约、质量、安全、评测、成本和发布治理文档。  
 > **作用：**把模型能力从原型演示提升为可衡量、可回归、可控成本的产品能力，并避免把配置或桩误报为真实 AI。  
 > **何时更新：**新增 AI 文档、模型/解析/评测/供应商/成本体系变化，或索引路径变化时。  
-> **状态基线：**2026-07-22；FastAPI 与 Courses 文件 AI 导入仍未实现。Azure Speech adapter 是独立非生成式能力，生产待启用。
+> **状态基线：**2026-07-22；FastAPI 与 Courses 文件 AI 导入仍未实现。Azure Speech adapter 是独立非生成式能力，已在生产启用。
 
 - [AI 评测与成本治理](EVALUATION_AND_COST.md)：四类生成产物、Courses 文件/OCR/类别 prompt/人工确认、Azure Speech 边界、离线/在线质量、安全隐私、usage/cost、预算与发布门禁。
 

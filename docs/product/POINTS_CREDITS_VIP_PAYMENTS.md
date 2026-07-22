@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-07-22。0008–0010 points 安全已生产验证；0011–0013 在仓库新增课程 +20 与九级徽章但尚未生产发布。Course Market v1 永久按“免费克隆”实现，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
+> **状态基线：**2026-07-22。生产已验证 0008–0013；课程 +20 与九级徽章已上线。Course Market v1 永久按“免费克隆”实现，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
 
 ## 1. 规范用语和总原则
 
@@ -26,7 +26,7 @@
 ### 2.1 当前可验证事实
 
 - `profiles` 有 `credits`、`vip_until`、`level`，迁移 0006/0007 增加 `points`、`streak`；迁移 0008 把 points 改为 `point_entries` 的只读 projection。
-- 生产 points 当前奖励：点赞 +1、评论 +2、普通发帖 +10、转发 +3、完成任务 +5。仓库 0011–0013 另实现合格英语词表课程首次熟练 +20，待生产发布；等级阈值仍为 0/50/150/350/700/1200。
+- 生产 points 当前奖励：点赞 +1、评论 +2、普通发帖 +10、转发 +3、完成任务 +5、合格英语词表课程首次熟练 +20；等级阈值仍为 0/50/150/350/700/1200。
 - 当前五类奖励均通过 `point_event_states` 和 append-style `point_entries` 激活/冲正；相同持久业务键在删除/取消后重建只恢复原净额，不再累计刷分。
 - authenticated 只能更新资料白名单和合法 IANA `timezone`；经济/等级/VIP/streak 受保护。Courses 奖励/徽章/progress 也不能由客户端写或 RPC 调用。
 - 0008 把迁移前 `profiles.points` 保存为 `legacy_opening`；2026-07-21 聚合审计确认唯一 Profile 有 11 points、credits/streak 为 0 且无 VIP，owner 决定 points 归零。0009 已在生产追加等额 `legacy_opening_reset=-11`，不删除 `legacy_opening=+11`，也不把它当成可信逐笔历史；0010 已验证每条 opening 恰有一条等额反向记录，且 Profile points/level 与账本投影一致。
@@ -279,7 +279,7 @@ Webhook 必须：使用原始 body 验签；检查 live/test mode 和账户；�
 - [ ] 收紧 feedback `status` 等仍由 owner 整行策略暴露的服务端字段；
 - [x] 原型商业入口保持 demo/feature flag，不接真实支付。
 - [x] Course Market v1 与商业域隔离：只免费克隆，不读写 credits/订单/应付；克隆课禁止再次传播。
-- [x] Courses +20 使用用户+排序去重词集合 SHA-256 永久键，徽章以用户+code 唯一；0011–0013 仍待生产发布。
+- [x] Courses +20 使用用户+排序去重词集合 SHA-256 永久键，徽章以用户+code 唯一；0011–0013 已于 2026-07-22 生产发布。
 
 ### Phase 1：无真实支付的账本
 

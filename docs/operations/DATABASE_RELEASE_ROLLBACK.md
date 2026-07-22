@@ -113,17 +113,17 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 
 - [ ] 新迁移文件名晚于仓库现有版本，旧文件无变化。
 - [ ] 老应用在新 schema 上仍能读写；contract 不在本次执行。
-- [ ] RLS、Storage policy、function EXECUTE、trigger 幂等有双用户测试。
+- [x] 2026-07-22 Courses 发布：RLS、Storage policy、function EXECUTE、trigger 幂等有双用户测试。
 - [x] 0008/0009 首次生产发布审计：2026-07-21 只读聚合确认 1 个 Profile，points=11、credits=0、streak=0、无 VIP；owner 决定 points 归零，0009 以 append-only reversal 实施，credits/VIP/streak 不改。
 - [ ] 估算表规模、锁、statement timeout 和 backfill 时间。
-- [ ] [ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
-- [ ] `production-database` owner 核对 Ref、Git SHA、迁移列表和 dry-run；若套餐无 reviewer 门禁，另存可审计的人工复核记录。
-- [ ] 加密 artifact 上传成功；解密 key 在 Actions 之外可取回。
+- [x] 2026-07-22 Courses 发布：[ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
+- [x] 2026-07-22 Courses 发布：owner 核对 Ref、Git SHA、0001–0013 history 和只读 dry-run；人工 plan/apply 分开执行。
+- [x] 2026-07-22 Courses 发布：新的加密恢复点创建、验证并保留；解密 key 仍由 Actions 外受控保管。
 - [ ] Storage 文件变更另有对象备份；数据库 dump 不含文件字节。
-- [ ] 准备应用 feature flag/降级、验证 SQL 和 forward-fix 草案。
-- [ ] Courses 发布：确认 0011–0013 的 15 张新表、`profiles.timezone`、`vocabulary-audio` bucket、全部 service-only RPC 和九个 badge 定义；应用先以所有 Courses flags 关闭部署。
-- [ ] Courses 大词表入口：把仓库 nginx `/api/ client_max_body_size 10m` 同步到实际 TLS server block，`nginx -t` 后 reload；确认 Nest JSON 10 MB 与评分 multipart 2 MB 的分层边界。
-- [ ] Azure key/region 只在 API 环境，fake 未进入生产；月预算、用户限额、熔断和真实合成账号 smoke 负责人已确认。
+- [x] 2026-07-22 Courses 发布：应用 flags/降级、验证 SQL、上一 release 回退和数据库 forward-fix 边界已准备并经过 workflow。
+- [x] Courses 发布：确认 0011–0013 的 15 张新表、`profiles.timezone`、`vocabulary-audio` bucket、全部 service-only RPC 和九个 badge 定义；remote history 已到 0013。
+- [x] Courses 大词表入口：生产 nginx `/api/ client_max_body_size 10m` 已同步并通过 `nginx -t`；Nest JSON 10 MB 与评分 multipart 2 MB 分层不变。
+- [x] Azure key/region 只在 API 环境，fake=false；月预算、用户限额、熔断和 Japan East 真实合成/评分 smoke 已确认。
 
 ## 7. 本地与 staging 验证
 
@@ -186,18 +186,16 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 该记录证明本次安全迁移和旧 11 points 冲正已上线；它不等于 Storage bytes 已备份、托管 staging/恢复演练已完成，或 points 已具备每日上限与内容反滥用。
 
-### 8.2 Courses 0011–0013 待执行发布单
+### 8.2 2026-07-22 Courses 0011–0013 发布记录
 
-本节是下一次发布的**操作单，不是完成记录**：
+- 发布提交：`53d0eabf767725b6e9ca83367c0e17c47a479eca`。
+- [只读 plan run `29889201210`](https://github.com/1590703336/Nalanda/actions/runs/29889201210) 显示 local/remote 0001–0013 逐项一致，最终 dry-run 为 **Remote database is up to date**。
+- [受保护 apply/deploy run `29889669272`](https://github.com/1590703336/Nalanda/actions/runs/29889669272) 重新通过生产镜像启动、0007→0013 升级、空库重建、双用户 RLS/Storage/Courses E2E 和 Playwright，随后创建并保留加密恢复点、验证 remote history/functions，并发布不可变应用。
+- 生产主机从 mode-600 `.env` 向候选 image 注入 Azure 配置；`japaneast`、`en-US-JennyNeural`、fake=false 的真实 TTS/固定 WAV scripted assessment 成功，accuracy 98、pronunciation 98.8、4 个音素。密钥未进入仓库、Actions Secret 或日志。
+- 激活 release 为 `53d0eabf767725b6e9ca83367c0e17c47a479eca-29889669272-1`，API image 为同 SHA；本机和公网 `/api/health` 均要求 `deps.supabase=ok`，未认证 `/api/me` 与私有 Courses 返回 401，公开 Course Market 返回 200。
+- Courses、分享、免费市场与发音 flags 已开启；生产 nginx 10 MB 课程 JSON 上限已验证。文件 AI 导入和其他三类课程仍禁用。
 
-1. 在 `main` 对目标 Git SHA 运行只读 `plan_database_migrations`，确认 production history 当前止于 0010，dry-run 只列 0011–0013。
-2. 单独审批 `apply_database_migrations`，先生成并验证加密恢复点，再 apply 0011–0013；remote lint、history 和二次 dry-run 必须成功。
-3. 部署应用 release，但服务器 `.env` 保持 Courses、分享、市场、语音 flags 全关；同步 nginx `/api/` 的 10 MB body 上限并通过 `nginx -t`/reload，确认旧 Materials/Schedule/Profile/市场路径无回归。
-4. 只向私有 beta 开放 Courses 总开关；观察 API/DB 错误、session/progress 增长和 points 异常。
-5. 写入 Azure key/region、限额/预算，保持 fake=false，以受控合成账号验证 TTS 和一个≤8 秒、无个人数据的固定 WAV 评分；失败时熔断语音，文本学习继续。
-6. 分享和 Course Market 分别审批、分别打开；验证撤销 token、免费克隆、不可变版本、举报告警和管理员审计后再扩大范围。
-
-任一步失败：关闭最窄的对应 flag；应用问题恢复上一 release；数据库不执行 down/drop，只新增 forward-fix。只有完成后才能把 Courses 从“待生产发布”改为“已上线”，并新增包含 run/artifact/checksum/smoke 证据的发布记录。
+后续发布仍沿用相同失败边界：关闭最窄 flag；应用恢复上一 release；数据库不执行 down/drop，只新增 forward-fix。
 
 ## 9. 失败处置
 
