@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260722000013_verify_learning_courses_release.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-22 同步到 0013。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260723000014_learning_feedback_flow.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。仓库最新为 0014；生产 migration history 在本变更发布前仍为 0013，不得把未完成的 plan/apply 描述为已上线。
 
 - **仓库最终结构**：30 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
@@ -493,15 +493,15 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helper | 固化尝试本地日期、词集合 SHA-256 与服务端内部课程快照；公开 API 另经 `publicSnapshot` 删除私有 ID/进度 |
 | `_refresh_learning_growth` | 完成学习/复习 | 发放课程 +20 points 和九级徽章；持久业务键/award PK 防重复 |
 | `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPC | owner 校验下原子保存、精确能力重置、改名和级联删除 |
-| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、候补池循环与完成推进 |
+| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进 |
 | `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
-| `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；持久化用户频率和全局预算预留 |
+| `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；按受控整体分数阈值原子加入/移除当前认词候补项；持久化用户频率和全局预算预留 |
 | `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPC | token hash 生命周期和撤销竞态内的事务克隆 |
 | `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPC | 不可变发布版本、免费独立克隆、限频举报与受审计隐藏/恢复 |
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 会逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链。API 传入的 user ID 必须来自已验证 JWT，不能接受请求体自报用户。
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权并断言评分 RPC 权限。API 传入的 user ID 和评分阈值来自已验证/受控服务端上下文，不能接受浏览器自报用户或直接执行 RPC。
 
 ## 8. 索引清单
 

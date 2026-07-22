@@ -55,6 +55,11 @@ function localizedApiError(code: string, source?: unknown) {
   return localize("Request failed. Please try again.", "请求失败，请重试", getLocale());
 }
 
+export async function apiErrorMessage(response: Response) {
+  const body = await response.json().catch(() => null) as Record<string, unknown> | null;
+  return localizedApiError(String(body?.code || "REQUEST_FAILED"), body?.message);
+}
+
 function localizedHeaders(init: RequestInit, token?: string) {
   const headers = new Headers(init.headers);
   headers.set("Accept-Language", localeTag());
