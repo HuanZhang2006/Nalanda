@@ -10,7 +10,10 @@ WORKDIR /app
 # 整个 monorepo 一起装（pnpm workspace 需要所有 package.json）
 COPY . .
 RUN pnpm install --frozen-lockfile
-RUN pnpm --filter @nalanda/api build
+# The API imports the workspace package through its published dist contract.
+# Build workspace dependencies first so a clean container does not rely on
+# artifacts that happened to exist in the checkout used by the caller.
+RUN pnpm --filter @nalanda/api... build
 
 # 抽出仅含生产依赖的自包含目录
 RUN pnpm --filter @nalanda/api deploy --prod /deploy
