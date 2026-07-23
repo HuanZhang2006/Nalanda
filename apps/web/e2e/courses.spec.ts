@@ -120,7 +120,16 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
     await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
     await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   }
-  for (const [term, translation] of [["apple", "苹果"], ["banana", "香蕉"]] as const) {
+  await expect(page.locator(".course-term")).toHaveText("apple");
+  await page.getByRole("button", { name: "香蕉", exact: true }).click();
+  await expect(page.locator(".course-option.is-wrong")).toHaveText("香蕉");
+  await expect(page.getByText("回答错误，已加入下一轮候补池")).toBeVisible();
+  await page.waitForTimeout(1_300);
+  await expect(page.locator(".course-term")).toHaveText("apple");
+  await expect(page.getByText("回答错误，已加入下一轮候补池")).toBeVisible();
+  await page.getByRole("button", { name: "下一题", exact: true }).click();
+
+  for (const [term, translation] of [["banana", "香蕉"], ["apple", "苹果"]] as const) {
     await expect(page.locator(".course-term")).toHaveText(term);
     await page.getByRole("button", { name: translation, exact: true }).click();
     await expect(page.locator(".course-option.is-correct")).toHaveText(translation);
