@@ -230,7 +230,7 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 }
 ```
 
-发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。服务端以 session 当前 queue/cursor 校验 active word、记录 append-only attempt、更新候补池并逐次提交；客户端不能跳阶段或自报正确。发音错配时 `expected` 返回目标英文词，其它测试返回对应正确答案；该字段只用于当前错误反馈。Web 的发音匹配/翻译选择会在点击后立即发此请求并自动推进；拼写以 Enter/单次提交确定输入边界，三者都不再需要第二次 Continue。
+发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。服务端以 session 当前 queue/cursor 校验 active word、记录 append-only attempt、更新候补池并逐次提交；客户端不能跳阶段或自报正确。发音错配时 `expected` 返回目标英文词，其它测试返回对应正确答案；该字段只用于当前错误反馈。Web 的发音匹配/翻译选择会在点击后立即发此请求，拼写以 Enter/单次提交确定输入边界；答对短暂反馈后自动推进，答错则保留当前题、错误选项和 `expected`，直到用户点击“下一题”后读取已持久化的下一题。
 
 ### 4.3 发音合成与朗读评分
 

@@ -33,6 +33,11 @@ async function settle(work?: () => void | Promise<void>) {
 
 function click(element: Element) { element.dispatchEvent(new MouseEvent("click", { bubbles: true })); }
 
+function inputValue(element: HTMLInputElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set?.call(element, value);
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
 function course(words: VocabularyWord[]): LearningCourseDetail {
   return { id: ids[0], title: "Instant feedback", category: "english_vocabulary", hasUnits: false, locale: "en-US",
     unitCount: 1, wordCount: words.length, learnedCount: 0, progressPercent: 0, activeSessionId: ids[4], canRepublish: true,
@@ -102,7 +107,7 @@ describe("LearningView immediate feedback", () => {
 
   afterEach(async () => { await settle(() => root.unmount()); vi.unstubAllGlobals(); vi.mocked(beginWavRecording).mockReset(); });
 
-  it("records a single-choice translation immediately, animates it, and advances without Check or Continue", async () => {
+  it("keeps incorrect translation feedback visible until the user opens the next question", async () => {
     vi.useFakeTimers();
     const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
     const { attempts } = installApi(words, "translation");
@@ -113,10 +118,18 @@ describe("LearningView immediate feedback", () => {
     expect(attempts).toHaveLength(1);
     expect(container.querySelector(".course-option.is-wrong")?.textContent).toBe("香蕉");
     expect(container.textContent).toContain("added to the next-round retry pool");
-    expect(container.textContent).not.toContain("Continue");
+    const nextQuestion = [...container.querySelectorAll("button")].find((entry) => entry.textContent === "Next question");
+    expect(nextQuestion).toBeTruthy();
+    expect(document.activeElement).toBe(nextQuestion);
 
-    await act(async () => { await vi.advanceTimersByTimeAsync(1_200); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(container.querySelector(".course-term")?.textContent).toBe("apple");
+    expect(container.querySelector(".course-option.is-wrong")?.textContent).toBe("香蕉");
+    expect(container.textContent).toContain("added to the next-round retry pool");
+
+    await settle(() => click(nextQuestion!));
     expect(container.querySelector(".course-term")?.textContent).toBe("banana");
+    expect(container.textContent).not.toContain("added to the next-round retry pool");
   });
 
   it("collects only the required multi-select answers and auto-submits the final correct choice", async () => {
@@ -145,6 +158,48 @@ describe("LearningView immediate feedback", () => {
     expect(attempts).toHaveLength(1);
     expect(container.querySelector(".course-match button.is-correct")).not.toBeNull();
     expect(container.textContent).not.toContain("Continue");
+  });
+
+  it("keeps an incorrect pronunciation match visible until Next question", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const { attempts } = installApi(words, "pronunciation");
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => click(container.querySelector('[aria-label="Play apple"]')!));
+    await settle(() => click([...container.querySelectorAll(".course-match > div:nth-child(2) button")].find((entry) => entry.textContent === "banana")!));
+    expect(attempts).toHaveLength(1);
+    expect(container.querySelector(".course-match button.is-wrong")).not.toBeNull();
+    expect(container.textContent).toContain("Correct answer: apple");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(container.querySelector(".course-match button.is-wrong")).not.toBeNull();
+    expect(container.textContent).toContain("Correct answer: apple");
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "Next question")!));
+    expect(container.textContent).not.toContain("Correct answer: apple");
+  });
+
+  it("keeps an incorrect spelling diff visible until Next question", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const { attempts } = installApi(words, "spelling");
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    const spelling = container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')!;
+    await settle(() => inputValue(spelling, "apply"));
+    await settle(() => { spelling.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(attempts).toHaveLength(1);
+    expect(container.querySelector(".course-spelling-answer.is-wrong")).not.toBeNull();
+    expect(container.textContent).toContain("Correct spelling: apple");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(container.querySelector(".course-spelling-answer.is-wrong")).not.toBeNull();
+    expect(container.textContent).toContain("Correct spelling: apple");
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "Next question")!));
+    expect(container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')?.value).toBe("");
+    expect(container.textContent).not.toContain("Correct spelling: apple");
   });
 
   it("shows the pronunciation pass score, persisted retry status, and an explicit read-again action", async () => {
