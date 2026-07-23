@@ -11,7 +11,6 @@ import { CourseLocaleButton } from "./CourseLocaleButton";
 
 const STAGES = ["recognition", "pronunciation", "translation", "spelling"] as const;
 const CORRECT_FEEDBACK_MS = 520;
-const WRONG_FEEDBACK_MS = 1_150;
 
 type AttemptFeedback = {
   result: LearningAttemptResult;
@@ -98,6 +97,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const stopRef = useRef<null | (() => Promise<Blob | null>)>(null);
   const submittingRef = useRef(false);
   const aliveRef = useRef(true);
+  const nextQuestionRef = useRef<HTMLButtonElement>(null);
   const [reviewOffsets, setReviewOffsets] = useState<number[]>([]);
 
   const load = async () => {
@@ -112,6 +112,9 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     return () => { active = false; void stopRef.current?.(); };
   }, [sessionId, l]);
   useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, [sessionId]);
+  useEffect(() => {
+    if (feedback && (!feedback.result.correct || error)) nextQuestionRef.current?.focus();
+  }, [error, feedback]);
 
   const q = session ? queueState(session) : { queue: [], nextQueue: [], cursor: 0, round: 1 };
   const currentId = q.queue[q.cursor];
@@ -142,19 +145,42 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const attempt = async (word: VocabularyWord, answer: Record<string, unknown>, visual: Pick<AttemptFeedback, "actual" | "triggerValue" | "selectedWordId"> = {}) => {
     if (!session || feedback || submittingRef.current || !["pronunciation", "translation", "spelling"].includes(session.stage)) return;
     const skill = session.stage as "pronunciation" | "translation" | "spelling";
+    let answerSaved = false;
     submittingRef.current = true;
     setBusy(true); setError("");
     try {
       const result = await coursesApi.attempt(session.id, { wordId: word.id, skill: session.stage as "pronunciation" | "translation" | "spelling", answer });
+      answerSaved = true;
       if (!aliveRef.current) return;
       setFeedback({ result, skill, wordId: word.id, ...visual });
-      await new Promise((resolve) => window.setTimeout(resolve, result.correct ? CORRECT_FEEDBACK_MS : WRONG_FEEDBACK_MS));
-      if (!aliveRef.current) return;
+      if (result.correct) {
+        await new Promise((resolve) => window.setTimeout(resolve, CORRECT_FEEDBACK_MS));
+        if (!aliveRef.current) return;
+        await refresh();
+        if (aliveRef.current) setFeedback(null);
+      }
+    } catch (caught) {
+      setError(answerSaved
+        ? l("Your answer was saved, but the next question could not be loaded. Try again.", "答案已保存，但下一题加载失败，请重试。")
+        : caught instanceof Error ? caught.message : l("Could not submit the answer.", "答案提交失败"));
+    } finally {
+      submittingRef.current = false;
+      if (aliveRef.current) setBusy(false);
+    }
+  };
+  const continueAfterFeedback = async () => {
+    if (!feedback || busy || submittingRef.current) return;
+    submittingRef.current = true;
+    setBusy(true); setError("");
+    try {
       await refresh();
       if (aliveRef.current) setFeedback(null);
-    } catch (caught) { setError(caught instanceof Error ? caught.message : l("Could not submit the answer.", "答案提交失败")); }
-    submittingRef.current = false;
-    if (aliveRef.current) setBusy(false);
+    } catch {
+      if (aliveRef.current) setError(l("Your answer was saved, but the next question could not be loaded. Try again.", "答案已保存，但下一题加载失败，请重试。"));
+    } finally {
+      submittingRef.current = false;
+      if (aliveRef.current) setBusy(false);
+    }
   };
 
   const assessBlob = async (blob: Blob) => {
@@ -253,10 +279,10 @@ export function LearningView({ sessionId, onExit, onChanged }: {
         <button className="btn btn-primary btn-lg mt-24" disabled={busy} onClick={recognize}>{busy ? l("Saving…", "保存中…") : l("I recognize it — continue", "认识了，继续")}</button>
       </> : session.stage === "pronunciation" ? <>
         <p className="muted">{l("Play a pronunciation on the left, then choose its word on the right. Each batch contains up to 5 words.", "先点击左侧任一发音，再从右侧选择对应单词。每批最多 5 个。")}</p>
-        <div className="course-match"><div>{audioBatch.map((word, index) => <button key={word.id} aria-label={l(`Play ${word.term}`, `播放 ${word.term}`)} disabled={busy}
+        <div className="course-match"><div>{audioBatch.map((word, index) => <button key={word.id} aria-label={l(`Play ${word.term}`, `播放 ${word.term}`)} disabled={busy || Boolean(feedback)}
           className={`btn ${activeAudioId === word.id ? "active" : ""} ${feedback?.skill === "pronunciation" && feedback.wordId === word.id ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`}
           onClick={() => { setActiveAudioId(word.id); setSelectedMatchId(""); void playWord(word, setNotice, l); }}>🔊 {l(`Audio ${index + 1}`, `发音 ${index + 1}`)}</button>)}</div>
-          <div>{wordBatch.map((word) => <button key={word.id} className={`btn ${selectedMatchId === word.id ? "selected" : ""} ${feedback?.skill === "pronunciation" && feedback.selectedWordId === word.id ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} disabled={busy || !activeAudioId}
+          <div>{wordBatch.map((word) => <button key={word.id} className={`btn ${selectedMatchId === word.id ? "selected" : ""} ${feedback?.skill === "pronunciation" && feedback.selectedWordId === word.id ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} disabled={busy || Boolean(feedback) || !activeAudioId}
             onClick={() => { const target = session.items.find((item) => item.word.id === activeAudioId)?.word; if (target) { setSelectedMatchId(word.id); void attempt(target, { wordId: word.id }, { selectedWordId: word.id }); } }}>{word.term}</button>)}</div></div>
       </> : session.stage === "translation" ? <>
         <div className="course-term" style={{ fontSize: 34 }}>{current.term}</div><div className="course-ipa">{current.ipa || l("IPA not available", "音标待补充")}</div>
@@ -265,22 +291,25 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           const resultClass = feedback?.skill === "translation" && feedback.wordId === current.id && feedback.triggerValue === option
             ? feedback.result.correct ? "is-correct" : "is-wrong"
             : selectedOption && current.translations.includes(option) ? "picked-correct" : "";
-          return <button key={option} aria-pressed={selectedOption} disabled={busy} className={`course-option ${selectedOption ? "selected" : ""} ${resultClass}`}
+          return <button key={option} aria-pressed={selectedOption} disabled={busy || Boolean(feedback)} className={`course-option ${selectedOption ? "selected" : ""} ${resultClass}`}
             onClick={() => chooseTranslation(option)}>{option}</button>;
         })}</div>
         {current.translations.length > 1 && <div className="faint mt-12">{l("Choose every correct translation. A wrong choice is recorded immediately.", "依次选择全部正确翻译；选错会立即记录。")}</div>}
       </> : <>
-        <button className="btn" onClick={() => playWord(current, setNotice, l)}>🔊 {l("Play pronunciation", "播放发音")}</button>
+        <button className="btn" disabled={busy || Boolean(feedback)} onClick={() => playWord(current, setNotice, l)}>🔊 {l("Play pronunciation", "播放发音")}</button>
         <input className={`course-form-field course-spelling-answer mt-24 ${feedback?.skill === "spelling" ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} style={{ maxWidth: 420, textAlign: "center", fontSize: 20 }} autoFocus
           aria-label={l("Spelling answer", "拼写答案")} value={spelling} onChange={(event) => setSpelling(event.target.value)}
-          disabled={busy} onKeyDown={(event) => { if (event.key === "Enter" && spelling.trim()) void attempt(current, { text: spelling }, { actual: spelling }); }} />
-        <button className="btn btn-primary mt-16" disabled={busy || !spelling.trim()} onClick={() => attempt(current, { text: spelling }, { actual: spelling })}>{l("Submit spelling", "提交拼写")}</button>
-        <div className="faint mt-8">{l("Press Enter or submit once; feedback advances automatically.", "按 Enter 或提交一次，反馈后会自动进入下一题。")}</div>
+          disabled={busy || Boolean(feedback)} onKeyDown={(event) => { if (event.key === "Enter" && spelling.trim()) void attempt(current, { text: spelling }, { actual: spelling }); }} />
+        <button className="btn btn-primary mt-16" disabled={busy || Boolean(feedback) || !spelling.trim()} onClick={() => attempt(current, { text: spelling }, { actual: spelling })}>{l("Submit spelling", "提交拼写")}</button>
+        <div className="faint mt-8">{l("Press Enter or submit once. Correct answers advance automatically; incorrect feedback waits for you.", "按 Enter 或提交一次；答对自动进入下一题，答错反馈会等待你手动继续。")}</div>
       </>}
       {feedback && <div role="status" aria-live="polite" className={`course-feedback ${feedback.result.correct ? "is-correct" : "wrong"}`}>
         <div><b>{feedback.result.correct ? l("Correct — continuing…", "回答正确，正在进入下一题…") : l("Incorrect — added to the next-round retry pool", "回答错误，已加入下一轮候补池")}</b></div>
         {!feedback.result.correct && feedback.skill === "spelling" && typeof feedback.result.expected === "string" && <div className="mt-8">{l("Your answer:", "你的答案：")} <SpellingDiff expected={feedback.result.expected} actual={feedback.actual || ""} /><br />{l("Correct spelling:", "正确拼写：")} <span className="mono">{feedback.result.expected}</span></div>}
         {!feedback.result.correct && feedback.skill !== "spelling" && <div className="mt-8">{l("Correct answer:", "正确答案：")} {Array.isArray(feedback.result.expected) ? feedback.result.expected.join(" / ") : feedback.result.expected}</div>}
+        {(!feedback.result.correct || error) && <button ref={nextQuestionRef} className="btn btn-sm mt-12" disabled={busy} onClick={continueAfterFeedback}>{busy
+          ? l("Loading…", "加载中…")
+          : error ? l("Try next question again", "重试下一题") : l("Next question", "下一题")}</button>}
       </div>}
     </div>
   </div>;

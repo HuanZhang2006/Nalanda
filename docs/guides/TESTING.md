@@ -80,7 +80,7 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 | `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
 | `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、逐单元与整份多单元纠错、独立翻译字段、编辑器批量追加/已有词重复、排序、保存失败、进度切换、会话恢复和 API error |
-| `apps/web/src/features/courses/LearningView.test.tsx` | 单选即时判错、多翻译逐项确认/自动提交、发音匹配即时提交、无 Check/Continue 自动推进，以及朗读阈值/候补状态/显式重读 |
+| `apps/web/src/features/courses/LearningView.test.tsx` | 翻译/发音匹配/拼写答错后错误持续到手动下一题、多翻译逐项确认/正确自动提交、答对自动推进，以及朗读阈值/候补状态/显式重读 |
 
 ### 4.2 mock 的边界
 
