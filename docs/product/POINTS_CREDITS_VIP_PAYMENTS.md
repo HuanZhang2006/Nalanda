@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-07-27。生产已验证 0008–0014；课程 +20 与九级徽章已上线。0015–0016 的幂等答题/弱网预测仍是待发布候选；Course Market v1 永久按“免费克隆”实现，不接 credits/支付，商业账本、Stripe、VIP 与创作者结算仍未实现。
+> **状态基线：**2026-07-27。生产已验证 0008–0016；课程 +20、九级徽章与服务端权威的幂等弱网答题已上线。Course Market v1 永久按“免费克隆”实现，不接 credits/支付，商业账本、Stripe、VIP 与创作者结算仍未实现。
 
 ## 1. 规范用语和总原则
 
@@ -71,7 +71,7 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 课程奖励的“100%”只看熟练度，不看首次四阶段完成度：每个词的发音、翻译、拼写都必须在至少两个不同本地日期的**已完成复习会话**中最终答对，三项均达标后才有 `learned_at`。同日重复、未完成会话、供应商/麦克风失败不推进。课程还须至少 20 个不同规范化英文词/短语。服务端在 `_refresh_learning_growth` 内用词集合 fingerprint 调现有 points 状态机并写 `points_claimed_at`；客户端不能自报完成。
 
-候选弱网流程中的前端正误、cursor 和“等待同步”都只是 provisional UI。每个答案用 `(user_id,session_id,attempt_id)` 幂等，revision 冲突由服务端拒绝；只有服务端事务确认 attempt、阶段完成、progress、徽章和课程 fingerprint 后才能显示或发放成长事实。离线预测完成、超时重试、重复 replay、Cache Storage 命中和音频生成都不能直接产生 points、徽章、credits 或 VIP。
+弱网流程中的前端正误、cursor 和“等待同步”都只是 provisional UI。每个答案用 `(user_id,session_id,attempt_id)` 幂等，revision 冲突由服务端拒绝；只有服务端事务确认 attempt、阶段完成、progress、徽章和课程 fingerprint 后才能显示或发放成长事实。离线预测完成、超时重试、重复 replay、Cache Storage 命中和音频生成都不能直接产生 points、徽章、credits 或 VIP。
 
 ### 3.3 Courses 徽章（非经济权益）
 
@@ -282,7 +282,7 @@ Webhook 必须：使用原始 body 验签；检查 live/test mode 和账户；�
 - [x] 原型商业入口保持 demo/feature flag，不接真实支付。
 - [x] Course Market v1 与商业域隔离：只免费克隆，不读写 credits/订单/应付；克隆课禁止再次传播。
 - [x] Courses +20 使用用户+排序去重词集合 SHA-256 永久键，徽章以用户+code 唯一；0011–0013 已于 2026-07-22 生产发布。
-- [ ] 0015–0016 候选需在真实 Supabase E2E 证明重复 `attemptId` 只落一条、revision 冲突不推进、离线完成待服务端确认且不重复奖励，生产发布前不得勾选。
+- [x] 0015–0016 已由真实本地 Supabase E2E 证明重复 `attemptId` 只落一条、revision 冲突不推进、离线完成待服务端确认且不重复奖励，并于 2026-07-27 完成受保护生产发布。
 
 ### Phase 1：无真实支付的账本
 

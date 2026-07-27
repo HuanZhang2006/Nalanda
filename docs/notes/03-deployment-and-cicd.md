@@ -76,7 +76,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 ### Secrets / 密钥分层
 - **repository Actions Secrets（当前实际位置）**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`；`production` environment 会在部署 job 中使用这些仓库级 Secrets。后续如迁移为 environment Secrets，应一次性迁移整组并验证。
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
-- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与 Azure key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses 四项 flags 已开启，Azure fake=false。0015 上线前另配置 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`、TTS 每分钟/月字符限制、预热间隔和 synthesis version，先私有启用。
+- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与 Azure key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音与音频预热 flags 已开启，Azure fake=false；TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
@@ -142,6 +142,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - [受保护 apply/deploy](https://github.com/1590703336/Nalanda/actions/runs/29940292716) 创建并保留 14 天加密恢复点 artifact `8538123165`，应用 0014 后确认 local/remote history 一致、dry-run 无待办且 remote lint 通过。
 - 激活前真实 Azure gate 使用 `japaneast`/`en-US-JennyNeural` 成功返回 MP3 10,656 bytes、accuracy 98、pronunciation 98.8 和 4 个音素；不可变 release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` 健康激活。
 - 独立公网复核：`/api/health` 为 `status=ok`、`deps.supabase=ok`，未认证 `/api/me` 为 401，首页加载新资产，生产 API image 为同 SHA；容器内随机缺失 TTS 缓存探针返回 `null`，确认首次发音不再因 Storage 的 HTTP 400/JSON-404 提前失败。
+
+### 2026-07-27 Courses 即时反馈、弱网答题与离线音频
+
+- main SHA：`6b6de0e985ad8b34c977f1bce3ba985b84eb82f2`；PR #21 run `30243998633` 与 main run `30244402278` 完成 docs/lint/typecheck、Web/API tests、build、0007→0016、空库重建/database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright。Playwright 的 Azure 为 fake。
+- [只读 migration plan](https://github.com/1590703336/Nalanda/actions/runs/30244967669) 确认远端停在 0014，唯一待办为 0015–0016，且没有执行恢复点、写入或应用部署。
+- [受保护 apply/deploy](https://github.com/1590703336/Nalanda/actions/runs/30245430630) 保留 artifact `8644999285` 后应用 0015–0016，确认远端 history、权限断言、lint 与空 dry-run，再构建隔离的不可变 Web/API release。
+- 切流前基础 Japan East 真实 Azure smoke 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；新队列 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`，证明首次生成、private Storage 命中、第二用户重复词不增加 Azure 生成及裁剪评分。
+- release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` 已健康激活。独立公网复核：Web 200，`/api/health` 返回 `deps.supabase=ok`，匿名 `/api/me` 返回 401。该 gate 是发布时证据，不替代持续监控。
 
 ## 8. 运维速查
 

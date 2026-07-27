@@ -175,7 +175,7 @@ supabase stop --no-backup
 
 Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分享/市场只能经 API、publication 快照更新被拒、四阶段会话恢复、两次不同本地日期熟练、Schedule 不生成 `study_tasks`、同词集合只出现一条 +20 分录、课程删除保留分录/徽章历史，以及 `learning_speech_usage` 不含音频或参考文本。
 
-0015–0016 发布候选还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到 0014 release 仍能运行。应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、VAD 裁剪评分与最终 `deps.supabase=ok`。
+0015–0016 还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到旧 release 仍能运行。应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、VAD 裁剪评分与最终 `deps.supabase=ok`。
 
 ### 8.1 2026-07-21 安全与积分发布记录
 
@@ -207,12 +207,15 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - 迁移后 local/remote history 均到 0014，远端 dry-run 与 lint 通过；真实 Azure gate、API Supabase readiness、鉴权守卫和公网 Web/API smoke 通过，release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` 健康激活。
 - 数据库回退继续只允许 forward-fix；应用问题恢复上一不可变 release，语音问题优先关闭 `FEATURE_PRONUNCIATION_ENABLED`。
 
-### 8.4 2026-07-27 Courses 0015–0016 发布候选（尚无生产证据）
+### 8.4 2026-07-27 Courses 0015–0016 发布记录
 
-- 候选文件：`20260727000015_learning_performance_offline_audio.sql` 与 `20260727000016_verify_learning_performance_release.sql`；生产已知基线仍是 0014。
-- 合并后普通 main push只执行完整 CI并阻止应用发布；随后必须分别运行 `plan_database_migrations=true` 和 `apply_database_migrations=true`，不得把 plan dry-run 当 apply。
-- 本节在 plan/apply 完成前不得填写“已发布”。正式记录至少补 Git SHA、plan/apply run、加密 recovery artifact、remote history/lint、真实队列 gate JSON、不可变 release ID 和独立公网 health/auth/Web smoke。
-- 失败边界：plan/备份/apply 任一步失败均不部署；数据库成功而队列/真实 Azure gate 失败时恢复上一应用 release、保持 0015–0016 schema，并关闭 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` 或 `FEATURE_PRONUNCIATION_ENABLED`，数据库只做 forward-fix。
+- 发布提交：`6b6de0e985ad8b34c977f1bce3ba985b84eb82f2`；PR #21 run `30243998633` 与 main run `30244402278` 通过 quality、0007→0016、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 和 Chromium Playwright。Playwright 使用 Azure fake，只证明浏览器/API/一次性数据库协作。
+- [只读 plan run `30244967669`](https://github.com/1590703336/Nalanda/actions/runs/30244967669) 显示远端 0001–0014 与本地一致，dry-run 只列 `20260727000015_learning_performance_offline_audio.sql` 和 `20260727000016_verify_learning_performance_release.sql`；恢复、apply 与 deploy 步骤全部跳过。
+- [受保护 apply/deploy run `30245430630`](https://github.com/1590703336/Nalanda/actions/runs/30245430630) 在 apply 前创建并保留加密恢复点 `db-recovery-6b6de0e985ad8b34c977f1bce3ba985b84eb82f2`，artifact `8644999285`，digest `sha256:09c37ba8755b1ffd95bea061fa5da49d961a85f3dd2d2694253cf16c4a6a10a7`，保留至 2026-08-10。
+- apply 后 local/remote history 均到 0016，新增结构/函数权限断言、远端 lint 与空 dry-run 通过。数据库继续只允许 forward-fix；旧答题签名暂时保留供应用兼容回退。
+- 切流前基础真实 Azure gate 在 `japaneast`/`en-US-JennyNeural` 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8 和 4 个音素。新 API 真实 gate 随后验证 4 个首次生成对象、private Storage 读取、第二用户复用同 4 个对象且不增加 Azure 生成、VAD 裁剪后评分 97；用户录音未落库或进入 Storage。
+- 不可变 release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` 健康激活。独立公网复核确认 Web `200`、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`，匿名 `/api/me` 为 `401 UNAUTHENTICATED`。
+- `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` 与默认 20 次/分钟、500,000 字符/月、3.1 秒间隔、synthesis version 1 已在 mode-600 生产 `.env` 启用。若后续队列或供应商异常，先关闭最窄 flag/熔断语音或恢复上一不可变应用 release；0015–0016 schema 不逆向。
 
 ## 9. 失败处置
 

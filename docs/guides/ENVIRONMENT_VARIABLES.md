@@ -49,7 +49,7 @@
 | `FEATURE_COURSE_SHARING_ENABLED` | flag；production 默认 false | 公开配置 | 公开分享创建/读取/克隆；关闭伪装 404。 |
 | `FEATURE_COURSE_MARKET_ENABLED` | flag；production 默认 false | 公开配置 | Course Market、发布、克隆、举报/审核；关闭伪装 404。 |
 | `FEATURE_PRONUNCIATION_ENABLED` | flag；任何环境默认 false | 公开配置 | Azure TTS/评分入口；只有显式 true 才可调用。 |
-| `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` | flag；production 默认 false | 公开配置 | 持久音频队列、manifest、未来五词预取与整单元离线音频；依赖 Courses/Pronunciation 同时开启。 |
+| `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` | flag；production 默认 false；当前生产 true | 公开配置 | 持久音频队列、manifest、未来五词预取与整单元离线音频；依赖 Courses/Pronunciation 同时开启。 |
 | `AZURE_SPEECH_CIRCUIT_OPEN` | 可选，默认 false | 受限配置 | 紧急熔断；true 时语音统一 503，不影响文本学习。 |
 | `AZURE_SPEECH_KEY` | 语音启用时必需 | **最高机密** | Azure Speech subscription key，只在 API 容器。 |
 | `AZURE_SPEECH_REGION` | 语音启用时必需 | 受限配置 | Azure region，同时组成 TTS/STT endpoint。 |
