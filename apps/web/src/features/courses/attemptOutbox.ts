@@ -13,6 +13,7 @@ export interface PendingLearningAttempt {
 const DATABASE = "nalanda-learning";
 const VERSION = 1;
 const STORE = "attempt-outbox";
+const STORAGE_TIMEOUT_MS = 2_000;
 const memory = new Map<string, PendingLearningAttempt>();
 let databasePromise: Promise<IDBDatabase | null> | null = null;
 
@@ -20,19 +21,35 @@ function openDatabase() {
   if (databasePromise) return databasePromise;
   if (!("indexedDB" in globalThis)) return Promise.resolve(null);
   databasePromise = new Promise((resolve) => {
-    const request = indexedDB.open(DATABASE, VERSION);
-    request.onupgradeneeded = () => {
-      const database = request.result;
-      if (!database.objectStoreNames.contains(STORE)) {
-        const store = database.createObjectStore(STORE, { keyPath: "attemptId" });
-        store.createIndex("user-session-revision", [
-          "userId", "sessionId", "request.expectedRevision",
-        ], { unique: false });
+    let settled = false;
+    const finish = (database: IDBDatabase | null) => {
+      if (settled) {
+        database?.close();
+        return;
       }
+      settled = true;
+      window.clearTimeout(timer);
+      if (!database) databasePromise = null;
+      resolve(database);
     };
-    request.onsuccess = () => resolve(request.result);
-    request.onerror = () => resolve(null);
-    request.onblocked = () => resolve(null);
+    const timer = window.setTimeout(() => finish(null), STORAGE_TIMEOUT_MS);
+    try {
+      const request = indexedDB.open(DATABASE, VERSION);
+      request.onupgradeneeded = () => {
+        const database = request.result;
+        if (!database.objectStoreNames.contains(STORE)) {
+          const store = database.createObjectStore(STORE, { keyPath: "attemptId" });
+          store.createIndex("user-session-revision", [
+            "userId", "sessionId", "request.expectedRevision",
+          ], { unique: false });
+        }
+      };
+      request.onsuccess = () => finish(request.result);
+      request.onerror = () => finish(null);
+      request.onblocked = () => finish(null);
+    } catch {
+      finish(null);
+    }
   });
   return databasePromise;
 }
@@ -45,16 +62,23 @@ async function transaction<T>(
   const database = await openDatabase();
   if (!database) return fallback();
   return new Promise<T>((resolve) => {
+    let timer: number | undefined;
     try {
       const tx = database.transaction(STORE, mode);
       let settled = false;
       const done = (value: T) => {
-        if (!settled) { settled = true; resolve(value); }
+        if (!settled) {
+          settled = true;
+          if (timer != null) window.clearTimeout(timer);
+          resolve(value);
+        }
       };
+      timer = window.setTimeout(() => done(fallback()), STORAGE_TIMEOUT_MS);
       work(tx.objectStore(STORE), done);
       tx.onerror = () => done(fallback());
       tx.onabort = () => done(fallback());
     } catch {
+      if (timer != null) window.clearTimeout(timer);
       resolve(fallback());
     }
   });

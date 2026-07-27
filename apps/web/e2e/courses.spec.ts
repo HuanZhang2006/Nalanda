@@ -107,7 +107,22 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
     return counts.reduce((sum, count) => sum + count, 0);
   });
   expect(cachedAudio).toBeGreaterThanOrEqual(2);
+  const startResponse = page.waitForResponse((response) =>
+    response.request().method() === "POST"
+    && /\/api\/learning-courses\/[^/]+\/sessions$/.test(response.url()));
+  const snapshotResponse = page.waitForResponse((response) =>
+    response.request().method() === "GET"
+    && /\/api\/learning-sessions\/[^/]+$/.test(response.url()));
+  const detailResponse = page.waitForResponse((response) =>
+    response.request().method() === "GET"
+    && /\/api\/learning-courses\/[^/]+$/.test(response.url()));
   await page.locator(".modal").getByRole("button", { name: "开始学习" }).click();
+  const started = await startResponse;
+  expect(started.status(), `session start: ${await started.text()}`).toBe(201);
+  const snapshot = await snapshotResponse;
+  expect(snapshot.status(), `session snapshot: ${await snapshot.text()}`).toBe(200);
+  const detail = await detailResponse;
+  expect(detail.status(), `course detail: ${await detail.text()}`).toBe(200);
   await expect(page.locator(".course-term")).toHaveText("apple");
   await assessWithFixedWav(page, courseTitle);
   await page.getByRole("button", { name: "认识了，继续" }).click();
