@@ -13,12 +13,15 @@ afterEach(() => vi.unstubAllGlobals());
 
 describe("browser vocabulary audio cache", () => {
   it("stores a fetched audio blob and serves the second read without another request", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(new Blob(["audio"], {
-      type: "audio/mpeg",
-    }), { status: 200 }));
+    const fetchMock = vi.fn().mockResolvedValue(new Response(
+      new TextEncoder().encode("audio"),
+      { status: 200, headers: { "Content-Type": "audio/mpeg" } },
+    ));
     vi.stubGlobal("fetch", fetchMock);
-    expect(await fetchAudioAsset(asset, "test")).toBeInstanceOf(Blob);
-    expect(await getCachedAudioBlob(asset, "test")).toBeInstanceOf(Blob);
+    const fetched = await fetchAudioAsset(asset, "test");
+    const cached = await getCachedAudioBlob(asset, "test");
+    expect(fetched).toMatchObject({ size: 5, type: "audio/mpeg" });
+    expect(cached).toMatchObject({ size: 5, type: "audio/mpeg" });
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
