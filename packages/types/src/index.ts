@@ -152,6 +152,7 @@ export interface LearningSession {
   selectedSkills: LearningSkill[];
   stage: LearningStage;
   active: boolean;
+  revision: number;
   state: Record<string, unknown>;
   items: LearningSessionItem[];
 }
@@ -165,16 +166,62 @@ export interface StartLearningSessionRequest {
 }
 
 export interface LearningAttemptRequest {
+  attemptId: string;
+  expectedRevision: number;
   wordId: string;
   skill: LearningSkill;
   answer: { wordId?: string; translations?: string[]; text?: string };
 }
 
-export interface LearningAttemptResult {
-  correct: boolean;
+export interface LearningSessionChangedItem {
+  wordId: string;
+  recognitionSeen: boolean;
+  pronunciationPassed: boolean;
+  translationPassed: boolean;
+  spellingPassed: boolean;
+  wrongCount: number;
+}
+
+export interface LearningSessionPatch {
   stage: LearningStage;
-  completed: boolean;
+  active: boolean;
+  state: Record<string, unknown>;
+  changedItem: LearningSessionChangedItem | null;
+  nextWordId: string | null;
+}
+
+export interface LearningAttemptResult {
+  attemptId: string;
+  correct: boolean;
   expected: string | string[];
+  revision: number;
+  replayed: boolean;
+  sessionPatch: LearningSessionPatch;
+}
+
+export interface LearningSessionMutationResult {
+  revision: number;
+  sessionPatch: LearningSessionPatch;
+}
+
+export type LearningAudioAssetStatus = "missing" | "pending" | "processing" | "ready" | "failed";
+
+export interface LearningAudioManifestAsset {
+  wordId: string;
+  cacheKey: string;
+  status: LearningAudioAssetStatus;
+  audioUrl: string;
+  lastErrorCode: string | null;
+}
+
+export interface LearningAudioManifest {
+  unitId: string;
+  total: number;
+  ready: number;
+  pending: number;
+  failed: number;
+  synthesisVersion: string;
+  assets: LearningAudioManifestAsset[];
 }
 
 export interface CreateReviewSchedulesRequest {
@@ -288,6 +335,8 @@ export interface PronunciationAssessment {
   passThreshold: number;
   passed: boolean;
   queuedForRetry: boolean;
+  revision: number;
+  sessionPatch: LearningSessionPatch;
   errorType: string | null;
   phonemes: PronunciationPhoneme[];
 }

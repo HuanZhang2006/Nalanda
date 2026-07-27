@@ -30,4 +30,11 @@ describe("SupabaseAdminService Storage cache", () => {
     await expect(service().storageGet("vocabulary-audio", "word.mp3"))
       .rejects.toBeInstanceOf(SupabaseRequestError);
   });
+
+  it("keeps Storage network failures visible", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
+
+    await expect(service().storageGet("vocabulary-audio", "word.mp3"))
+      .rejects.toMatchObject({ response: { code: "UPSTREAM_UNREACHABLE" } });
+  });
 });

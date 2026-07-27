@@ -15,10 +15,22 @@ export class PronunciationController {
 
   @Get("audio/:wordId")
   async audio(@CurrentUser() user: AuthUser, @Param("wordId") wordId: string, @Res({ passthrough: true }) response: Response) {
-    const bytes = await this.pronunciation.audio(user.id, wordId);
-    response.setHeader("Content-Type", Buffer.from(bytes).subarray(0, 4).toString("ascii") === "RIFF" ? "audio/wav" : "audio/mpeg");
-    response.setHeader("Cache-Control", "private, max-age=86400");
-    return new StreamableFile(Buffer.from(bytes));
+    const asset = await this.pronunciation.audio(user.id, wordId);
+    response.setHeader("ETag", `"${asset.cacheKey}"`);
+    if (!asset.bytes) {
+      response.status(202);
+      response.setHeader("Retry-After", "3");
+      response.setHeader("Cache-Control", "no-store");
+      return {
+        code: "AUDIO_PENDING",
+        message: "Audio is being prepared",
+        cacheKey: asset.cacheKey,
+        status: asset.status,
+      };
+    }
+    response.setHeader("Content-Type", Buffer.from(asset.bytes).subarray(0, 4).toString("ascii") === "RIFF" ? "audio/wav" : "audio/mpeg");
+    response.setHeader("Cache-Control", "private, max-age=31536000, immutable");
+    return new StreamableFile(Buffer.from(asset.bytes));
   }
 
   @Post("assess")

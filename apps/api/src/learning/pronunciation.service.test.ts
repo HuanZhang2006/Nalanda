@@ -12,11 +12,17 @@ function wav(seconds = 0.1) {
 }
 
 function harness() {
-  const db = { storageGet: vi.fn().mockResolvedValue(null), storagePut: vi.fn(), select: vi.fn().mockResolvedValue([{ id: "word", term: "apple" }]) };
+  const patch = { stage: "recognition", active: true, state: {}, changedItem: null, nextWordId: "word" };
   const learning = { ownedWordInSession: vi.fn().mockResolvedValue({ id: "w", term: "apple" }),
-    reserveSpeechQuota: vi.fn(), recordSpeechAssessment: vi.fn().mockResolvedValue({ recorded: true, correct: true, retryQueued: false, passThreshold: 70 }) };
+    reserveSpeechQuota: vi.fn(), recordSpeechAssessment: vi.fn().mockResolvedValue({
+      recorded: true, correct: true, retryQueued: false, passThreshold: 70, revision: 1, sessionPatch: patch,
+    }) };
   const flags = { pronunciation: vi.fn() };
-  return { db, learning, flags, service: new PronunciationService(db as any, learning as any, flags as any) };
+  const learningAudio = { audio: vi.fn().mockResolvedValue({
+    bytes: new Uint8Array([73, 68, 51, 4]), cacheKey: "cache", status: "ready",
+  }) };
+  return { learning, flags, learningAudio,
+    service: new PronunciationService(learning as any, flags as any, learningAudio as any) };
 }
 
 afterEach(() => { vi.unstubAllGlobals(); delete process.env.AZURE_SPEECH_KEY; delete process.env.AZURE_SPEECH_REGION; delete process.env.AZURE_SPEECH_FAKE; delete process.env.AZURE_SPEECH_TIMEOUT_MS; delete process.env.AZURE_SPEECH_PRONUNCIATION_PASS_SCORE; });
@@ -73,7 +79,10 @@ describe("pronunciation adapter", () => {
     process.env.AZURE_SPEECH_KEY = "test"; process.env.AZURE_SPEECH_REGION = "japaneast";
     process.env.AZURE_SPEECH_PRONUNCIATION_PASS_SCORE = "75";
     const { service, learning } = harness();
-    learning.recordSpeechAssessment.mockResolvedValue({ recorded: true, correct: false, retryQueued: true, passThreshold: 75 });
+    learning.recordSpeechAssessment.mockResolvedValue({
+      recorded: true, correct: false, retryQueued: true, passThreshold: 75,
+      revision: 1, sessionPatch: { stage: "recognition", active: true, state: {}, changedItem: null, nextWordId: "word" },
+    });
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({ NBest: [{
       AccuracyScore: 72, FluencyScore: 70, CompletenessScore: 100, PronScore: 74, Words: [],
     }] }), { status: 200, headers: { "Content-Type": "application/json" } })));
@@ -83,14 +92,13 @@ describe("pronunciation adapter", () => {
     });
   });
 
-  it("returns generated TTS even when the optional cache write fails", async () => {
-    process.env.AZURE_SPEECH_KEY = "test"; process.env.AZURE_SPEECH_REGION = "japaneast";
-    const { service, db } = harness();
-    db.storagePut.mockRejectedValue(new Error("cache unavailable"));
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Uint8Array([73, 68, 51, 4]), { status: 200 })));
-
+  it("delegates generated-audio lookup to the durable audio cache", async () => {
+    const { service, learningAudio } = harness();
     await expect(service.audio("user", "11111111-1111-4111-8111-111111111111"))
-      .resolves.toEqual(new Uint8Array([73, 68, 51, 4]));
+      .resolves.toMatchObject({ cacheKey: "cache", status: "ready" });
+    expect(learningAudio.audio).toHaveBeenCalledWith(
+      "user", "11111111-1111-4111-8111-111111111111",
+    );
   });
 
   it("does not record an attempt when the provider times out", async () => {

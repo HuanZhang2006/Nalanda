@@ -20,6 +20,7 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
         ▼
 服务器 /opt/nalanda/
   ├─ 新 image + 服务器 .env → 真实 Azure TTS/评分 gate
+  ├─ 0015+ 候选 API → 队列首次生成/Storage hit/重复词/裁剪评分 gate
   ├─ docker compose（.deploy.env 选择不可变 API image）
   ├─ releases/<release-id>/web + web 原子 symlink
   └─ .env（Supabase/Azure 密钥，仅服务器持有，不入库/不进 CI）
@@ -54,9 +55,9 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 ## 流程
 
-推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check → 自动暂存 0008 及以后迁移并验证 0007→最新升级 → 空库重建 → db lint → 本地真实 RLS/Storage/points/Courses E2E → Azure fake Playwright Courses 主流程。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动选中 `plan_database_migrations` 只读核对远端 history/dry-run，再单独选中 `apply_database_migrations`；数据库发布成功后才继续部署应用。上传完成后，生产主机用自己的 mode-600 `.env` 在新 image 中运行 `scripts/smoke-azure-speech.mjs`，真实 TTS/评分失败时不会切换 API/Web；后续应用 smoke 失败会恢复上一 Web symlink/API image，数据库不会危险地自动逆向。
+推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check → 自动暂存 0008 及以后迁移并验证 0007→最新升级 → 空库重建 → db lint → 本地真实 RLS/Storage/points/Courses E2E → Azure fake Playwright Courses 主流程。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动选中 `plan_database_migrations` 只读核对远端 history/dry-run，再单独选中 `apply_database_migrations`；数据库发布成功后才继续部署应用。上传完成后，生产主机用自己的 mode-600 `.env` 先运行原始真实 Azure gate；0015+ 再在新 API 候选上运行 `scripts/smoke-learning-audio-production.mjs`，证明持久队列首次生成、private Storage hit、第二用户重复词不增加 Azure attempt、裁剪后评分和 session patch。任一 gate 失败都不会切换 Web；后续应用 smoke 失败会恢复上一 Web symlink/API image，数据库不会危险地自动逆向。
 
-手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求真实 Azure gate 成功、API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。
+手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求真实 Azure gates 成功、API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。Playwright 的 fake provider 与本地 Cache Storage 流程不能替代这项生产证据。
 
 仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。CI 不覆盖 certbot 管理的生产站点文件；生产站点已于 2026-07-22 同步该值并通过 `nginx -t`。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
 

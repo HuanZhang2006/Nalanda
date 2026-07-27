@@ -1,6 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  LearningCourseDetail, LearningCourseInput, LearningCourseSummary, LearningScope, LearningSkill,
+  LearningAudioManifest, LearningCourseDetail, LearningCourseInput, LearningCourseSummary, LearningScope, LearningSkill,
   VocabularyUnitInput,
 } from "@nalanda/types";
 import { coursesApi } from "./api";
@@ -10,10 +10,26 @@ import { CourseLocaleButton } from "./CourseLocaleButton";
 import { VocabularyErrorList } from "./VocabularyErrorList";
 import { parseMultiUnitVocabularyText, parseVocabularyText, randomCourseId, type VocabularyParseError } from "./parser";
 import { useI18n } from "../../i18n";
+import {
+  cachedAudioCount,
+  prefetchAudioAssets,
+  removeCachedAudioAssets,
+  requestPersistentAudioStorage,
+} from "./audioCache";
 import "./courses.css";
 
 type WizardStep = "category" | "source" | "setup" | "paste";
 type UnitPasteMode = "separate" | "document";
+const AUDIO_QUOTA_CODES = new Set([
+  "SPEECH_TTS_RATE_LIMIT",
+  "SPEECH_TTS_MONTHLY_LIMIT",
+  "SPEECH_QUOTA_EXCEEDED",
+]);
+function quotaPausedAudioCount(manifest: LearningAudioManifest) {
+  return manifest.assets.filter(
+    (asset) => asset.status === "pending" && AUDIO_QUOTA_CODES.has(asset.lastErrorCode || ""),
+  ).length;
+}
 type PasteUnit = { id: string; name: string; isSystem: boolean; text: string; errors: VocabularyParseError[] };
 
 const CATEGORIES = [
@@ -166,6 +182,13 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [countModes, setCountModes] = useState<Record<string, boolean>>({});
   const [picker, setPicker] = useState<{ course: LearningCourseDetail; mode: "initial" | "review"; unitId: string; skills: LearningSkill[]; scope: LearningScope; scheduleId?: string } | null>(null);
+  const [pickerAudio, setPickerAudio] = useState<{
+    manifest: LearningAudioManifest | null;
+    running: boolean;
+    cached: number;
+    persistent: boolean;
+  }>({ manifest: null, running: false, cached: 0, persistent: false });
+  const pickerDownloadRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => { setLoading(true); try { setCourses(await coursesApi.list()); setError(""); } catch (caught) { setError(apiMessage(caught, l("Could not load courses.", "课程加载失败"))); } setLoading(false); }, [l]);
   useEffect(() => { void load(); }, [load]);
@@ -194,6 +217,60 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
     try { const session = await coursesApi.startSession(picker.course.id, { unitId: picker.unitId, mode: picker.mode,
       skills: picker.skills, scope: picker.mode === "initial" ? "all" : picker.scope, scheduleId: picker.scheduleId }); setPicker(null); setSessionId(session.id); }
     catch (caught) { setError(apiMessage(caught, l("Could not start this session.", "无法开始本次会话"))); }
+  };
+
+  useEffect(() => {
+    pickerDownloadRef.current?.abort();
+    setPickerAudio({ manifest: null, running: false, cached: 0, persistent: false });
+    return () => pickerDownloadRef.current?.abort();
+  }, [picker?.unitId]);
+
+  const downloadPickedUnit = async () => {
+    if (!picker) return;
+    if (pickerAudio.running) {
+      pickerDownloadRef.current?.abort();
+      setPickerAudio((value) => ({ ...value, running: false }));
+      return;
+    }
+    const controller = new AbortController();
+    pickerDownloadRef.current = controller;
+    const persistent = await requestPersistentAudioStorage();
+    setPickerAudio((value) => ({ ...value, running: true, persistent }));
+    try {
+      let manifest = await coursesApi.prewarmAudio(picker.unitId);
+      while (!controller.signal.aborted) {
+        await prefetchAudioAssets(
+          manifest.assets.filter((asset) => asset.status === "ready"),
+          manifest.synthesisVersion,
+          2,
+        );
+        const cached = await cachedAudioCount(manifest.assets, manifest.synthesisVersion);
+        const quotaPaused = quotaPausedAudioCount(manifest);
+        const activelyPreparing = manifest.pending > quotaPaused;
+        setPickerAudio({ manifest, running: activelyPreparing, cached, persistent });
+        if (!activelyPreparing) break;
+        await new Promise<void>((resolve) => {
+          const timer = window.setTimeout(resolve, 3_000);
+          controller.signal.addEventListener("abort", () => {
+            window.clearTimeout(timer); resolve();
+          }, { once: true });
+        });
+        if (!controller.signal.aborted) manifest = await coursesApi.audioManifest(picker.unitId);
+      }
+    } catch (caught) {
+      setError(apiMessage(caught, l("Could not prepare offline audio.", "无法准备离线音频")));
+      setPickerAudio((value) => ({ ...value, running: false }));
+    }
+  };
+
+  const removePickedAudio = async () => {
+    if (!pickerAudio.manifest) return;
+    pickerDownloadRef.current?.abort();
+    await removeCachedAudioAssets(
+      pickerAudio.manifest.assets,
+      pickerAudio.manifest.synthesisVersion,
+    );
+    setPickerAudio((value) => ({ ...value, running: false, cached: 0 }));
   };
   const edit = async (id: string) => {
     try { const detail = await coursesApi.detail(id); setEditing({ existing: true, course: { id: detail.id, title: detail.title,
@@ -224,6 +301,14 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
     {picker && <div className="scrim" onMouseDown={(event) => event.target === event.currentTarget && setPicker(null)}><div className="modal"><div className="modal-pad">
       <div className="row between"><h2>{picker.mode === "initial" ? l("Choose a unit", "选择学习单元") : l("Start review", "开始复习")}</h2><button className="icon-btn" aria-label={l("Close", "关闭")} onClick={() => setPicker(null)}>×</button></div>
       <label className="course-label">{l("Unit", "单元")}</label><select className="course-form-field" value={picker.unitId} onChange={(event) => setPicker({ ...picker, unitId: event.target.value })}>{picker.course.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.isSystem ? l("All vocabulary", "全部词表") : unit.name} · {l(`${unit.words.length} words`, `${unit.words.length} 词`)}</option>)}</select>
+      <div className="row wrap-flex mt-12"><button className="btn btn-sm" onClick={() => void downloadPickedUnit()}>{pickerAudio.running
+        ? l("Stop audio download", "停止音频下载")
+        : l("Download this unit's audio", "下载本单元音频")}</button>
+        {pickerAudio.cached > 0 && <button className="btn btn-sm" onClick={() => void removePickedAudio()}>{l("Remove local audio", "删除本地音频")}</button>}</div>
+      {pickerAudio.manifest && <div className="faint mt-8">{l(
+        `${pickerAudio.cached}/${pickerAudio.manifest.total} stored locally · ${pickerAudio.manifest.pending - quotaPausedAudioCount(pickerAudio.manifest)} preparing · ${quotaPausedAudioCount(pickerAudio.manifest)} quota-paused · ${pickerAudio.manifest.failed} failed${pickerAudio.persistent ? " · persistent storage requested" : ""}`,
+        `本地已保存 ${pickerAudio.cached}/${pickerAudio.manifest.total} 个 · ${pickerAudio.manifest.pending - quotaPausedAudioCount(pickerAudio.manifest)} 个准备中 · ${quotaPausedAudioCount(pickerAudio.manifest)} 个因配额暂停 · ${pickerAudio.manifest.failed} 个失败${pickerAudio.persistent ? " · 已申请持久存储" : ""}`,
+      )}</div>}
       {picker.mode === "review" && picker.scheduleId && <div className="course-feedback">{l("This review came from Schedule. It will use the saved skills and scope, then mark the schedule complete when the session finishes.", "此复习来自 Schedule，将按日程保存的测试项目与范围开始；完成会话后日程自动标记完成。")}</div>}
       {picker.mode === "review" && !picker.scheduleId && <><div className="course-label">{l("Skills", "测试项目")}</div><div className="row wrap-flex">{(["pronunciation", "translation", "spelling"] as LearningSkill[]).map((skill) => <label className="chip chip-outline" key={skill}><input type="checkbox" checked={picker.skills.includes(skill)}
         onChange={(event) => setPicker({ ...picker, skills: event.target.checked ? [...picker.skills, skill] : picker.skills.filter((value) => value !== skill) })} /> {skill === "pronunciation" ? l("Pronunciation match", "发音匹配") : skill === "translation" ? l("Translation", "翻译") : l("Spelling", "拼写")}</label>)}</div>

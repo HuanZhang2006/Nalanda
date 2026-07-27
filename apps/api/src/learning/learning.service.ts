@@ -4,18 +4,22 @@ import {
   ForbiddenException,
   HttpException,
   Injectable,
+  Logger,
   NotFoundException,
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { createHash, randomBytes } from "node:crypto";
 import type {
   LearningAttemptRequest,
+  LearningAttemptResult,
   LearningCourseDetail,
   LearningCourseInput,
   LearningCourseSummary,
   LearningProfileSummary,
   LearningScope,
   LearningSession,
+  LearningSessionMutationResult,
+  LearningSessionPatch,
   LearningSkill,
   PublicCoursePreview,
   ReviewSchedule,
@@ -26,10 +30,16 @@ import { SupabaseAdminService, SupabaseRequestError } from "./supabase-admin.ser
 import { assertUuid, cloneSnapshot, publicSnapshot, validateCourseInput } from "./learning.util";
 
 type Row = Record<string, any>;
+type CompatibleLearningAttemptRequest = Pick<
+  LearningAttemptRequest,
+  "wordId" | "skill" | "answer"
+> & Partial<Pick<LearningAttemptRequest, "attemptId" | "expectedRevision">>;
 const q = (values: Record<string, string>) => new URLSearchParams(values);
 
 @Injectable()
 export class LearningService {
+  private readonly logger = new Logger(LearningService.name);
+
   constructor(private readonly db: SupabaseAdminService, private readonly ipa: IpaService) {}
 
   private async call<T>(work: () => Promise<T>): Promise<T> {
@@ -43,6 +53,12 @@ export class LearningService {
       }
       if (/course report daily quota exceeded/i.test(error.message)) {
         throw new HttpException({ code: "REPORT_LIMIT", message: "今日举报次数已达上限" }, 429);
+      }
+      if (/speech tts minute quota exceeded/i.test(error.message)) {
+        throw new HttpException({ code: "SPEECH_TTS_RATE_LIMIT", message: "发音生成速率已达上限" }, 429);
+      }
+      if (/speech tts monthly character quota exceeded/i.test(error.message)) {
+        throw new HttpException({ code: "SPEECH_TTS_MONTHLY_LIMIT", message: "本月发音生成字符额度已用完" }, 429);
       }
       if (/speech .*quota exceeded|speech monthly budget exceeded/i.test(error.message)) {
         throw new HttpException({ code: "SPEECH_QUOTA_EXCEEDED", message: "发音服务配额已用完，请稍后再试" }, 429);
@@ -159,42 +175,112 @@ export class LearningService {
 
   async getSession(userId: string, sessionId: string): Promise<LearningSession> {
     assertUuid(sessionId, "sessionId");
-    const sessions = await this.db.select<Row>("learning_sessions", q({ select: "*", id: `eq.${sessionId}`, user_id: `eq.${userId}`, limit: "1" }));
-    const session = sessions[0];
-    if (!session) throw new NotFoundException({ code: "SESSION_NOT_FOUND", message: "学习会话不存在" });
-    const items = await this.db.select<Row>("learning_session_items", q({ select: "*", session_id: `eq.${sessionId}`, order: "position.asc" }));
-    const wordIds = items.map((item) => item.word_id);
-    const [words, progress] = wordIds.length ? await Promise.all([
-      this.db.select<Row>("learning_course_words", q({ select: "*", id: `in.(${wordIds.join(",")})`, user_id: `eq.${userId}` })),
-      this.db.select<Row>("learning_word_progress", q({ select: "*", word_id: `in.(${wordIds.join(",")})`, user_id: `eq.${userId}` })),
-    ]) : [[], []];
-    const wordMap = new Map(words.map((word) => [word.id, word]));
-    const progressMap = new Map(progress.map((row) => [row.word_id, row]));
-    return {
+    const startedAt = Date.now();
+    let session: Row;
+    try {
+      session = await this.call(() => this.db.rpc<Row>("learning_get_session_snapshot", {
+        p_user_id: userId,
+        p_session_id: sessionId,
+      }));
+    } catch (error) {
+      if (error instanceof SupabaseRequestError && (
+        String(error.body && typeof error.body === "object" && "code" in error.body
+          ? (error.body as { code: unknown }).code : "") === "P0002"
+        || /learning session not found/i.test(error.message)
+      )) {
+        throw new NotFoundException({ code: "SESSION_NOT_FOUND", message: "学习会话不存在" });
+      }
+      throw error;
+    }
+    const result: LearningSession = {
       id: session.id, courseId: session.course_id, unitId: session.unit_id,
       mode: session.mode, scope: session.scope, selectedSkills: session.selected_skills,
-      stage: session.stage, active: session.active, state: session.state || {},
-      items: items.map((item) => ({
-        word: this.word(wordMap.get(item.word_id), progressMap.get(item.word_id)),
+      stage: session.stage, active: session.active, revision: Number(session.revision || 0),
+      state: session.state || {},
+      items: (session.items || []).map((item: Row) => ({
+        word: this.word(item.word, item.word?.progress),
         position: item.position, recognitionSeen: item.recognition_seen,
         pronunciationPassed: item.pronunciation_passed, translationPassed: item.translation_passed,
         spellingPassed: item.spelling_passed, wrongCount: item.wrong_count,
       })),
     };
+    this.logger.log(JSON.stringify({
+      event: "learning_session_snapshot",
+      durationMs: Date.now() - startedAt,
+      itemCount: result.items.length,
+      stage: result.stage,
+      revision: result.revision,
+    }));
+    return result;
   }
 
-  async markRecognition(userId: string, sessionId: string, wordId: string) {
+  async markRecognition(userId: string, sessionId: string, wordId: string): Promise<LearningSessionMutationResult> {
     assertUuid(sessionId, "sessionId"); assertUuid(wordId, "wordId");
-    return this.call(() => this.db.rpc("learning_mark_recognition", { p_user_id: userId, p_session_id: sessionId, p_word_id: wordId }));
+    const row = await this.call(() => this.db.rpc<Row>("learning_mark_recognition", {
+      p_user_id: userId, p_session_id: sessionId, p_word_id: wordId,
+    }));
+    return { revision: Number(row.revision), sessionPatch: this.sessionPatch(row.session_patch) };
   }
 
-  async recordAttempt(userId: string, sessionId: string, body: LearningAttemptRequest) {
-    assertUuid(sessionId, "sessionId"); assertUuid(body?.wordId || "", "wordId");
+  async recordAttempt(
+    userId: string,
+    sessionId: string,
+    body: CompatibleLearningAttemptRequest,
+  ): Promise<LearningAttemptResult | Row> {
+    assertUuid(sessionId, "sessionId");
+    assertUuid(body?.wordId || "", "wordId");
     if (!["pronunciation", "translation", "spelling"].includes(body?.skill)) throw new BadRequestException({ code: "INVALID_SKILL", message: "测试类型无效" });
-    return this.call(() => this.db.rpc("learning_record_attempt", {
+    const legacy = body?.attemptId == null && body?.expectedRevision == null;
+    if (legacy) {
+      // Keep already-open 0014 browser tabs functional while the immutable
+      // API/Web release switches over. This calls the retained service-only
+      // five-argument RPC; the database trigger still advances revision.
+      return this.call(() => this.db.rpc<Row>("learning_record_attempt", {
+        p_user_id: userId, p_session_id: sessionId, p_word_id: body.wordId,
+        p_skill: body.skill, p_answer: body.answer || {},
+      }));
+    }
+    assertUuid(body?.attemptId || "", "attemptId");
+    if (!Number.isSafeInteger(body?.expectedRevision) || body.expectedRevision! < 0) {
+      throw new BadRequestException({ code: "INVALID_REVISION", message: "会话版本无效" });
+    }
+    const startedAt = Date.now();
+    const row = await this.call(() => this.db.rpc<Row>("learning_record_attempt", {
       p_user_id: userId, p_session_id: sessionId, p_word_id: body.wordId,
       p_skill: body.skill, p_answer: body.answer || {},
+      p_attempt_id: body.attemptId,
+      p_expected_revision: body.expectedRevision,
     }));
+    if (row.conflict) {
+      this.logger.warn(JSON.stringify({
+        event: "learning_attempt_revision_conflict",
+        durationMs: Date.now() - startedAt,
+        expectedRevision: body.expectedRevision,
+        currentRevision: Number(row.current_revision),
+      }));
+      throw new ConflictException({
+        code: "SESSION_REVISION_CONFLICT",
+        message: "学习进度已在其它位置更新",
+        currentRevision: Number(row.current_revision),
+      });
+    }
+    const result: LearningAttemptResult = {
+      attemptId: String(row.attempt_id),
+      correct: Boolean(row.correct),
+      expected: row.expected as string | string[],
+      revision: Number(row.revision),
+      replayed: Boolean(row.replayed),
+      sessionPatch: this.sessionPatch(row.session_patch),
+    };
+    this.logger.log(JSON.stringify({
+      event: "learning_attempt_committed",
+      durationMs: Date.now() - startedAt,
+      skill: body.skill,
+      correct: result.correct,
+      replayed: result.replayed,
+      revision: result.revision,
+    }));
+    return result;
   }
 
   async createReviewSchedules(userId: string, unitId: string, sourceSessionId: unknown, offsets: unknown): Promise<ReviewSchedule[]> {
@@ -359,21 +445,38 @@ export class LearningService {
   }
 
   async ownedWordInSession(userId: string, sessionId: string, wordId: string) {
-    const session = await this.getSession(userId, sessionId);
-    if (!session.active) {
-      throw new ConflictException({ code: "SESSION_INACTIVE", message: "学习会话已经结束" });
+    assertUuid(sessionId, "sessionId"); assertUuid(wordId, "wordId");
+    try {
+      return await this.call(() => this.db.rpc<Row>("learning_get_assessment_target", {
+        p_user_id: userId,
+        p_session_id: sessionId,
+        p_word_id: wordId,
+      }));
+    } catch (error) {
+      if (error instanceof SupabaseRequestError && (
+        String(error.body && typeof error.body === "object" && "code" in error.body
+          ? (error.body as { code: unknown }).code : "") === "42501"
+      )) {
+        throw new ForbiddenException({ code: "WORD_NOT_IN_SESSION", message: "该词不属于当前活动学习会话" });
+      }
+      throw error;
     }
-    const item = session.items.find((entry) => entry.word.id === wordId);
-    if (!item) throw new ForbiddenException({ code: "WORD_NOT_IN_SESSION", message: "该词不属于当前学习会话" });
-    return item.word;
   }
 
   async recordSpeechAssessment(userId: string, sessionId: string, wordId: string, assessment: unknown) {
     assertUuid(sessionId, "sessionId"); assertUuid(wordId, "wordId");
-    return this.call(() => this.db.rpc<{ recorded: boolean; correct: boolean; retryQueued: boolean; passThreshold: number }>("learning_record_speech_assessment", {
+    const row = await this.call(() => this.db.rpc<Row>("learning_record_speech_assessment", {
       p_user_id: userId, p_session_id: sessionId, p_word_id: wordId,
       p_assessment: assessment,
     }));
+    return {
+      recorded: Boolean(row.recorded),
+      correct: Boolean(row.correct),
+      retryQueued: Boolean(row.retry_queued),
+      passThreshold: Number(row.pass_threshold),
+      revision: Number(row.revision),
+      sessionPatch: this.sessionPatch(row.session_patch),
+    };
   }
 
   async reserveSpeechQuota(userId: string | null, kind: "tts" | "assessment", costMicrousd: number) {
@@ -388,6 +491,39 @@ export class LearningService {
       p_day_limit: positiveEnvironmentNumber("AZURE_SPEECH_ASSESSMENTS_PER_DAY", 300, true),
       p_month_budget_microusd: positiveEnvironmentNumber("AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD", 5_000_000, true),
     }));
+  }
+
+  async reserveTtsQuota(characterCount: number, costMicrousd: number) {
+    if (!Number.isSafeInteger(characterCount) || characterCount <= 0
+        || !Number.isFinite(costMicrousd) || costMicrousd <= 0) {
+      throw new ServiceUnavailableException({ code: "SERVER_MISCONFIG", message: "Invalid TTS quota reservation" });
+    }
+    return this.call(() => this.db.rpc("learning_reserve_tts_quota", {
+      p_character_count: characterCount,
+      p_cost_microusd: Math.max(1, Math.round(costMicrousd)),
+      p_minute_limit: positiveEnvironmentNumber("AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE", 20, true),
+      p_month_character_limit: positiveEnvironmentNumber("AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT", 500_000, true),
+      p_month_budget_microusd: positiveEnvironmentNumber("AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD", 5_000_000, true),
+    }));
+  }
+
+  private sessionPatch(row: Row | null | undefined): LearningSessionPatch {
+    if (!row) throw new ServiceUnavailableException({ code: "DATABASE_ERROR", message: "Session patch is missing" });
+    const changed = row.changed_item;
+    return {
+      stage: row.stage,
+      active: Boolean(row.active),
+      state: row.state || {},
+      changedItem: changed ? {
+        wordId: changed.word_id,
+        recognitionSeen: Boolean(changed.recognition_seen),
+        pronunciationPassed: Boolean(changed.pronunciation_passed),
+        translationPassed: Boolean(changed.translation_passed),
+        spellingPassed: Boolean(changed.spelling_passed),
+        wrongCount: Number(changed.wrong_count || 0),
+      } : null,
+      nextWordId: row.next_word_id || null,
+    };
   }
 
   private summary(course: Row, unitCount: number, wordCount: number, learnedCount: number, activeSessionId: string | null): LearningCourseSummary {

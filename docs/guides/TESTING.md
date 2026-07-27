@@ -14,11 +14,11 @@
 | Web jsdom 集成 | Vitest + jsdom + 内存 Supabase mock，覆盖 legacy 壳与主要模块交互 | 否 | `pnpm test` |
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
-| 发布工具单元 | 6 个 Node 内置 test 验证 production migration history 状态机、Storage policy/bucket dump 解析、migration-history schema 不存在/其他 dump 错误的恢复点分支，以及 schema diff 的 CLI 调用 | 否 | `pnpm test:release` |
-| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、CMUdict、Azure adapter/格式/超时/隐私 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
-| Azure Speech 供应商 smoke | 无个人数据的 `apple` fixture 验证 MP3/PCM TTS、scripted assessment、分数和音素；拒绝 fake | 是，产生少量 Azure 用量 | `node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs` |
+| 发布工具单元 | 8 个 Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff，以及音频全局缓存键与 6 秒 VAD 生产 fixture | 否 | `pnpm test:release` |
+| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter、持久队列/配额/Storage miss/格式/超时/隐私 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
+| Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和裁剪评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
-| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure fake 运行 Courses 主流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
+| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure fake 运行 Courses、弱网 outbox 与 Cache Storage 流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
 重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest 和本地 Supabase，但 Azure 是 fake。真实 provider smoke 证明 key/region/TTS/评分响应，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
 
@@ -80,7 +80,11 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 | `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
 | `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、逐单元与整份多单元纠错、独立翻译字段、编辑器批量追加/已有词重复、排序、保存失败、进度切换、会话恢复和 API error |
-| `apps/web/src/features/courses/LearningView.test.tsx` | 翻译/发音匹配/拼写答错后错误持续到手动下一题、多翻译逐项确认/正确自动提交、答对自动推进，以及朗读阈值/候补状态/显式重读 |
+| `apps/web/src/features/courses/LearningView.test.tsx` | Promise 未完成时即时反馈、服务端纠正、翻译/发音匹配/拼写错误手动推进、正确 520 ms 自动推进、慢请求期间后续 outbox 串行续传，以及朗读阈值/候补/显式重读 |
+| `apps/web/src/features/courses/learningSessionState.test.ts` | 客户端/数据库一致的正误规则、retry pool、stage transition、完成预测和权威 patch 替换 |
+| `apps/web/src/features/courses/attemptOutbox.test.ts` | IndexedDB 缺失时内存降级、按 user/session/revision 排序、重试退避和账号级清理 |
+| `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage 命中跳过网络、202 pending 不缓存、ready 响应缓存与双并发入口 |
+| `apps/web/src/features/courses/recording.test.ts` | 20 ms VAD、噪声阈值、250 ms 有效语音拒绝和 6 秒裁剪 |
 
 ### 4.2 mock 的边界
 
@@ -117,6 +121,7 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 - 触发 points/level、帖子计数、通知、标签同步和 streak；
 - finally/afterAll 尝试删除 Storage 对象与 Auth 用户。
 - 创建学习课程/单元/20 个词、会话/attempt/progress、复习日程、分享、不可变 publication、举报、克隆、徽章和课程 points 分录。
+- 创建/清理全局合成音频任务 metadata；不调用真实 Azure，也不上传用户录音。
 
 只允许使用**可随时重置的一次性或专用测试 Supabase 项目**。即使设置了确认变量，也不得输入生产 Project Ref。测试会产生唯一 university/major/subject 全局 `tags`；当前 schema 没有客户端删除 policy，Auth 级联不会清理这些标签，因此项目可能残留少量测试 tag。最安全的清理方式是运行后重置/销毁该测试项目。
 
@@ -182,6 +187,9 @@ git check-ignore .env.rls.local
 - study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
 - 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
 - Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage，也不能执行特权 RPC；Profile timezone 只接受 IANA 名称；
+- 0015–0016 的 snapshot/七参数 attempt/单元与单词 prepare/claim/finish/quota RPC 均不能由 anon/authenticated 执行，普通用户不能读写 `learning_audio_assets`；
+- 同 attempt UUID 的并发请求只追加一个事实/一次 wrong_count 并重放首次响应；相同 revision 的不同 answer 只有一项提交，另一项返回 revision conflict；旧五参数 RPC 仍会推进 revision，支持应用回滚；
+- 两个用户相同规范化词集合得到相同 20 个 cache key 且不重复建任务；错误 owner 不能 prepare 他人 word；并发 claim 只有一个全局租约，配额暂停不会消耗生成重试次数；
 - 测试答题候补池、低于/达到朗读 `PronScore` 阈值时 recognition 候补项的加入/移除、认词候补轮完成后才能推进，以及同日本地日期去重、两次不同本地日期三能力熟练、错误/复习次数、schedule 完成且不创建普通 task；
 - 九级徽章的达标持久发放、20 词课程 +20、规范化词集合指纹防删除/克隆重复奖励；
 - 分享 token hash、撤销后事务克隆失败、匿名 PostgREST 拒绝、市场快照不可变、独立零进度克隆/禁止再传播、举报事务。
@@ -193,7 +201,7 @@ git check-ignore .env.rls.local
 - `study_goals.course_id` 跨 owner 归属；
 - `community-media` public bucket 的写/删/对象清理；
 - 账号删除后的全部 Storage 孤儿与隐私删除流程；
-- 每日 points 上限、垃圾/重复内容和协同作弊；除并发评论冲正外的高并发、网络中断和长时间 session。
+- 每日 points 上限、垃圾/重复内容和协同作弊；普通 answer 的并发/超时重放已覆盖，但 recognition、旧模块写入、进程崩溃窗口和长时间 session 仍需持续扩展。
 - 真实 Azure 账号、音频供应商网络、浏览器麦克风权限与实际发音质量；自动测试只使用 adapter fake/固定 WAV。
 
 这些是后续安全迁移、产品治理与负向 E2E 的优先项，不属于当前套件已证明安全的范围。
@@ -276,12 +284,13 @@ FEATURE_LEARNING_COURSES_ENABLED=true \
 FEATURE_COURSE_SHARING_ENABLED=true \
 FEATURE_COURSE_MARKET_ENABLED=true \
 FEATURE_PRONUNCIATION_ENABLED=true \
+FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
 AZURE_SPEECH_FAKE=true \
 PUBLIC_ORIGIN=http://127.0.0.1:5173 \
 pnpm --filter @nalanda/web test:playwright
 ```
 
-确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→粘贴整份多单元文本→触发并修正单元内重复错误→进入 Review Course Content→断言共享 `.content` 的 `scrollHeight > clientHeight`→滚到最底并断言“添加单元”处于 viewport→指针拖动与键盘排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%。这是真 Chromium 布局/滚动断言，不是 jsdom 视觉模拟；但它不是截图视觉回归，也未覆盖所有桌面/移动、深浅色组合。
+确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→粘贴整份多单元文本→格式纠错/滚动/排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%；并额外验证整单元音频进入 Cache Storage、两次 answer 请求断网进入 outbox、恢复网络后同步。这里的音频由 API fake provider 产生，仅证明浏览器/API/本地 Supabase 协作，不证明 Azure。它是真 Chromium 布局与 offline/cache 行为，不是截图视觉回归。
 
 同一修复的 jsdom 层分别断言：整份导入生成预期单元、多个翻译渲染为独立输入、编辑器批量追加成功，以及与已有词重复时出现 `DUPLICATE_EXISTING_TERM` 且不追加。jsdom 不计算真实尺寸，所以“底部操作是否可达”必须保留在 Playwright 层。
 
@@ -323,7 +332,7 @@ curl -fsS http://localhost:8000/generate/quiz \
 
 当前固定桩响应只能证明 schema/route 可调用，不证明解析、Claude、质量或成本。
 
-API 测试覆盖受保护路由缺 bearer 拒绝、HS256 正确/错误 issuer 与 audience、readiness、Courses public 脱敏/owner、事务传播 RPC、输入指纹、CMUdict、WAV 格式/2 MB/8 秒、Azure phoneme 映射和 provider timeout 不记 attempt。真实 JWKS 网络拉取与轮换仍由一次性 Supabase/线上登录 smoke 承担。该层不证明 Nest HTTP multipart、真实 PostgREST 或 Azure endpoint。
+API 测试覆盖受保护路由缺 bearer 拒绝、HS256 issuer/audience、readiness、Courses public 脱敏/owner、单 snapshot 映射、attempt 幂等响应/409 envelope、音频队列 claim/生成/Storage 恢复、输入指纹、CMUdict、WAV 格式/2 MB/8 秒、Azure phoneme 映射和 provider timeout 不记 attempt。真实 JWKS 网络拉取与轮换仍由一次性 Supabase/线上登录 smoke 承担。该层使用 fake DB/fetch，不证明 Nest HTTP multipart、真实 PostgREST、数据库锁或 Azure endpoint。
 
 ## 8. 文档测试
 
@@ -344,6 +353,8 @@ node scripts/check-docs.mjs
 
 ```bash
 pnpm docs:check
+pnpm test:release
+pnpm lint
 pnpm typecheck
 pnpm test
 pnpm build
@@ -363,7 +374,7 @@ pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + Azure fake env
 node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 ```
 
-`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure 是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布会把无密钥脚本上传到主机，并在新 image 激活前从服务器 `.env` 运行真实 provider gate；CI fake 不能代替该结果，provider gate 也不能代替 Playwright。
+`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure 是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite 仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布先运行基础真实 Azure smoke；新 API readiness/auth 通过后，再由 `scripts/smoke-learning-audio-production.mjs` 创建两名临时用户，验证首次队列生成、private Storage、第二用户重复词零新增 claim、6 秒内裁剪 WAV 评分及清理，成功后才切 Web symlink。CI fake 不能代替该结果，真实 provider gate 也不能代替 RLS/Playwright。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
@@ -379,7 +390,7 @@ node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 
 - PR 已跑：docs check、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、升级/空库 migrations/database lint、双用户 RLS/Storage/Courses E2E、Playwright Courses；FastAPI contract 待补；
 - 受保护 staging 目标：近生产数据规模与配置漂移 E2E；
-- 发布前：恢复点、迁移/回滚演练；应用激活前由生产主机强制运行真实 Azure 合成账号 smoke；
+- 发布前：恢复点、迁移/回滚演练；应用激活前由生产主机强制运行真实 Azure 基础 smoke 与队列/Storage/重复词/评分 smoke；
 - 定时：RLS 安全回归、依赖/secret scan、备份恢复、AI 评测/成本（接入后）。
 
 高权限 E2E runner 必须使用独立 test project、受保护 environment approval 和短期/可轮换 secret，不能把 service-role 暴露给不受信任 fork PR。
@@ -392,8 +403,9 @@ node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 | Web/legacy UI | typecheck + 相关 jsdom + 全部 `pnpm test` + build |
 | Supabase query shape | jsdom + disposable project RLS E2E |
 | Migration/RLS/trigger/function | 空项目全迁移 + 相关旧版本→新版本升级夹具 + lint + RLS E2E + 发布前备份 |
-| NestJS auth/Courses API | typecheck/build + API unit + RLS E2E + Playwright；multipart/真实 Azure 另做受控 smoke |
+| NestJS auth/Courses API | typecheck/build + API unit + RLS E2E + Playwright；attempt 变更另测 UUID 重放/revision conflict/outbox；multipart/真实 Azure 另做受控 smoke |
 | Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
+| Courses 音频/离线 | cache key/VAD unit + API queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
 | AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
 | nginx/compose/CI | build image + staging deploy + 外部 health/login |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
