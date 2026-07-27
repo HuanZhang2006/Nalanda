@@ -33,4 +33,42 @@ describe("browser vocabulary audio cache", () => {
     await expect(fetchAudioAsset(pending, "pending")).resolves.toBeNull();
     await expect(prefetchAudioAssets([pending], "pending", 2)).resolves.toBe(0);
   });
+
+  it("prioritizes pending assets with at most two concurrent requests and reports each result", async () => {
+    const assets = Array.from({ length: 5 }, (_, index) => ({
+      ...asset,
+      wordId: `word-window-${index}`,
+      cacheKey: `cache-window-${index}`,
+      status: "pending" as const,
+      audioUrl: `/api/pronunciation/audio/word-window-${index}`,
+    }));
+    let active = 0;
+    let peak = 0;
+    const releases: Array<() => void> = [];
+    vi.stubGlobal("fetch", vi.fn(async () => {
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise<void>((resolve) => releases.push(resolve));
+      active -= 1;
+      return new Response(JSON.stringify({ code: "AUDIO_PENDING" }), {
+        status: 202,
+        headers: { "Content-Type": "application/json" },
+      });
+    }));
+    const results: string[] = [];
+    const prefetch = prefetchAudioAssets(assets, "window", 2, (entry, result) => {
+      results.push(`${entry.wordId}:${result}`);
+    });
+
+    await vi.waitFor(() => expect(active).toBe(2));
+    expect(peak).toBe(2);
+    while (results.length < assets.length) {
+      releases.shift()?.();
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    await expect(prefetch).resolves.toBe(0);
+    expect(peak).toBe(2);
+    expect(results).toEqual(assets.map((entry) => `${entry.wordId}:pending`));
+  });
 });

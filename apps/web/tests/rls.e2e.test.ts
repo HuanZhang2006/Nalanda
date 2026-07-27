@@ -676,6 +676,104 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(concurrentStarts[0].data).toBe(concurrentStarts[1].data);
     expect((await admin.from("learning_sessions").delete().eq("id", concurrentStarts[0].data)).error).toBeNull();
 
+    // A paused first-learning session must not hijack an explicit review of a
+    // different unit. Each exact intent remains resumable, while reordered
+    // review skills still resolve to the same normalized review session.
+    const parallelCourseId = randomUUID();
+    const initialUnitId = randomUUID();
+    const reviewUnitId = randomUUID();
+    const parallelPayload = {
+      id: parallelCourseId,
+      title: "Parallel learning and review",
+      category: "english_vocabulary",
+      hasUnits: true,
+      locale: "en-US",
+      units: [
+        {
+          id: initialUnitId,
+          name: "Initial unit",
+          isSystem: false,
+          words: ["alpha", "bravo", "charlie", "delta"].map((term) => ({
+            id: randomUUID(), term, translations: [term], ipa: null,
+          })),
+        },
+        {
+          id: reviewUnitId,
+          name: "Review unit",
+          isSystem: false,
+          words: ["echo", "foxtrot", "golf", "hotel"].map((term) => ({
+            id: randomUUID(), term, translations: [term], ipa: null,
+          })),
+        },
+      ],
+    };
+    await rpc("learning_upsert_course", {
+      p_user_id: aId,
+      p_payload: parallelPayload,
+    });
+    const initialSession = await rpc<string>("learning_start_session", {
+      p_user_id: aId,
+      p_course_id: parallelCourseId,
+      p_unit_id: initialUnitId,
+      p_mode: "initial",
+      p_skills: ["pronunciation", "translation", "spelling"],
+      p_scope: "all",
+      p_schedule_id: null,
+    });
+    const reviewSession = await rpc<string>("learning_start_session", {
+      p_user_id: aId,
+      p_course_id: parallelCourseId,
+      p_unit_id: reviewUnitId,
+      p_mode: "review",
+      p_skills: ["translation", "pronunciation"],
+      p_scope: "all",
+      p_schedule_id: null,
+    });
+    expect(reviewSession).not.toBe(initialSession);
+    expect(await rpc<string>("learning_start_session", {
+      p_user_id: aId,
+      p_course_id: parallelCourseId,
+      p_unit_id: initialUnitId,
+      p_mode: "initial",
+      p_skills: ["pronunciation", "translation", "spelling"],
+      p_scope: "all",
+      p_schedule_id: null,
+    })).toBe(initialSession);
+    expect(await rpc<string>("learning_start_session", {
+      p_user_id: aId,
+      p_course_id: parallelCourseId,
+      p_unit_id: reviewUnitId,
+      p_mode: "review",
+      p_skills: ["pronunciation", "translation"],
+      p_scope: "all",
+      p_schedule_id: null,
+    })).toBe(reviewSession);
+    const parallelSessions = await admin.from("learning_sessions")
+      .select("id,unit_id,mode,active,resume_key")
+      .eq("course_id", parallelCourseId)
+      .eq("active", true)
+      .order("mode");
+    expect(parallelSessions.error).toBeNull();
+    expect(parallelSessions.data).toHaveLength(2);
+    expect(parallelSessions.data).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        id: initialSession,
+        unit_id: initialUnitId,
+        mode: "initial",
+        active: true,
+      }),
+      expect.objectContaining({
+        id: reviewSession,
+        unit_id: reviewUnitId,
+        mode: "review",
+        active: true,
+      }),
+    ]));
+    await rpc("learning_delete_course", {
+      p_user_id: aId,
+      p_course_id: parallelCourseId,
+    });
+
     // The retained v1 signature remains usable by an immutable application
     // rollback and still advances the shared revision clock.
     const rollbackSession = await startReview(courseId, unitId, ["spelling"]);
@@ -839,7 +937,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const sourceSessionId = randomUUID();
     expect((await admin.from("learning_sessions").insert({ id: sourceSessionId, user_id: aId, course_id: courseId, unit_id: unitId,
       mode: "initial", scope: "all", selected_skills: ["pronunciation", "translation", "spelling"], stage: "completed",
-      active: false, completed_at: new Date().toISOString() })).error).toBeNull();
+      active: false, resume_key: `initial:${courseId}:${unitId}`, completed_at: new Date().toISOString() })).error).toBeNull();
     const schedules = await rpc<any[]>("learning_schedule_reviews", { p_user_id: aId, p_unit_id: unitId,
       p_source_session_id: sourceSessionId, p_offsets: [3, 7] });
     expect(schedules).toHaveLength(2);

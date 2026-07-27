@@ -121,6 +121,7 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 - 触发 points/level、帖子计数、通知、标签同步和 streak；
 - finally/afterAll 尝试删除 Storage 对象与 Auth 用户。
 - 创建学习课程/单元/20 个词、会话/attempt/progress、复习日程、分享、不可变 publication、举报、克隆、徽章和课程 points 分录。
+- 同一课程同时保留暂停的 Unit 1 首次学习与 Unit 2 复习，验证精确意图恢复、测试项顺序规范化和相同意图并发幂等。
 - 创建/清理全局合成音频任务 metadata；不调用真实 Azure，也不上传用户录音。
 
 只允许使用**可随时重置的一次性或专用测试 Supabase 项目**。即使设置了确认变量，也不得输入生产 Project Ref。测试会产生唯一 university/major/subject 全局 `tags`；当前 schema 没有客户端删除 policy，Auth 级联不会清理这些标签，因此项目可能残留少量测试 tag。最安全的清理方式是运行后重置/销毁该测试项目。
