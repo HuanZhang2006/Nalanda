@@ -4,7 +4,7 @@
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech、分享市场或测试边界变化时。
-> - **状态基线**：2026-07-27。0011–0014 已上线；0015–0016 的即时预测、幂等弱网同步、会话增量与持久音频队列已实现为待 CI/受保护发布候选。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-07-27。0011–0016 已上线；即时预测、幂等弱网同步、会话增量、持久音频队列与浏览器离线音频已有受保护生产发布证据。文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -64,17 +64,17 @@ Profile 聚合学习课程数、规范化去重后的熟练英文词数、不同
 
 ## 7. Azure Speech、隐私与降级
 
-TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参考文本只能由当前用户课程中的 `wordId/sessionId` 推导。评分输入服务端限制为最长 8 秒、2 MB、16 kHz 单声道 WAV；浏览器候选实现先做噪声自适应 VAD、保留首尾 150ms 并裁剪到最多 6 秒。录音只在请求内存中转发，响应后丢弃，数据库仅保存分数、错误类型与音素反馈。合成音频按规范化内容键在 private Storage 跨课程共享，用户录音永不缓存。
+TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参考文本只能由当前用户课程中的 `wordId/sessionId` 推导。评分输入服务端限制为最长 8 秒、2 MB、16 kHz 单声道 WAV；浏览器先做噪声自适应 VAD、保留首尾 150ms 并裁剪到最多 6 秒。录音只在请求内存中转发，响应后丢弃，数据库仅保存分数、错误类型与音素反馈。合成音频按规范化内容键在 private Storage 跨课程共享，用户录音永不缓存。
 
 评分采用 HundredMark、Phoneme、IPA 和 miscue；低于 70 的音素在 UI 标红。整体通过线由 `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 控制，默认 70 且必须为 1–100；API 返回 `passThreshold/passed/queuedForRetry`，0014 事务按整体 `PronScore` 更新认词候补池，客户端不能自报通过。评分仍是可选入口：未评分不会阻断学习，主动评分后产生的低分会要求在本阶段候补轮再次看到该词。每用户默认 30 次/分钟、300 次/日，另有月预算和熔断开关。Azure 不可用时 TTS 降级浏览器朗读、评分入口关闭，不把供应商/麦克风失败计为学习错误。
 
-0015 候选将 Session 增加单调 `revision`，attempt 增加客户端 UUID、唯一约束和首次响应快照。Web 先用 Session 中已有答案在当前渲染帧反馈：正确约 520ms 自动推进，错误一直保留到手动“下一题”；后台按 revision 串行提交 IndexedDB outbox。API 返回 `sessionPatch`，普通答案不再重拉完整 Session/Courses；重复 attempt 幂等 replay，冲突 409 后拉一次 `learning_get_session_snapshot`。离线预测到完成只显示“等待同步”，服务端仍唯一决定 retry pool、cursor/stage、progress、错误次数、points 和徽章；登出清除本账号 outbox，不能跨账号提交。
+0015 将 Session 增加单调 `revision`，attempt 增加客户端 UUID、唯一约束和首次响应快照。Web 先用 Session 中已有答案在当前渲染帧反馈：正确约 520ms 自动推进，错误一直保留到手动“下一题”；后台按 revision 串行提交 IndexedDB outbox。API 返回 `sessionPatch`，普通答案不再重拉完整 Session/Courses；重复 attempt 幂等 replay，冲突 409 后拉一次 `learning_get_session_snapshot`。离线预测到完成只显示“等待同步”，服务端仍唯一决定 retry pool、cursor/stage、progress、错误次数、points 和徽章；登出清除本账号 outbox，不能跨账号提交。
 
-0015 候选还把 `vocabulary-audio` 保持为 private Storage 唯一服务端事实源，新增无客户端权限的 `learning_audio_assets` 持久队列。全局键为 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)`；Session 启动排整个单元，音频 miss 只提升优先级并快速返回 `202 AUDIO_PENDING`，不会在请求中等待 Azure。worker 默认单并发、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月。Web 优先读 Cache Storage，预取当前和未来四词，并允许下载/续传/删除指定单元；这不包含完整离线 app shell。Storage 网络故障必须显式失败，只有 HTTP 404 或 Storage HTTP 400 + JSON `statusCode=404` 可当正常 miss，以免故障时重复调用 Azure。
+0015 还把 `vocabulary-audio` 保持为 private Storage 唯一服务端事实源，新增无客户端权限的 `learning_audio_assets` 持久队列。全局键为 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)`；Session 启动排整个单元，音频 miss 只提升优先级并快速返回 `202 AUDIO_PENDING`，不会在请求中等待 Azure。worker 默认单并发、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月。Web 优先读 Cache Storage，预取当前和未来四词，并允许下载/续传/删除指定单元；这不包含完整离线 app shell。Storage 网络故障必须显式失败，只有 HTTP 404 或 Storage HTTP 400 + JSON `statusCode=404` 可当正常 miss，以免故障时重复调用 Azure。
 
 ## 8. 数据与安全证据
 
-0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；候选 0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言。私有表只允许 owner 读；音频队列表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
+0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言。私有表只允许 owner 读；音频队列表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
 
 删除课程级联私有学习数据和日程，但保留同账号下已发 points/badge facts；用户删除遵循 Auth 外键级联，出版物、points 与 badge awards 随账号删除，只有 speech 成本行和 moderation action 以 `user_id/actor_id=NULL` 留下非账号化运营事实。Storage 清理仍须删除编排。细节见 ERD、API、安全、隐私、内容审核和积分产品规则。
 
@@ -85,6 +85,8 @@ TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参�
 2026-07-22 的 PR run `29932310309` 与 main run `29932840103` 均通过 quality、0007→latest、空库重建、数据库 lint、一次性本地 Supabase 的双用户 RLS/Storage/Courses E2E 和 Chromium Playwright。Playwright 使用 Azure fake；main 发布另在激活前运行生产主机的真实 Azure gate，但本次 UI/文本导入变更没有修改语音行为。最终不可变 release 为 `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`，公网复核包含 Web 200、`deps.supabase=ok`、未认证 `/api/me` 401，以及用户示例成功拆成 `Starter Unit 1`/`Starter Unit 2`、独立翻译输入和底部操作可达。
 
 2026-07-23 的 PR run `29938780461`、main run `29939301081`、只读 plan `29939798432` 与 apply/deploy `29940292716` 逐层通过相同 quality、0007→0014、空库重建、database lint、真实 RLS/Storage 和 Chromium Playwright。生产只计划并应用 0014，保留加密恢复点 artifact `8538123165`；真实 Azure gate 得到 10,656-byte MP3 与 pronunciation 98.8，最终 release 为 `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1`。独立复核确认公网 `deps.supabase=ok`、未认证 `/api/me` 401、运行 image 为同 SHA，且生产容器对不存在的 `vocabulary-audio` 对象返回正常 cache miss 而非错误。
+
+2026-07-27 的 PR #21 run `30243998633`、main run `30244402278`、只读 plan `30244967669` 与 apply/deploy `30245430630` 通过 quality、0007→0016、空库重建/database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright；Playwright 的 Azure 是 fake。plan 只列 0015–0016，apply 前保留 artifact `8644999285`，远端 history 到 0016。切流前 Japan East 真实 gate 验证 4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象、VAD 裁剪评分 97；release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` 激活后，独立公网复核为 Web 200、`deps.supabase=ok`、未认证 `/api/me` 401。
 
 复习日程必须引用本人该单元已完成的 initial session；由日程启动时服务端固定使用其 skills/scope，并在 review session 完成事务里写回 completed session。普通 Vitest/jsdom 不等于真实数据库 E2E；本地无 Supabase CLI/Docker 时 RLS 和 Playwright 会跳过或无法启动，只有一次性 Supabase CI 成功后才能称真实 E2E 已通过。
 

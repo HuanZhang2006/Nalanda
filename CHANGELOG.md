@@ -9,9 +9,13 @@
 
 ## [Unreleased]
 
+暂无待发布变更。
+
+## [0.7.0] - 2026-07-27
+
 ### Added
 
-- 新增 0015–0016 发布候选：`learning_sessions.revision`、attempt UUID/首次响应快照与复合唯一约束、单 RPC session snapshot、service-only `learning_audio_assets` 持久任务表、全局单租约/配额预留和结构/权限断言；保留旧答题 RPC 供数据库先行与应用回滚。
+- 新增 0015–0016：`learning_sessions.revision`、attempt UUID/首次响应快照与复合唯一约束、单 RPC session snapshot、service-only `learning_audio_assets` 持久任务表、全局单租约/配额预留和结构/权限断言；保留旧答题 RPC 供数据库先行与应用回滚。
 - 新增 IndexedDB 答题 outbox、同 attempt UUID 超时重放、revision 冲突恢复、账号隔离与离线完成待服务器确认；客户端 Cache Storage 支持未来五词双并发预取、整单元续传下载、持久存储申请和本地删除。
 - 新增单元音频预热/manifest API、异步 `202 AUDIO_PENDING` 音频读取、20 ms VAD 裁剪，以及真实生产 gate 脚本验证 Japan East 队列生成、private Storage 命中、跨用户重复词复用和裁剪后朗读评分。
 
@@ -32,7 +36,9 @@
 
 ### Release
 
-- 尚未发布：必须先等待完整 CI，再执行独立只读 migration plan、加密恢复点与 apply；只有真实队列/Storage/重复词/评分 gate 和 `deps.supabase=ok` 均通过后才能把本节移动到正式版本。
+- PR #21、main push 与受保护发布均通过 docs/lint/typecheck、Web/API tests、build、0007→0016、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright；Playwright 使用 Azure fake，不作为供应商证明。
+- main SHA `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2` 的只读 plan run `30244967669` 只列 0015–0016；apply/deploy run `30245430630` 保留加密恢复点 artifact `8644999285`、同步远端到 0016，并激活 release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1`。
+- 切流前 Japan East 真实 gate 验证 Azure TTS/评分、4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象且不增加 Azure 生成、VAD 裁剪后评分；独立公网复核 Web 200、`deps.supabase=ok` 和匿名 `/api/me` 401。
 
 ## [0.6.2] - 2026-07-23
 

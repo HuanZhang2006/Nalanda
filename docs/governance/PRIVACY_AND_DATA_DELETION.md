@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-07-27。本文不是法律意见或已发布隐私政策；Courses/0011–0014 与 Azure Speech 已生产启用，0015–0016 的弱网答题/离线音频能力仍是待 CI 与受保护发布验证的候选，文件 AI 导入仍未实现。
+> **状态基线：**2026-07-27。本文不是法律意见或已发布隐私政策；Courses/0011–0016、弱网答题、离线合成音频与 Azure Speech 已生产启用，文件 AI 导入仍未实现。
 
 ## 1. 原则与责任
 
@@ -24,12 +24,12 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 社区附件 | public `community-media` bucket | 图片/音频展示 | URL 可被外部持有；删帖不保证对象同步删除 |
 | 学习计划 | `study_goals`、`study_tasks` | 私有目标、任务、完成时间 | owner-only；账户删除级联 |
 | 学习课程内容 | `learning_courses/units/words` | 私有课程名、单元、英文/翻译/IPA；克隆来源署名 | owner 只读、API 写；删课程级联私有内容，但已发 points/徽章历史不因删课回退 |
-| 学习行为 | `learning_sessions/items/attempts/word_progress` | 阶段/队列、答案、正确性、错误次数、不同本地日期熟练度；候选版另保存单调 revision、客户端 attempt UUID 与首次响应快照 | owner 只读、API 写；Auth 删除级联；attempt 是事实，不应在普通编辑时改写；响应快照只含该次学习状态增量 |
+| 学习行为 | `learning_sessions/items/attempts/word_progress` | 阶段/队列、答案、正确性、错误次数、不同本地日期熟练度、单调 revision、客户端 attempt UUID 与首次响应快照 | owner 只读、API 写；Auth 删除级联；attempt 是事实，不应在普通编辑时改写；响应快照只含该次学习状态增量 |
 | 复习 | `learning_review_schedules`、Profile `timezone` | 到期日期、技能/范围、完成时间与本地日期解释 | owner 私有；日程可取消，时区变化不重写历史 attempt local_date |
 | 分享/课程市场 | `learning_course_shares/publications` | bearer-link 当前课程、不可变公开版本、作者显示名/来源、clone count | token 明文只返回一次且 DB 只存 hash；撤销分享；出版物公开读取经 API；Auth 删除按 FK 删除作者版本 |
 | 举报/审核 | `learning_course_reports/moderation_actions` | 类别/说明、举报人、状态、管理员理由 | 举报人只能读自己的报告；动作客户端不可见；管理员/举报人删除后按 FK 删除或去标识 |
 | 课程徽章/成长 | `badge_definitions/user_badge_awards` + points | 熟练词/课程/复习日期成就和 +20 事实 | award 持久防重；删课程不回退，删 Auth 用户级联；不是商业权益 |
-| Speech | 请求内 WAV、`learning_attempts.provider_details`、`learning_speech_usage`、候选 `learning_audio_assets`、private `vocabulary-audio` | Azure 朗读评分、分数/音素教学反馈、配额/估算成本、跨用户共享的合成 TTS 对象与生成队列 | 用户 WAV 仅内存转发后丢弃，不进 DB/Storage/log/backup；合成对象/队列不含 owner、翻译或录音；评分/用量随规则删除/去标识 |
+| Speech | 请求内 WAV、`learning_attempts.provider_details`、`learning_speech_usage`、`learning_audio_assets`、private `vocabulary-audio` | Azure 朗读评分、分数/音素教学反馈、配额/估算成本、跨用户共享的合成 TTS 对象与生成队列 | 用户 WAV 仅内存转发后丢弃，不进 DB/Storage/log/backup；合成对象/队列不含 owner、翻译或录音；评分/用量随规则删除/去标识 |
 | 浏览器弱网副本 | IndexedDB attempt outbox、Cache Storage 音频 | 断网重试、未来五词预取和用户选择的单元音频离线副本 | 登出清除该账号待同步 outbox；音频按全局内容键存可重建副本，用户可删除，浏览器也可能在存储压力下回收 |
 | 通知/反馈 | `notifications`、`feedback` | 互动通知、用户工单 | owner-only；无运维端正式工单留存/删除流程 |
 | 原型/假数据 | 前端 bundle/内存 | 演示 Home、Notes、Market、AI | 不是用户事实源，不应进入用户导出 |
