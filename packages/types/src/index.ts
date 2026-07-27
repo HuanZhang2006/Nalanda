@@ -63,6 +63,12 @@ export type LearningSessionMode = "initial" | "review";
 export type LearningStage = "recognition" | LearningSkill | "completed";
 export type LearningScope = "all" | "unlearned";
 
+export interface LearningSpellingOptions {
+  timeLimitEnabled: boolean;
+  timeLimitSeconds: number;
+  translationFirst: boolean;
+}
+
 export interface VocabularyWordInput {
   id: string;
   term: string;
@@ -153,6 +159,13 @@ export interface LearningSession {
   stage: LearningStage;
   active: boolean;
   revision: number;
+  spellingOptions: LearningSpellingOptions;
+  spellingTranslationAssessment: {
+    attemptId: string;
+    wordId: string;
+    revision: number;
+    correct: true;
+  } | null;
   state: Record<string, unknown>;
   items: LearningSessionItem[];
 }
@@ -163,6 +176,7 @@ export interface StartLearningSessionRequest {
   skills?: LearningSkill[];
   scope?: LearningScope;
   scheduleId?: string;
+  spellingOptions?: LearningSpellingOptions;
 }
 
 export interface LearningAttemptRequest {
@@ -197,6 +211,23 @@ export interface LearningAttemptResult {
   revision: number;
   replayed: boolean;
   sessionPatch: LearningSessionPatch;
+}
+
+export interface LearningSpellingTranslationAssessmentRequest {
+  attemptId: string;
+  expectedRevision: number;
+  wordId: string;
+  answer: string;
+}
+
+export interface LearningSpellingTranslationAssessmentResult {
+  attemptId: string;
+  correct: boolean;
+  expected: string[];
+  feedback: string;
+  revision: number;
+  replayed: boolean;
+  attemptResult: LearningAttemptResult | null;
 }
 
 export interface LearningSessionMutationResult {

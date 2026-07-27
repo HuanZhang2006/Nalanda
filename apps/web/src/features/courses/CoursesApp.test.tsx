@@ -174,6 +174,62 @@ describe("Courses React UI", () => {
     }));
   });
 
+  it("persists optional spelling timing and translation-first settings when a session starts", async () => {
+    setLocale("en", { persist: false });
+    const summary = { id: ids[0], title: "Configured spelling", category: "english_vocabulary", hasUnits: false, locale: "en-US", unitCount: 1,
+      wordCount: 4, learnedCount: 0, progressPercent: 0, activeSessionId: null, canRepublish: true,
+      originPublicationId: null, originShareId: null, originAuthorName: null, updatedAt: new Date().toISOString() };
+    const words = ["apple", "pear", "orange", "banana"].map((term, index) => ({ id: ids[index + 2], term, normalizedTerm: term,
+      translations: [`translation-${index}`], ipa: null, position: index, progress }));
+    const detail = { ...summary, units: [{ id: ids[1], name: "Default unit", position: 0, isSystem: true, words }] };
+    const started = { id: ids[7], courseId: ids[0], unitId: ids[1], mode: "initial", scope: "all",
+      selectedSkills: ["pronunciation", "translation", "spelling"], stage: "recognition", active: true, revision: 0,
+      spellingOptions: { timeLimitEnabled: true, timeLimitSeconds: 12, translationFirst: true },
+      spellingTranslationAssessment: null,
+      state: { queue: words.map((word) => word.id), cursor: 0, nextQueue: [], round: 1 },
+      items: words.map((word, position) => ({ word, position, recognitionSeen: false, pronunciationPassed: false,
+        translationPassed: false, spellingPassed: false, wrongCount: 0 })) };
+    let startBody: Record<string, any> | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+      const path = String(input);
+      if (path.endsWith(`/learning-courses/${ids[0]}/sessions`)) {
+        startBody = JSON.parse(String(init.body));
+        return response(started, 201);
+      }
+      if (path.endsWith(`/learning-sessions/${ids[7]}`)) return response(started);
+      if (path.endsWith(`/learning-courses/${ids[0]}`)) return response(detail);
+      if (path.includes("/audio-prewarm") || path.includes("/audio-manifest")) {
+        return response({ unitId: ids[1], total: 4, ready: 0, pending: 4, failed: 0, synthesisVersion: "1",
+          assets: words.map((word) => ({ wordId: word.id, cacheKey: word.id, status: "pending",
+            audioUrl: `/api/pronunciation/audio/${word.id}`, lastErrorCode: null })) });
+      }
+      return response([summary]);
+    }));
+    await settle(() => root.render(<CoursesApp />));
+    await settle(() => clickText(container, "Start learning"));
+    const modal = container.querySelector(".modal")!;
+    await settle(() => {
+      const timed = [...modal.querySelectorAll("label")].find((label) =>
+        label.textContent?.includes("Set a time limit"))!.querySelector("input") as HTMLInputElement;
+      timed.click();
+    });
+    const seconds = modal.querySelector<HTMLInputElement>('[aria-label="Seconds per spelling word"]')!;
+    await settle(() => setValue(seconds, "12"));
+    await settle(() => {
+      const translation = [...modal.querySelectorAll("label")].find((label) =>
+        label.textContent?.includes("Test a typed translation"))!.querySelector("input") as HTMLInputElement;
+      translation.click();
+    });
+    await settle(() => clickText(modal, "Start learning"));
+    expect(startBody).toMatchObject({
+      spellingOptions: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 12,
+        translationFirst: true,
+      },
+    });
+  });
+
   it("toggles mastery counts and resumes the unique persisted session", async () => {
     setLocale("zh");
     const summary = { id: ids[0], title: "Resume me", category: "english_vocabulary", hasUnits: false, locale: "en-US", unitCount: 1,

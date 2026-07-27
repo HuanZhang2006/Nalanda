@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   LearningAttemptRequest, LearningAttemptResult, LearningAudioManifest, LearningCourseDetail,
-  LearningSession, PronunciationAssessment,
+  LearningSession, LearningSpellingTranslationAssessmentResult, PronunciationAssessment,
   VocabularyWord,
 } from "@nalanda/types";
 import { ApiClientError, apiErrorMessage, authedFetch } from "../../lib/api";
@@ -54,6 +54,8 @@ type AttemptFeedback = {
   actual?: string;
   triggerValue?: string;
   selectedWordId?: string;
+  translationActual?: string;
+  translationFeedback?: string;
 };
 
 type AudioFallbackNotice = {
@@ -132,6 +134,12 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [spelling, setSpelling] = useState("");
+  const [spellingTranslation, setSpellingTranslation] = useState("");
+  const [spellingTranslationResult, setSpellingTranslationResult] =
+    useState<LearningSpellingTranslationAssessmentResult | null>(null);
+  const [spellingTranslationBusy, setSpellingTranslationBusy] = useState(false);
+  const [spellingAttemptId, setSpellingAttemptId] = useState(() => crypto.randomUUID());
+  const [spellingTimeRemainingMs, setSpellingTimeRemainingMs] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<AttemptFeedback | null>(null);
   const [activeAudioId, setActiveAudioId] = useState("");
   const [selectedMatchId, setSelectedMatchId] = useState("");
@@ -158,6 +166,8 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const audioPrefetchRetryTimerRef = useRef<number | null>(null);
   const prioritizedAudioRef = useRef(new Set<string>());
   const nextQuestionRef = useRef<HTMLButtonElement>(null);
+  const spellingSubmittedRef = useRef(false);
+  const submitSpellingRef = useRef<(timedOut?: boolean) => void>(() => undefined);
   const [reviewOffsets, setReviewOffsets] = useState<number[]>([]);
 
   const setCurrentSession = (next: LearningSession | null) => {
@@ -401,9 +411,31 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     .map((id) => session.items.find((item) => item.word.id === id)?.word).filter(Boolean) as VocabularyWord[] : [];
   const audioBatch = session ? stableShuffle(batch, `${session.id}:${session.stage}:${q.round}:${batchStart}:audio`) : [];
   const wordBatch = [...audioBatch].reverse();
+  const spellingOptions = session?.spellingOptions || {
+    timeLimitEnabled: false,
+    timeLimitSeconds: 20,
+    translationFirst: false,
+  };
+  const restoredSpellingTranslation = session?.spellingTranslationAssessment
+    && session.spellingTranslationAssessment.wordId === currentId
+    && session.spellingTranslationAssessment.revision === session.revision
+    ? session.spellingTranslationAssessment
+    : null;
+  const translationReady = !spellingOptions.translationFirst
+    || Boolean(spellingTranslationResult?.correct)
+    || Boolean(restoredSpellingTranslation);
+  const activeSpellingAttemptId = spellingTranslationResult?.correct
+    ? spellingTranslationResult.attemptId
+    : restoredSpellingTranslation?.attemptId || spellingAttemptId;
   useEffect(() => {
     setSelected([]);
     setSpelling("");
+    setSpellingTranslation("");
+    setSpellingTranslationResult(null);
+    setSpellingTranslationBusy(false);
+    setSpellingAttemptId(crypto.randomUUID());
+    setSpellingTimeRemainingMs(null);
+    spellingSubmittedRef.current = false;
     setAssessment(null);
     setActiveAudioId("");
     setSelectedMatchId("");
@@ -522,12 +554,16 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const attempt = (
     word: VocabularyWord,
     answer: LearningAttemptRequest["answer"],
-    visual: Pick<AttemptFeedback, "actual" | "triggerValue" | "selectedWordId"> = {},
+    visual: Pick<
+      AttemptFeedback,
+      "actual" | "triggerValue" | "selectedWordId" | "translationActual" | "translationFeedback"
+    > = {},
+    requestAttemptId: string = crypto.randomUUID(),
   ) => {
     if (!session || feedback || !["pronunciation", "translation", "spelling"].includes(session.stage)) return;
     const skill = session.stage as "pronunciation" | "translation" | "spelling";
     const request: LearningAttemptRequest = {
-      attemptId: crypto.randomUUID(),
+      attemptId: requestAttemptId,
       expectedRevision: session.revision,
       wordId: word.id,
       skill,
@@ -616,6 +652,111 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       void attempt(current, { translations: values }, { triggerValue: option });
     }
   };
+
+  const assessSpellingTranslation = async () => {
+    if (!session || !current || spellingTranslationBusy || feedback
+        || !spellingTranslation.trim()) return;
+    setSpellingTranslationBusy(true);
+    setError("");
+    try {
+      const result = await coursesApi.assessSpellingTranslation(session.id, {
+        attemptId: spellingAttemptId,
+        expectedRevision: session.revision,
+        wordId: current.id,
+        answer: spellingTranslation,
+      });
+      if (result.correct) {
+        setSpellingTranslationResult(result);
+        setNotice("");
+      } else if (result.attemptResult) {
+        const request: LearningAttemptRequest = {
+          attemptId: result.attemptId,
+          expectedRevision: session.revision,
+          wordId: current.id,
+          skill: "spelling",
+          answer: { text: "" },
+        };
+        const predictedSession = applySessionPatch(
+          session,
+          result.attemptResult.revision,
+          result.attemptResult.sessionPatch,
+        );
+        setConfirmedRevision((value) => Math.max(value, result.attemptResult!.revision));
+        setCurrentFeedback({
+          result: result.attemptResult,
+          serverResult: result.attemptResult,
+          predictedSession,
+          request,
+          skill: "spelling",
+          wordId: current.id,
+          actual: "",
+          translationActual: spellingTranslation,
+          translationFeedback: result.feedback,
+        });
+      }
+    } catch (caught) {
+      if (caught instanceof ApiClientError && caught.code === "SESSION_REVISION_CONFLICT") {
+        await restoreAfterConflict();
+      } else {
+        setError(caught instanceof Error
+          ? caught.message
+          : l("Could not check this translation. It was not counted as wrong.", "无法判定该翻译，本次不会记为错误。"));
+      }
+    } finally {
+      setSpellingTranslationBusy(false);
+    }
+  };
+
+  const submitSpelling = (timedOut = false) => {
+    if (!session || !current || feedback || spellingSubmittedRef.current
+        || session.stage !== "spelling" || !translationReady) return;
+    if (!timedOut && !spelling.trim()) return;
+    spellingSubmittedRef.current = true;
+    void attempt(
+      current,
+      { text: spelling },
+      { actual: spelling },
+      activeSpellingAttemptId,
+    );
+  };
+  submitSpellingRef.current = submitSpelling;
+
+  useEffect(() => {
+    const seconds = spellingOptions.timeLimitSeconds;
+    if (session?.stage !== "spelling"
+        || !spellingOptions.timeLimitEnabled
+        || !translationReady
+        || !current
+        || feedback
+        || spellingTranslationBusy
+        || !Number.isFinite(seconds)) {
+      setSpellingTimeRemainingMs(null);
+      return;
+    }
+    const duration = Math.max(3, Math.min(300, Number(seconds))) * 1_000;
+    const deadline = Date.now() + duration;
+    setSpellingTimeRemainingMs(duration);
+    const tick = () => {
+      const remaining = Math.max(0, deadline - Date.now());
+      setSpellingTimeRemainingMs(remaining);
+      if (remaining === 0) {
+        window.clearInterval(timer);
+        submitSpellingRef.current(true);
+      }
+    };
+    const timer = window.setInterval(tick, 200);
+    return () => window.clearInterval(timer);
+  }, [
+    activeSpellingAttemptId,
+    currentId,
+    feedback,
+    session?.id,
+    spellingOptions.timeLimitEnabled,
+    spellingOptions.timeLimitSeconds,
+    session?.stage,
+    spellingTranslationBusy,
+    translationReady,
+  ]);
 
   const downloadOfflineAudio = async () => {
     if (!session?.unitId) return;
@@ -723,6 +864,9 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const initialPercent = Math.round(completedParts / Math.max(1, session.items.length * 4) * 100);
   const assessmentThreshold = assessment?.passThreshold ?? 70;
   const assessmentPassed = assessment?.passed ?? Boolean(assessment && assessment.pronunciationScore >= assessmentThreshold);
+  const feedbackWord = feedback
+    ? session.items.find((item) => item.word.id === feedback.wordId)?.word || null
+    : null;
   return <div className="wrap course-session courses-root">
     <div className="row between wrap-flex" style={{ marginBottom: 14 }}><div><div className="eyebrow">{course.title} · {l(`Round ${q.round}`, `第 ${q.round} 轮`)}</div>
       <h1 className="page-title">{label(session.stage)}</h1></div><div className="row wrap-flex"><button className="btn btn-sm" onClick={() => void downloadOfflineAudio()}>
@@ -778,15 +922,68 @@ export function LearningView({ sessionId, onExit, onChanged }: {
         {current.translations.length > 1 && <div className="faint mt-12">{l("Choose every correct translation. A wrong choice is recorded immediately.", "依次选择全部正确翻译；选错会立即记录。")}</div>}
       </> : <>
         <button className="btn" disabled={busy || Boolean(feedback)} onClick={() => playWord(current, audioManifest, setAudioNotice, l)}>🔊 {l("Play pronunciation", "播放发音")}</button>
-        <input className={`course-form-field course-spelling-answer mt-24 ${feedback?.skill === "spelling" ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} style={{ maxWidth: 420, textAlign: "center", fontSize: 20 }} autoFocus
-          aria-label={l("Spelling answer", "拼写答案")} value={spelling} onChange={(event) => setSpelling(event.target.value)}
-          disabled={busy || Boolean(feedback)} onKeyDown={(event) => { if (event.key === "Enter" && spelling.trim()) void attempt(current, { text: spelling }, { actual: spelling }); }} />
-        <button className="btn btn-primary mt-16" disabled={busy || Boolean(feedback) || !spelling.trim()} onClick={() => attempt(current, { text: spelling }, { actual: spelling })}>{l("Submit spelling", "提交拼写")}</button>
-        <div className="faint mt-8">{l("Press Enter or submit once. Correct answers advance automatically; incorrect feedback waits for you.", "按 Enter 或提交一次；答对自动进入下一题，答错反馈会等待你手动继续。")}</div>
+        {spellingOptions.translationFirst && !translationReady ? <div className="course-spelling-gate mt-24">
+          <label className="course-label" htmlFor="spelling-translation-answer">{l(
+            "Translate this word before spelling it",
+            "拼写前先输入这个词的翻译",
+          )}</label>
+          <input id="spelling-translation-answer" className="course-form-field course-spelling-answer"
+            style={{ maxWidth: 520, textAlign: "center", fontSize: 20 }} autoFocus
+            aria-label={l("Typed translation answer", "键入翻译答案")}
+            value={spellingTranslation}
+            onChange={(event) => setSpellingTranslation(event.target.value)}
+            disabled={busy || spellingTranslationBusy || Boolean(feedback)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter" && spellingTranslation.trim()) {
+                void assessSpellingTranslation();
+              }
+            }} />
+          <button className="btn btn-primary mt-16"
+            disabled={busy || spellingTranslationBusy || Boolean(feedback) || !spellingTranslation.trim()}
+            onClick={() => void assessSpellingTranslation()}>{spellingTranslationBusy
+              ? l("Checking meaning…", "正在判断语义…")
+              : l("Check translation", "提交翻译")}</button>
+          <div className="faint mt-8">{l(
+            "Equivalent meanings and natural paraphrases are accepted. The spelling timer starts only after this check passes.",
+            "可接受同义表达和自然改写；翻译通过后才开始拼写计时。",
+          )}</div>
+        </div> : <>
+          {spellingOptions.translationFirst && <div className="course-feedback is-correct mt-16">{l(
+            "Translation accepted. Now spell the English term.",
+            "翻译已通过，现在请拼写英文。",
+          )}</div>}
+          {spellingTimeRemainingMs != null && <div className={`course-spelling-timer mt-16 ${spellingTimeRemainingMs <= 5_000 ? "urgent" : ""}`} role="timer" aria-live="polite">
+            <span>{l("Time left", "剩余时间")}</span>
+            <b>{Math.ceil(spellingTimeRemainingMs / 1_000)}s</b>
+          </div>}
+          <input className={`course-form-field course-spelling-answer mt-24 ${feedback?.skill === "spelling" ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} style={{ maxWidth: 420, textAlign: "center", fontSize: 20 }} autoFocus
+            aria-label={l("Spelling answer", "拼写答案")} value={spelling} onChange={(event) => setSpelling(event.target.value)}
+            disabled={busy || Boolean(feedback)} onKeyDown={(event) => { if (event.key === "Enter" && spelling.trim()) submitSpelling(); }} />
+          <button className="btn btn-primary mt-16" disabled={busy || Boolean(feedback) || !spelling.trim()} onClick={() => submitSpelling()}>{l("Submit spelling", "提交拼写")}</button>
+          <div className="faint mt-8">{spellingOptions.timeLimitEnabled ? l(
+            `This word is submitted automatically after ${spellingOptions.timeLimitSeconds} seconds. Correct answers advance automatically; incorrect feedback waits for you.`,
+            `每个词将在 ${spellingOptions.timeLimitSeconds} 秒后自动提交；答对自动进入下一题，答错反馈会等待你手动继续。`,
+          ) : l("Press Enter or submit once. Correct answers advance automatically; incorrect feedback waits for you.", "按 Enter 或提交一次；答对自动进入下一题，答错反馈会等待你手动继续。")}</div>
+        </>}
       </>}
       {feedback && <div role="status" aria-live="polite" className={`course-feedback ${feedback.result.correct ? "is-correct" : "wrong"}`}>
         <div><b>{feedback.result.correct ? l("Correct — continuing…", "回答正确，正在进入下一题…") : l("Incorrect — added to the next-round retry pool", "回答错误，已加入下一轮候补池")}</b></div>
-        {!feedback.result.correct && feedback.skill === "spelling" && typeof feedback.result.expected === "string" && <div className="mt-8">{l("Your answer:", "你的答案：")} <SpellingDiff expected={feedback.result.expected} actual={feedback.actual || ""} /><br />{l("Correct spelling:", "正确拼写：")} <span className="mono">{feedback.result.expected}</span></div>}
+        {feedback.skill === "spelling" && <div className="course-spelling-result mt-12">
+          {feedback.translationActual != null && <div className="course-result-note"><b>{l("Your translation", "你的翻译")}</b><span>{feedback.translationActual}</span>
+            {feedback.translationFeedback && <small>{feedback.translationFeedback}</small>}</div>}
+          {!feedback.result.correct && typeof feedback.result.expected === "string" && <div className="course-result-note">
+            <b>{l("Your spelling", "你的拼写")}</b>
+            {feedback.actual ? <SpellingDiff expected={feedback.result.expected} actual={feedback.actual} /> : <span>{feedback.translationActual != null
+              ? l("Skipped because the translation was incorrect", "因翻译错误而跳过")
+              : l("No answer before time expired", "限时结束前未作答")}</span>}
+          </div>}
+          <div className="course-result-grid">
+            <div><span>{feedback.result.correct ? l("Spelling", "拼写") : l("Correct spelling:", "正确拼写：")}</span>{" "}<b className="mono">{typeof feedback.result.expected === "string"
+              ? feedback.result.expected : feedbackWord?.term}</b></div>
+            <div><span>{l("Translation", "翻译")}</span><div className="course-result-translations">{feedbackWord?.translations.map((translation) =>
+              <em key={translation}>{translation}</em>)}</div></div>
+          </div>
+        </div>}
         {!feedback.result.correct && feedback.skill !== "spelling" && <div className="mt-8">{l("Correct answer:", "正确答案：")} {Array.isArray(feedback.result.expected) ? feedback.result.expected.join(" / ") : feedback.result.expected}</div>}
         {(!feedback.result.correct || error) && <button ref={nextQuestionRef} className="btn btn-sm mt-12" disabled={busy} onClick={continueAfterFeedback}>{busy
           ? l("Loading…", "加载中…")

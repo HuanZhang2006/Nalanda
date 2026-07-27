@@ -12,11 +12,13 @@ import { LearningService } from "./learning/learning.service";
 import { PronunciationController } from "./learning/pronunciation.controller";
 import { PronunciationService } from "./learning/pronunciation.service";
 import { SupabaseAdminService } from "./learning/supabase-admin.service";
+import { OpenRouterTranslationService } from "./learning/openrouter-translation.service";
 
 @Module({
   controllers: [HealthController, MeController, AuthController, LearningController, PublicLearningController, PronunciationController],
   providers: [
-    SupabaseAdminService, IpaService, LearningService, LearningAudioService, PronunciationService, FeatureFlagsService,
+    SupabaseAdminService, IpaService, LearningService, LearningAudioService, PronunciationService,
+    OpenRouterTranslationService, FeatureFlagsService,
     { provide: APP_FILTER, useClass: ApiErrorFilter },
   ],
 })

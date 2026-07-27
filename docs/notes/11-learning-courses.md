@@ -3,8 +3,8 @@
 > **文档定位**
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
-> - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech、分享市场或测试边界变化时。
-> - **状态基线**：2026-07-27。生产已发布 0011–0018；会话意图恢复与历史冷单元未来五词排队/缓存替换已完成受保护发布。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech/OpenRouter、分享市场或测试边界变化时。
+> - **状态基线**：2026-07-27。生产已发布 0011–0018；会话意图恢复与历史冷单元未来五词排队/缓存替换已完成受保护发布。0019–0020 的可选限时拼写与语义翻译前测是待发布候选。文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -37,7 +37,7 @@ Courses、学习/复习、公开分享与 Course Market 共用 Web 的 `nalanda-
 1. **认单词**：顺序展示英文、IPA、全部翻译和发音；朗读评分可选。整体 `PronScore` 默认 70 分通过，低分会持久进入本阶段候补池；结果页显示真实阈值和候补状态，并可立即“重新朗读并评分”，达标重读会移除该候补项。
 2. **发音记忆**：每批最多五词，音频列和词列分别打乱；选中发音对应词后立即提交并在所选项显示结果。答对短暂动画后自动推进；错配记到目标词并进入下一轮候补池，错误状态持续保留，直到用户点击“下一题”。
 3. **翻译记忆**：一个翻译时点击选项立即判定；多个翻译时逐个确认正确项，最后一个正确项自动提交，任一错误项立即判错。干扰项来自课程内其他翻译；答对自动推进，答错持续显示错误选项与正确答案并等待手动“下一题”，不恢复 Check/Continue 两步确认。
-4. **拼写记忆**：播放发音后输入，比较忽略大小写、首尾空格和重复空格，但保留连字符与撇号要求；Enter 或一次提交确定答案。答对自动推进；错误字符差异和正确拼写持续显示，用户点击“下一题”后才推进。
+4. **拼写记忆**：播放发音后输入，比较忽略大小写、首尾空格和重复空格，但保留连字符与撇号要求；Enter 或一次提交确定答案。开始包含 spelling 的 session 时可选择不限时或 3–300 秒限时；限时从拼写输入真正可作答时开始，归零后按当前内容（可为空）只自动提交一次。还可开启翻译前测：用户先键入翻译，由服务端 OpenRouter 语义评判；正确后才显示拼写输入并开始计时，错误则直接形成该词一次 spelling 错误。答对自动推进；任何错误的字符差异、正确英文与每项翻译持续显示，用户点击“下一题”后才推进。
 
 每个测试阶段执行“首轮全部词 → 本轮错误池 → 下一轮错误池”，直至全部通过。识别推进和每次答案都由 owner 校验后的 service-role RPC 原子更新，客户端不能直接伪造会话、尝试或 progress。
 
@@ -72,15 +72,23 @@ TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参�
 
 0015 还把 `vocabulary-audio` 保持为 private Storage 唯一服务端事实源，新增无客户端权限的 `learning_audio_assets` 持久队列。全局键为 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)`；Session 启动排整个单元，音频 miss 只提升优先级并快速返回 `202 AUDIO_PENDING`，不会在请求中等待 Azure。worker 默认单并发、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月。Web 优先读 Cache Storage；0017 应用修复后，当前词和未来四词无论 ready/pending 都以最多两个并发请求主动缓存或提升队列优先级，manifest 每三秒轮询，ready 后立即落 Cache Storage 并清除该词的过期浏览器朗读提示。用户仍可下载/续传/删除指定单元；这不包含完整离线 app shell。Storage 网络故障必须显式失败，只有 HTTP 404 或 Storage HTTP 400 + JSON `statusCode=404` 可当正常 miss，以免故障时重复调用 Azure。
 
+### 7.1 OpenRouter 翻译前测边界
+
+翻译前测不是 Courses 文件 AI 导入，也不是客户端模糊匹配。浏览器只发送当前 session/word、revision、UUID 和用户输入；NestJS 从 owner 可见的课程中取得英文与 translations，使用固定结构化 JSON schema 调用 `google/gemma-4-26b-a4b-it:free`。模型只返回 boolean 与短反馈，不能推进会话、授予积分或改写参考答案。
+
+`learning_spelling_translation_assessments` 只保存用户答案 SHA-256、provider/model、判定、token usage、租约与首次响应；输入正文仅在 API 请求内存中存在。相同 UUID/答案 hash 重放直接返回首次响应，错误翻译用同 UUID 原子写一次 spelling 错误；正确翻译要求后续 spelling attempt 复用该 UUID。超时、网络故障或非法结构化输出会释放租约且不记错。默认每用户 20 次/分钟、滚动 24 小时 200 次，生产 fake 明确禁止。
+
+UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt RPC；结果页面无论正确或错误都显示正确英文与拆分后的 translations。生产启用必须同时有一次性数据库 RLS/幂等门禁、fake-provider Chromium 流程和独立真实 OpenRouter structured/API gate。
+
 ## 8. 数据与安全证据
 
-0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017 追加并回填 `resume_key`，把 active session 唯一性从整门课程收窄到首次学习、临时复习或日程复习的具体请求意图，0018 验证新索引、函数定义和 service-role-only 权限。私有表只允许 owner 读；音频队列表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
+0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017 追加并回填 `resume_key`，把 active session 唯一性从整门课程收窄到首次学习、临时复习或日程复习的具体请求意图，0018 验证新索引、函数定义和 service-role-only 权限。待发布的 0019 增加 session spelling options、答案 hash 评判事实与 service-only claim/complete/release/spelling RPC，0020 验证结构、RLS 与精确 grants。私有表只允许 owner 读；音频队列和翻译评判表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
 
 删除课程级联私有学习数据和日程，但保留同账号下已发 points/badge facts；用户删除遵循 Auth 外键级联，出版物、points 与 badge awards 随账号删除，只有 speech 成本行和 moderation action 以 `user_id/actor_id=NULL` 留下非账号化运营事实。Storage 清理仍须删除编排。细节见 ERD、API、安全、隐私、内容审核和积分产品规则。
 
 ## 9. 验收边界
 
-仓库测试覆盖逐单元/整份多单元解析、全局错误行列、编辑器批量追加与已有词重复、独立翻译字段、排序、状态恢复、候补池、跨日熟练度、编辑重置、积分指纹、API 鉴权/限流/Azure fake/公开脱敏、双用户 RLS、Playwright 主流程及 0007 升级夹具。Chromium 流程会实际断言 `.content` 可滚动、滚到底后“添加单元”进入 viewport，再继续保存和完整学习流程；这项布局验证不能由 jsdom 的零布局模型替代。
+仓库测试覆盖逐单元/整份多单元解析、全局错误行列、编辑器批量追加与已有词重复、独立翻译字段、排序、状态恢复、候补池、跨日熟练度、编辑重置、积分指纹、API 鉴权/限流/Azure fake/公开脱敏、双用户 RLS、Playwright 主流程及 0007 升级夹具。0019–0020 另覆盖 fake timer 单次超时提交、翻译通过前不计时、同 UUID 两步提交、语义错误手动推进、provider 失败不记错、答案 hash 不留正文、租约/配额/重放/跨用户拒绝，以及正确/错误结果同时显示英文和翻译。Chromium 流程会实际断言 `.content` 可滚动、滚到底后“添加单元”进入 viewport，再继续保存和完整学习流程；这项布局验证不能由 jsdom 的零布局模型替代。
 
 2026-07-22 的 PR run `29932310309` 与 main run `29932840103` 均通过 quality、0007→latest、空库重建、数据库 lint、一次性本地 Supabase 的双用户 RLS/Storage/Courses E2E 和 Chromium Playwright。Playwright 使用 Azure fake；main 发布另在激活前运行生产主机的真实 Azure gate，但本次 UI/文本导入变更没有修改语音行为。最终不可变 release 为 `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`，公网复核包含 Web 200、`deps.supabase=ok`、未认证 `/api/me` 401，以及用户示例成功拆成 `Starter Unit 1`/`Starter Unit 2`、独立翻译输入和底部操作可达。
 

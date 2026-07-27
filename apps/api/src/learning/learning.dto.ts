@@ -8,6 +8,8 @@ import type {
   LearningScope,
   LearningSessionMode,
   LearningSkill,
+  LearningSpellingOptions,
+  LearningSpellingTranslationAssessmentRequest,
   ModerateCoursePublicationRequest,
   PublishLearningCourseRequest,
   RenameLearningCourseRequest,
@@ -37,6 +39,7 @@ export class StartLearningSessionDto implements StartLearningSessionRequest {
   skills?: LearningSkill[];
   scope?: LearningScope;
   scheduleId?: string;
+  spellingOptions?: LearningSpellingOptions;
 }
 
 export class LearningAttemptDto implements LearningAttemptRequest {
@@ -45,6 +48,14 @@ export class LearningAttemptDto implements LearningAttemptRequest {
   wordId!: string;
   skill!: LearningSkill;
   answer!: LearningAttemptRequest["answer"];
+}
+
+export class LearningSpellingTranslationAssessmentDto
+implements LearningSpellingTranslationAssessmentRequest {
+  attemptId!: string;
+  expectedRevision!: number;
+  wordId!: string;
+  answer!: string;
 }
 
 export class CreateReviewSchedulesDto implements CreateReviewSchedulesRequest {

@@ -31,6 +31,8 @@ function session(stage: LearningSession["stage"]): LearningSession {
   return {
     id: ids[0], courseId: ids[0], unitId: ids[0], mode: "initial", scope: "all",
     selectedSkills: ["pronunciation", "translation", "spelling"], stage, active: true,
+    spellingOptions: { timeLimitEnabled: false, timeLimitSeconds: 20, translationFirst: false },
+    spellingTranslationAssessment: null,
     revision: 0, state: { queue: words.map((entry) => entry.id), cursor: 0, nextQueue: [], round: 1 },
     items: words.map((entry, position) => ({
       word: entry, position, recognitionSeen: true,

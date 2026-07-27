@@ -114,6 +114,9 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
 
   await page.getByRole("article").getByRole("button", { name: "开始学习" }).click();
   await page.locator(".modal select").selectOption({ index: 0 });
+  await page.locator(".modal").getByLabel("为每个单词设置限时").check();
+  await page.locator(".modal").getByLabel("每个拼写单词的秒数").fill("20");
+  await page.locator(".modal").getByLabel("拼写前先测试键入翻译").check();
   await page.locator(".modal").getByRole("button", { name: "下载本单元音频" }).click();
   await expect(page.locator(".modal").getByText(/本地已保存 2\/2 个/)).toBeVisible({ timeout: 20_000 });
   const cachedAudio = await vocabularyAudioCacheCount(page);
@@ -130,6 +133,13 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.locator(".modal").getByRole("button", { name: "开始学习" }).click();
   const started = await startResponse;
   expect(started.status(), `session start: ${await started.text()}`).toBe(201);
+  expect(started.request().postDataJSON()).toMatchObject({
+    spellingOptions: {
+      timeLimitEnabled: true,
+      timeLimitSeconds: 20,
+      translationFirst: true,
+    },
+  });
   const snapshot = await snapshotResponse;
   expect(snapshot.status(), `session snapshot: ${await snapshot.text()}`).toBe(200);
   const detail = await detailResponse;
@@ -241,10 +251,16 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.locator(".course-option.is-correct")).toHaveText("苹果");
   await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
   await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
-  for (const term of ["apple", "banana"]) {
+  for (const [term, translation] of [["apple", "苹果"], ["banana", "香蕉"]] as const) {
+    await page.getByLabel("键入翻译答案").fill(translation);
+    await page.getByRole("button", { name: "提交翻译" }).click();
+    await expect(page.getByText("翻译已通过，现在请拼写英文。")).toBeVisible();
+    await expect(page.getByRole("timer")).toContainText(/(?:20|19)s/);
     await page.getByLabel("拼写答案").fill(term);
     await page.getByLabel("拼写答案").press("Enter");
     await expect(page.locator(".course-spelling-answer.is-correct")).toBeVisible();
+    await expect(page.getByText("拼写", { exact: true }).last()).toBeVisible();
+    await expect(page.getByText(translation, { exact: true }).last()).toBeVisible();
     await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
     await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   }

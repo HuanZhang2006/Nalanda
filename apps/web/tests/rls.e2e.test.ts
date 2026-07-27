@@ -622,6 +622,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.from("user_badge_awards").insert({ user_id: aId, badge_code: "vocab_words_gold" })).error).not.toBeNull();
     expect((await a.from("learning_speech_usage").select("id").limit(1)).error).not.toBeNull();
     expect((await a.from("learning_audio_assets").select("cache_key").limit(1)).error).not.toBeNull();
+    expect((await a.from("learning_spelling_translation_assessments").select("assessment_id").limit(1)).error).not.toBeNull();
     expect((await a.rpc("learning_upsert_course", { p_user_id: aId, p_payload: payload })).error).not.toBeNull();
     expect((await a.rpc("learning_record_attempt", { p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id, p_skill: "spelling", p_answer: { text: terms[0].term } })).error).not.toBeNull();
     expect((await a.rpc("learning_record_attempt", {
@@ -631,6 +632,33 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     })).error).not.toBeNull();
     expect((await a.rpc("learning_get_session_snapshot", {
       p_user_id: aId, p_session_id: randomUUID(),
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_start_session", {
+      p_user_id: aId, p_course_id: courseId, p_unit_id: unitId, p_mode: "review",
+      p_skills: ["spelling"], p_scope: "all", p_schedule_id: null,
+      p_spelling_options: { timeLimitEnabled: true, timeLimitSeconds: 10, translationFirst: true },
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_claim_spelling_translation_assessment", {
+      p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
+      p_assessment_id: randomUUID(), p_expected_revision: 0,
+      p_answer_hash: "a".repeat(64), p_lease_token: randomUUID(),
+      p_lease_seconds: 30, p_minute_limit: 20, p_day_limit: 200,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_record_spelling_attempt", {
+      p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
+      p_answer: { text: terms[0].term }, p_attempt_id: randomUUID(),
+      p_expected_revision: 0,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_complete_spelling_translation_assessment", {
+      p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
+      p_assessment_id: randomUUID(), p_expected_revision: 0,
+      p_answer_hash: "a".repeat(64), p_lease_token: randomUUID(),
+      p_correct: true, p_feedback: "forged", p_provider: "forged",
+      p_model: "forged", p_usage: {},
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_release_spelling_translation_assessment", {
+      p_user_id: aId, p_assessment_id: randomUUID(),
+      p_lease_token: randomUUID(), p_error_code: "forged",
     })).error).not.toBeNull();
     expect((await a.rpc("learning_prepare_unit_audio", {
       p_user_id: aId, p_unit_id: unitId, p_locale: "en-US",
@@ -825,6 +853,181 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await admin.from("learning_attempts").select("id")
       .eq("session_id", idempotentSession)).data).toHaveLength(1);
     expect((await admin.from("learning_sessions").delete().eq("id", idempotentSession)).error).toBeNull();
+
+    // Timed/translation-first spelling settings survive snapshots. Translation
+    // decisions are idempotent, store no raw typed answer, and only the
+    // service-role wrapper may turn them into authoritative attempts.
+    const semanticSession = await rpc<string>("learning_start_session", {
+      p_user_id: aId,
+      p_course_id: courseId,
+      p_unit_id: unitId,
+      p_mode: "review",
+      p_skills: ["spelling"],
+      p_scope: "all",
+      p_schedule_id: null,
+      p_spelling_options: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 11,
+        translationFirst: true,
+      },
+    });
+    const semanticSnapshot = await rpc<any>("learning_get_session_snapshot", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+    });
+    expect(semanticSnapshot).toMatchObject({
+      revision: 0,
+      stage: "spelling",
+      spelling_options: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 11,
+        translationFirst: true,
+      },
+      spelling_translation_assessment: null,
+    });
+
+    const semanticAttemptId = randomUUID();
+    const semanticLease = randomUUID();
+    const semanticAnswerHash = createHash("sha256").update("一种水果").digest("hex");
+    const semanticClaimArgs = {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[0].id,
+      p_assessment_id: semanticAttemptId,
+      p_expected_revision: 0,
+      p_answer_hash: semanticAnswerHash,
+      p_lease_token: semanticLease,
+      p_lease_seconds: 30,
+      p_minute_limit: 20,
+      p_day_limit: 200,
+    };
+    expect(await rpc<any>("learning_claim_spelling_translation_assessment", semanticClaimArgs))
+      .toMatchObject({ claimed: true, term: terms[0].term, translations: terms[0].translations });
+    expect(await rpc<any>("learning_claim_spelling_translation_assessment", {
+      ...semanticClaimArgs,
+      p_lease_token: randomUUID(),
+    })).toMatchObject({ pending: true });
+    const acceptedTranslation = await rpc<any>("learning_complete_spelling_translation_assessment", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[0].id,
+      p_assessment_id: semanticAttemptId,
+      p_expected_revision: 0,
+      p_answer_hash: semanticAnswerHash,
+      p_lease_token: semanticLease,
+      p_correct: true,
+      p_feedback: "Equivalent meaning accepted.",
+      p_provider: "openrouter",
+      p_model: "google/gemma-4-26b-a4b-it:free",
+      p_usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+    });
+    expect(acceptedTranslation).toMatchObject({
+      attempt_id: semanticAttemptId,
+      correct: true,
+      revision: 0,
+      attempt_result: null,
+    });
+    expect(await rpc<any>("learning_get_session_snapshot", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+    })).toMatchObject({
+      spelling_translation_assessment: {
+        attempt_id: semanticAttemptId,
+        word_id: terms[0].id,
+        revision: 0,
+        correct: true,
+      },
+    });
+    const acceptedSpelling = await rpc<any>("learning_record_spelling_attempt", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[0].id,
+      p_answer: { text: terms[0].term },
+      p_attempt_id: semanticAttemptId,
+      p_expected_revision: 0,
+    });
+    expect(acceptedSpelling).toMatchObject({
+      attempt_id: semanticAttemptId,
+      correct: true,
+      revision: 1,
+      replayed: false,
+    });
+    expect(await rpc<any>("learning_record_spelling_attempt", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[0].id,
+      p_answer: { text: terms[0].term },
+      p_attempt_id: semanticAttemptId,
+      p_expected_revision: 0,
+    })).toMatchObject({ attempt_id: semanticAttemptId, replayed: true });
+
+    const wrongTranslationId = randomUUID();
+    const wrongLease = randomUUID();
+    const wrongHash = createHash("sha256").update("完全错误").digest("hex");
+    await rpc("learning_claim_spelling_translation_assessment", {
+      ...semanticClaimArgs,
+      p_word_id: terms[1].id,
+      p_assessment_id: wrongTranslationId,
+      p_expected_revision: 1,
+      p_answer_hash: wrongHash,
+      p_lease_token: wrongLease,
+    });
+    const rejectedTranslation = await rpc<any>("learning_complete_spelling_translation_assessment", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[1].id,
+      p_assessment_id: wrongTranslationId,
+      p_expected_revision: 1,
+      p_answer_hash: wrongHash,
+      p_lease_token: wrongLease,
+      p_correct: false,
+      p_feedback: "The meaning does not match.",
+      p_provider: "openrouter",
+      p_model: "google/gemma-4-26b-a4b-it:free",
+      p_usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+    });
+    expect(rejectedTranslation).toMatchObject({
+      attempt_id: wrongTranslationId,
+      correct: false,
+      revision: 2,
+      attempt_result: {
+        attempt_id: wrongTranslationId,
+        correct: false,
+        revision: 2,
+      },
+    });
+    expect(await rpc<any>("learning_complete_spelling_translation_assessment", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[1].id,
+      p_assessment_id: wrongTranslationId,
+      p_expected_revision: 1,
+      p_answer_hash: wrongHash,
+      p_lease_token: wrongLease,
+      p_correct: false,
+      p_feedback: "The meaning does not match.",
+      p_provider: "openrouter",
+      p_model: "google/gemma-4-26b-a4b-it:free",
+      p_usage: {},
+    })).toMatchObject({ attempt_id: wrongTranslationId, replayed: true });
+    expect((await admin.from("learning_attempts").select("id")
+      .in("attempt_id", [semanticAttemptId, wrongTranslationId])).data).toHaveLength(2);
+    const storedSemantic = await admin.from("learning_spelling_translation_assessments")
+      .select("assessment_id,answer_hash,status,correct,provider,model,prompt_tokens,total_tokens")
+      .in("assessment_id", [semanticAttemptId, wrongTranslationId])
+      .order("created_at");
+    expect(storedSemantic.error).toBeNull();
+    expect(storedSemantic.data).toHaveLength(2);
+    expect(new Set(storedSemantic.data!.map((entry) => entry.answer_hash)))
+      .toEqual(new Set([semanticAnswerHash, wrongHash]));
+    expect(storedSemantic.data!.every((entry) => entry.status === "completed")).toBe(true);
+    expect((await b.from("learning_spelling_translation_assessments")
+      .select("assessment_id").in("assessment_id", [semanticAttemptId, wrongTranslationId])).error)
+      .not.toBeNull();
+    expect((await admin.from("learning_sessions").delete().eq("id", semanticSession)).error).toBeNull();
+    expect((await admin.from("learning_spelling_translation_assessments")
+      .select("assessment_id").in("assessment_id", [semanticAttemptId, wrongTranslationId])).data)
+      .toEqual([]);
 
     const preparedAudio = await rpc<any>("learning_prepare_unit_audio", {
       p_user_id: aId,
