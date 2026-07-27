@@ -4,7 +4,7 @@
 > - **内容**：记录 Courses 不复用 Materials 表、特权学习写入经 API/RPC，以及语音能力通过 Azure 适配层实现的决策。
 > - **作用**：固定长期数据、安全、供应商和隐私边界，避免后续把资料目录、学习事实或录音处理重新混在一起。
 > - **何时更新**：课程领域边界、公开传播模型、语音供应商、录音留存、安全写入方式、弱网/缓存事实源或替代 ADR 变化时。
-> - **状态**：Accepted；2026-07-27。0011–0014 已生产启用；0015–0016 对本 ADR 增补的 revision/outbox、持久 TTS 队列与浏览器缓存仍待受保护发布。
+> - **状态**：Accepted；2026-07-27。0011–0016 已生产启用；revision/outbox、持久 TTS 队列与浏览器缓存已完成受保护发布。
 
 ## 背景
 
@@ -36,6 +36,6 @@
 
 ## 发布与验证
 
-0011–0013 只追加对象并包含客户端 EXECUTE 拒绝断言；0014 已补齐评分候补池。0015 追加 revision、attempt 幂等响应和音频队列，保留旧 RPC 签名供应用回滚；0016 验证列、触发器、RLS 和 service-role-only 权限。上线顺序为 migration plan、加密恢复点、apply、lint/dry-run、应用 release、私有预热 flag，再以 Japan East 真实 Azure 证明首次生成、Storage 命中、跨课程重复词不再调用 Azure 和裁剪评分，才开放新链路。回滚关闭 flags 或恢复应用 release；数据库只做向前修复。
+0011–0013 只追加对象并包含客户端 EXECUTE 拒绝断言；0014 已补齐评分候补池。0015 追加 revision、attempt 幂等响应和音频队列，保留旧 RPC 签名供应用回滚；0016 验证列、触发器、RLS 和 service-role-only 权限。2026-07-27 已按 migration plan、加密恢复点、apply、lint/dry-run、不可变应用 release 和 Japan East 真实 Azure gate 的顺序发布；gate 证明首次生成、Storage 命中、跨用户重复词不增加生成和裁剪评分。回滚关闭 flags 或恢复应用 release；数据库只做向前修复。
 
 验证入口：解析器/jsdom/API Vitest、双用户 RLS E2E、Playwright 端到端、迁移空库和 0007 升级夹具。普通 mock 测试不能替代数据库或供应商 smoke。

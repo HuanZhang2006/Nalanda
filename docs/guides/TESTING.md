@@ -410,6 +410,8 @@ node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 | nginx/compose/CI | build image + staging deploy + 外部 health/login |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 
+2026-07-27 的可核验发布样本：PR #21 run `30243998633` 与 main run `30244402278` 完成自动化矩阵；只读 plan `30244967669` 只列 0015–0016；apply/deploy `30245430630` 创建恢复 artifact `8644999285`，并在切流前用 Japan East 真实 Azure 验证首次生成、private Storage 命中、跨用户重复词复用和 VAD 裁剪评分。Playwright 在这些 run 中仍使用 fake provider，真实供应商证据只来自独立生产 gate。
+
 ## 11. 新增测试约定
 
 1. 测试名描述用户行为/安全属性，不只写函数名。

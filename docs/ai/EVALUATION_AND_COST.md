@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-07-27。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter 的现有语音合成/评分已生产启用；持久 TTS 队列、跨课程缓存、弱网答题与客户端裁剪仍是待 CI 和受保护发布验证的 0015–0016 候选，不能冒充生成式 AI/文件解析闭环。
+> **状态基线：**2026-07-27。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter、持久 TTS 队列、跨课程缓存、弱网答题与客户端裁剪已通过 0015–0016 受保护发布启用，但不能冒充生成式 AI/文件解析闭环。
 
 ## 1. 范围和非目标
 
@@ -22,7 +22,7 @@
 - TypeScript 与 Python 的请求字段命名存在 camelCase/snake_case 差异，Web 也没有真实消费该契约；
 - 当前生产 compose 不包含 AI 服务，NestJS 没有 AI 模块、job 或服务间调用。
 - Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
-- Azure Speech 的 Nest adapter、fake tests、WAV 限制、配额/估算成本和熔断已经存在并在生产启用；候选版把 TTS miss 改为持久队列和 private Storage 事实源，并增加客户端 VAD 裁剪。它仍只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
+- Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列、private Storage 事实源和客户端 VAD 裁剪已经在生产启用；fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
 
 因此当前不得：收费扣 credits；把 placeholder 或文件入口标为已生成/已解析；把 Azure TTS 当成课程 AI 导入；把 health/key/fake 当真实供应商可用；用真实私有课件/录音做非受控测试；公开承诺准确率/成本/延迟。
 
@@ -58,11 +58,11 @@
 
 ### 2.3 Azure Speech 当前边界
 
-Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的 PCM WAV；客户端候选实现按 20ms 帧检测语音，阈值为 `max(0.015, 首 200ms 噪声 RMS × 3)`，保留首尾 150ms，少于 250ms 有效语音要求重录并裁剪至最多 6 秒，服务端继续限制 8 秒/2 MB。不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
+Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的 PCM WAV；客户端按 20ms 帧检测语音，阈值为 `max(0.015, 首 200ms 噪声 RMS × 3)`，保留首尾 150ms，少于 250ms 有效语音要求重录并裁剪至最多 6 秒，服务端继续限制 8 秒/2 MB。不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
 
-评分的持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。TTS 候选队列按 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)` 跨用户复用 private Storage 对象，默认单 worker、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月；租约、重试、字符预留和成本预算都由服务端数据库控制。浏览器只缓存可重建副本并预取当前加未来四词。
+评分的持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。TTS 队列按 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)` 跨用户复用 private Storage 对象，默认单 worker、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月；租约、重试、字符预留和成本预算都由服务端数据库控制。浏览器只缓存可重建副本并预取当前加未来四词。
 
-必须分别观测 attempt/snapshot RPC 延迟、队列等待、Azure 合成、Storage hit、浏览器 Cache hit、评分总耗时与供应商耗时；配额暂停、失败重试和重复词命中不能混入“生成成功率”。2026-07-22/23 Japan East 真实账号发布 gate 已通过旧同步链路；0015–0016 必须另以真实首次生成、Storage 命中、重复词不再调用 Azure 和裁剪后评分作为上线证据。Azure fake 只验证代码路径，不参与质量或供应商可用率报告。
+必须分别观测 attempt/snapshot RPC 延迟、队列等待、Azure 合成、Storage hit、浏览器 Cache hit、评分总耗时与供应商耗时；配额暂停、失败重试和重复词命中不能混入“生成成功率”。2026-07-27 Japan East 真实发布 gate 已验证 4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象且不增加生成，以及 VAD 裁剪后评分 97。Azure fake 只验证代码路径，不参与质量或供应商可用率报告；单次 gate 也不是持续可用率或账单对账。
 
 ## 3. 可追溯生成记录
 

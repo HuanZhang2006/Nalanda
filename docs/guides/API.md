@@ -157,7 +157,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（基础版生产已启用；0015–0016 增量待发布）
+## 4. Courses API（0011–0016 生产已启用）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -490,7 +490,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权。发布候选 0015–0016 同样拒绝客户端执行 snapshot、幂等 attempt、assessment target、音频 prepare/claim/finish/requeue/quota RPC，并拒绝读写队列表；RLS E2E 会以普通用户逐项验证失败。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权。0015–0016 同样拒绝客户端执行 snapshot、幂等 attempt、assessment target、音频 prepare/claim/finish/requeue/quota RPC，并拒绝读写队列表；0016 发布断言和双用户 RLS E2E 以普通用户逐项验证失败。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 
