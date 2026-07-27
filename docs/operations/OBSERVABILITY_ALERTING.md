@@ -62,7 +62,7 @@
 | 私有资料 | upload + signed URL + download 合成成功率 | ≥ 99% / 1 小时，使用小型无敏感 fixture |
 | 备份 | 最近一次已验证恢复点年龄 | 数据库 < 24 小时；目标 PITR 指标按 RPO |
 | 数据保护 | 跨用户 RLS 拒绝率 | 测试应 100% 拒绝；任何成功为 P1 |
-| Courses 持久化 | 创建/答题/恢复成功率（排除合法 4xx） | ≥99% / 15 分钟；恢复必须返回同一 active session |
+| Courses 持久化 | 创建/答题/恢复成功率（排除合法 4xx） | ≥99% / 15 分钟；相同意图必须恢复同一 active session，不同单元/模式不得串线 |
 | 发音合成 | Azure worker 成功率/生成延迟、Storage/browser cache hit | ≥98% / 1 小时；ready 缓存播放 p95<300 ms，队列等待按 3.1 秒限流可解释；失败可降级，不计文本课程不可用 |
 | 弱网答题 | provisional→服务器确认时延、outbox 年龄/冲突率 | 即时反馈 p95<一帧；在线确认 p95<1 秒；最旧 outbox >5 分钟或冲突率异常需调查 |
 | 朗读评分 | 有效 WAV provider 成功率 | ≥97% / 1 小时；供应商失败不写错误次数 |

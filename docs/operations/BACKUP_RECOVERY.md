@@ -169,7 +169,7 @@ bash scripts/restore-db-release.sh restore-isolated
 - posts 冗余计数与关系聚合一致；
 - points/credits/VIP/streak 没有因恢复 trigger 改变；
 - function owner/search_path/EXECUTE grants 正确。
-- learning course/unit/word owner 链无 orphan，active session 唯一，revision 非负且与新增 attempt 时钟一致，非空 attempt UUID 在 user/session 内唯一且响应快照可重放，attempt 仍为追加事实，progress 三组日期与 `learned_at` 一致；
+- learning course/unit/word owner 链无 orphan；active session 只在 `(user_id,resume_key)` 意图内唯一，同一课程允许不同单元/模式的未完成会话；revision 非负且与新增 attempt 时钟一致，非空 attempt UUID 在 user/session 内唯一且响应快照可重放，attempt 仍为追加事实，progress 三组日期与 `learned_at` 一致；
 - `learning_audio_assets` 无客户端 grant、无过期 processing 永久卡住；ready metadata 对应 private Storage bytes，缺失项回到 pending 后可重建，相同缓存键不重复生成；
 - review schedule 未被复制成 `study_tasks`；publication snapshot/版本/指纹未改变，撤销 share 不会重新 active；
 - 课程完成 points 业务键按用户+词集合唯一、badge award PK 唯一，Profile 学习聚合可从事实重算；speech usage 不含音频/参考文本。

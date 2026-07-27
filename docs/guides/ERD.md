@@ -499,7 +499,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helper | 固化尝试本地日期、词集合 SHA-256 与服务端内部课程快照；公开 API 另经 `publicSnapshot` 删除私有 ID/进度 |
 | `_refresh_learning_growth` | 完成学习/复习 | 发放课程 +20 points 和九级徽章；持久业务键/award PK 防重复 |
 | `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPC | owner 校验下原子保存、精确能力重置、改名和级联删除 |
-| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载，重复请求返回首次响应、过期 revision 返回冲突 |
+| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载；0017 按 course/unit/mode/scope/skills 或 schedule 的服务端意图键恢复，避免复习另一单元误返回暂停学习 session |
 | `learning_get_session_snapshot`, `_learning_session_patch`, `_learning_increment_session_revision` | API/内部 RPC 与 trigger helper | 一次返回 session/items/words/progress；写事务返回小增量；`learning_attempts AFTER INSERT` 推进 revision，保证旧应用回滚写入也不会绕过版本时钟 |
 | `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
 | `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；按受控整体分数阈值原子加入/移除当前认词候补项；持久化用户频率和全局预算预留 |
@@ -532,7 +532,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `learning_courses_user_updated_idx(user_id, updated_at DESC)`
 - `learning_course_units_owner_idx(user_id, course_id, position)`
 - `learning_course_words_course_idx(course_id, unit_id, position)`、`learning_course_words_owner_term_idx(user_id, normalized_term)`
-- `learning_sessions_one_active_course_idx(user_id, course_id) WHERE active`、`learning_sessions_owner_activity_idx(user_id, last_activity_at DESC)`
+- `learning_sessions_one_active_intent_idx UNIQUE(user_id,resume_key) WHERE active`、`learning_sessions_active_course_activity_idx(user_id,course_id,last_activity_at DESC) WHERE active`、`learning_sessions_owner_activity_idx(user_id,last_activity_at DESC)`
 - `learning_attempts_owner_created_idx(user_id, created_at DESC)`、`learning_attempts_course_idx(course_id, created_at DESC)`、`learning_attempts_word_idx(word_id, created_at DESC)`
 - `learning_attempts_idempotency_idx UNIQUE(user_id,session_id,attempt_id)`（NULL 仅用于兼容旧/非普通答题事实）
 - `learning_speech_usage_user_rate_idx(user_id, kind, created_at DESC)`、`learning_speech_usage_budget_idx(created_at DESC)`、`learning_speech_usage_kind_rate_idx(kind,created_at DESC)`

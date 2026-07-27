@@ -25,6 +25,10 @@ const ids = [
   "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
   "33333333-3333-4333-8333-333333333333", "44444444-4444-4444-8444-444444444444",
   "55555555-5555-4555-8555-555555555555",
+  "66666666-6666-4666-8666-666666666666", "77777777-7777-4777-8777-777777777777",
+  "88888888-8888-4888-8888-888888888888", "99999999-9999-4999-8999-999999999999",
+  "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
 ];
 const progress = { recognitionSeen: false, initialPronunciationPassed: false, initialTranslationPassed: false, initialSpellingPassed: false,
   pronunciationReviewDates: [], translationReviewDates: [], spellingReviewDates: [], wrongCount: 0, reviewCount: 0, learnedAt: null };
@@ -70,12 +74,24 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   assessment?: "low" | "high";
   holdAttempt?: boolean;
   serverCorrect?: boolean;
+  audio?: "ready" | "pending-then-ready";
+  mode?: "initial" | "review";
 } = {}) {
   let cursor = 0;
   let revision = 0;
   let retryQueue: string[] = [];
+  let audioReady = options.audio !== "pending-then-ready";
   const attempts: Array<Record<string, unknown>> = [];
+  const audioRequests: string[] = [];
   let releaseAttempt: (() => void) | null = null;
+  const currentSession = (
+    nextStage: LearningSession["stage"],
+    nextCursor: number,
+    nextRetryQueue: string[] = [],
+  ) => ({
+    ...session(words, nextStage, nextCursor, nextRetryQueue),
+    mode: options.mode || "initial",
+  });
   const fetchMock = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input);
     if (path.endsWith(`/api/learning-courses/${ids[0]}`)) return json(course(words));
@@ -93,7 +109,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
       const correct = options.serverCorrect ?? predictedCorrect;
       cursor = Math.min(cursor + 1, words.length - 1);
       revision += 1;
-      const next = session(words, stage, cursor, retryQueue);
+      const next = currentSession(stage, cursor, retryQueue);
       next.revision = revision;
       const responseBody = {
         attemptId: request.attemptId,
@@ -123,14 +139,26 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
     }
     if (path.includes("/api/learning-units/") && (
       path.endsWith("/audio-prewarm") || path.endsWith("/audio-manifest")
-    )) return json({
-      unitId: ids[1], total: words.length, ready: words.length, pending: 0, failed: 0,
-      synthesisVersion: "1",
-      assets: words.map((entry) => ({
-        wordId: entry.id, cacheKey: entry.id, status: "ready",
-        audioUrl: `/api/pronunciation/audio/${entry.id}`, lastErrorCode: null,
-      })),
-    });
+    )) {
+      if (path.endsWith("/audio-manifest") && options.audio === "pending-then-ready") {
+        audioReady = true;
+      }
+      return json({
+        unitId: ids[1],
+        total: words.length,
+        ready: audioReady ? words.length : 0,
+        pending: audioReady ? 0 : words.length,
+        failed: 0,
+        synthesisVersion: "1",
+        assets: words.map((entry) => ({
+          wordId: entry.id,
+          cacheKey: entry.id,
+          status: audioReady ? "ready" : "pending",
+          audioUrl: `/api/pronunciation/audio/${entry.id}`,
+          lastErrorCode: null,
+        })),
+      });
+    }
     if (path.endsWith("/api/pronunciation/assess")) {
       const low = options.assessment !== "high";
       retryQueue = low ? [words[0].id] : [];
@@ -139,22 +167,33 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
         revision: ++revision,
         sessionPatch: {
           stage: "recognition", active: true,
-          state: session(words, "recognition", cursor, retryQueue).state,
+          state: currentSession("recognition", cursor, retryQueue).state,
           changedItem: null, nextWordId: words[cursor].id,
         },
         errorType: null, phonemes: [{ phoneme: "æ", accuracyScore: low ? 62 : 91, needsPractice: low }] }, 201);
     }
-    if (path.includes("/api/pronunciation/audio/")) return Promise.resolve(new Response(new Blob(["audio"], { type: "audio/mpeg" }), { status: 200 }));
-    if (path.endsWith(`/api/learning-sessions/${ids[4]}`)) return json(session(words, stage, cursor, retryQueue));
+    if (path.includes("/api/pronunciation/audio/")) {
+      audioRequests.push(path);
+      if (!audioReady) return json({ code: "AUDIO_PENDING" }, 202);
+      return Promise.resolve(new Response(
+        new Blob(["audio"], { type: "audio/mpeg" }),
+        { status: 200 },
+      ));
+    }
+    if (path.endsWith(`/api/learning-sessions/${ids[4]}`)) {
+      return json(currentSession(stage, cursor, retryQueue));
+    }
     throw new Error(`Unexpected fetch: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { attempts, fetchMock, releaseAttempt: () => releaseAttempt?.() };
+  return { attempts, audioRequests, fetchMock, releaseAttempt: () => releaseAttempt?.() };
 }
 
 describe("LearningView immediate feedback", () => {
   let root: Root;
   let container: HTMLDivElement;
+  let audioPlay: ReturnType<typeof vi.fn>;
+  let browserSpeak: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     setLocale("en", { persist: false });
@@ -168,10 +207,20 @@ describe("LearningView immediate feedback", () => {
       return { data: { subscription: { unsubscribe: vi.fn() } } };
     });
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    audioPlay = vi.fn().mockResolvedValue(undefined);
+    browserSpeak = vi.fn();
     vi.stubGlobal("Audio", class {
       onended: (() => void) | null = null;
       onerror: (() => void) | null = null;
-      play = vi.fn().mockResolvedValue(undefined);
+      play = audioPlay;
+    });
+    vi.stubGlobal("speechSynthesis", {
+      cancel: vi.fn(),
+      speak: browserSpeak,
+    });
+    vi.stubGlobal("SpeechSynthesisUtterance", class {
+      lang = "";
+      constructor(public readonly text: string) {}
     });
     if (!(URL as typeof URL & { createObjectURL?: unknown }).createObjectURL) {
       Object.defineProperty(URL, "createObjectURL", { configurable: true, value: vi.fn(() => "blob:test") });
@@ -368,6 +417,51 @@ describe("LearningView immediate feedback", () => {
     await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "Next question")!));
     expect(container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')?.value).toBe("");
     expect(container.textContent).not.toContain("Correct spelling: apple");
+  });
+
+  it("prioritizes and caches the next five cold review words before replacing browser speech", async () => {
+    vi.useFakeTimers();
+    const words = [
+      word(ids[5], "legacyapple", ["苹果"], 0),
+      word(ids[6], "legacybanana", ["香蕉"], 1),
+      word(ids[7], "legacycherry", ["樱桃"], 2),
+      word(ids[8], "legacydate", ["枣"], 3),
+      word(ids[9], "legacyelder", ["接骨木"], 4),
+      word(ids[10], "legacyfig", ["无花果"], 5),
+      word(ids[11], "legacygrape", ["葡萄"], 6),
+      word(ids[12], "legacyhoney", ["蜂蜜"], 7),
+    ];
+    const api = installApi(words, "pronunciation", {
+      audio: "pending-then-ready",
+      mode: "review",
+    });
+    await settle(() => root.render(
+      <LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />,
+    ));
+
+    const prioritizedIds = new Set(
+      api.audioRequests.map((path) => path.split("/").pop()),
+    );
+    expect(prioritizedIds).toEqual(new Set(
+      words.slice(0, 5).map((entry) => entry.id),
+    ));
+    expect(prioritizedIds.has(words[5].id)).toBe(false);
+
+    await settle(() => click(
+      container.querySelector(`[aria-label="Play ${words[0].term}"]`)!,
+    ));
+    expect(browserSpeak).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Browser speech is being used");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await settle();
+    expect(container.textContent).not.toContain("Browser speech is being used");
+
+    await settle(() => click(
+      container.querySelector(`[aria-label="Play ${words[0].term}"]`)!,
+    ));
+    expect(audioPlay).toHaveBeenCalledTimes(1);
+    expect(browserSpeak).toHaveBeenCalledTimes(1);
   });
 
   it("shows the pronunciation pass score, persisted retry status, and an explicit read-again action", async () => {

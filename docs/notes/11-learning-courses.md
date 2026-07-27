@@ -4,7 +4,7 @@
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech、分享市场或测试边界变化时。
-> - **状态基线**：2026-07-27。0011–0016 已上线；即时预测、幂等弱网同步、会话增量、持久音频队列与浏览器离线音频已有受保护生产发布证据。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-07-27。生产仍以 0011–0016 为已发布基线；0017–0018 的会话意图恢复与冷音频未来五词修复列在 Unreleased，完成受保护发布前不得描述为生产已启用。文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -32,7 +32,7 @@ Courses、学习/复习、公开分享与 Course Market 共用 Web 的 `nalanda-
 
 ## 3. 学习与恢复
 
-每个用户、每门课程全局最多一个未完成会话；并发开始请求被串行化并返回同一个 session。会话记录选定单元和模式，当前阶段、当前位置、每轮候补池、单词项和每次实际答题都写入数据库，因此刷新或换设备能继续。
+未完成会话按请求意图独立恢复，而不是按整门课程强制唯一。首次学习以课程+单元为意图；临时复习还包含范围与排序后的测试项；日程复习以 schedule ID 为意图。因而暂停 Unit 1 首次学习后可以开始 Unit 2 复习，两者进度都保留；相同意图的并发开始仍由 advisory lock 与部分唯一索引返回同一个 session。课程卡快捷继续最近活动的一项，完成临时复习后会再次看到仍未完成的首次学习。会话的阶段、位置、候补池、单词项和实际答题都写入数据库，因此刷新或换设备能继续。
 
 1. **认单词**：顺序展示英文、IPA、全部翻译和发音；朗读评分可选。整体 `PronScore` 默认 70 分通过，低分会持久进入本阶段候补池；结果页显示真实阈值和候补状态，并可立即“重新朗读并评分”，达标重读会移除该候补项。
 2. **发音记忆**：每批最多五词，音频列和词列分别打乱；选中发音对应词后立即提交并在所选项显示结果。答对短暂动画后自动推进；错配记到目标词并进入下一轮候补池，错误状态持续保留，直到用户点击“下一题”。
@@ -70,7 +70,7 @@ TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参�
 
 0015 将 Session 增加单调 `revision`，attempt 增加客户端 UUID、唯一约束和首次响应快照。Web 先用 Session 中已有答案在当前渲染帧反馈：正确约 520ms 自动推进，错误一直保留到手动“下一题”；后台按 revision 串行提交 IndexedDB outbox。API 返回 `sessionPatch`，普通答案不再重拉完整 Session/Courses；重复 attempt 幂等 replay，冲突 409 后拉一次 `learning_get_session_snapshot`。离线预测到完成只显示“等待同步”，服务端仍唯一决定 retry pool、cursor/stage、progress、错误次数、points 和徽章；登出清除本账号 outbox，不能跨账号提交。
 
-0015 还把 `vocabulary-audio` 保持为 private Storage 唯一服务端事实源，新增无客户端权限的 `learning_audio_assets` 持久队列。全局键为 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)`；Session 启动排整个单元，音频 miss 只提升优先级并快速返回 `202 AUDIO_PENDING`，不会在请求中等待 Azure。worker 默认单并发、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月。Web 优先读 Cache Storage，预取当前和未来四词，并允许下载/续传/删除指定单元；这不包含完整离线 app shell。Storage 网络故障必须显式失败，只有 HTTP 404 或 Storage HTTP 400 + JSON `statusCode=404` 可当正常 miss，以免故障时重复调用 Azure。
+0015 还把 `vocabulary-audio` 保持为 private Storage 唯一服务端事实源，新增无客户端权限的 `learning_audio_assets` 持久队列。全局键为 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)`；Session 启动排整个单元，音频 miss 只提升优先级并快速返回 `202 AUDIO_PENDING`，不会在请求中等待 Azure。worker 默认单并发、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月。Web 优先读 Cache Storage；0017 应用修复后，当前词和未来四词无论 ready/pending 都以最多两个并发请求主动缓存或提升队列优先级，manifest 每三秒轮询，ready 后立即落 Cache Storage 并清除该词的过期浏览器朗读提示。用户仍可下载/续传/删除指定单元；这不包含完整离线 app shell。Storage 网络故障必须显式失败，只有 HTTP 404 或 Storage HTTP 400 + JSON `statusCode=404` 可当正常 miss，以免故障时重复调用 Azure。
 
 ## 8. 数据与安全证据
 
