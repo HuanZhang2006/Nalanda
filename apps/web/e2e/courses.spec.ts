@@ -17,6 +17,16 @@ async function openCourses(page: Page) {
   await expect(page.getByRole("heading", { name: "学习课程", exact: true })).toBeVisible();
 }
 
+async function vocabularyAudioCacheCount(page: Page) {
+  return page.evaluate(async () => {
+    const names = (await caches.keys()).filter((name) =>
+      name.startsWith("nalanda-vocabulary-audio-"));
+    const counts = await Promise.all(names.map(async (name) =>
+      (await (await caches.open(name)).keys()).length));
+    return counts.reduce((sum, count) => sum + count, 0);
+  });
+}
+
 async function signOut(page: Page) {
   await page.locator('[data-act="signOut"]').click();
   // The shell delegates to an async Supabase sign-out. Wait for the auth UI so
@@ -63,6 +73,9 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   // unique title prevents the first attempt's immutable market publication
   // from making retry assertions ambiguous.
   const courseTitle = `E2E English Vocabulary ${nonce}`;
+  const coldTerms = Array.from({ length: 6 }, (_, index) =>
+    `legacyword${index}${nonce.replace(/[^A-Za-z0-9]/g, "")}`);
+  const coldLines = coldTerms.map((term, index) => `${term} 冷词${index + 1}`).join("\n");
   await signUp(page, `courses-a-${nonce}@example.com`, password);
   await openCourses(page);
 
@@ -77,7 +90,9 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.getByLabel("整份多单元词表").fill("Starter Unit 1\napple 苹果\napple 水果\nStarter Unit 2\norange 橙子\npear 梨");
   await page.getByRole("button", { name: "解析并进入编辑" }).click();
   await expect(page.getByText(/DUPLICATE_TERM/)).toBeVisible();
-  await page.getByLabel("整份多单元词表").fill("Starter Unit 1\napple 苹果\nbanana 香蕉\nStarter Unit 2\norange 橙子\npear 梨");
+  await page.getByLabel("整份多单元词表").fill(
+    `Starter Unit 1\napple 苹果\nbanana 香蕉\nStarter Unit 2\norange 橙子\npear 梨\n${coldLines}`,
+  );
   await page.getByRole("button", { name: "解析并进入编辑" }).click();
   await expect(page.getByRole("heading", { name: "确认课程内容" })).toBeVisible();
 
@@ -101,11 +116,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.locator(".modal select").selectOption({ index: 0 });
   await page.locator(".modal").getByRole("button", { name: "下载本单元音频" }).click();
   await expect(page.locator(".modal").getByText(/本地已保存 2\/2 个/)).toBeVisible({ timeout: 20_000 });
-  const cachedAudio = await page.evaluate(async () => {
-    const names = (await caches.keys()).filter((name) => name.startsWith("nalanda-vocabulary-audio-"));
-    const counts = await Promise.all(names.map(async (name) => (await (await caches.open(name)).keys()).length));
-    return counts.reduce((sum, count) => sum + count, 0);
-  });
+  const cachedAudio = await vocabularyAudioCacheCount(page);
   expect(cachedAudio).toBeGreaterThanOrEqual(2);
   const startResponse = page.waitForResponse((response) =>
     response.request().method() === "POST"
@@ -127,8 +138,65 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await assessWithFixedWav(page, courseTitle);
   await page.getByRole("button", { name: "认识了，继续" }).click();
 
-  // A full reload returns to the shell; the course card still resumes the exact
-  // server-side stage, cursor, and queue.
+  // A cold legacy-style unit has no prior audio download. Starting its review
+  // must prioritize the current plus next four words, cache them as the worker
+  // finishes, and must not resume the paused first-learning session in Unit 1.
+  await page.getByRole("button", { name: "暂停并返回" }).click();
+  await expect(page.getByRole("heading", { name: courseTitle, exact: true })).toBeVisible();
+  await page.getByRole("article").getByRole("button", { name: "复习" }).click();
+  const reviewModal = page.locator(".modal");
+  await reviewModal.locator("select").selectOption({ index: 1 });
+  await reviewModal.getByLabel("翻译").uncheck();
+  await reviewModal.getByLabel("拼写").uncheck();
+  const reviewAudioRequests = new Set<string>();
+  let forceAudioPending = true;
+  await page.route(/\/api\/pronunciation\/audio\//, async (route) => {
+    reviewAudioRequests.add(new URL(route.request().url()).pathname.split("/").pop() || "");
+    if (forceAudioPending) {
+      await route.fulfill({
+        status: 202,
+        contentType: "application/json",
+        body: JSON.stringify({ code: "AUDIO_PENDING" }),
+      });
+    } else {
+      await route.continue();
+    }
+  });
+  const cacheBeforeColdReview = await vocabularyAudioCacheCount(page);
+  await reviewModal.getByRole("button", { name: "开始复习" }).click();
+  await expect(page.getByRole("heading", { name: "发音记忆", exact: true })).toBeVisible();
+  await expect.poll(() => reviewAudioRequests.size).toBeGreaterThanOrEqual(5);
+
+  const firstReviewAudio = page.locator(".course-match > div").first().getByRole("button").first();
+  const firstReviewTerm = (await firstReviewAudio.getAttribute("aria-label"))!.replace(/^播放 /, "");
+  await firstReviewAudio.click();
+  await expect(page.getByText(/音频仍在准备中/)).toBeVisible();
+  forceAudioPending = false;
+  await expect.poll(
+    () => vocabularyAudioCacheCount(page),
+    { timeout: 30_000 },
+  ).toBeGreaterThanOrEqual(cacheBeforeColdReview + 5);
+  await expect(page.getByText(/音频仍在准备中/)).toBeHidden();
+  await page.unroute(/\/api\/pronunciation\/audio\//);
+
+  await page.locator(".course-match > div").nth(1)
+    .getByRole("button", { name: firstReviewTerm, exact: true }).click();
+  await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
+  await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
+  for (let index = 1; index < coldTerms.length + 2; index += 1) {
+    const audio = page.locator(".course-match > div").first().getByRole("button").first();
+    const term = (await audio.getAttribute("aria-label"))!.replace(/^播放 /, "");
+    await audio.click();
+    await page.locator(".course-match > div").nth(1)
+      .getByRole("button", { name: term, exact: true }).click();
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
+    await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
+  }
+  await expect(page.getByRole("heading", { name: "本次复习完成", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "返回课程" }).click();
+
+  // A full reload returns to the shell; after the independent review completes,
+  // the card resumes Unit 1 at its exact server-side cursor and queue.
   await page.reload(); await openCourses(page);
   await page.getByRole("button", { name: "继续学习" }).click();
   await expect(page.locator(".course-term")).toHaveText("banana");

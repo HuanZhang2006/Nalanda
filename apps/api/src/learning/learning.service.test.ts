@@ -20,6 +20,25 @@ afterEach(() => {
 });
 
 describe("LearningService ownership and public boundaries", () => {
+  it("selects the most recently active session for the course resume shortcut", async () => {
+    const { value, db } = service();
+    db.select
+      .mockResolvedValueOnce([{ id: courseId, title: "Course", category: "english_vocabulary",
+        has_units: true, locale: "en-US", can_republish: true, updated_at: new Date(0).toISOString() }])
+      .mockResolvedValueOnce([{ id: publicationId, course_id: courseId }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { id: attemptId, course_id: courseId, last_activity_at: new Date(1).toISOString() },
+        { id: publicationId, course_id: courseId, last_activity_at: new Date(0).toISOString() },
+      ]);
+
+    const [summary] = await value.listCourses("user-a");
+
+    expect(summary.activeSessionId).toBe(attemptId);
+    expect(String(db.select.mock.calls[4][1])).toContain("order=last_activity_at.desc");
+  });
+
   it("treats another user's course as not found", async () => {
     const { value, db } = service(); db.select.mockResolvedValue([]);
     await expect(value.getCourse("user-a", courseId)).rejects.toBeInstanceOf(NotFoundException);

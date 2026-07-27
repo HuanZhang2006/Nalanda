@@ -110,7 +110,12 @@ export class LearningService {
       this.db.select<Row>("learning_course_units", q({ select: "id,course_id", user_id: `eq.${userId}` })),
       this.db.select<Row>("learning_course_words", q({ select: "id,course_id", user_id: `eq.${userId}` })),
       this.db.select<Row>("learning_word_progress", q({ select: "word_id,learned_at", user_id: `eq.${userId}` })),
-      this.db.select<Row>("learning_sessions", q({ select: "id,course_id", user_id: `eq.${userId}`, active: "eq.true" })),
+      this.db.select<Row>("learning_sessions", q({
+        select: "id,course_id,last_activity_at",
+        user_id: `eq.${userId}`,
+        active: "eq.true",
+        order: "last_activity_at.desc",
+      })),
     ]);
     const learned = new Set(progress.filter((row) => row.learned_at).map((row) => row.word_id));
     return courses.map((course) => {
@@ -128,7 +133,14 @@ export class LearningService {
       this.db.select<Row>("learning_course_units", q({ select: "*", user_id: `eq.${userId}`, course_id: `eq.${courseId}`, order: "position.asc" })),
       this.db.select<Row>("learning_course_words", q({ select: "*", user_id: `eq.${userId}`, course_id: `eq.${courseId}`, order: "position.asc" })),
       this.db.select<Row>("learning_word_progress", q({ select: "*", user_id: `eq.${userId}` })),
-      this.db.select<Row>("learning_sessions", q({ select: "id", user_id: `eq.${userId}`, course_id: `eq.${courseId}`, active: "eq.true", limit: "1" })),
+      this.db.select<Row>("learning_sessions", q({
+        select: "id,last_activity_at",
+        user_id: `eq.${userId}`,
+        course_id: `eq.${courseId}`,
+        active: "eq.true",
+        order: "last_activity_at.desc",
+        limit: "1",
+      })),
     ]);
     const progressByWord = new Map(progress.map((row) => [row.word_id, row]));
     const mappedUnits = units.map((unit) => ({

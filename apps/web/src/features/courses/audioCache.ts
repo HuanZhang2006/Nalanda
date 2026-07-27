@@ -70,6 +70,10 @@ export async function prefetchAudioAssets(
   assets: LearningAudioManifestAsset[],
   version: string,
   concurrency = 2,
+  onResult?: (
+    asset: LearningAudioManifestAsset,
+    result: "cached" | "pending" | "failed",
+  ) => void,
 ) {
   const queue = [...assets];
   let cached = 0;
@@ -77,7 +81,17 @@ export async function prefetchAudioAssets(
     while (queue.length) {
       const asset = queue.shift();
       if (!asset) return;
-      if (await fetchAudioAsset(asset, version).catch(() => null)) cached += 1;
+      try {
+        const blob = await fetchAudioAsset(asset, version);
+        if (blob) {
+          cached += 1;
+          onResult?.(asset, "cached");
+        } else {
+          onResult?.(asset, "pending");
+        }
+      } catch {
+        onResult?.(asset, "failed");
+      }
     }
   };
   await Promise.all(Array.from(
