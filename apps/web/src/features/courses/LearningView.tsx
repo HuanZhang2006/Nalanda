@@ -338,7 +338,14 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       if (active) setError(caught instanceof Error ? caught.message : l("Could not load this session.", "会话加载失败"));
     });
     const subscription = supabase?.auth.onAuthStateChange((event, authSession) => {
-      if (event === "SIGNED_OUT") {
+      if (event === "INITIAL_SESSION") {
+        // Supabase can emit INITIAL_SESSION before the getSession() awaited by
+        // load() resolves. Seed the account reference without treating that
+        // normal mount ordering as a cross-account login.
+        if (!userIdRef.current && authSession?.user.id) {
+          userIdRef.current = authSession.user.id;
+        }
+      } else if (event === "SIGNED_OUT") {
         const previous = userIdRef.current;
         userIdRef.current = "";
         if (previous) void clearPendingAttemptsForUser(previous);

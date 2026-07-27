@@ -7,6 +7,19 @@ import { beginWavRecording } from "./recording";
 import { LearningView } from "./LearningView";
 
 vi.mock("./recording", () => ({ beginWavRecording: vi.fn() }));
+const authMock = vi.hoisted(() => ({
+  callback: null as null | ((event: string, session: any) => void),
+  getSession: vi.fn(),
+  onAuthStateChange: vi.fn(),
+}));
+vi.mock("../../lib/supabase", () => ({
+  supabase: {
+    auth: {
+      getSession: authMock.getSession,
+      onAuthStateChange: authMock.onAuthStateChange,
+    },
+  },
+}));
 
 const ids = [
   "11111111-1111-4111-8111-111111111111", "22222222-2222-4222-8222-222222222222",
@@ -145,6 +158,15 @@ describe("LearningView immediate feedback", () => {
 
   beforeEach(() => {
     setLocale("en", { persist: false });
+    authMock.callback = null;
+    authMock.getSession.mockReset().mockResolvedValue({
+      data: { session: { access_token: "test-token", user: { id: "user-a" } } },
+      error: null,
+    });
+    authMock.onAuthStateChange.mockReset().mockImplementation((callback) => {
+      authMock.callback = callback;
+      return { data: { subscription: { unsubscribe: vi.fn() } } };
+    });
     container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
     vi.stubGlobal("Audio", class {
       onended: (() => void) | null = null;
@@ -158,6 +180,35 @@ describe("LearningView immediate feedback", () => {
   });
 
   afterEach(async () => { await settle(() => root.unmount()); vi.unstubAllGlobals(); vi.mocked(beginWavRecording).mockReset(); });
+
+  it("does not mistake Supabase INITIAL_SESSION for a cross-account login", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    installApi(words, "recognition");
+    let releaseAuth!: (value: {
+      data: { session: { access_token: string; user: { id: string } } };
+      error: null;
+    }) => void;
+    authMock.getSession.mockImplementationOnce(() => new Promise((resolve) => {
+      releaseAuth = resolve;
+    }));
+    const onExit = vi.fn();
+
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={onExit} onChanged={() => {}} />));
+    expect(authMock.callback).not.toBeNull();
+    await settle(() => authMock.callback?.("INITIAL_SESSION", {
+      access_token: "test-token",
+      user: { id: "user-a" },
+    }));
+    expect(onExit).not.toHaveBeenCalled();
+
+    releaseAuth({
+      data: { session: { access_token: "test-token", user: { id: "user-a" } } },
+      error: null,
+    });
+    await settle();
+    expect(container.querySelector(".course-term")?.textContent).toBe("apple");
+    expect(onExit).not.toHaveBeenCalled();
+  });
 
   it("keeps incorrect translation feedback visible until the user opens the next question", async () => {
     vi.useFakeTimers();
