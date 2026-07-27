@@ -46,6 +46,8 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0014_learning_feedback_flow.sql` | 朗读整体分数阈值的 recognition 候补池加入/移除，以及认词候补轮推进；重申评分 RPC 仅 service-role 可执行 |
 | `0015_learning_performance_offline_audio.sql` | session revision、幂等 attempt/首次响应、单 RPC snapshot、朗读目标校验、private TTS 生成队列/配额/租约 |
 | `0016_verify_learning_performance_release.sql` | 断言 0015 结构、唯一约束、revision 触发器、队列 RLS/客户端撤权及全部新 RPC 仅 service role |
+| `0017_learning_session_intent_resume.sql` | 回填非空 `resume_key`，以 course/unit/mode/scope/排序 skills 或 schedule ID 区分 active session 意图，并替换 `learning_start_session` |
+| `0018_verify_learning_audio_review_fix.sql` | 断言 0017 列/意图唯一索引/活动排序索引、函数定义及 service-role-only 权限 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
@@ -93,6 +95,6 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 ## 7. 待改进
 - CI 已通过 CLI migration history 发布，并在生产 migration 前完成本地重建/RLS E2E、dry-run 和加密恢复点；首次生产启用仍须人工 baseline 旧历史。
 - 仍需定期 staging 演练、Storage 文件异地备份、数据库恢复演练和 schema drift 告警。
-- 0011–0013 已于 2026-07-22、0014 已于 2026-07-23、0015–0016 已于 2026-07-27 通过受保护 plan/apply 发布。队列表不授予客户端任何读写，旧答题 RPC 在稳定窗口内保留供应用回滚，数据库仍只做 forward-fix；详细 run/artifact/真实 Azure 证据见发布手册第 8 节。
+- 0011–0013 已于 2026-07-22、0014 已于 2026-07-23、0015–0018 已于 2026-07-27 通过受保护 plan/apply 发布。队列表不授予客户端任何读写，旧答题 RPC 在稳定窗口内保留供应用回滚，数据库仍只做 forward-fix；详细 run/artifact/真实 Azure 证据见发布手册第 8 节。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。

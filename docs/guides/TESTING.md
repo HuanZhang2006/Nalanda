@@ -80,10 +80,10 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 | `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
 | `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、逐单元与整份多单元纠错、独立翻译字段、编辑器批量追加/已有词重复、排序、保存失败、进度切换、会话恢复和 API error |
-| `apps/web/src/features/courses/LearningView.test.tsx` | Promise 未完成时即时反馈、服务端纠正、翻译/发音匹配/拼写错误手动推进、正确 520 ms 自动推进、慢请求期间后续 outbox 串行续传，以及朗读阈值/候补/显式重读 |
+| `apps/web/src/features/courses/LearningView.test.tsx` | Promise 未完成时即时反馈、服务端纠正、翻译/发音匹配/拼写错误手动推进、正确 520 ms 自动推进、慢请求期间后续 outbox 串行续传、朗读阈值/候补/显式重读，以及八词历史冷单元前五词 pending 提权、ready 缓存替换和过期降级提示清除 |
 | `apps/web/src/features/courses/learningSessionState.test.ts` | 客户端/数据库一致的正误规则、retry pool、stage transition、完成预测和权威 patch 替换 |
 | `apps/web/src/features/courses/attemptOutbox.test.ts` | IndexedDB 缺失时内存降级、按 user/session/revision 排序、重试退避和账号级清理 |
-| `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage 命中跳过网络、202 pending 不缓存、ready 响应缓存与双并发入口 |
+| `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage 命中跳过网络、202 pending 不缓存、ready 响应缓存、逐资源状态回调与最多两个并发 |
 | `apps/web/src/features/courses/recording.test.ts` | 20 ms VAD、噪声阈值、250 ms 有效语音拒绝和 6 秒裁剪 |
 
 ### 4.2 mock 的边界
@@ -412,6 +412,8 @@ node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 
 2026-07-27 的可核验发布样本：PR #21 run `30243998633` 与 main run `30244402278` 完成自动化矩阵；只读 plan `30244967669` 只列 0015–0016；apply/deploy `30245430630` 创建恢复 artifact `8644999285`，并在切流前用 Japan East 真实 Azure 验证首次生成、private Storage 命中、跨用户重复词复用和 VAD 裁剪评分。Playwright 在这些 run 中仍使用 fake provider，真实供应商证据只来自独立生产 gate。
+
+同日后续样本：PR #24 run `30263277807` 与 main run `30263794368` 完成 0007→0018、空库重建/lint、真实本地 Supabase RLS/Storage、jsdom 与 Chromium Playwright；历史八词冷单元和暂停 Unit 1→复习 Unit 2→恢复 Unit 1 的浏览器测试使用 Azure fake。只读 plan `30264327821` 只列 0017–0018；apply/deploy `30264979509` 创建恢复 artifact `8652623403`，并在切流前用真实 Japan East 账号验证 `generatedAssets=4`、`duplicateAssetsReused=4` 和评分 97。公网/服务器健康检查是发布证据，不把 fake Playwright 描述为真实供应商 E2E。
 
 ## 11. 新增测试约定
 
