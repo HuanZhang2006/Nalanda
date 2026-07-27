@@ -1,3 +1,5 @@
+import { localize } from "../../i18n";
+
 function resample(input: Float32Array, sourceRate: number, targetRate = 16_000) {
   if (sourceRate === targetRate) return input;
   const ratio = sourceRate / targetRate;
@@ -10,6 +12,29 @@ function resample(input: Float32Array, sourceRate: number, targetRate = 16_000) 
     output[i] = sum / Math.max(1, end - start);
   }
   return output;
+}
+
+export function trimSpeechSamples(samples: Float32Array, sampleRate = 16_000) {
+  const frameSize = Math.max(1, Math.round(sampleRate * 0.02));
+  const rms = (start: number, end: number) => {
+    let sum = 0;
+    for (let index = start; index < end; index += 1) sum += samples[index] ** 2;
+    return Math.sqrt(sum / Math.max(1, end - start));
+  };
+  const noiseEnd = Math.min(samples.length, Math.round(sampleRate * 0.2));
+  const threshold = Math.max(0.015, rms(0, noiseEnd) * 3);
+  const active: number[] = [];
+  for (let start = 0; start < samples.length; start += frameSize) {
+    if (rms(start, Math.min(samples.length, start + frameSize)) >= threshold) active.push(start);
+  }
+  if (active.length * frameSize < sampleRate * 0.25) {
+    throw new Error(localize("No clear speech was detected. Please record again.", "没有检测到清晰语音，请重新录制"));
+  }
+  const padding = Math.round(sampleRate * 0.15);
+  const start = Math.max(0, active[0] - padding);
+  const voicedEnd = Math.min(samples.length, active[active.length - 1] + frameSize + padding);
+  const end = Math.min(voicedEnd, start + sampleRate * 6);
+  return samples.slice(start, end);
 }
 
 export function encodePcmWav(samples: Float32Array, sampleRate = 16_000) {
@@ -26,7 +51,10 @@ export function encodePcmWav(samples: Float32Array, sampleRate = 16_000) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
-export async function beginWavRecording(onAutoStop: (blob: Blob) => void) {
+export async function beginWavRecording(
+  onAutoStop: (blob: Blob) => void,
+  onError?: (error: Error) => void,
+) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error(localize("This browser does not support microphone recording.", "此浏览器不支持麦克风录音"));
   const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false } });
   const context = new AudioContext();
@@ -43,9 +71,15 @@ export async function beginWavRecording(onAutoStop: (blob: Blob) => void) {
     const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const merged = new Float32Array(length); let offset = 0;
     chunks.forEach((chunk) => { merged.set(chunk, offset); offset += chunk.length; });
-    return encodePcmWav(resample(merged, context.sampleRate));
+    return encodePcmWav(trimSpeechSamples(resample(merged, context.sampleRate)));
   };
-  const timeout = window.setTimeout(async () => { const blob = await stop(); if (blob) onAutoStop(blob); }, 8_000);
+  const timeout = window.setTimeout(async () => {
+    try {
+      const blob = await stop();
+      if (blob) onAutoStop(blob);
+    } catch (error) {
+      onError?.(error instanceof Error ? error : new Error("Recording failed"));
+    }
+  }, 6_000);
   return async () => { window.clearTimeout(timeout); return stop(); };
 }
-import { localize } from "../../i18n";

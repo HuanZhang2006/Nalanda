@@ -29,7 +29,7 @@
 | 服务器 SSH authorized key | 服务器 | 接受 CI/管理员连接 | 公钥 | 当前使用 |
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
-| `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses TTS 与 pronunciation assessment | 否 | 生产当前使用；2026-07-22 Japan East gate 已通过 |
+| `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；基础 Japan East gate 已通过，队列增量待独立发布 gate |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
@@ -174,13 +174,13 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 当前生产 region 为 `japaneast`、voice 为 `en-US-JennyNeural`，fake=false；密钥值不得写入本文或日志。计划轮换：
 
 1. 记录 Azure resource/region、key ID（不记值）、月预算和当前错误率；确认 Azure 当前是否提供两把可交替 key。
-2. 若无安全重叠，先关闭 `FEATURE_PRONUNCIATION_ENABLED` 或打开 `AZURE_SPEECH_CIRCUIT_OPEN`；文本课程、进度和浏览器朗读继续。
+2. 若无安全重叠，先关闭 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` 停止新队列，再按需关闭 `FEATURE_PRONUNCIATION_ENABLED` 或打开 `AZURE_SPEECH_CIRCUIT_OPEN`；文本课程、进度、已缓存 private Storage 音频和浏览器朗读继续。
 3. 生成/重置非当前 key，安全更新 `/opt/nalanda/.env` 的 key/region，`chmod 600`，force-recreate API 容器。
-4. 以专用账号和无个人数据 fixture 验证一个未缓存 TTS，再提交一个≤8 秒 16 kHz 单声道固定 WAV；确认 phoneme 结果、speech usage 预算行和用户录音未进入 DB/Storage/log。
-5. 观察 Azure usage 与 API `SPEECH_PROVIDER_*`/429；关闭 circuit 或恢复 flag。
+4. 以专用账号和无个人数据 fixture 验证一个未缓存词从 pending→ready、private Storage bytes/ETag 可读；第二账号创建相同词时必须立即 ready 且 `attempt_count` 不增加。再提交经客户端规则裁剪、≤6 秒（服务端上限仍 8 秒）的 16 kHz 单声道固定 WAV，确认 phoneme、revision/session patch、speech usage reservation 和用户录音未进入 DB/Storage/log。
+5. 观察 `learning_audio_generation_failed`、queue wait、Storage hit/miss、Azure usage 与 API `SPEECH_PROVIDER_*`/429；关闭 circuit 或恢复 flags。
 6. 重置/撤销旧 key，并再次验证。若供应商只支持 Key1/Key2 reset，记录哪一个现为 active，避免下次误重置正在使用的 key。
 
-泄露时立即熔断语音、重置受影响 key、检查 Azure usage/账单和 API 日志；不要删除 learning attempts 或把供应商失败记成用户错误。TTS cache 是公共合成结果，可清空重建，不需要随 key 搬迁。
+泄露时立即熔断语音、重置受影响 key、检查 Azure usage/账单和 API 日志；不要删除 learning attempts 或把供应商失败记成用户错误。TTS 是可跨用户复用的合成结果，但对象所在 bucket 仍是 private；它可清空后由持久队列重建，不需要随 key 搬迁。仅轮换 key 不改变缓存键；若同时更换 voice、SSML 或后处理语义，必须递增 `LEARNING_AUDIO_SYNTHESIS_VERSION`，保留旧对象到新版本命中稳定后再按生命周期清理。
 
 `COURSE_MARKET_ADMIN_USER_IDS` 变更需双人复核 Supabase UUID：先添加新管理员并验证受审计 hide/restore，再移除旧 UUID、重启 API，并确认旧账号返回 `ADMIN_REQUIRED`。不得用共享 service-role 或开放 RPC 替代管理员列表。
 

@@ -7,6 +7,7 @@ import { ApiErrorFilter } from "./learning/api-error.filter";
 import { FeatureFlagsService } from "./learning/feature-flags.service";
 import { IpaService } from "./learning/ipa.service";
 import { LearningController, PublicLearningController } from "./learning/learning.controller";
+import { LearningAudioService } from "./learning/learning-audio.service";
 import { LearningService } from "./learning/learning.service";
 import { PronunciationController } from "./learning/pronunciation.controller";
 import { PronunciationService } from "./learning/pronunciation.service";
@@ -15,7 +16,7 @@ import { SupabaseAdminService } from "./learning/supabase-admin.service";
 @Module({
   controllers: [HealthController, MeController, AuthController, LearningController, PublicLearningController, PronunciationController],
   providers: [
-    SupabaseAdminService, IpaService, LearningService, PronunciationService, FeatureFlagsService,
+    SupabaseAdminService, IpaService, LearningService, LearningAudioService, PronunciationService, FeatureFlagsService,
     { provide: APP_FILTER, useClass: ApiErrorFilter },
   ],
 })

@@ -145,9 +145,10 @@ FEATURE_LEARNING_COURSES_ENABLED=true
 FEATURE_COURSE_SHARING_ENABLED=true
 FEATURE_COURSE_MARKET_ENABLED=true
 FEATURE_PRONUNCIATION_ENABLED=false
+FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=false
 ```
 
-非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音始终默认关闭。要测真实 Azure，再填写 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70，可用 `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 在 1–100 内调整。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke。
+非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
 
 `/api/health` 会探测 JWKS 与 PostgREST profiles 空查询，失败返回 503；`REDIS_URL`/`AI_SERVICE_URL` 仍只影响状态展示。API 的 service-role key 还会调用 Courses 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
 
@@ -217,6 +218,8 @@ curl -I http://localhost:5173
 6. 打开 Courses，创建“英语单词学习”；选择逐单元粘贴或整份多单元词表，先制造一行格式错误确认精确标红，再修正并进入 Review Course Content。
 7. 完成一个单元四阶段，刷新页面确认从 active session 恢复；建立 3 天复习并在 Schedule 看见独立复习项。
 8. 创建分享、撤销后确认旧链接失效；上架免费 Course Market，用第二个开发账号克隆并确认副本进度为 0、不能再次传播。
+9. 开启音频预热后选定单元：确认 manifest 从 pending 变 ready，当前题及后四词进入浏览器 Cache Storage；“下载单元音频”可续传、显示失败/配额暂停并可删除本地副本。浏览器即使授予 persistent storage，仍可能在存储压力下回收。
+10. 在开发者工具设 Offline 后连续完成至少两题，确认反馈立即出现且完成页显示等待同步；恢复网络后同一 attempt UUID 串行提交，刷新不会重复累计错误。完整 Web app shell/PWA 离线启动不在此功能范围。
 
 本地当日无法验证“两次不同日期复习即熟练”时，不要手改生产数据；使用一次性本地 Supabase RLS fixture，测试会按 profile 时区生成两个不同 `local_date`。
 
@@ -287,11 +290,11 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移（当前为 0014），而不是仍停在旧 migration history。
+- 确认本地数据库已 reset 到仓库最新发布候选迁移（当前仓库为 0016），而不是仍停在旧 migration history；生产基线仍以发布记录中的 0014 为准，二者不要混写。
 
 ### 发音按钮降级或评分不可用
 
-这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。评分要求 feature flag、key/region、当前 active session/当前认词卡片和 16 kHz/16-bit/单声道 PCM WAV；供应商超时不应记为学习错误。若 API 返回 500，先查看响应码和 API 日志：私有 TTS 缓存不存在可能表现为 Storage HTTP 400 + JSON 404，当前实现必须把它当 cache miss，而不是停止在 Azure 调用之前。
+这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。音频 GET 首次可能快速返回 `202 AUDIO_PENDING`，worker 生成后 manifest 才变 ready；不要把 202 当 500。评分要求 feature flag、key/region、当前 active session/当前认词卡片和 16 kHz/16-bit/单声道 PCM WAV；浏览器先做 20 ms VAD 并裁剪到 6 秒，供应商/麦克风失败不应记为学习错误。私有 TTS 对象缺失可能表现为 Storage HTTP 400 + JSON 404，应正常重建；Storage 网络/权限错误必须保持可见，不能误判为 cache miss 后重复消耗 Azure。
 
 ### Courses 创建/编辑页看不到底部操作
 
@@ -305,7 +308,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；浏览器流程覆盖整份多单元导入、错误修正和真实滚动容器。Playwright 的 Azure 使用 fake；生产发布另有真实供应商自动 gate，仍缺 PR 中的真实供应商测试、FastAPI contract 和 ESLint/格式化规则。
+- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；浏览器流程覆盖文本导入、弱网 outbox 和 Cache Storage，Azure 使用 fake。生产发布另有真实基础 Azure gate 与队列/Storage/重复词/VAD 评分 gate；真实供应商不在 PR 上消耗共享额度，仍缺 FastAPI contract 和 ESLint/格式化规则。
 - **目标**：接入 Redis/BullMQ、API→AI 内部调用、真实解析/Claude 生成。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 

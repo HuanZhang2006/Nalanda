@@ -1,7 +1,7 @@
 import type {
-  CreateCourseReportRequest, LearningAttemptRequest, LearningAttemptResult, LearningCourseDetail,
+  CreateCourseReportRequest, LearningAttemptRequest, LearningAttemptResult, LearningAudioManifest, LearningCourseDetail,
   LearningCourseInput, LearningCourseSummary, LearningProfileSummary, LearningSession,
-  PublicCoursePreview, ReviewSchedule, StartLearningSessionRequest,
+  LearningSessionMutationResult, PublicCoursePreview, ReviewSchedule, StartLearningSessionRequest,
 } from "@nalanda/types";
 import { apiJson } from "../../lib/api";
 
@@ -22,8 +22,13 @@ export const coursesApi = {
   remove: (id: string) => apiJson<{ ok: true }>(`/api/learning-courses/${id}`, { method: "DELETE" }),
   startSession: (courseId: string, body: StartLearningSessionRequest) => apiJson<LearningSession>(`/api/learning-courses/${courseId}/sessions`, json(body)),
   session: (id: string) => apiJson<LearningSession>(`/api/learning-sessions/${id}`),
-  recognition: (id: string, wordId: string) => apiJson(`/api/learning-sessions/${id}/recognition`, json({ wordId })),
-  attempt: (id: string, body: LearningAttemptRequest) => apiJson<LearningAttemptResult>(`/api/learning-sessions/${id}/attempts`, json(body)),
+  recognition: (id: string, wordId: string) => apiJson<LearningSessionMutationResult>(`/api/learning-sessions/${id}/recognition`, json({ wordId })),
+  attempt: (id: string, body: LearningAttemptRequest, signal?: AbortSignal) => apiJson<LearningAttemptResult>(
+    `/api/learning-sessions/${id}/attempts`,
+    { ...json(body), signal },
+  ),
+  prewarmAudio: (unitId: string) => apiJson<LearningAudioManifest>(`/api/learning-units/${unitId}/audio-prewarm`, json({})),
+  audioManifest: (unitId: string) => apiJson<LearningAudioManifest>(`/api/learning-units/${unitId}/audio-manifest`),
   schedules: () => apiJson<ReviewSchedule[]>("/api/learning-review-schedules"),
   schedule: (unitId: string, sourceSessionId: string, offsets: number[]) => apiJson<ReviewSchedule[]>(`/api/learning-units/${unitId}/review-schedules`, json({ sourceSessionId, offsets })),
   cancelSchedule: (id: string) => apiJson<{ ok: true }>(`/api/learning-review-schedules/${id}`, { method: "DELETE" }),

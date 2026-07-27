@@ -1,17 +1,11 @@
 import {
-  BadGatewayException, BadRequestException, Injectable, Logger, ServiceUnavailableException,
+  BadGatewayException, BadRequestException, Injectable, ServiceUnavailableException,
 } from "@nestjs/common";
-import { createHash } from "node:crypto";
 import type { PronunciationAssessment, PronunciationPhoneme } from "@nalanda/types";
 import { boundedEnvironmentNumber, positiveEnvironmentNumber } from "./environment";
 import { FeatureFlagsService } from "./feature-flags.service";
+import { LearningAudioService } from "./learning-audio.service";
 import { LearningService } from "./learning.service";
-import { assertUuid, normalizeTerm } from "./learning.util";
-import { SupabaseAdminService } from "./supabase-admin.service";
-
-const xml = (value: string) => value.replace(/[<>&"']/g, (char) => ({
-  "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;",
-})[char]!);
 
 function num(value: unknown): number | null {
   const result = Number(value);
@@ -22,15 +16,6 @@ function providerTimeoutSignal() {
   const configured = Number(process.env.AZURE_SPEECH_TIMEOUT_MS || 10_000);
   const milliseconds = Number.isFinite(configured) ? Math.max(1_000, Math.min(60_000, Math.round(configured))) : 10_000;
   return AbortSignal.timeout(milliseconds);
-}
-
-function fakeToneWav() {
-  const samples = 3_200; const bytes = Buffer.alloc(44 + samples * 2);
-  bytes.write("RIFF", 0); bytes.writeUInt32LE(36 + samples * 2, 4); bytes.write("WAVE", 8); bytes.write("fmt ", 12);
-  bytes.writeUInt32LE(16, 16); bytes.writeUInt16LE(1, 20); bytes.writeUInt16LE(1, 22); bytes.writeUInt32LE(16_000, 24);
-  bytes.writeUInt32LE(32_000, 28); bytes.writeUInt16LE(2, 32); bytes.writeUInt16LE(16, 34); bytes.write("data", 36); bytes.writeUInt32LE(samples * 2, 40);
-  for (let index = 0; index < samples; index += 1) bytes.writeInt16LE(Math.round(Math.sin(index / 9) * 2_000), 44 + index * 2);
-  return new Uint8Array(bytes);
 }
 
 export function validateAssessmentWav(bytes: Buffer) {
@@ -62,61 +47,29 @@ export function validateAssessmentWav(bytes: Buffer) {
 
 @Injectable()
 export class PronunciationService {
-  private readonly logger = new Logger(PronunciationService.name);
-
   constructor(
-    private readonly db: SupabaseAdminService,
     private readonly learning: LearningService,
     private readonly flags: FeatureFlagsService,
+    private readonly learningAudio: LearningAudioService,
   ) {}
 
   private config() {
     const key = process.env.AZURE_SPEECH_KEY;
     const region = process.env.AZURE_SPEECH_REGION;
     if (!key || !region) throw new ServiceUnavailableException({ code: "PRONUNCIATION_UNAVAILABLE", message: "发音服务暂不可用" });
-    return { key, region, voice: process.env.AZURE_SPEECH_VOICE || "en-US-JennyNeural" };
+    return { key, region };
   }
 
   async audio(userId: string, wordId: string) {
-    this.flags.pronunciation();
-    const word = await this.ownedWord(userId, wordId);
-    const normalized = normalizeTerm(word.term);
-    const path = `${createHash("sha256").update(normalized).digest("hex")}.mp3`;
-    const cached = await this.db.storageGet("vocabulary-audio", path).catch((error: unknown) => {
-      this.logger.warn(`TTS cache read failed; continuing without cache (${error instanceof Error ? error.name : "unknown"})`);
-      return null;
-    });
-    if (cached) return cached;
-
-    if (process.env.AZURE_SPEECH_FAKE === "true") {
-      await this.learning.reserveSpeechQuota(userId, "tts", 1);
-      return fakeToneWav();
-    }
-
-    const { key, region, voice } = this.config();
-    const perThousand = positiveEnvironmentNumber("AZURE_SPEECH_TTS_MICRO_USD_PER_1000_CHARS", 16_000);
-    await this.learning.reserveSpeechQuota(userId, "tts", Math.max(1, normalized.length * perThousand / 1000));
-    const body = `<speak version="1.0" xml:lang="en-US"><voice name="${xml(voice)}">${xml(word.term)}</voice></speak>`;
-    const response = await fetch(`https://${region}.tts.speech.microsoft.com/cognitiveservices/v1`, {
-      method: "POST",
-      signal: providerTimeoutSignal(),
-      headers: { "Ocp-Apim-Subscription-Key": key, "Content-Type": "application/ssml+xml",
-        "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3", "User-Agent": "Nalanda" },
-      body,
-    }).catch(() => null);
-    if (!response) throw new BadGatewayException({ code: "SPEECH_PROVIDER_TIMEOUT", message: "发音服务连接超时" });
-    if (!response.ok) throw new BadGatewayException({ code: "SPEECH_PROVIDER_ERROR", message: "发音服务暂不可用" });
-    const bytes = new Uint8Array(await response.arrayBuffer());
-    if (!bytes.length) throw new BadGatewayException({ code: "SPEECH_PROVIDER_ERROR", message: "发音服务返回空音频" });
-    // Cache availability must not decide whether an already generated lesson
-    // can be heard. A later request may retry the cache write.
-    await this.db.storagePut("vocabulary-audio", path, bytes, "audio/mpeg").catch((error: unknown) => {
-      this.logger.warn(`TTS cache write failed; returning generated audio (${error instanceof Error ? error.name : "unknown"})`);
-    });
-    return bytes;
+    return this.learningAudio.audio(userId, wordId);
   }
 
-  private async persistAssessment(userId: string, sessionId: string, wordId: string, result: Omit<PronunciationAssessment, "passThreshold" | "passed" | "queuedForRetry">) {
+  private async persistAssessment(
+    userId: string,
+    sessionId: string,
+    wordId: string,
+    result: Omit<PronunciationAssessment, "passThreshold" | "passed" | "queuedForRetry" | "revision" | "sessionPatch">,
+  ) {
     const passThreshold = boundedEnvironmentNumber("AZURE_SPEECH_PRONUNCIATION_PASS_SCORE", 70, 1, 100);
     const assessed = { ...result, passThreshold, passed: result.pronunciationScore >= passThreshold };
     const recorded = await this.learning.recordSpeechAssessment(userId, sessionId, wordId, assessed);
@@ -124,6 +77,8 @@ export class PronunciationService {
       ...assessed,
       passed: recorded?.correct ?? assessed.passed,
       queuedForRetry: Boolean(recorded?.retryQueued),
+      revision: Number(recorded?.revision),
+      sessionPatch: recorded.sessionPatch,
     } satisfies PronunciationAssessment;
   }
 
@@ -186,14 +141,5 @@ export class PronunciationService {
       phonemes,
     };
     return this.persistAssessment(userId, sessionId, wordId, result);
-  }
-
-  private async ownedWord(userId: string, wordId: string) {
-    assertUuid(wordId, "wordId");
-    const rows = await this.db.select<Record<string, any>>("learning_course_words", new URLSearchParams({
-      select: "id,term", id: `eq.${wordId}`, user_id: `eq.${userId}`, limit: "1",
-    }));
-    if (!rows[0]) throw new BadRequestException({ code: "WORD_NOT_FOUND", message: "单词不存在" });
-    return rows[0];
   }
 }

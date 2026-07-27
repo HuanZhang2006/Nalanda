@@ -40,6 +40,8 @@ export class StartLearningSessionDto implements StartLearningSessionRequest {
 }
 
 export class LearningAttemptDto implements LearningAttemptRequest {
+  attemptId!: string;
+  expectedRevision!: number;
   wordId!: string;
   skill!: LearningSkill;
   answer!: LearningAttemptRequest["answer"];

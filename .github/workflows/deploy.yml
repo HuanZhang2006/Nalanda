@@ -312,6 +312,7 @@ jobs:
           FEATURE_COURSE_SHARING_ENABLED=true \
           FEATURE_COURSE_MARKET_ENABLED=true \
           FEATURE_PRONUNCIATION_ENABLED=true \
+          FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
           AZURE_SPEECH_FAKE=true \
           PUBLIC_ORIGIN=http://127.0.0.1:5173 \
           pnpm --filter @nalanda/web test:playwright
@@ -494,7 +495,9 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
             "$SERVER_USER@$SERVER_HOST" "install -d -m 700 /opt/nalanda/incoming/${GITHUB_SHA}"
           scp -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
-            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml scripts/smoke-azure-speech.mjs \
+            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
+            scripts/smoke-azure-speech.mjs scripts/smoke-learning-audio-production.mjs \
+            scripts/learning-audio-smoke-lib.mjs \
             "$SERVER_USER@$SERVER_HOST:/opt/nalanda/incoming/${GITHUB_SHA}/"
 
       - name: Activate release and automatically roll back application on failure
@@ -630,6 +633,8 @@ jobs:
           [[ -s "$incoming/web.tgz" ]]
           [[ -s "$incoming/docker-compose.yml" ]]
           [[ -s "$incoming/smoke-azure-speech.mjs" ]]
+          [[ -s "$incoming/smoke-learning-audio-production.mjs" ]]
+          [[ -s "$incoming/learning-audio-smoke-lib.mjs" ]]
           gzip -t "$incoming/nalanda-api.tar.gz"
           tar -tzf "$incoming/web.tgz" >/dev/null
 
@@ -662,6 +667,17 @@ jobs:
           fi
           if ! assert_auth_guard http://127.0.0.1:8411/api/me; then
             rollback_application "local auth guard smoke check failed" || true
+            exit 1
+          fi
+          if ! docker run --rm \
+            --network host \
+            --env-file "$root/.env" \
+            -e SMOKE_API_ORIGIN=http://127.0.0.1:8411/api \
+            --entrypoint node \
+            -v "$incoming/smoke-learning-audio-production.mjs:/tmp/smoke-learning-audio-production.mjs:ro" \
+            -v "$incoming/learning-audio-smoke-lib.mjs:/tmp/learning-audio-smoke-lib.mjs:ro" \
+            "nalanda-api:$sha" /tmp/smoke-learning-audio-production.mjs; then
+            rollback_application "real queued audio/Storage/assessment gate failed" || true
             exit 1
           fi
 

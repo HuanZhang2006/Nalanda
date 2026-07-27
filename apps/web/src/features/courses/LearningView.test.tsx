@@ -47,36 +47,88 @@ function course(words: VocabularyWord[]): LearningCourseDetail {
 
 function session(words: VocabularyWord[], stage: LearningSession["stage"], cursor: number, nextQueue: string[] = []): LearningSession {
   return { id: ids[4], courseId: ids[0], unitId: ids[1], mode: "initial", scope: "all",
-    selectedSkills: ["pronunciation", "translation", "spelling"], stage, active: true,
+    selectedSkills: ["pronunciation", "translation", "spelling"], stage, active: true, revision: cursor,
     state: { queue: words.map((entry) => entry.id), cursor, nextQueue, round: 1 },
     items: words.map((entry, position) => ({ word: entry, position, recognitionSeen: stage !== "recognition",
       pronunciationPassed: false, translationPassed: false, spellingPassed: false, wrongCount: 0 })) };
 }
 
-function installApi(words: VocabularyWord[], stage: LearningSession["stage"], options: { assessment?: "low" | "high" } = {}) {
+function installApi(words: VocabularyWord[], stage: LearningSession["stage"], options: {
+  assessment?: "low" | "high";
+  holdAttempt?: boolean;
+  serverCorrect?: boolean;
+} = {}) {
   let cursor = 0;
+  let revision = 0;
   let retryQueue: string[] = [];
   const attempts: Array<Record<string, unknown>> = [];
+  let releaseAttempt: (() => void) | null = null;
   const fetchMock = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input);
     if (path.endsWith(`/api/learning-courses/${ids[0]}`)) return json(course(words));
     if (path.endsWith(`/api/learning-sessions/${ids[4]}/attempts`)) {
-      const request = JSON.parse(String(init.body)) as { wordId: string; skill: string; answer: Record<string, unknown> };
+      const request = JSON.parse(String(init.body)) as {
+        attemptId: string; expectedRevision: number; wordId: string; skill: string; answer: Record<string, unknown>;
+      };
       attempts.push(request);
       const current = words[cursor];
-      const correct = request.skill === "pronunciation"
+      const predictedCorrect = request.skill === "pronunciation"
         ? request.answer.wordId === request.wordId
         : request.skill === "translation"
           ? JSON.stringify([...(request.answer.translations as string[])].sort()) === JSON.stringify([...current.translations].sort())
           : String(request.answer.text).toLowerCase() === current.term.toLowerCase();
+      const correct = options.serverCorrect ?? predictedCorrect;
       cursor = Math.min(cursor + 1, words.length - 1);
-      return json({ correct, stage, completed: false, expected: request.skill === "translation" ? current.translations : current.term });
+      revision += 1;
+      const next = session(words, stage, cursor, retryQueue);
+      next.revision = revision;
+      const responseBody = {
+        attemptId: request.attemptId,
+        correct,
+        expected: request.skill === "translation" ? current.translations : current.term,
+        revision,
+        replayed: false,
+        sessionPatch: {
+          stage, active: true, state: next.state,
+          changedItem: {
+            wordId: request.wordId,
+            recognitionSeen: true,
+            pronunciationPassed: request.skill === "pronunciation" && correct,
+            translationPassed: request.skill === "translation" && correct,
+            spellingPassed: request.skill === "spelling" && correct,
+            wrongCount: correct ? 0 : 1,
+          },
+          nextWordId: words[cursor]?.id || null,
+        },
+      };
+      if (options.holdAttempt) {
+        return new Promise<Response>((resolve) => {
+          releaseAttempt = () => { void json(responseBody).then(resolve); };
+        });
+      }
+      return json(responseBody);
     }
+    if (path.includes("/api/learning-units/") && (
+      path.endsWith("/audio-prewarm") || path.endsWith("/audio-manifest")
+    )) return json({
+      unitId: ids[1], total: words.length, ready: words.length, pending: 0, failed: 0,
+      synthesisVersion: "1",
+      assets: words.map((entry) => ({
+        wordId: entry.id, cacheKey: entry.id, status: "ready",
+        audioUrl: `/api/pronunciation/audio/${entry.id}`, lastErrorCode: null,
+      })),
+    });
     if (path.endsWith("/api/pronunciation/assess")) {
       const low = options.assessment !== "high";
       retryQueue = low ? [words[0].id] : [];
       return json({ accuracyScore: low ? 64 : 88, fluencyScore: 80, completenessScore: 100,
         pronunciationScore: low ? 66 : 90, passThreshold: 70, passed: !low, queuedForRetry: low,
+        revision: ++revision,
+        sessionPatch: {
+          stage: "recognition", active: true,
+          state: session(words, "recognition", cursor, retryQueue).state,
+          changedItem: null, nextWordId: words[cursor].id,
+        },
         errorType: null, phonemes: [{ phoneme: "æ", accuracyScore: low ? 62 : 91, needsPractice: low }] }, 201);
     }
     if (path.includes("/api/pronunciation/audio/")) return Promise.resolve(new Response(new Blob(["audio"], { type: "audio/mpeg" }), { status: 200 }));
@@ -84,7 +136,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
     throw new Error(`Unexpected fetch: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { attempts, fetchMock };
+  return { attempts, fetchMock, releaseAttempt: () => releaseAttempt?.() };
 }
 
 describe("LearningView immediate feedback", () => {
@@ -130,6 +182,71 @@ describe("LearningView immediate feedback", () => {
     await settle(() => click(nextQuestion!));
     expect(container.querySelector(".course-term")?.textContent).toBe("banana");
     expect(container.textContent).not.toContain("added to the next-round retry pool");
+  });
+
+  it("renders provisional feedback before the answer request resolves", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "translation", { holdAttempt: true });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "香蕉")!));
+    expect(api.attempts).toHaveLength(1);
+    expect(container.querySelector(".course-option.is-wrong")?.textContent).toBe("香蕉");
+    expect(container.textContent).toContain("added to the next-round retry pool");
+    api.releaseAttempt();
+    await settle();
+  });
+
+  it("continues serial outbox sync when a later answer was queued during a slow request", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "translation", { holdAttempt: true });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "苹果")!));
+    expect(api.attempts).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(520); });
+    expect(container.querySelector(".course-term")?.textContent).toBe("banana");
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "香蕉")!));
+    expect(api.attempts).toHaveLength(1);
+    api.releaseAttempt();
+    await settle();
+    await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+    await settle();
+    expect(api.attempts).toHaveLength(2);
+    expect(api.attempts.map((entry) => entry.expectedRevision)).toEqual([0, 1]);
+  });
+
+  it("keeps a server-corrected error visible instead of running the provisional success timer", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "translation", { holdAttempt: true, serverCorrect: false });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "苹果")!));
+    expect(container.textContent).toContain("Correct — continuing");
+    api.releaseAttempt();
+    await settle();
+    expect(container.textContent).toContain("Incorrect — added to the next-round retry pool");
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_000); });
+    expect(container.querySelector(".course-term")?.textContent).toBe("apple");
+    expect(container.textContent).toContain("Next question");
+  });
+
+  it("auto-advances when the server corrects a provisional error", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "translation", { holdAttempt: true, serverCorrect: true });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "香蕉")!));
+    expect(container.textContent).toContain("Incorrect — added to the next-round retry pool");
+    api.releaseAttempt();
+    await settle();
+    expect(container.textContent).toContain("Correct — continuing");
+    await act(async () => { await vi.advanceTimersByTimeAsync(520); });
+    expect(container.querySelector(".course-term")?.textContent).toBe("banana");
   });
 
   it("collects only the required multi-select answers and auto-submits the final correct choice", async () => {

@@ -6,9 +6,9 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260723000014_learning_feedback_flow.sql` 的最终叠加结果整理。迁移 SQL 是结构的最终权威来源；本文用于阅读和评审。仓库与生产 migration history 均已通过受保护 plan/apply 同步到 0014。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至发布候选 `20260727000016_verify_learning_performance_release.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已有受保护发布证据到 0014，0015–0016 尚待 CI 与 plan/apply。
 
-- **仓库最终结构**：30 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
+- **仓库候选最终结构**：31 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
 
 ## 2. 当前 ERD
@@ -232,9 +232,14 @@ erDiagram
     BADGE_DEFINITIONS ||--o{ USER_BADGE_AWARDS : awards
     AUTH_USERS ||--o{ USER_BADGE_AWARDS : earns
     AUTH_USERS o|--o{ LEARNING_SPEECH_USAGE : reserves
+    LEARNING_AUDIO_ASSETS {
+        text cache_key PK
+        text status
+        text storage_path
+    }
 ```
 
-`learning_attempts` 是追加事实，`learning_word_progress` 是受保护投影；市场 publication 是不可变快照，source 课程删除时只把 `source_course_id` 置空。分享读取当前课程，不保存内容副本。
+`learning_attempts` 是追加事实，`learning_word_progress` 是受保护投影；市场 publication 是不可变快照，source 课程删除时只把 `source_course_id` 置空。分享读取当前课程，不保存内容副本。`learning_audio_assets` 不外键关联用户或 word：相同规范化词、locale、voice、格式和合成版本通过内容哈希共享一项可重建任务/对象。
 
 ## 3. 表字典
 
@@ -392,12 +397,13 @@ erDiagram
 | `learning_courses` | `id`, `user_id`, `title`, `category`, `has_units`, `locale`, `origin_publication_id`, `origin_share_id`, `origin_author_name`, `can_republish`, `points_claimed_at`, `created_at`, `updated_at` | owner → Auth CASCADE；标题 1–80；四类 category 但 v1 API 只接受英语词表；locale=`en-US`；`(id,user_id)` 唯一；克隆来源 → publication/share SET NULL，来源记录消失后仍保留作者署名 |
 | `learning_course_units` | `id`, `course_id`, `user_id`, `name`, `position`, `is_system`, `created_at`, `updated_at` | course/Auth CASCADE；复合 FK `(course_id,user_id)` 防跨 owner；名 1–80；position≥0；`(course_id,position)` 延迟唯一 |
 | `learning_course_words` | `id`, `course_id`, `unit_id`, `user_id`, `term`, `normalized_term`, `translations`, `ipa`, `position`, `content_version`, `created_at`, `updated_at` | `normalized_term` 为 `_points_normalize_text(term)` stored generated；term 1–120；1–10 translations；IPA≤120；复合 unit/course/owner FK；单元内 normalized term 与 position 延迟唯一 |
-| `learning_sessions` | `id`, `user_id`, `course_id`, `unit_id`, `mode`, `scope`, `selected_skills`, `stage`, `active`, `state`, `started_at`, `last_activity_at`, `completed_at` | course CASCADE、unit 删除 SET NULL；mode=`initial/review`；scope=`all/unlearned`；skill 为 pronunciation/translation/spelling 的 1–3 项；stage 为 recognition/pronunciation/translation/spelling/completed；每用户每课程最多一个 active 会话 |
+| `learning_sessions` | `id`, `user_id`, `course_id`, `unit_id`, `mode`, `scope`, `selected_skills`, `stage`, `active`, `state`, `revision`, `started_at`, `last_activity_at`, `completed_at` | course CASCADE、unit 删除 SET NULL；mode=`initial/review`；scope=`all/unlearned`；skill 为 pronunciation/translation/spelling 的 1–3 项；stage 为 recognition/pronunciation/translation/spelling/completed；每用户每课程最多一个 active 会话；0015 的 `revision bigint≥0` 在每个 immutable attempt 后单调递增 |
 | `learning_session_items` | `session_id`, `word_id`, `position`, `recognition_seen`, `pronunciation_passed`, `translation_passed`, `spelling_passed`, `wrong_count` | `(session_id,word_id)` PK；会话/词删除 CASCADE；position 每会话延迟唯一；pass 字段是当前会话投影 |
-| `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `created_at` | bigint identity；course/session/user CASCADE，word 删除 SET NULL；skill 另含 recognition 和 speech_assessment；允许 `is_correct=null` 表达非判分事实；保存发生时本地日期，不保存录音；service_role 也无直接 UPDATE/DELETE，普通内容编辑不会删历史 attempt，课程删除仍按产品规则级联 |
+| `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `attempt_id`, `response_payload`, `created_at` | bigint identity；course/session/user CASCADE，word 删除 SET NULL；skill 另含 recognition 和 speech_assessment；允许 `is_correct=null` 表达非判分事实；普通测试 attempt 以 `(user_id,session_id,attempt_id)` 唯一并保存首次完整响应供超时重放；旧 RPC/recognition/评分允许 `attempt_id=NULL`；不保存录音；service_role 也无直接 UPDATE/DELETE |
 | `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `learned_at`, `updated_at` | `(user_id,word_id)` PK；三组 date[] 去重由工作流保证；三项均有至少两个不同完成复习日期才设置 learned_at |
 | `learning_review_schedules` | `id`, `user_id`, `course_id`, `unit_id`, `source_session_id`, `due_date`, `skills`, `scope`, `status`, `completed_session_id`, `completed_at`, `created_at` | user/course/unit/source initial session CASCADE，completed review session SET NULL；只有本人该单元已完成 initial session 才能创建 3/7/15/30 偏移；status=`pending/completed/cancelled`；`(user_id,unit_id,due_date)` 唯一 |
-| `learning_speech_usage` | `id`, `user_id`, `kind`, `cost_microusd`, `local_date`, `created_at` | bigint identity；user 删除 SET NULL 以保留预算事实；kind=`tts/assessment`；成本必须 >0；没有音频/参考文本 |
+| `learning_speech_usage` | `id`, `user_id`, `kind`, `cost_microusd`, `character_count`, `local_date`, `created_at` | bigint identity；user 删除 SET NULL 以保留预算事实；kind=`tts/assessment`；成本必须 >0；TTS reservation 记录字符数并可使用 NULL user 表达全局共享生成；没有音频/参考文本 |
+| `learning_audio_assets` | `cache_key`, `normalized_term`, `synthesis_text`, `locale`, `voice`, `output_format`, `synthesis_version`, `storage_path`, `status`, `priority`, `attempt_count`, `next_attempt_at`, `lease_token`, `lease_until`, `last_error_code`, `last_error_message`, `ready_at`, `created_at`, `updated_at` | 64 位 hex SHA-256 PK；storage path 唯一；status=`pending/processing/ready/failed`；租约、指数退避和优先级驱动持久 worker；RLS 开启且表权限从 public/anon/authenticated 全撤销，只有 service_role；不含用户录音、翻译或 owner ID |
 | `learning_course_shares` | `id`, `user_id`, `course_id`, `token_hash`, `active`, `author_name`, `created_at`, `revoked_at` | owner/course CASCADE；只存 token SHA-256；token hash 唯一，每课程最多一个 active 分享 |
 | `learning_course_publications` | `id`, `author_id`, `source_course_id`, `title`, `description`, `author_name`, `category`, `locale`, `version`, `snapshot`, `content_fingerprint`, `status`, `rights_declared_at`, `clone_count`, `created_at`, `updated_at` | author CASCADE、source SET NULL；英语/en-US；status=`published/hidden/withdrawn`；同 author/source/version 唯一；trigger 禁止内容快照/署名/指纹/权利声明变更，只允许生命周期、clone_count、source 置空和 updated_at |
 | `learning_course_reports` | `id`, `reporter_id`, `publication_id`, `share_id`, `category`, `details`, `status`, `created_at` | reporter CASCADE，目标 CASCADE；publication/share 必须且只能有一个；六类举报；details≤1000；status=`open/reviewing/resolved/dismissed` |
@@ -461,7 +467,7 @@ erDiagram
 |---|---|---|---|---|
 | `materials` | private | authenticated 仅可 SELECT/INSERT/DELETE 自己 UUID 首段路径 | `{auth.uid()}/...` | `materials.storage_path` 是文本引用；表和对象间无 FK/事务 |
 | `community-media` | public | authenticated 仅可 INSERT/DELETE 自己 UUID 首段路径；公共读取由 public bucket 提供 | `{auth.uid()}/...` | `posts.image_url/audio_url` 是 URL 文本；删除帖子不会自动删对象 |
-| `vocabulary-audio` | private | 没有客户端 Storage policy；仅 API service-role 读写 | 规范化英文的服务端缓存键 | 只允许 Azure 合成公共语音；不存用户录音，也不与 word 行做 FK |
+| `vocabulary-audio` | private | 没有客户端 Storage policy；仅 API service-role 读写 | `SHA-256(normalizedTerm␟locale␟voice␟format␟synthesisVersion).mp3` | 只允许可跨用户复用的 Azure 合成语音；不存用户录音，也不与 word 行做 FK |
 
 Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路径或显式设计安全策略。
 
@@ -493,15 +499,18 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helper | 固化尝试本地日期、词集合 SHA-256 与服务端内部课程快照；公开 API 另经 `publicSnapshot` 删除私有 ID/进度 |
 | `_refresh_learning_growth` | 完成学习/复习 | 发放课程 +20 points 和九级徽章；持久业务键/award PK 防重复 |
 | `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPC | owner 校验下原子保存、精确能力重置、改名和级联删除 |
-| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进 |
+| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载，重复请求返回首次响应、过期 revision 返回冲突 |
+| `learning_get_session_snapshot`, `_learning_session_patch`, `_learning_increment_session_revision` | API/内部 RPC 与 trigger helper | 一次返回 session/items/words/progress；写事务返回小增量；`learning_attempts AFTER INSERT` 推进 revision，保证旧应用回滚写入也不会绕过版本时钟 |
 | `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
 | `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；按受控整体分数阈值原子加入/移除当前认词候补项；持久化用户频率和全局预算预留 |
+| `_learning_audio_cache_key`, `learning_prepare_unit_audio`, `learning_prepare_word_audio`, `learning_get_unit_audio_manifest` | 服务端音频 RPC | 计算全局内容哈希、owner 校验后按单元/单词幂等入队、返回不暴露 Storage 的用户级 manifest |
+| `learning_claim_audio_asset`, `learning_finish_audio_asset`, `learning_requeue_audio_asset`, `learning_reserve_tts_quota` | 服务端 worker RPC | 数据库 advisory lock + 单活动租约保证全局单并发，最小 3.1 秒启动间隔、失败退避、Storage 丢失重建和每分钟/月字符/预算 reservation |
 | `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPC | token hash 生命周期和撤销竞态内的事务克隆 |
 | `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPC | 不可变发布版本、免费独立克隆、限频举报与受审计隐藏/恢复 |
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权，并同时断言两个 RPC 只允许 service_role。API 传入的 user ID 和评分阈值来自已验证/受控服务端上下文，不能接受浏览器自报用户或直接执行 RPC。
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权。发布候选 0015 对 snapshot、七参数 attempt、assessment target、音频 prepare/claim/finish/requeue/quota 及 helper 全部再次撤销客户端 EXECUTE，0016 检查表 RLS、revision trigger、精确函数签名和 service-role grant。API 传入的 user ID、revision 和评分阈值来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
 
 ## 8. 索引清单
 
@@ -525,7 +534,9 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `learning_course_words_course_idx(course_id, unit_id, position)`、`learning_course_words_owner_term_idx(user_id, normalized_term)`
 - `learning_sessions_one_active_course_idx(user_id, course_id) WHERE active`、`learning_sessions_owner_activity_idx(user_id, last_activity_at DESC)`
 - `learning_attempts_owner_created_idx(user_id, created_at DESC)`、`learning_attempts_course_idx(course_id, created_at DESC)`、`learning_attempts_word_idx(word_id, created_at DESC)`
-- `learning_speech_usage_user_rate_idx(user_id, kind, created_at DESC)`、`learning_speech_usage_budget_idx(created_at DESC)`
+- `learning_attempts_idempotency_idx UNIQUE(user_id,session_id,attempt_id)`（NULL 仅用于兼容旧/非普通答题事实）
+- `learning_speech_usage_user_rate_idx(user_id, kind, created_at DESC)`、`learning_speech_usage_budget_idx(created_at DESC)`、`learning_speech_usage_kind_rate_idx(kind,created_at DESC)`
+- `learning_audio_assets_queue_idx(priority DESC,next_attempt_at,created_at) WHERE status IN ('pending','processing')`
 - `learning_word_progress_learned_idx(user_id, learned_at) WHERE learned_at IS NOT NULL`
 - `learning_review_schedules_owner_due_idx(user_id, due_date, status)`
 - `learning_course_shares_one_active_idx(course_id) WHERE active`

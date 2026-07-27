@@ -1,33 +1,60 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
-  LearningAttemptResult, LearningCourseDetail, LearningSession, PronunciationAssessment,
+  LearningAttemptRequest, LearningAttemptResult, LearningAudioManifest, LearningCourseDetail,
+  LearningSession, PronunciationAssessment,
   VocabularyWord,
 } from "@nalanda/types";
-import { apiErrorMessage, authedFetch } from "../../lib/api";
+import { ApiClientError, apiErrorMessage, authedFetch } from "../../lib/api";
+import { supabase } from "../../lib/supabase";
 import { coursesApi } from "./api";
 import { beginWavRecording } from "./recording";
 import { useI18n } from "../../i18n";
 import { CourseLocaleButton } from "./CourseLocaleButton";
+import {
+  cachedAudioCount,
+  playAudioAsset,
+  prefetchAudioAssets,
+  removeCachedAudioAssets,
+  requestPersistentAudioStorage,
+} from "./audioCache";
+import {
+  clearPendingAttemptsForUser,
+  listPendingAttempts,
+  PendingLearningAttempt,
+  putPendingAttempt,
+  removePendingAttempt,
+  retryDelay,
+} from "./attemptOutbox";
+import {
+  applySessionPatch,
+  predictAttempt,
+  readQueueState,
+} from "./learningSessionState";
 
 const STAGES = ["recognition", "pronunciation", "translation", "spelling"] as const;
 const CORRECT_FEEDBACK_MS = 520;
+const AUDIO_QUOTA_CODES = new Set([
+  "SPEECH_TTS_RATE_LIMIT",
+  "SPEECH_TTS_MONTHLY_LIMIT",
+  "SPEECH_QUOTA_EXCEEDED",
+]);
+
+function quotaPausedCount(manifest: LearningAudioManifest | null) {
+  return manifest?.assets.filter((asset) =>
+    asset.status === "pending" && AUDIO_QUOTA_CODES.has(asset.lastErrorCode || "")).length || 0;
+}
 
 type AttemptFeedback = {
   result: LearningAttemptResult;
+  serverResult?: LearningAttemptResult;
+  predictedSession: LearningSession;
+  request: LearningAttemptRequest;
   skill: "pronunciation" | "translation" | "spelling";
   wordId: string;
   actual?: string;
   triggerValue?: string;
   selectedWordId?: string;
 };
-
-function queueState(session: LearningSession) {
-  const raw = session.state as { queue?: unknown; nextQueue?: unknown; cursor?: unknown; round?: unknown };
-  const queue = Array.isArray(raw.queue) ? raw.queue.map(String) : session.items.map((item) => item.word.id);
-  const nextQueue = Array.isArray(raw.nextQueue) ? raw.nextQueue.map(String) : [];
-  const cursor = Math.max(0, Number(raw.cursor || 0));
-  return { queue, nextQueue, cursor, round: Math.max(1, Number(raw.round || 1)) };
-}
 
 function fallbackSpeak(text: string) {
   if (!("speechSynthesis" in window)) return false;
@@ -41,19 +68,24 @@ function stableShuffle(words: VocabularyWord[], salt: string) {
   return [...words].sort((left, right) => score(left.id) - score(right.id) || left.id.localeCompare(right.id));
 }
 
-async function playWord(word: VocabularyWord, setNotice: (value: string) => void, l: (english: string, chinese: string) => string) {
-  let objectUrl = "";
+async function playWord(
+  word: VocabularyWord,
+  manifest: LearningAudioManifest | null,
+  setNotice: (value: string) => void,
+  l: (english: string, chinese: string) => string,
+) {
   try {
-    const response = await authedFetch(`/api/pronunciation/audio/${word.id}`);
-    if (!response.ok) throw new Error(await apiErrorMessage(response));
-    objectUrl = URL.createObjectURL(await response.blob());
-    const audio = new Audio(objectUrl);
-    const release = () => { if (objectUrl) URL.revokeObjectURL(objectUrl); objectUrl = ""; };
-    audio.onended = release; audio.onerror = release;
-    try { await audio.play(); }
-    catch { release(); throw new Error(l("The browser could not play the generated audio.", "浏览器无法播放已生成的音频")); }
+    const asset = manifest?.assets.find((entry) => entry.wordId === word.id) || {
+      wordId: word.id,
+      cacheKey: word.id,
+      status: "pending" as const,
+      audioUrl: `/api/pronunciation/audio/${encodeURIComponent(word.id)}`,
+      lastErrorCode: null,
+    };
+    if (!await playAudioAsset(asset, manifest?.synthesisVersion || "1")) {
+      throw new Error(l("Audio is still being prepared.", "音频仍在准备中"));
+    }
   } catch (caught) {
-    if (objectUrl) URL.revokeObjectURL(objectUrl);
     const reason = caught instanceof Error && caught.message
       ? caught.message : l("Azure pronunciation is temporarily unavailable.", "Azure 发音暂不可用");
     if (fallbackSpeak(word.term)) setNotice(l(`${reason} Browser speech is being used.`, `${reason}，已使用浏览器朗读`));
@@ -94,29 +126,250 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const [selectedMatchId, setSelectedMatchId] = useState("");
   const [recording, setRecording] = useState(false);
   const [assessment, setAssessment] = useState<PronunciationAssessment | null>(null);
+  const [assessmentBusy, setAssessmentBusy] = useState(false);
+  const [audioManifest, setAudioManifest] = useState<LearningAudioManifest | null>(null);
+  const [pendingCount, setPendingCount] = useState(0);
+  const [confirmedRevision, setConfirmedRevision] = useState(0);
+  const [offlineAudio, setOfflineAudio] = useState({
+    running: false, cached: 0, total: 0, pending: 0, failed: 0,
+    quotaPaused: 0, persistent: false,
+  });
   const stopRef = useRef<null | (() => Promise<Blob | null>)>(null);
-  const submittingRef = useRef(false);
   const aliveRef = useRef(true);
+  const sessionRef = useRef<LearningSession | null>(null);
+  const audioManifestRef = useRef<LearningAudioManifest | null>(null);
+  const feedbackRef = useRef<AttemptFeedback | null>(null);
+  const userIdRef = useRef("");
+  const flushingRef = useRef(false);
+  const flushTimerRef = useRef<number | null>(null);
+  const downloadRef = useRef<AbortController | null>(null);
   const nextQuestionRef = useRef<HTMLButtonElement>(null);
   const [reviewOffsets, setReviewOffsets] = useState<number[]>([]);
 
-  const load = async () => {
-    const next = await coursesApi.session(sessionId);
+  const setCurrentSession = (next: LearningSession | null) => {
+    sessionRef.current = next;
     setSession(next);
-    if (!course || course.id !== next.courseId) setCourse(await coursesApi.detail(next.courseId));
-    return next;
   };
-  useEffect(() => { let active = true; setError(""); coursesApi.session(sessionId).then(async (next) => {
-    const detail = await coursesApi.detail(next.courseId); if (active) { setSession(next); setCourse(detail); }
-  }).catch((caught) => active && setError(caught instanceof Error ? caught.message : l("Could not load this session.", "会话加载失败")));
-    return () => { active = false; void stopRef.current?.(); };
+  const setCurrentFeedback = (next: AttemptFeedback | null) => {
+    feedbackRef.current = next;
+    setFeedback(next);
+  };
+  const setCurrentAudioManifest = (next: LearningAudioManifest | null) => {
+    audioManifestRef.current = next;
+    setAudioManifest(next);
+  };
+
+  const attemptMatches = (value: LearningSession, request: LearningAttemptRequest) => {
+    if (!value.active || value.stage !== request.skill) return false;
+    const state = readQueueState(value);
+    if (request.skill === "pronunciation") {
+      return state.queue.slice(state.cursor, state.cursor + 5).includes(request.wordId);
+    }
+    return state.queue[state.cursor] === request.wordId;
+  };
+
+  const restoreAfterConflict = async () => {
+    const latest = await coursesApi.session(sessionId);
+    const pending = await listPendingAttempts(userIdRef.current, sessionId);
+    let optimistic = latest;
+    let retained = 0;
+    let discarded = 0;
+    for (const entry of pending) {
+      if (attemptMatches(optimistic, entry.request)) {
+        const request = {
+          ...entry.request,
+          expectedRevision: optimistic.revision,
+        };
+        await putPendingAttempt({
+          ...entry,
+          request,
+          retryCount: 0,
+          nextAttemptAt: Date.now(),
+        });
+        optimistic = predictAttempt(optimistic, request).session;
+        retained += 1;
+      } else {
+        await removePendingAttempt(entry.attemptId);
+        discarded += 1;
+      }
+    }
+    setConfirmedRevision(latest.revision);
+    setCurrentSession(optimistic);
+    setCurrentFeedback(null);
+    setPendingCount(retained);
+    setNotice(l(
+      retained
+        ? `Progress changed on another device. Compatible offline answers are being synchronized.${discarded ? ` ${discarded} superseded answer${discarded === 1 ? " was" : "s were"} discarded.` : ""}`
+        : `Progress changed on another device. The latest confirmed question has been restored.${discarded ? ` ${discarded} superseded answer${discarded === 1 ? " was" : "s were"} discarded.` : ""}`,
+      retained
+        ? `学习进度已在其它设备更新，兼容的离线答案正在继续同步。${discarded ? `已丢弃 ${discarded} 个被新进度取代的答案。` : ""}`
+        : `学习进度已在其它设备更新，已恢复最新确认题目。${discarded ? `已丢弃 ${discarded} 个被新进度取代的答案。` : ""}`,
+    ));
+    return retained;
+  };
+
+  const scheduleCorrectAdvance = (attemptId: string) => {
+    window.setTimeout(() => {
+      const current = feedbackRef.current;
+      if (aliveRef.current && current?.request.attemptId === attemptId
+          && current.result.correct) advanceFeedback();
+    }, CORRECT_FEEDBACK_MS);
+  };
+
+  const scheduleFlush = (milliseconds: number) => {
+    if (flushTimerRef.current != null) window.clearTimeout(flushTimerRef.current);
+    flushTimerRef.current = window.setTimeout(() => { void flushOutbox(); }, milliseconds);
+  };
+
+  const flushOutbox = async () => {
+    const userId = userIdRef.current;
+    if (!userId || flushingRef.current || !aliveRef.current) return;
+    flushingRef.current = true;
+    try {
+      const entries = await listPendingAttempts(userId, sessionId);
+      setPendingCount(entries.length);
+      for (const entry of entries) {
+        if (!aliveRef.current) break;
+        if (entry.nextAttemptAt > Date.now()) {
+          scheduleFlush(entry.nextAttemptAt - Date.now());
+          break;
+        }
+        try {
+          const signal = typeof AbortSignal.timeout === "function"
+            ? AbortSignal.timeout(8_000)
+            : undefined;
+          const result = await coursesApi.attempt(sessionId, entry.request, signal);
+          await removePendingAttempt(entry.attemptId);
+          if (!aliveRef.current || userId !== userIdRef.current) break;
+          setConfirmedRevision((value) => Math.max(value, result.revision));
+          const activeFeedback = feedbackRef.current;
+          if (activeFeedback?.request.attemptId === result.attemptId) {
+            setCurrentFeedback({ ...activeFeedback, result, serverResult: result });
+            if (!activeFeedback.result.correct && result.correct) {
+              scheduleCorrectAdvance(result.attemptId);
+            }
+          } else {
+            const currentSession = sessionRef.current;
+            if (currentSession && (
+              currentSession.revision === result.revision
+              || currentSession.revision === result.revision - 1
+            )) {
+              setCurrentSession(applySessionPatch(currentSession, result.revision, result.sessionPatch));
+            }
+          }
+          const remaining = await listPendingAttempts(userId, sessionId);
+          setPendingCount(remaining.length);
+          if (!result.sessionPatch.active && !feedbackRef.current && remaining.length === 0) onChanged();
+        } catch (caught) {
+          if (!aliveRef.current || userId !== userIdRef.current) {
+            await removePendingAttempt(entry.attemptId);
+            break;
+          }
+          if (caught instanceof ApiClientError && caught.code === "SESSION_REVISION_CONFLICT") {
+            if (await restoreAfterConflict()) scheduleFlush(50);
+            break;
+          }
+          if (caught instanceof ApiClientError && caught.status >= 400
+              && caught.status < 500
+              && ![401, 408, 425, 429].includes(caught.status)) {
+            await removePendingAttempt(entry.attemptId);
+            setError(caught.message);
+            await restoreAfterConflict();
+            break;
+          }
+          const retryCount = entry.retryCount + 1;
+          const delay = caught instanceof ApiClientError && caught.status === 429
+            ? 30_000
+            : retryDelay(retryCount);
+          await putPendingAttempt({
+            ...entry,
+            retryCount,
+            nextAttemptAt: Date.now() + delay,
+          });
+          setNotice(l(
+            "Your answer is saved on this device and will sync when the connection recovers.",
+            "答案已保存在本机，将在网络恢复后自动同步。",
+          ));
+          scheduleFlush(delay);
+          break;
+        }
+      }
+    } finally {
+      flushingRef.current = false;
+      if (aliveRef.current && userId === userIdRef.current) {
+        const remaining = await listPendingAttempts(userId, sessionId);
+        setPendingCount(remaining.length);
+        if (remaining.length) {
+          scheduleFlush(Math.max(0, remaining[0].nextAttemptAt - Date.now()));
+        }
+      }
+    }
+  };
+
+  const load = async () => {
+    const auth = await supabase?.auth.getSession();
+    if (auth?.error) throw auth.error;
+    const userId = auth?.data.session?.user.id || "local-session";
+    userIdRef.current = userId;
+    const confirmed = await coursesApi.session(sessionId);
+    const pending = userId ? await listPendingAttempts(userId, sessionId) : [];
+    let optimistic = confirmed;
+    for (const entry of pending) {
+      if (entry.request.expectedRevision === optimistic.revision
+          && attemptMatches(optimistic, entry.request)) {
+        optimistic = predictAttempt(optimistic, entry.request).session;
+      }
+    }
+    setConfirmedRevision(confirmed.revision);
+    setPendingCount(pending.length);
+    setCurrentSession(optimistic);
+    if (!course || course.id !== confirmed.courseId) {
+      setCourse(await coursesApi.detail(confirmed.courseId));
+    }
+    window.setTimeout(() => { void flushOutbox(); }, 0);
+    return optimistic;
+  };
+
+  useEffect(() => {
+    let active = true;
+    aliveRef.current = true;
+    setError("");
+    load().catch((caught) => {
+      if (active) setError(caught instanceof Error ? caught.message : l("Could not load this session.", "会话加载失败"));
+    });
+    const subscription = supabase?.auth.onAuthStateChange((event, authSession) => {
+      if (event === "SIGNED_OUT") {
+        const previous = userIdRef.current;
+        userIdRef.current = "";
+        if (previous) void clearPendingAttemptsForUser(previous);
+        setCurrentFeedback(null);
+        setCurrentSession(null);
+      } else if (authSession?.user.id && authSession.user.id !== userIdRef.current) {
+        const previous = userIdRef.current;
+        userIdRef.current = authSession.user.id;
+        if (previous) void clearPendingAttemptsForUser(previous);
+        setCurrentFeedback(null);
+        setCurrentSession(null);
+        onExit();
+      }
+    }).data.subscription;
+    const syncWhenOnline = () => scheduleFlush(0);
+    window.addEventListener("online", syncWhenOnline);
+    return () => {
+      active = false;
+      aliveRef.current = false;
+      window.removeEventListener("online", syncWhenOnline);
+      subscription?.unsubscribe();
+      if (flushTimerRef.current != null) window.clearTimeout(flushTimerRef.current);
+      downloadRef.current?.abort();
+      void stopRef.current?.().catch(() => null);
+    };
   }, [sessionId, l]);
-  useEffect(() => { aliveRef.current = true; return () => { aliveRef.current = false; }; }, [sessionId]);
   useEffect(() => {
     if (feedback && (!feedback.result.correct || error)) nextQuestionRef.current?.focus();
   }, [error, feedback]);
 
-  const q = session ? queueState(session) : { queue: [], nextQueue: [], cursor: 0, round: 1 };
+  const q = session ? readQueueState(session) : { queue: [], nextQueue: [], cursor: 0, round: 1 };
   const currentId = q.queue[q.cursor];
   const current = session?.items.find((item) => item.word.id === currentId)?.word || null;
   const batchStart = Math.floor(q.cursor / 5) * 5;
@@ -134,76 +387,150 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     return values.sort((a, b) => `${current.id}:${a}`.localeCompare(`${current.id}:${b}`));
   }, [course, current]);
 
-  const refresh = async () => { const next = await load(); onChanged(); return next; };
+  useEffect(() => {
+    if (!session?.unitId) return;
+    let active = true;
+    setCurrentAudioManifest(null);
+    const update = async (prepare: boolean) => {
+      const next = prepare
+        ? await coursesApi.prewarmAudio(session.unitId!)
+        : await coursesApi.audioManifest(session.unitId!);
+      if (active) setCurrentAudioManifest(next);
+    };
+    void update(true).catch(() => undefined);
+    const timer = window.setInterval(() => {
+      const manifest = audioManifestRef.current;
+      if (manifest?.pending !== 0 && quotaPausedCount(manifest) < (manifest?.pending || 0)) {
+        void update(false).catch(() => undefined);
+      }
+    }, 3_000);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [session?.unitId]);
+
+  useEffect(() => {
+    if (!audioManifest || !Array.isArray(audioManifest.assets) || !session) return;
+    const ids = q.queue.slice(q.cursor, q.cursor + 5);
+    const assets = ids.map((id) => audioManifest.assets.find((asset) => asset.wordId === id))
+      .filter((asset): asset is NonNullable<typeof asset> => Boolean(asset && asset.status === "ready"));
+    void prefetchAudioAssets(assets, audioManifest.synthesisVersion, 2);
+  }, [audioManifest, currentId, session?.stage]);
+
   const recognize = async () => {
     if (!current || !session) return;
     setBusy(true); setError("");
-    try { await coursesApi.recognition(session.id, current.id); await refresh(); }
+    try {
+      const result = await coursesApi.recognition(session.id, current.id);
+      setConfirmedRevision(result.revision);
+      setCurrentSession(applySessionPatch(session, result.revision, result.sessionPatch));
+    }
     catch (caught) { setError(caught instanceof Error ? caught.message : l("Could not save progress.", "保存进度失败")); }
     setBusy(false);
   };
-  const attempt = async (word: VocabularyWord, answer: Record<string, unknown>, visual: Pick<AttemptFeedback, "actual" | "triggerValue" | "selectedWordId"> = {}) => {
-    if (!session || feedback || submittingRef.current || !["pronunciation", "translation", "spelling"].includes(session.stage)) return;
+
+  const advanceFeedback = () => {
+    const activeFeedback = feedbackRef.current;
+    const currentSession = sessionRef.current;
+    if (!activeFeedback || !currentSession) return;
+    const next = activeFeedback.serverResult
+      ? applySessionPatch(currentSession, activeFeedback.serverResult.revision, activeFeedback.serverResult.sessionPatch)
+      : activeFeedback.predictedSession;
+    setCurrentSession(next);
+    if (activeFeedback.serverResult) {
+      setConfirmedRevision((value) => Math.max(value, activeFeedback.serverResult!.revision));
+    }
+    setCurrentFeedback(null);
+    setError("");
+    if (!next.active && activeFeedback.serverResult && pendingCount === 0) onChanged();
+    void flushOutbox();
+  };
+
+  const attempt = (
+    word: VocabularyWord,
+    answer: LearningAttemptRequest["answer"],
+    visual: Pick<AttemptFeedback, "actual" | "triggerValue" | "selectedWordId"> = {},
+  ) => {
+    if (!session || feedback || !["pronunciation", "translation", "spelling"].includes(session.stage)) return;
     const skill = session.stage as "pronunciation" | "translation" | "spelling";
-    let answerSaved = false;
-    submittingRef.current = true;
-    setBusy(true); setError("");
-    try {
-      const result = await coursesApi.attempt(session.id, { wordId: word.id, skill: session.stage as "pronunciation" | "translation" | "spelling", answer });
-      answerSaved = true;
-      if (!aliveRef.current) return;
-      setFeedback({ result, skill, wordId: word.id, ...visual });
-      if (result.correct) {
-        await new Promise((resolve) => window.setTimeout(resolve, CORRECT_FEEDBACK_MS));
-        if (!aliveRef.current) return;
-        await refresh();
-        if (aliveRef.current) setFeedback(null);
-      }
-    } catch (caught) {
-      setError(answerSaved
-        ? l("Your answer was saved, but the next question could not be loaded. Try again.", "答案已保存，但下一题加载失败，请重试。")
-        : caught instanceof Error ? caught.message : l("Could not submit the answer.", "答案提交失败"));
-    } finally {
-      submittingRef.current = false;
-      if (aliveRef.current) setBusy(false);
+    const request: LearningAttemptRequest = {
+      attemptId: crypto.randomUUID(),
+      expectedRevision: session.revision,
+      wordId: word.id,
+      skill,
+      answer,
+    };
+    const prediction = predictAttempt(session, request);
+    const nextFeedback: AttemptFeedback = {
+      result: prediction.result,
+      predictedSession: prediction.session,
+      request,
+      skill,
+      wordId: word.id,
+      ...visual,
+    };
+    setError("");
+    setCurrentFeedback(nextFeedback);
+    const entry: PendingLearningAttempt = {
+      attemptId: request.attemptId,
+      userId: userIdRef.current,
+      sessionId: session.id,
+      request,
+      createdAt: Date.now(),
+      retryCount: 0,
+      nextAttemptAt: Date.now(),
+    };
+    void putPendingAttempt(entry).then(async () => {
+      setPendingCount((value) => value + 1);
+      await flushOutbox();
+    });
+    if (prediction.result.correct) {
+      scheduleCorrectAdvance(request.attemptId);
     }
   };
-  const continueAfterFeedback = async () => {
-    if (!feedback || busy || submittingRef.current) return;
-    submittingRef.current = true;
-    setBusy(true); setError("");
-    try {
-      await refresh();
-      if (aliveRef.current) setFeedback(null);
-    } catch {
-      if (aliveRef.current) setError(l("Your answer was saved, but the next question could not be loaded. Try again.", "答案已保存，但下一题加载失败，请重试。"));
-    } finally {
-      submittingRef.current = false;
-      if (aliveRef.current) setBusy(false);
-    }
-  };
+  const continueAfterFeedback = () => { if (!busy) advanceFeedback(); };
 
   const assessBlob = async (blob: Blob) => {
     if (!session || !current) return;
-    setBusy(true); setNotice("");
+    setAssessmentBusy(true); setNotice("");
     try {
       const form = new FormData(); form.append("sessionId", session.id); form.append("wordId", current.id); form.append("audio", blob, "reading.wav");
       const response = await authedFetch("/api/pronunciation/assess", { method: "POST", body: form });
       if (!response.ok) throw new Error(await apiErrorMessage(response));
       const body = await response.json() as PronunciationAssessment;
-      setAssessment(body); await refresh();
+      setAssessment(body);
+      setConfirmedRevision(body.revision);
+      const currentSession = sessionRef.current;
+      if (currentSession) setCurrentSession(applySessionPatch(currentSession, body.revision, body.sessionPatch));
     } catch (caught) { setNotice(l(`${caught instanceof Error ? caught.message : "Pronunciation assessment is temporarily unavailable."} You can continue learning.`, `${caught instanceof Error ? caught.message : "朗读评分暂不可用"}，不影响继续学习`)); }
-    setBusy(false); setRecording(false); stopRef.current = null;
+    setAssessmentBusy(false); setRecording(false); stopRef.current = null;
   };
   const startRecording = async () => {
     try {
-      stopRef.current = await beginWavRecording((blob) => { void assessBlob(blob); });
+      stopRef.current = await beginWavRecording(
+        (blob) => { void assessBlob(blob); },
+        (caught) => {
+          setRecording(false);
+          stopRef.current = null;
+          setNotice(l(`${caught.message} This is not counted as an error.`, `${caught.message}，不计入错误次数`));
+        },
+      );
       setRecording(true);
-      setNotice(l("Recording… Read the word, then stop (8 seconds maximum).", "正在录音，朗读后点击停止（最多 8 秒）"));
+      setNotice(l("Recording… Read the word, then stop (6 seconds maximum).", "正在录音，朗读后点击停止（最多 6 秒）"));
     } catch (caught) { setNotice(l(`${caught instanceof Error ? caught.message : "The microphone is unavailable."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "麦克风不可用"}，不计入错误次数`)); }
   };
   const toggleRecording = async () => {
-    if (recording && stopRef.current) { const blob = await stopRef.current(); if (blob) await assessBlob(blob); return; }
+    if (recording && stopRef.current) {
+      try {
+        const blob = await stopRef.current();
+        if (blob) await assessBlob(blob);
+      } catch (caught) {
+        setRecording(false); stopRef.current = null;
+        setNotice(l(`${caught instanceof Error ? caught.message : "No clear speech was detected."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "没有检测到清晰语音"}，不计入错误次数`));
+      }
+      return;
+    }
     await startRecording();
   };
   const retryAssessment = async () => { setAssessment(null); setNotice(""); await startRecording(); };
@@ -218,11 +545,82 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     }
   };
 
+  const downloadOfflineAudio = async () => {
+    if (!session?.unitId) return;
+    if (offlineAudio.running) {
+      downloadRef.current?.abort();
+      setOfflineAudio((value) => ({ ...value, running: false }));
+      return;
+    }
+    const controller = new AbortController();
+    downloadRef.current = controller;
+    const persistent = await requestPersistentAudioStorage();
+    setOfflineAudio((value) => ({ ...value, running: true, persistent }));
+    try {
+      let next = await coursesApi.prewarmAudio(session.unitId);
+      while (!controller.signal.aborted && aliveRef.current) {
+        setCurrentAudioManifest(next);
+        await prefetchAudioAssets(
+          next.assets.filter((asset) => asset.status === "ready"),
+          next.synthesisVersion,
+          2,
+        );
+        const cached = await cachedAudioCount(next.assets, next.synthesisVersion);
+        setOfflineAudio({
+          running: next.pending > quotaPausedCount(next),
+          cached,
+          total: next.total,
+          pending: next.pending,
+          failed: next.failed,
+          quotaPaused: quotaPausedCount(next),
+          persistent,
+        });
+        if (next.pending === 0 || next.pending === quotaPausedCount(next)) break;
+        await new Promise<void>((resolve) => {
+          const timer = window.setTimeout(resolve, 3_000);
+          controller.signal.addEventListener("abort", () => {
+            window.clearTimeout(timer);
+            resolve();
+          }, { once: true });
+        });
+        if (!controller.signal.aborted) next = await coursesApi.audioManifest(session.unitId);
+      }
+    } catch (caught) {
+      setNotice(caught instanceof Error
+        ? caught.message
+        : l("Offline audio could not be prepared.", "离线音频准备失败"));
+      setOfflineAudio((value) => ({ ...value, running: false }));
+    }
+  };
+
+  const removeOfflineAudio = async () => {
+    if (!audioManifest) return;
+    downloadRef.current?.abort();
+    await removeCachedAudioAssets(audioManifest.assets, audioManifest.synthesisVersion);
+    setOfflineAudio({
+      running: false, cached: 0, total: audioManifest.total,
+      pending: audioManifest.pending, failed: audioManifest.failed,
+      quotaPaused: quotaPausedCount(audioManifest), persistent: false,
+    });
+  };
+
   if (error && !session) return <div className="wrap"><div role="alert" className="card card-pad" style={{ color: "var(--pink)" }}>{error}<div className="mt-12"><button className="btn" onClick={onExit}>{l("Back to courses", "返回课程")}</button></div></div></div>;
   if (!session || !course) return <div className="wrap"><div className="card card-pad muted">{l("Restoring learning progress…", "恢复学习进度中…")}</div></div>;
   if (!session.active && session.stage !== "completed") return <div className="wrap"><div role="status" className="card card-pad">
     <h1 className="page-title">{l("This learning session has ended", "本次学习已结束")}</h1><p className="page-sub">{l("The course content was updated elsewhere. Previous attempts are retained; return to the course to start a new session.", "课程内容已在其它位置更新；旧答题事实仍保留，请返回课程开始新的会话。")}</p>
     <button className="btn btn-primary mt-16" onClick={onExit}>{l("Back to courses", "返回课程")}</button>
+  </div></div>;
+  if (session.stage === "completed" && (
+    pendingCount > 0 || confirmedRevision < session.revision
+  )) return <div className="wrap course-session courses-root"><div className="card course-study-card" role="status">
+    <div className="course-empty-icon">↻</div>
+    <h1 className="page-title">{l("Confirming session completion…", "正在确认会话完成…")}</h1>
+    <p className="page-sub" style={{ textAlign: "center" }}>{l(
+      "Your answers are saved on this device. Points, badges and completion will appear only after the server confirms them.",
+      "答案已保存在本机；积分、徽章和完成状态只会在服务器确认后显示。",
+    )}</p>
+    <div className="faint mt-12">{l(`${pendingCount} answers waiting to sync`, `${pendingCount} 个答案等待同步`)}</div>
+    <button className="btn mt-16" onClick={() => void flushOutbox()}>{l("Retry sync", "重试同步")}</button>
   </div></div>;
   if (session.stage === "completed") {
     const unitId = session.unitId;
@@ -255,7 +653,17 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const assessmentPassed = assessment?.passed ?? Boolean(assessment && assessment.pronunciationScore >= assessmentThreshold);
   return <div className="wrap course-session courses-root">
     <div className="row between wrap-flex" style={{ marginBottom: 14 }}><div><div className="eyebrow">{course.title} · {l(`Round ${q.round}`, `第 ${q.round} 轮`)}</div>
-      <h1 className="page-title">{label(session.stage)}</h1></div><div className="row"><CourseLocaleButton /><button className="btn" onClick={onExit}>{l("Pause and return", "暂停并返回")}</button></div></div>
+      <h1 className="page-title">{label(session.stage)}</h1></div><div className="row wrap-flex"><button className="btn btn-sm" onClick={() => void downloadOfflineAudio()}>
+        {offlineAudio.running ? l("Stop audio download", "停止音频下载") : l("Download unit audio", "下载单元音频")}
+      </button>{offlineAudio.cached > 0 && <button className="btn btn-sm" onClick={() => void removeOfflineAudio()}>{l("Remove offline audio", "删除离线音频")}</button>}<CourseLocaleButton /><button className="btn" onClick={onExit}>{l("Pause and return", "暂停并返回")}</button></div></div>
+    {(offlineAudio.running || offlineAudio.total > 0) && <div className="faint" style={{ marginBottom: 10 }}>{l(
+      `${offlineAudio.cached}/${offlineAudio.total} audio files stored locally · ${offlineAudio.pending} preparing · ${offlineAudio.quotaPaused} quota-paused · ${offlineAudio.failed} failed${offlineAudio.persistent ? " · persistent storage requested" : ""}`,
+      `已在本地保存 ${offlineAudio.cached}/${offlineAudio.total} 个音频 · ${offlineAudio.pending} 个准备中 · ${offlineAudio.quotaPaused} 个因配额暂停 · ${offlineAudio.failed} 个失败${offlineAudio.persistent ? " · 已申请持久存储" : ""}`,
+    )}</div>}
+    {pendingCount > 0 && <div className="course-feedback" role="status">{l(
+      `${pendingCount} answer${pendingCount === 1 ? "" : "s"} waiting for server confirmation.`,
+      `${pendingCount} 个答案等待服务器确认。`,
+    )}</div>}
     <div className="course-stage-track">{STAGES.map((stage) => <div key={stage} className={`course-stage-step ${session.stage === stage ? "active" : ""}`}>{label(stage)}</div>)}</div>
     <div className="row between" style={{ marginBottom: 8 }}><span className="faint">{session.mode === "initial" ? l(`First-learning progress ${initialPercent}%`, `首次学习完成度 ${initialPercent}%`) : l(`${session.selectedSkills.length} review skills`, `复习项目 ${session.selectedSkills.length} 项`)}</span><span className="faint">{l(`Round ${Math.min(q.cursor + 1, q.queue.length)}/${q.queue.length} · Retry pool ${q.nextQueue.length}`, `本轮 ${Math.min(q.cursor + 1, q.queue.length)}/${q.queue.length} · 候补 ${q.nextQueue.length}`)}</span></div>
     <div className="bar" style={{ marginBottom: 16 }}><i style={{ width: `${Math.round(q.cursor / Math.max(1, q.queue.length) * 100)}%` }} /></div>
@@ -264,8 +672,8 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     <div className="card course-study-card">
       {!current ? <div>{l("Syncing the next stage…", "正在同步下一阶段…")}</div> : session.stage === "recognition" ? <>
         <div className="course-term">{current.term}</div><div className="course-ipa">{current.ipa || l("IPA not available", "音标待补充")}</div>
-        <div className="row mt-16"><button className="btn" onClick={() => playWord(current, setNotice, l)}>🔊 {l("US pronunciation", "美式发音")}</button>
-          <button className={`btn ${recording ? "btn-primary" : ""}`} disabled={busy} onClick={() => assessment && !recording ? retryAssessment() : toggleRecording()}>{recording ? l("■ Stop and assess", "■ 停止并评分") : assessment ? l("🎙 Read again", "🎙 重新朗读") : l("🎙 Pronunciation feedback (optional)", "🎙 朗读评分（可选）")}</button></div>
+        <div className="row mt-16"><button className="btn" onClick={() => playWord(current, audioManifest, setNotice, l)}>🔊 {l("US pronunciation", "美式发音")}</button>
+          <button className={`btn ${recording ? "btn-primary" : ""}`} disabled={assessmentBusy} onClick={() => assessment && !recording ? retryAssessment() : toggleRecording()}>{assessmentBusy ? l("Assessing…", "评分中…") : recording ? l("■ Stop and assess", "■ 停止并评分") : assessment ? l("🎙 Read again", "🎙 重新朗读") : l("🎙 Pronunciation feedback (optional)", "🎙 朗读评分（可选）")}</button></div>
         <div style={{ fontSize: 18, marginTop: 24 }}>{current.translations.join(" / ")}</div>
         {assessment && <div role="status" className={`course-feedback ${assessmentPassed ? "is-correct" : "wrong"}`}><b>{l(`Pronunciation ${Math.round(assessment.pronunciationScore)}`, `发音 ${Math.round(assessment.pronunciationScore)} 分`)}</b>
           <div className="muted mt-4">{l(`Pass score: ${assessmentThreshold} or higher.`, `通过分数：${assessmentThreshold} 分及以上。`)}</div>
@@ -275,13 +683,13 @@ export function LearningView({ sessionId, onExit, onChanged }: {
               ? l("Below the pass score. This word was added to the recognition retry pool.", "低于通过分数，本词已加入认单词候补池。")
               : l("Below the pass score. Read again before continuing.", "低于通过分数，请在继续前重新朗读。")}</div>
           <div className="course-phonemes">{assessment.phonemes.map((entry, index) => <span key={`${entry.phoneme}-${index}`} className={`course-phoneme ${entry.needsPractice ? "bad" : ""}`}>{entry.phoneme} {Math.round(entry.accuracyScore)}</span>)}</div>
-          <button className="btn btn-sm mt-12" disabled={busy} onClick={retryAssessment}>🎙 {l("Try pronunciation again", "重新朗读并评分")}</button></div>}
-        <button className="btn btn-primary btn-lg mt-24" disabled={busy} onClick={recognize}>{busy ? l("Saving…", "保存中…") : l("I recognize it — continue", "认识了，继续")}</button>
+          <button className="btn btn-sm mt-12" disabled={assessmentBusy} onClick={retryAssessment}>🎙 {l("Try pronunciation again", "重新朗读并评分")}</button></div>}
+        <button className="btn btn-primary btn-lg mt-24" disabled={busy || assessmentBusy} onClick={recognize}>{busy ? l("Saving…", "保存中…") : l("I recognize it — continue", "认识了，继续")}</button>
       </> : session.stage === "pronunciation" ? <>
         <p className="muted">{l("Play a pronunciation on the left, then choose its word on the right. Each batch contains up to 5 words.", "先点击左侧任一发音，再从右侧选择对应单词。每批最多 5 个。")}</p>
         <div className="course-match"><div>{audioBatch.map((word, index) => <button key={word.id} aria-label={l(`Play ${word.term}`, `播放 ${word.term}`)} disabled={busy || Boolean(feedback)}
           className={`btn ${activeAudioId === word.id ? "active" : ""} ${feedback?.skill === "pronunciation" && feedback.wordId === word.id ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`}
-          onClick={() => { setActiveAudioId(word.id); setSelectedMatchId(""); void playWord(word, setNotice, l); }}>🔊 {l(`Audio ${index + 1}`, `发音 ${index + 1}`)}</button>)}</div>
+          onClick={() => { setActiveAudioId(word.id); setSelectedMatchId(""); void playWord(word, audioManifest, setNotice, l); }}>🔊 {l(`Audio ${index + 1}`, `发音 ${index + 1}`)}</button>)}</div>
           <div>{wordBatch.map((word) => <button key={word.id} className={`btn ${selectedMatchId === word.id ? "selected" : ""} ${feedback?.skill === "pronunciation" && feedback.selectedWordId === word.id ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} disabled={busy || Boolean(feedback) || !activeAudioId}
             onClick={() => { const target = session.items.find((item) => item.word.id === activeAudioId)?.word; if (target) { setSelectedMatchId(word.id); void attempt(target, { wordId: word.id }, { selectedWordId: word.id }); } }}>{word.term}</button>)}</div></div>
       </> : session.stage === "translation" ? <>
@@ -296,7 +704,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
         })}</div>
         {current.translations.length > 1 && <div className="faint mt-12">{l("Choose every correct translation. A wrong choice is recorded immediately.", "依次选择全部正确翻译；选错会立即记录。")}</div>}
       </> : <>
-        <button className="btn" disabled={busy || Boolean(feedback)} onClick={() => playWord(current, setNotice, l)}>🔊 {l("Play pronunciation", "播放发音")}</button>
+        <button className="btn" disabled={busy || Boolean(feedback)} onClick={() => playWord(current, audioManifest, setNotice, l)}>🔊 {l("Play pronunciation", "播放发音")}</button>
         <input className={`course-form-field course-spelling-answer mt-24 ${feedback?.skill === "spelling" ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} style={{ maxWidth: 420, textAlign: "center", fontSize: 20 }} autoFocus
           aria-label={l("Spelling answer", "拼写答案")} value={spelling} onChange={(event) => setSpelling(event.target.value)}
           disabled={busy || Boolean(feedback)} onKeyDown={(event) => { if (event.key === "Enter" && spelling.trim()) void attempt(current, { text: spelling }, { actual: spelling }); }} />

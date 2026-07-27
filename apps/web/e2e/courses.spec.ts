@@ -99,6 +99,14 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
 
   await page.getByRole("article").getByRole("button", { name: "开始学习" }).click();
   await page.locator(".modal select").selectOption({ index: 0 });
+  await page.locator(".modal").getByRole("button", { name: "下载本单元音频" }).click();
+  await expect(page.locator(".modal").getByText(/本地已保存 2\/2 个/)).toBeVisible({ timeout: 20_000 });
+  const cachedAudio = await page.evaluate(async () => {
+    const names = (await caches.keys()).filter((name) => name.startsWith("nalanda-vocabulary-audio-"));
+    const counts = await Promise.all(names.map(async (name) => (await (await caches.open(name)).keys()).length));
+    return counts.reduce((sum, count) => sum + count, 0);
+  });
+  expect(cachedAudio).toBeGreaterThanOrEqual(2);
   await page.locator(".modal").getByRole("button", { name: "开始学习" }).click();
   await expect(page.locator(".course-term")).toHaveText("apple");
   await assessWithFixedWav(page, courseTitle);
@@ -121,6 +129,11 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
     await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   }
   await expect(page.locator(".course-term")).toHaveText("apple");
+  let offlineAttemptCount = 0;
+  await page.route("**/api/learning-sessions/*/attempts", async (route) => {
+    offlineAttemptCount += 1;
+    await route.abort("internetdisconnected");
+  });
   await page.getByRole("button", { name: "香蕉", exact: true }).click();
   await expect(page.locator(".course-option.is-wrong")).toHaveText("香蕉");
   await expect(page.getByText("回答错误，已加入下一轮候补池")).toBeVisible();
@@ -129,13 +142,22 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByText("回答错误，已加入下一轮候补池")).toBeVisible();
   await page.getByRole("button", { name: "下一题", exact: true }).click();
 
-  for (const [term, translation] of [["banana", "香蕉"], ["apple", "苹果"]] as const) {
-    await expect(page.locator(".course-term")).toHaveText(term);
-    await page.getByRole("button", { name: translation, exact: true }).click();
-    await expect(page.locator(".course-option.is-correct")).toHaveText(translation);
-    await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
-    await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
-  }
+  await expect(page.locator(".course-term")).toHaveText("banana");
+  await page.getByRole("button", { name: "香蕉", exact: true }).click();
+  await expect(page.locator(".course-option.is-correct")).toHaveText("香蕉");
+  await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
+  await expect(page.getByText("2 个答案等待服务器确认。")).toBeVisible();
+  expect(offlineAttemptCount).toBeGreaterThan(0);
+
+  await page.unroute("**/api/learning-sessions/*/attempts");
+  await page.evaluate(() => window.dispatchEvent(new Event("online")));
+  await expect(page.getByText("2 个答案等待服务器确认。")).toBeHidden({ timeout: 15_000 });
+
+  await expect(page.locator(".course-term")).toHaveText("apple");
+  await page.getByRole("button", { name: "苹果", exact: true }).click();
+  await expect(page.locator(".course-option.is-correct")).toHaveText("苹果");
+  await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
+  await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   for (const term of ["apple", "banana"]) {
     await page.getByLabel("拼写答案").fill(term);
     await page.getByLabel("拼写答案").press("Enter");

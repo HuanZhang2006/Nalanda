@@ -44,6 +44,12 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   SPEECH_PROVIDER_TIMEOUT: ["The speech service timed out. Please try again.", "发音服务连接超时，请重试"],
   SPEECH_PROVIDER_ERROR: ["The speech service is temporarily unavailable.", "发音服务暂不可用"],
   SPEECH_PROVIDER_INVALID: ["The pronunciation result was invalid. Please try again.", "朗读评分结果无效，请重试"],
+  AUDIO_PENDING: ["Audio is being prepared. Browser speech is available now.", "音频正在准备中，当前可使用浏览器朗读"],
+  AUDIO_PREWARM_DISABLED: ["Offline audio preparation is not available yet.", "离线音频准备暂未开放"],
+  AUDIO_ASSET_MISSING: ["The audio task could not be found.", "音频任务不存在"],
+  SESSION_REVISION_CONFLICT: ["Progress changed on another device. Restoring the latest version.", "学习进度已在其它设备更新，正在恢复最新版本"],
+  INVALID_REVISION: ["The learning-session version is invalid.", "学习会话版本无效"],
+  RECORDING_TOO_QUIET: ["No clear speech was detected. Please record again.", "没有检测到清晰语音，请重新录制"],
 };
 
 function localizedApiError(code: string, source?: unknown) {
@@ -84,6 +90,7 @@ export class ApiClientError extends Error {
     readonly code: string,
     message: string,
     readonly fieldErrors?: Record<string, string>,
+    readonly currentRevision?: number,
   ) { super(message); }
 }
 
@@ -94,7 +101,8 @@ export async function apiJson<T>(path: string, init: RequestInit = {}, authentic
     const code = String(body?.code || "REQUEST_FAILED");
     throw new ApiClientError(response.status, code,
       localizeErrors ? localizedApiError(code, body?.message) : String(body?.message || localize("Request failed. Please try again.", "请求失败，请重试", getLocale())),
-      body?.fieldErrors as Record<string, string> | undefined);
+      body?.fieldErrors as Record<string, string> | undefined,
+      typeof body?.currentRevision === "number" ? body.currentRevision : undefined);
   }
   return body as T;
 }

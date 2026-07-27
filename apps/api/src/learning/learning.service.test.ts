@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { BadRequestException, ConflictException, HttpException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ForbiddenException, HttpException, NotFoundException, ServiceUnavailableException } from "@nestjs/common";
 import { LearningService } from "./learning.service";
 import { SupabaseRequestError } from "./supabase-admin.service";
 
 const courseId = "11111111-1111-4111-8111-111111111111";
 const publicationId = "22222222-2222-4222-8222-222222222222";
+const attemptId = "33333333-3333-4333-8333-333333333333";
 const token = "abcdefghijklmnopqrstuvwxyzABCDE_0123456789-xy";
 
 function service() {
@@ -129,15 +130,16 @@ describe("LearningService ownership and public boundaries", () => {
     expect(db.rpc).not.toHaveBeenCalled();
   });
 
-  it("rejects pronunciation assessment lookup for an inactive session before provider work", async () => {
-    const { value } = service();
-    vi.spyOn(value, "getSession").mockResolvedValue({
-      id: publicationId, courseId, unitId: publicationId, mode: "initial", scope: "all",
-      selectedSkills: ["pronunciation", "translation", "spelling"], stage: "completed",
-      active: false, state: {}, items: [],
-    });
+  it("rejects pronunciation assessment lookup outside an active owned session before provider work", async () => {
+    const { value, db } = service();
+    db.rpc.mockRejectedValue(new SupabaseRequestError(
+      "active assessment target not found", 403, { code: "42501" },
+    ));
     await expect(value.ownedWordInSession("user-a", publicationId, courseId))
-      .rejects.toBeInstanceOf(ConflictException);
+      .rejects.toBeInstanceOf(ForbiddenException);
+    expect(db.rpc).toHaveBeenCalledWith("learning_get_assessment_target", {
+      p_user_id: "user-a", p_session_id: publicationId, p_word_id: courseId,
+    });
   });
 
   it("fails closed when a persistent quota environment value is invalid", async () => {
@@ -146,5 +148,126 @@ describe("LearningService ownership and public boundaries", () => {
     await expect(value.reserveSpeechQuota("user-a", "assessment", 1))
       .rejects.toBeInstanceOf(ServiceUnavailableException);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("loads a complete learning session through one snapshot RPC", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue({
+      id: publicationId,
+      course_id: courseId,
+      unit_id: publicationId,
+      mode: "initial",
+      scope: "all",
+      selected_skills: ["pronunciation", "translation", "spelling"],
+      stage: "translation",
+      active: true,
+      revision: 7,
+      state: { queue: [attemptId], cursor: 0, nextQueue: [], round: 1 },
+      items: [{
+        position: 0,
+        recognition_seen: true,
+        pronunciation_passed: true,
+        translation_passed: false,
+        spelling_passed: false,
+        wrong_count: 1,
+        word: {
+          id: attemptId, term: "apple", normalized_term: "apple",
+          translations: ["苹果"], ipa: "ˈæpəl", position: 0,
+          progress: {
+            initial_recognition_seen: true,
+            initial_pronunciation_passed: true,
+            initial_translation_passed: false,
+            initial_spelling_passed: false,
+            pronunciation_review_dates: [],
+            translation_review_dates: [],
+            spelling_review_dates: [],
+            wrong_count: 1,
+            review_count: 0,
+            learned_at: null,
+          },
+        },
+      }],
+    });
+    await expect(value.getSession("user-a", publicationId)).resolves.toMatchObject({
+      id: publicationId,
+      revision: 7,
+      items: [{
+        word: {
+          term: "apple",
+          progress: {
+            recognitionSeen: true,
+            initialPronunciationPassed: true,
+            wrongCount: 1,
+          },
+        },
+        wrongCount: 1,
+      }],
+    });
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+    expect(db.select).not.toHaveBeenCalled();
+  });
+
+  it("maps an idempotent attempt patch and surfaces revision conflicts as 409", async () => {
+    const { value, db } = service();
+    const request = {
+      attemptId,
+      expectedRevision: 4,
+      wordId: publicationId,
+      skill: "spelling" as const,
+      answer: { text: "apple" },
+    };
+    db.rpc.mockResolvedValueOnce({
+      attempt_id: attemptId,
+      correct: true,
+      expected: "apple",
+      revision: 5,
+      replayed: false,
+      session_patch: {
+        stage: "completed", active: false, state: {},
+        changed_item: {
+          word_id: publicationId, recognition_seen: true,
+          pronunciation_passed: true, translation_passed: true,
+          spelling_passed: true, wrong_count: 0,
+        },
+        next_word_id: null,
+      },
+    });
+    await expect(value.recordAttempt("user-a", courseId, request)).resolves.toMatchObject({
+      attemptId,
+      revision: 5,
+      sessionPatch: { stage: "completed", active: false },
+    });
+    expect(db.rpc).toHaveBeenCalledWith("learning_record_attempt", expect.objectContaining({
+      p_attempt_id: attemptId,
+      p_expected_revision: 4,
+    }));
+
+    db.rpc.mockResolvedValueOnce({ conflict: true, current_revision: 8 });
+    await expect(value.recordAttempt("user-a", courseId, request)).rejects.toMatchObject({
+      status: 409,
+      response: { code: "SESSION_REVISION_CONFLICT", currentRevision: 8 },
+    });
+  });
+
+  it("keeps complete legacy attempts working during the immutable Web/API switchover", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue({
+      correct: true,
+      expected: ["苹果"],
+      stage: "translation",
+      completed: false,
+    });
+    await expect(value.recordAttempt("user-a", courseId, {
+      wordId: publicationId,
+      skill: "translation",
+      answer: { translations: ["苹果"] },
+    })).resolves.toMatchObject({ correct: true, stage: "translation" });
+    expect(db.rpc).toHaveBeenCalledWith("learning_record_attempt", {
+      p_user_id: "user-a",
+      p_session_id: courseId,
+      p_word_id: publicationId,
+      p_skill: "translation",
+      p_answer: { translations: ["苹果"] },
+    });
   });
 });
