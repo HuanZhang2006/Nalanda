@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-07-27
+
 ### Added
 
 - 新增 0017–0018：学习会话以受保护 `resume_key` 按请求意图恢复，并验证新索引与 service-role-only `learning_start_session` 权限。首次学习、临时复习和日程复习可分别保留进度，相同意图的并发开始仍只创建一个 active session。
@@ -21,6 +23,12 @@
 ### Testing
 
 - 增加八词历史冷单元 pending→ready→Cache Storage jsdom、五词双并发上限、跨单元学习/复习意图 RLS，以及无预下载复习、缓存替换与原学习 cursor 恢复的 Playwright 回归覆盖。
+
+### Release
+
+- PR #24 run `30263277807` 与 main run `30263794368` 通过 docs/lint/typecheck、Web/API tests、build、0007→0018、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright；Playwright 使用 Azure fake，只证明浏览器/API/一次性数据库协作。
+- main SHA `99313bd3763ce5bf1f7ffb252f821f7b21a67eec` 的只读 plan run `30264327821` 只列 0017–0018；apply/deploy run `30264979509` 保留加密恢复点 artifact `8652623403`、同步远端到 0018，并激活 release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1`。
+- 切流前 Japan East 真实基础 smoke 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；队列/Storage/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`。独立公网与服务器复核确认 Web 200、`deps.supabase=ok`、匿名 `/api/me` 401、Web symlink 和 API image 均指向同一 release SHA。
 
 ## [0.7.0] - 2026-07-27
 

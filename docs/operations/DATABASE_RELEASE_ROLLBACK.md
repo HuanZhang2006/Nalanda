@@ -217,6 +217,15 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - 不可变 release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` 健康激活。独立公网复核确认 Web `200`、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`，匿名 `/api/me` 为 `401 UNAUTHENTICATED`。
 - `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` 与默认 20 次/分钟、500,000 字符/月、3.1 秒间隔、synthesis version 1 已在 mode-600 生产 `.env` 启用。若后续队列或供应商异常，先关闭最窄 flag/熔断语音或恢复上一不可变应用 release；0015–0016 schema 不逆向。
 
+### 8.5 2026-07-27 Courses 0017–0018 发布记录
+
+- 发布提交：`99313bd3763ce5bf1f7ffb252f821f7b21a67eec`；PR #24 run `30263277807` 与 main run `30263794368` 通过 quality、0007→0018、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 和 Chromium Playwright。浏览器回归验证历史八词冷单元、前五词 pending 提权/ready 缓存替换，以及暂停首次学习与其他单元复习不会互相劫持；Azure 为 fake。
+- [只读 plan run `30264327821`](https://github.com/1590703336/Nalanda/actions/runs/30264327821) 显示远端 0001–0016 与本地一致，dry-run 只列 `20260727000017_learning_session_intent_resume.sql` 和 `20260727000018_verify_learning_audio_review_fix.sql`；恢复、apply 与 deploy 步骤全部跳过。
+- [受保护 apply/deploy run `30264979509`](https://github.com/1590703336/Nalanda/actions/runs/30264979509) 在 apply 前创建并保留加密恢复点 `db-recovery-99313bd3763ce5bf1f7ffb252f821f7b21a67eec`，artifact `8652623403`，digest `sha256:22861e8f8ccba2d87fc673f468c75677d6df3a0e9d424111c66dc67d009d5ac3`。
+- apply 后 local/remote history 均到 0018，远端 dry-run 为空、database lint 无 error，`learning_start_session` 的客户端执行权和新意图唯一索引断言通过。数据库仍只做 forward-fix；0017 与旧应用兼容，不以 down migration 回退。
+- 切流前基础真实 Azure gate 在 `japaneast`/`en-US-JennyNeural` 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实队列/Storage/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。
+- 不可变 release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` 健康激活。独立公网与服务器复核确认 Web `200`、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 `401`，Web symlink 与 API image 都指向同一 release SHA。
+
 ## 9. 失败处置
 
 ### 9.1 本地重建、lint 或 RLS E2E 失败
