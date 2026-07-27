@@ -30,8 +30,26 @@ export class FeatureFlagsService {
 
   pronunciation() {
     this.courses();
+    if (process.env.NODE_ENV === "production" && process.env.AZURE_SPEECH_FAKE === "true") {
+      throw new ServiceUnavailableException({
+        code: "PRONUNCIATION_UNAVAILABLE",
+        message: "生产环境禁止使用模拟发音供应商",
+      });
+    }
     if (!enabled("FEATURE_PRONUNCIATION_ENABLED", false) || process.env.AZURE_SPEECH_CIRCUIT_OPEN === "true") {
       throw new ServiceUnavailableException({ code: "PRONUNCIATION_UNAVAILABLE", message: "发音服务暂不可用" });
     }
+  }
+
+  audioPrewarm() {
+    this.pronunciation();
+    if (!enabled("FEATURE_LEARNING_AUDIO_PREWARM_ENABLED")) {
+      throw new ServiceUnavailableException({ code: "AUDIO_PREWARM_DISABLED", message: "离线音频准备暂未开放" });
+    }
+  }
+
+  audioPrewarmEnabled() {
+    try { this.audioPrewarm(); return true; }
+    catch { return false; }
   }
 }

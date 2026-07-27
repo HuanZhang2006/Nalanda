@@ -33,6 +33,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
   let bId = "";
   let aName = "";
   const storagePaths: string[] = [];
+  const audioCacheKeys: string[] = [];
 
   beforeAll(async () => {
     if (!url || !anonKey || !serviceRoleKey || !confirmedProjectRef) {
@@ -74,6 +75,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     if (admin && storagePaths.length) {
       const removed = await admin.storage.from("materials").remove(storagePaths);
       if (removed.error) cleanupErrors.push(`Storage cleanup: ${removed.error.message}`);
+    }
+    if (admin && audioCacheKeys.length) {
+      const removed = await admin.from("learning_audio_assets").delete().in("cache_key", audioCacheKeys);
+      if (removed.error) cleanupErrors.push(`Audio queue cleanup: ${removed.error.message}`);
     }
     // 删除 auth 用户会通过外键级联删除本套件产生的业务表数据。
     if (admin && aId) {
@@ -616,8 +621,41 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.from("learning_word_progress").update({ learned_at: new Date().toISOString() }).eq("user_id", aId)).error).not.toBeNull();
     expect((await a.from("user_badge_awards").insert({ user_id: aId, badge_code: "vocab_words_gold" })).error).not.toBeNull();
     expect((await a.from("learning_speech_usage").select("id").limit(1)).error).not.toBeNull();
+    expect((await a.from("learning_audio_assets").select("cache_key").limit(1)).error).not.toBeNull();
     expect((await a.rpc("learning_upsert_course", { p_user_id: aId, p_payload: payload })).error).not.toBeNull();
     expect((await a.rpc("learning_record_attempt", { p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id, p_skill: "spelling", p_answer: { text: terms[0].term } })).error).not.toBeNull();
+    expect((await a.rpc("learning_record_attempt", {
+      p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
+      p_skill: "spelling", p_answer: { text: terms[0].term },
+      p_attempt_id: randomUUID(), p_expected_revision: 0,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_get_session_snapshot", {
+      p_user_id: aId, p_session_id: randomUUID(),
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_prepare_unit_audio", {
+      p_user_id: aId, p_unit_id: unitId, p_locale: "en-US",
+      p_voice: "en-US-JennyNeural",
+      p_output_format: "audio-24khz-48kbitrate-mono-mp3",
+      p_synthesis_version: "1", p_priority: 50,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_prepare_word_audio", {
+      p_user_id: aId, p_word_id: terms[0].id, p_locale: "en-US",
+      p_voice: "en-US-JennyNeural",
+      p_output_format: "audio-24khz-48kbitrate-mono-mp3",
+      p_synthesis_version: "1", p_priority: 100,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_claim_audio_asset", {
+      p_lease_token: randomUUID(), p_lease_seconds: 60,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_finish_audio_asset", {
+      p_lease_token: randomUUID(), p_cache_key: "a".repeat(64),
+      p_success: false, p_error_code: "forged", p_error_message: "forged",
+      p_retry_after_seconds: 60,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_reserve_tts_quota", {
+      p_character_count: 1, p_cost_microusd: 1, p_minute_limit: 20,
+      p_month_character_limit: 500_000, p_month_budget_microusd: 5_000_000,
+    })).error).not.toBeNull();
     expect((await a.rpc("learning_record_speech_assessment", { p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
       p_assessment: { accuracyScore: 100, pronunciationScore: 100, passThreshold: 70 } })).error).not.toBeNull();
     expect((await a.rpc("learning_profile_summary", { p_user_id: aId })).error).not.toBeNull();
@@ -638,6 +676,136 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(concurrentStarts[0].data).toBe(concurrentStarts[1].data);
     expect((await admin.from("learning_sessions").delete().eq("id", concurrentStarts[0].data)).error).toBeNull();
 
+    // The retained v1 signature remains usable by an immutable application
+    // rollback and still advances the shared revision clock.
+    const rollbackSession = await startReview(courseId, unitId, ["spelling"]);
+    await answer(rollbackSession, terms[0], "spelling");
+    expect((await admin.from("learning_sessions").select("revision")
+      .eq("id", rollbackSession).single()).data).toEqual({ revision: 1 });
+    expect((await admin.from("learning_sessions").delete().eq("id", rollbackSession)).error).toBeNull();
+
+    // The v2 attempt path is idempotent even when the same request races on
+    // two API instances. A stale revision returns a conflict payload without
+    // adding another attempt or error.
+    const idempotentSession = await startReview(courseId, unitId, ["spelling"]);
+    const idempotentSnapshot = await rpc<any>("learning_get_session_snapshot", {
+      p_user_id: aId, p_session_id: idempotentSession,
+    });
+    expect(idempotentSnapshot).toMatchObject({
+      id: idempotentSession, revision: 0, stage: "spelling",
+    });
+    expect(idempotentSnapshot.items).toHaveLength(20);
+    const clientAttemptId = randomUUID();
+    const idempotentArgs = {
+      p_user_id: aId,
+      p_session_id: idempotentSession,
+      p_word_id: terms[0].id,
+      p_skill: "spelling",
+      p_answer: { text: "wrong" },
+      p_attempt_id: clientAttemptId,
+      p_expected_revision: 0,
+    };
+    const duplicateResults = await Promise.all([
+      admin.rpc("learning_record_attempt", idempotentArgs),
+      admin.rpc("learning_record_attempt", idempotentArgs),
+    ]);
+    expect(duplicateResults.map((result) => result.error)).toEqual([null, null]);
+    expect(duplicateResults.map((result) => result.data.correct)).toEqual([false, false]);
+    expect(duplicateResults.map((result) => result.data.replayed).sort()).toEqual([false, true]);
+    expect((await admin.from("learning_attempts").select("id").eq("attempt_id", clientAttemptId)).data).toHaveLength(1);
+    expect((await admin.from("learning_session_items").select("wrong_count")
+      .eq("session_id", idempotentSession).eq("word_id", terms[0].id).single()).data)
+      .toEqual({ wrong_count: 1 });
+    expect((await admin.from("learning_sessions").select("revision")
+      .eq("id", idempotentSession).single()).data).toEqual({ revision: 1 });
+    const conflict = await rpc<any>("learning_record_attempt", {
+      ...idempotentArgs,
+      p_attempt_id: randomUUID(),
+      p_word_id: terms[1].id,
+    });
+    expect(conflict).toEqual({ conflict: true, current_revision: 1 });
+    expect((await admin.from("learning_attempts").select("id")
+      .eq("session_id", idempotentSession)).data).toHaveLength(1);
+    expect((await admin.from("learning_sessions").delete().eq("id", idempotentSession)).error).toBeNull();
+
+    const preparedAudio = await rpc<any>("learning_prepare_unit_audio", {
+      p_user_id: aId,
+      p_unit_id: unitId,
+      p_locale: "en-US",
+      p_voice: "en-US-JennyNeural",
+      p_output_format: "audio-24khz-48kbitrate-mono-mp3",
+      p_synthesis_version: "1",
+      p_priority: 50,
+    });
+    expect(preparedAudio).toMatchObject({ unit_id: unitId, total: 20, ready: 0, pending: 20, failed: 0 });
+    audioCacheKeys.push(...preparedAudio.assets.map((asset: any) => asset.cache_key));
+    expect(new Set(audioCacheKeys).size).toBe(20);
+    expect((await admin.rpc("learning_prepare_unit_audio", {
+      p_user_id: bId, p_unit_id: unitId, p_locale: "en-US",
+      p_voice: "en-US-JennyNeural",
+      p_output_format: "audio-24khz-48kbitrate-mono-mp3",
+      p_synthesis_version: "1", p_priority: 50,
+    })).error).not.toBeNull();
+
+    const audioCloneId = randomUUID();
+    const audioCloneUnitId = randomUUID();
+    const audioClonePayload = {
+      ...payload,
+      id: audioCloneId,
+      title: "Cross-user audio cache clone",
+      units: [{
+        ...payload.units[0],
+        id: audioCloneUnitId,
+        words: terms.map((word) => ({ ...word, id: randomUUID() })),
+      }],
+    };
+    expect(await rpc<string>("learning_upsert_course", {
+      p_user_id: bId, p_payload: audioClonePayload,
+    })).toBe(audioCloneId);
+    const preparedCloneAudio = await rpc<any>("learning_prepare_unit_audio", {
+      p_user_id: bId,
+      p_unit_id: audioCloneUnitId,
+      p_locale: "en-US",
+      p_voice: "en-US-JennyNeural",
+      p_output_format: "audio-24khz-48kbitrate-mono-mp3",
+      p_synthesis_version: "1",
+      p_priority: 50,
+    });
+    expect(preparedCloneAudio.assets.map((asset: any) => asset.cache_key))
+      .toEqual(preparedAudio.assets.map((asset: any) => asset.cache_key));
+    expect((await admin.from("learning_audio_assets").select("cache_key")).data)
+      .toHaveLength(20);
+
+    const leases = [randomUUID(), randomUUID()];
+    const claims = await Promise.all(leases.map((lease) => admin.rpc(
+      "learning_claim_audio_asset",
+      {
+        p_lease_token: lease,
+        p_lease_seconds: 60,
+        p_min_interval_milliseconds: 3100,
+      },
+    )));
+    expect(claims.map((result) => result.error)).toEqual([null, null]);
+    const claimedIndex = claims.findIndex((result) => result.data);
+    expect(claimedIndex).toBeGreaterThanOrEqual(0);
+    expect(claims.filter((result) => result.data)).toHaveLength(1);
+    const claimed = claims[claimedIndex].data;
+    await rpc("learning_finish_audio_asset", {
+      p_lease_token: leases[claimedIndex],
+      p_cache_key: claimed.cache_key,
+      p_success: false,
+      p_error_code: "SPEECH_TTS_RATE_LIMIT",
+      p_error_message: "quota pause",
+      p_retry_after_seconds: 60,
+    });
+    expect((await admin.from("learning_audio_assets")
+      .select("status,attempt_count,last_error_code")
+      .eq("cache_key", claimed.cache_key).single()).data).toEqual({
+      status: "pending",
+      attempt_count: 0,
+      last_error_code: "SPEECH_TTS_RATE_LIMIT",
+    });
+
     // Optional speech scoring uses the visible overall PronScore threshold.
     // A low score is persisted in recognition's retry pool, a successful
     // reread removes it, and the pool must be consumed before stage advance.
@@ -649,10 +817,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_user_id: aId, p_session_id: recognitionSession, p_word_id: terms[0].id,
       p_assessment: { accuracyScore: pronunciationScore, pronunciationScore, passThreshold: 70, phonemes: [] },
     });
-    expect(await assess(69)).toMatchObject({ correct: false, retryQueued: true, passThreshold: 70 });
+    expect(await assess(69)).toMatchObject({ correct: false, retry_queued: true, pass_threshold: 70, revision: 1 });
     expect((await admin.from("learning_sessions").select("state").eq("id", recognitionSession).single()).data!.state)
       .toMatchObject({ nextQueue: [terms[0].id] });
-    expect(await assess(70)).toMatchObject({ correct: true, retryQueued: false, passThreshold: 70 });
+    expect(await assess(70)).toMatchObject({ correct: true, retry_queued: false, pass_threshold: 70, revision: 2 });
     expect((await admin.from("learning_sessions").select("state").eq("id", recognitionSession).single()).data!.state)
       .toMatchObject({ nextQueue: [] });
     await assess(40);

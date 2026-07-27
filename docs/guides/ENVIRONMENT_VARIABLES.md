@@ -49,6 +49,7 @@
 | `FEATURE_COURSE_SHARING_ENABLED` | flag；production 默认 false | 公开配置 | 公开分享创建/读取/克隆；关闭伪装 404。 |
 | `FEATURE_COURSE_MARKET_ENABLED` | flag；production 默认 false | 公开配置 | Course Market、发布、克隆、举报/审核；关闭伪装 404。 |
 | `FEATURE_PRONUNCIATION_ENABLED` | flag；任何环境默认 false | 公开配置 | Azure TTS/评分入口；只有显式 true 才可调用。 |
+| `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` | flag；production 默认 false | 公开配置 | 持久音频队列、manifest、未来五词预取与整单元离线音频；依赖 Courses/Pronunciation 同时开启。 |
 | `AZURE_SPEECH_CIRCUIT_OPEN` | 可选，默认 false | 受限配置 | 紧急熔断；true 时语音统一 503，不影响文本学习。 |
 | `AZURE_SPEECH_KEY` | 语音启用时必需 | **最高机密** | Azure Speech subscription key，只在 API 容器。 |
 | `AZURE_SPEECH_REGION` | 语音启用时必需 | 受限配置 | Azure region，同时组成 TTS/STT endpoint。 |
@@ -58,15 +59,19 @@
 | `AZURE_SPEECH_ASSESSMENTS_PER_MINUTE` | 可选，30 | 公开配置 | 单用户评分每分钟持久限额。 |
 | `AZURE_SPEECH_ASSESSMENTS_PER_DAY` | 可选，300 | 公开配置 | 按用户 IANA 时区本地日期的每日评分限额。 |
 | `AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD` | 可选，5,000,000 | 受限配置 | 所有 API 实例共享的月度估算预算，单位 micro-USD。 |
+| `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE` | 可选，20 | 受限配置 | 全局 TTS 生成 reservation 每分钟上限；数据库在所有 API 副本间共享。 |
+| `AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT` | 可选，500,000 | 受限配置 | 全局 TTS 每月字符 reservation 上限；跨用户复用缓存不重复计字符。 |
 | `AZURE_SPEECH_TTS_MICRO_USD_PER_1000_CHARS` | 可选，16,000 | 受限配置 | TTS 每千字符估算成本，用于预算预留，不是账单事实。 |
 | `AZURE_SPEECH_ASSESSMENT_MICRO_USD` | 可选，2,500 | 受限配置 | 每次评分估算成本。 |
-| `AZURE_SPEECH_FAKE` | **仅测试**，默认 false | 测试配置 | 生成固定 WAV/评分；任何共享、staging 供应商 smoke 或生产必须未设置/false。 |
+| `LEARNING_AUDIO_PREWARM_INTERVAL_MS` | 可选，3,100 | 受限配置 | worker 启动两次 Azure TTS 的最小间隔；实现拒绝小于 3,100 ms，默认配合全局单租约。 |
+| `LEARNING_AUDIO_SYNTHESIS_VERSION` | 可选，`1` | 受限配置 | 进入全局 SHA-256 缓存键；更换 voice/SSML/后处理语义时递增以安全重建，不原地覆盖旧键。 |
+| `AZURE_SPEECH_FAKE` | **仅测试**，默认 false | 测试配置 | 生成固定 WAV/评分；任何共享、staging 供应商 smoke 或生产必须未设置/false，API 在 `NODE_ENV=production` 时显式拒绝 true。 |
 | `COURSE_MARKET_DAILY_PUBLISH_LIMIT` | 可选，5 | 公开配置 | 每用户本地日期上架次数限制。 |
 | `COURSE_REPORT_DAILY_LIMIT` | 可选，20 | 公开配置 | 每用户本地日期举报次数限制。 |
 | `COURSE_REPORT_ALERT_THRESHOLD` | 可选，3 | 受限配置 | 同一目标 open 举报达到该值写结构化告警；不会自动下架。 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | 逗号分隔的 Supabase user UUID；授权隐藏/恢复/撤回市场版本，应纳入审批与轮换。 |
 
-所有 `*_LIMIT`、`*_BUDGET*` 与 `*_COST*` 必须是有限正数，其中次数和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
+所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*` 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
 
 ## 4. FastAPI AI 运行时变量
 
@@ -114,7 +119,7 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | `DB_BACKUP_ENCRYPTION_KEY` | 有新迁移时必需 | **最高机密** | 加密 14 天保留的 release recovery artifact；副本须离线保存。 |
 | `PUBLIC_ORIGIN` | workflow 非秘密 env | 公开配置 | 公网 smoke 的规范 origin；API 分享 URL 仍从服务器 `.env` 读取，二者必须一致。 |
 
-服务器 `/opt/nalanda/.env` 至少需要 Supabase 两项才能支持注册；启用 Courses 还必须写总/子 flags 和 `PUBLIC_ORIGIN`，启用语音再写 Azure key/region/配额。`SUPABASE_JWT_SECRET` 仅作旧 HS256 回退。CI**不会**创建、下载或更新这个文件；它只上传无密钥 smoke 脚本，并在生产主机内用该 `.env` 和新 API image 执行真实 Azure gate。API image Git SHA 位于非秘密 `.deploy.env` 并由 CI 原子更新。
+服务器 `/opt/nalanda/.env` 至少需要 Supabase 两项才能支持注册；启用 Courses 还必须写总/子 flags 和 `PUBLIC_ORIGIN`，启用语音/离线音频再写 Azure key/region、预热 flag、TTS 配额、间隔和 synthesis version。`SUPABASE_JWT_SECRET` 仅作旧 HS256 回退。CI**不会**创建、下载或更新这个文件；它只上传无密钥 smoke 脚本，并在生产主机内用该 `.env` 和新 API image 执行真实 Azure 基础 gate 及队列/Storage/重复词/评分 gate。API image Git SHA 位于非秘密 `.deploy.env` 并由 CI 原子更新。
 
 ## 7. Supabase RLS E2E 变量
 
@@ -130,7 +135,7 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 
 完整运行与清理流程见 [测试指南](./TESTING.md)。确认 ref 只防手滑，不授权在生产运行。
 
-Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECRET`、两项 `VITE_SUPABASE_*`，显式打开四个 Courses flags，并设置 `AZURE_SPEECH_FAKE=true` 与本地 `PUBLIC_ORIGIN`。这些都是一次性 job 环境，不能复制成生产供应商验证配置。
+Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECRET`、两项 `VITE_SUPABASE_*`，显式打开 Courses/分享/市场/发音/音频预热五个 flags，并设置 `AZURE_SPEECH_FAKE=true` 与本地 `PUBLIC_ORIGIN`。这些都是一次性 job 环境，不能复制成生产供应商验证配置。
 
 ## 8. `infra/hybrid-2g` 目标部署变量
 

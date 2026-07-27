@@ -3,15 +3,36 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-07-23。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-07-27。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
 ## [Unreleased]
 
+### Added
+
+- 新增 0015–0016 发布候选：`learning_sessions.revision`、attempt UUID/首次响应快照与复合唯一约束、单 RPC session snapshot、service-only `learning_audio_assets` 持久任务表、全局单租约/配额预留和结构/权限断言；保留旧答题 RPC 供数据库先行与应用回滚。
+- 新增 IndexedDB 答题 outbox、同 attempt UUID 超时重放、revision 冲突恢复、账号隔离与离线完成待服务器确认；客户端 Cache Storage 支持未来五词双并发预取、整单元续传下载、持久存储申请和本地删除。
+- 新增单元音频预热/manifest API、异步 `202 AUDIO_PENDING` 音频读取、20 ms VAD 裁剪，以及真实生产 gate 脚本验证 Japan East 队列生成、private Storage 命中、跨用户重复词复用和裁剪后朗读评分。
+
 ### Changed
 
 - 测试阶段答错后不再在约 1.15 秒后自动进入下一题；错误选项、正确答案或拼写差异会持续显示并锁定当前题，直到用户点击中英文“下一题”。答对仍保留短暂正确动画并自动推进。
+- 翻译、拼写和发音匹配会在当前渲染帧显示 provisional 正误；普通成功响应返回增量 `sessionPatch`，不再每题重拉完整会话和 Courses 列表。服务端仍是 retry pool、阶段、进度、奖励和完成状态的唯一权威。
+- 合成音频未命中不再在用户请求中同步等待 Azure；后台任务以至少 3.1 秒间隔和默认 20 次/分钟、500,000 字符/月生成，private Supabase Storage 继续是唯一服务端缓存。
+
+### Security
+
+- 所有新增 RPC 均撤销 `public/anon/authenticated` EXECUTE；音频任务表不开放 PostgREST。客户端不能用 provisional 状态发放积分/徽章，重复或超时答题只提交一次事实。
+- 生产运行时显式拒绝 `AZURE_SPEECH_FAKE=true`；Storage 网络故障不会被降格成缓存未命中而触发不必要的 Azure 生成。
+
+### Testing
+
+- 增加预测/权威修正、连续弱网 outbox、Cache Storage、VAD、queue lease/quota、并发幂等/revision 冲突和客户端 RPC 拒绝覆盖；Playwright fake 仅证明浏览器流程，不作为真实 Azure 证据。
+
+### Release
+
+- 尚未发布：必须先等待完整 CI，再执行独立只读 migration plan、加密恢复点与 apply；只有真实队列/Storage/重复词/评分 gate 和 `deps.supabase=ok` 均通过后才能把本节移动到正式版本。
 
 ## [0.6.2] - 2026-07-23
 

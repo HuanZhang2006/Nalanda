@@ -31,6 +31,12 @@ export class ApiErrorFilter implements ExceptionFilter {
       : typeof nested.message === "string" ? nested.message
       : status >= 500 ? "服务暂时不可用" : error instanceof Error ? error.message : "请求失败";
     const fieldErrors = source.fieldErrors || nested.fieldErrors;
-    response.status(status).json({ code, message, ...(fieldErrors ? { fieldErrors } : {}) });
+    const currentRevision = source.currentRevision ?? nested.currentRevision;
+    response.status(status).json({
+      code,
+      message,
+      ...(fieldErrors ? { fieldErrors } : {}),
+      ...(typeof currentRevision === "number" ? { currentRevision } : {}),
+    });
   }
 }

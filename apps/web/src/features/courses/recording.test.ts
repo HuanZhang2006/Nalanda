@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { encodePcmWav } from "./recording";
+import { encodePcmWav, trimSpeechSamples } from "./recording";
 
 describe("pronunciation WAV encoder", () => {
   it("writes clamped 16 kHz mono PCM samples with a valid WAV header", async () => {
@@ -28,5 +28,14 @@ describe("pronunciation WAV encoder", () => {
     expect(view.getInt16(48, true)).toBe(0);
     expect(view.getInt16(50, true)).toBe(16_383);
     expect(view.getInt16(52, true)).toBe(32_767);
+  });
+
+  it("trims silence with padding and rejects recordings without clear speech", () => {
+    const samples = new Float32Array(16_000 * 2);
+    for (let index = 8_000; index < 16_000; index += 1) samples[index] = 0.2;
+    const trimmed = trimSpeechSamples(samples);
+    expect(trimmed.length).toBeGreaterThan(8_000);
+    expect(trimmed.length).toBeLessThan(samples.length);
+    expect(() => trimSpeechSamples(new Float32Array(16_000))).toThrow(/speech|语音/i);
   });
 });

@@ -18,7 +18,7 @@ flowchart LR
 - 生产 Web/API 同源基址：`https://nalanda.online`；本文示例默认本地 `http://localhost:3000`。
 - NestJS 全局前缀：`/api`。
 - FastAPI 默认本地基址：`http://localhost:8000`，目标上只允许内网访问；当前没有 API→AI 调用代码。
-- 当前没有 OpenAPI 文件、API 版本号、请求 ID 或通用分页规范。Nest 全局错误已统一为 `{ code, message, fieldErrors? }`；Courses 语音、发布和举报有专用限流，但注册/其它旧接口仍没有统一限流。
+- 当前没有 OpenAPI 文件、API 版本号、请求 ID 或通用分页规范。Nest 全局错误已统一为 `{ code, message, fieldErrors?, currentRevision? }`；`currentRevision` 只用于 409 session 冲突。Courses 语音、发布和举报有专用限流，但注册/其它旧接口仍没有统一限流。
 - NestJS 跨域许可来自 `CORS_ALLOWED_ORIGINS`，未设置时复用 `PUBLIC_ORIGIN`；生产两者都缺失时不返回跨域许可，同源 nginx `/api` 不受影响，且当前不启用 credential cookie。
 
 ## 2. 认证约定
@@ -157,7 +157,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（生产已启用）
+## 4. Courses API（基础版生产已启用；0015–0016 增量待发布）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -210,9 +210,9 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 | 方法 | 路径 | 请求 | 成功响应 |
 |---|---|---|---|
 | POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review", skills?, scope?, scheduleId? }` | 新建或恢复唯一 active `LearningSession` |
-| GET | `/api/learning-sessions/:id` | — | 当前 owner 的完整 session/items/state |
-| POST | `/api/learning-sessions/:id/recognition` | `{ wordId }` | 更新后的阶段/队列状态 JSON |
-| POST | `/api/learning-sessions/:id/attempts` | `LearningAttemptRequest` | `{ correct, stage, completed, expected }` |
+| GET | `/api/learning-sessions/:id` | — | 当前 owner 的完整 session/items/state/revision；API 内部由一个 `learning_get_session_snapshot` RPC 读取 |
+| POST | `/api/learning-sessions/:id/recognition` | `{ wordId }` | `{ revision, sessionPatch }` |
+| POST | `/api/learning-sessions/:id/attempts` | `LearningAttemptRequest` | `LearningAttemptResult`；只返回本次事实与 session 增量 |
 | GET | `/api/learning-review-schedules` | — | `ReviewSchedule[]`，含课程/单元名、source/completed session ID |
 | POST | `/api/learning-units/:id/review-schedules` | `{ sourceSessionId, offsets: number[] }`，source 必须是本人该单元已完成的 initial session；offset 仅 3/7/15/30 | 当前用户全部 schedule |
 | DELETE | `/api/learning-review-schedules/:id` | — | `{ "ok": true }`，状态改 cancelled |
@@ -224,24 +224,63 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 
 ```json
 {
+  "attemptId": "44444444-4444-4444-8444-444444444444",
+  "expectedRevision": 12,
   "wordId": "33333333-3333-4333-8333-333333333333",
   "skill": "translation",
   "answer": { "translations": ["参加", "参与"] }
 }
 ```
 
-发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。服务端以 session 当前 queue/cursor 校验 active word、记录 append-only attempt、更新候补池并逐次提交；客户端不能跳阶段或自报正确。发音错配时 `expected` 返回目标英文词，其它测试返回对应正确答案；该字段只用于当前错误反馈。Web 的发音匹配/翻译选择会在点击后立即发此请求，拼写以 Enter/单次提交确定输入边界；答对短暂反馈后自动推进，答错则保留当前题、错误选项和 `expected`，直到用户点击“下一题”后读取已持久化的下一题。
+发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。`attemptId` 必须是 UUID；`expectedRevision` 必须等于当前 session revision。服务端先按 `(user_id,session_id,attempt_id)` 查首次响应，再锁定 session、校验 revision，原子记录 append-only attempt、更新候补池/cursor/stage/progress/revision 并保存响应快照。相同 attempt UUID 的超时重放返回第一次结果且 `replayed=true`，不重复推进或加错；过期 revision 返回 `409 { code:"SESSION_REVISION_CONFLICT", message, currentRevision }`。
+
+数据库先行和不可变 Web/API 切换期间，0014 页面可能仍发送同时缺少 `attemptId` 与 `expectedRevision` 的旧完整请求；API 暂时只对这种“两者都缺失”的形状调用保留的五参数 service-role RPC，revision trigger 仍推进。任一字段单独缺失都会拒绝。正式 0015 Web、弱网重试与所有新集成必须使用上面的幂等契约；兼容分支与旧 RPC 在稳定窗口后通过新的向前迁移/应用版本一起删除。
+
+成功响应：
+
+```json
+{
+  "attemptId": "44444444-4444-4444-8444-444444444444",
+  "correct": false,
+  "expected": ["参加", "参与"],
+  "revision": 13,
+  "replayed": false,
+  "sessionPatch": {
+    "stage": "translation",
+    "active": true,
+    "state": {
+      "queue": ["33333333-3333-4333-8333-333333333333"],
+      "cursor": 0,
+      "nextQueue": [],
+      "round": 2
+    },
+    "changedItem": {
+      "wordId": "33333333-3333-4333-8333-333333333333",
+      "recognitionSeen": true,
+      "pronunciationPassed": true,
+      "translationPassed": false,
+      "spellingPassed": false,
+      "wrongCount": 2
+    },
+    "nextWordId": "33333333-3333-4333-8333-333333333333"
+  }
+}
+```
+
+客户端从已加载 session 在同一渲染帧计算 provisional 正误：答对约 520 ms 自动进入下一题，答错一直保留并等用户点“下一题”。这个预测不授予完成、points 或徽章；IndexedDB outbox 按 revision 串行提交，服务器增量替换预测。只在冷启动/退出、服务端确认完成或 revision 冲突时重拉完整 snapshot，普通每题不刷新 Courses 列表。
 
 ### 4.3 发音合成与朗读评分
 
 | 方法 | 路径 | 请求 | 成功响应 |
 |---|---|---|---|
-| GET | `/api/pronunciation/audio/:wordId` | owner 课程中的 word ID | `audio/mpeg`；测试 fake 为 `audio/wav`，`Cache-Control: private, max-age=86400` |
+| POST | `/api/learning-units/:id/audio-prewarm` | owner unit；空 JSON body | 将整单元幂等写入持久生成队列并返回 `LearningAudioManifest` |
+| GET | `/api/learning-units/:id/audio-manifest` | owner unit | `{ unitId,total,ready,pending,failed,synthesisVersion,assets[] }`；asset 只给 API audio URL，不给 Storage URL |
+| GET | `/api/pronunciation/audio/:wordId` | owner 课程中的 word ID | ready 时 `audio/mpeg`（fake 为 WAV）、ETag 与 `private,max-age=31536000,immutable`；未 ready 时快速 `202 AUDIO_PENDING` + `Retry-After: 3` |
 | POST | `/api/pronunciation/assess` | `multipart/form-data`：`audio`, `sessionId`, `wordId` | `PronunciationAssessment` |
 
-评分只接受当前用户 active session 中的词；认单词阶段还要求 `wordId` 是当前卡片，避免迟到/伪造请求改变其它词的候补池。`audio` 必须是 ≤2 MB、≤8 秒、16 kHz/16-bit/单声道 PCM WAV；参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,errorType,phonemes[]`。整体 `pronunciationScore` 默认达到 70 才通过：低分原子加入 recognition `nextQueue`，对同一当前词重新评分达标会移除；阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
+评分只接受当前用户 active session 中的词；认单词阶段还要求 `wordId` 是当前卡片，避免迟到/伪造请求改变其它词的候补池。浏览器以 20 ms 帧做 VAD，阈值是 `max(0.015, 前 200 ms 噪声 RMS×3)`，前后保留 150 ms，有效语音少于 250 ms 要求重录，客户端裁剪到最多 6 秒；服务端继续兼容并强制 ≤2 MB、≤8 秒、16 kHz/16-bit/单声道 PCM WAV。参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,revision,sessionPatch,errorType,phonemes[]`，无需再拉完整 session。整体 `pronunciationScore` 默认达到 70 才通过：低分原子加入 recognition `nextQueue`，对同一当前词重新评分达标会移除；阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
 
-用户录音不落库；只有评分 JSON 写 append-only attempt。TTS 的私有 Storage 对象只是可丢弃缓存：Supabase 可能以 HTTP 400 + JSON 404 表示缓存未命中，API 会继续调用 Azure；缓存读取或写入故障也不能把已经生成的音频变成请求失败。常见错误：`AUDIO_REQUIRED`、`INVALID_AUDIO(_FORMAT)`、`AUDIO_TOO_LONG/LARGE`、`WORD_NOT_IN_SESSION`、`SPEECH_QUOTA_EXCEEDED`、`SPEECH_PROVIDER_*`。
+用户录音不落库；只有评分 JSON 写 append-only attempt。TTS GET 不再同步调用 Azure：owner 校验后只提升单词任务优先级，worker 全局单并发并以至少 3.1 秒间隔、默认 20 次/分钟和 500,000 字符/月处理。private Supabase Storage 是服务端唯一音频事实源；HTTP 400 + JSON 404 只表示正常对象缺失并触发重建，网络/权限/其它 Storage 失败保持可见，不会冒充 miss 浪费 Azure。浏览器 Cache Storage 是可删除、可回收的副本，不产生匿名 Storage URL。常见错误：`AUDIO_PENDING`、`AUDIO_REQUIRED`、`INVALID_AUDIO(_FORMAT)`、`AUDIO_TOO_LONG/LARGE`、`WORD_NOT_IN_SESSION`、`SPEECH_TTS_RATE_LIMIT`、`SPEECH_TTS_MONTHLY_LIMIT`、`SPEECH_QUOTA_EXCEEDED`、`SPEECH_PROVIDER_*`。
 
 ### 4.4 分享、免费课程市场和举报
 
@@ -270,6 +309,8 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 | 分享关闭 | 404 `SHARING_DISABLED` |
 | 市场关闭 | 404 `MARKET_DISABLED` |
 | 语音关闭、熔断或缺配置 | 503 `PRONUNCIATION_UNAVAILABLE` |
+| 音频预热子开关关闭 | 503 `AUDIO_PREWARM_DISABLED` |
+| session revision 过期 | 409 `SESSION_REVISION_CONFLICT` + `currentRevision` |
 | Courses 配额/成本变量不是有限正数 | 503 `SERVER_MISCONFIG` |
 
 ## 5. FastAPI AI（当前桩接口）
@@ -433,6 +474,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 | 计划 | `study_goals`, `study_tasks` | owner CRUD | task 关联实体由 RLS 检查 owner |
 | Courses 私有读取 | `learning_courses/units/words/sessions/items/attempts/progress/review_schedules/shares` | Web 当前经 Nest API 读取；数据库允许 owner SELECT | authenticated 无写权限；API service-role 写事务 RPC |
 | Courses 传播/成长 | publications/reports/badges | 作者/举报人/本人只读；公共读取经 API | 匿名 PostgREST 不开放；speech usage/审核动作对客户端隐藏 |
+| Courses 音频任务 | `learning_audio_assets` | 客户端无表/API 原始读取；只经 owner unit/word API 获取脱敏 manifest/audio | RLS + 表 grant 默认拒绝；仅 service-role worker |
 
 字段、FK、级联和完整 RLS 矩阵见 [ERD 与数据库字典](./ERD.md)。Web 不应使用 service-role key；所有直连请求都必须在 anon key + 用户 session + RLS 下运行。
 
@@ -448,7 +490,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权并在迁移内断言。RLS E2E 会以普通用户尝试伪造 progress/badge/points/发布/评分并验证失败。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权。发布候选 0015–0016 同样拒绝客户端执行 snapshot、幂等 attempt、assessment target、音频 prepare/claim/finish/requeue/quota RPC，并拒绝读写队列表；RLS E2E 会以普通用户逐项验证失败。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 

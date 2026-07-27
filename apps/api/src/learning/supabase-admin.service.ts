@@ -91,8 +91,12 @@ export class SupabaseAdminService {
     const { url, key } = this.config();
     const response = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
       headers: { apikey: key, Authorization: `Bearer ${key}` },
-    }).catch(() => null);
-    if (!response) return null;
+    }).catch(() => {
+      throw new ServiceUnavailableException({
+        code: "UPSTREAM_UNREACHABLE",
+        message: "Storage is unavailable",
+      });
+    });
     if (!response.ok) {
       const text = await response.text();
       // Supabase Storage currently reports a missing private object as HTTP

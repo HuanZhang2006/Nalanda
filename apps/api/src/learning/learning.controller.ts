@@ -17,11 +17,16 @@ import {
   StartLearningSessionDto,
 } from "./learning.dto";
 import { LearningService } from "./learning.service";
+import { LearningAudioService } from "./learning-audio.service";
 
 @Controller()
 @UseGuards(SupabaseAuthGuard)
 export class LearningController {
-  constructor(private readonly learning: LearningService, private readonly flags: FeatureFlagsService) {}
+  constructor(
+    private readonly learning: LearningService,
+    private readonly flags: FeatureFlagsService,
+    private readonly learningAudio: LearningAudioService,
+  ) {}
 
   @Get("learning-courses")
   list(@CurrentUser() user: AuthUser) { this.flags.courses(); return this.learning.listCourses(user.id); }
@@ -46,12 +51,24 @@ export class LearningController {
   remove(@CurrentUser() user: AuthUser, @Param("id") id: string) { this.flags.courses(); return this.learning.deleteCourse(user.id, id); }
 
   @Post("learning-courses/:id/sessions")
-  start(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() body: StartLearningSessionDto) {
-    this.flags.courses(); return this.learning.startSession(user.id, id, body);
+  async start(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() body: StartLearningSessionDto) {
+    this.flags.courses();
+    const session = await this.learning.startSession(user.id, id, body);
+    if (session.unitId && this.flags.audioPrewarmEnabled()) {
+      void this.learningAudio.prepareUnit(user.id, session.unitId, 50).catch(() => undefined);
+    }
+    return session;
   }
 
   @Get("learning-sessions/:id")
-  session(@CurrentUser() user: AuthUser, @Param("id") id: string) { this.flags.courses(); return this.learning.getSession(user.id, id); }
+  async session(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    this.flags.courses();
+    const session = await this.learning.getSession(user.id, id);
+    if (session.unitId && this.flags.audioPrewarmEnabled()) {
+      void this.learningAudio.prepareUnit(user.id, session.unitId, 50).catch(() => undefined);
+    }
+    return session;
+  }
 
   @Post("learning-sessions/:id/recognition")
   recognition(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body("wordId") wordId: string) {
@@ -69,6 +86,16 @@ export class LearningController {
   @Post("learning-units/:id/review-schedules")
   schedule(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() body: CreateReviewSchedulesDto) {
     this.flags.courses(); return this.learning.createReviewSchedules(user.id, id, body?.sourceSessionId, body?.offsets);
+  }
+
+  @Post("learning-units/:id/audio-prewarm")
+  prewarmAudio(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.learningAudio.prepareUnit(user.id, id, 80);
+  }
+
+  @Get("learning-units/:id/audio-manifest")
+  audioManifest(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.learningAudio.manifest(user.id, id);
   }
 
   @Delete("learning-review-schedules/:id")

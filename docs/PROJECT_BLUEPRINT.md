@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-07-23。
+最后核对：2026-07-27。
 
 ---
 
@@ -24,10 +24,11 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ## 2. 当前基线（不是最终完成状态）
 
-截至 2026-07-23，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses”：
+截至 2026-07-27，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses”：
 
 - 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API 生产部署；生产 migration history 已到 0014。
 - 已上线：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech；生产 flags 已开启，fake 未进入生产。
+- 发布候选：0015–0016 与应用代码把普通答题改成客户端一帧内预测反馈、`attemptId + expectedRevision` 幂等串行 outbox、单 RPC session snapshot，并用 Supabase Storage 持久队列与浏览器 Cache Storage 预取/下载单元音频。它仍须完整 CI、受保护数据库发布和 Japan East 真实 gate，不能视为现网能力。
 - 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
@@ -64,6 +65,8 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 ### 3.3 Courses 学习课程
 
 首版英语单词学习已经上线：文本逐单元/整份多单元粘贴、精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习熟练度、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；生产已发布 0011–0014 并开启对应 flags，0014 增加朗读分数阈值候补池和认词候补轮推进。
+
+下一发布候选已实现但尚未宣告上线：答题 UI 在本地确定正误，服务端仍唯一决定 retry pool、cursor/stage、错误次数、完成、points 与徽章；IndexedDB outbox 按 revision 串行、用相同 attempt UUID 重放，冲突时拉单一 snapshot 并重放仍兼容的答案。音频按规范化词、locale、voice、格式和合成版本做全局 SHA-256，private Storage 是服务端唯一事实源，浏览器只保存可重建 Cache Storage 副本并允许用户删除；这不等于完整离线 PWA。
 
 当前明确未实现：PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR/解析；按英语单词/知识点/阅读理解/题库训练选择 prompt；模型结构化输出与人工确认；导入评测集、token/成本和隐私留存。入口必须保持“AI 解析即将推出”，不能接受文件或暗示已调用模型。
 
