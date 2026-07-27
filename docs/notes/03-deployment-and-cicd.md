@@ -151,6 +151,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 切流前基础 Japan East 真实 Azure smoke 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；新队列 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`，证明首次生成、private Storage 命中、第二用户重复词不增加 Azure 生成及裁剪评分。
 - release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` 已健康激活。独立公网复核：Web 200，`/api/health` 返回 `deps.supabase=ok`，匿名 `/api/me` 返回 401。该 gate 是发布时证据，不替代持续监控。
 
+### 2026-07-27 Courses 历史冷音频与跨单元会话恢复
+
+- main SHA：`99313bd3763ce5bf1f7ffb252f821f7b21a67eec`；PR #24 run `30263277807` 与 main run `30263794368` 完成 docs/lint/typecheck、Web/API tests、build、0007→0018、空库重建/database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright。新增浏览器场景使用 Azure fake，不能作为供应商证据。
+- [只读 migration plan](https://github.com/1590703336/Nalanda/actions/runs/30264327821) 确认远端停在 0016，唯一待办为 0017–0018，且没有执行恢复点、写入或应用部署。
+- [受保护 apply/deploy](https://github.com/1590703336/Nalanda/actions/runs/30264979509) 创建并保留加密恢复点 artifact `8652623403`，digest `sha256:22861e8f8ccba2d87fc673f468c75677d6df3a0e9d424111c66dc67d009d5ac3`，应用 0017–0018 后确认远端 history、权限断言、lint 与空 dry-run，再构建隔离的不可变 Web/API release。
+- 切流前基础 Japan East 真实 Azure smoke 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；队列 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。这些是真实供应商/Storage 证据，与 Playwright fake 明确分开。
+- release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` 已健康激活。独立公网复核为 Web 200、`deps.supabase=ok`、匿名 `/api/me` 401；服务器本机 Web symlink 指向该 release，API image 为 `nalanda-api:99313bd3763ce5bf1f7ffb252f821f7b21a67eec`。
+
 ## 8. 运维速查
 
 ```bash

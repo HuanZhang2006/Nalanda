@@ -40,7 +40,7 @@
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
 | FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
-| Courses API | 生产已启用至 0016 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/熟练度指标；health 不查 learning schema |
+| Courses API | 生产已启用至 0018 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/熟练度指标；health 不查 learning schema |
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
 | Redis/BullMQ | 未接入当前业务 | hybrid compose 有目标配置 | 无队列/worker 指标 |

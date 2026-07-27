@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-27。生产数据库已有受保护发布证据到 0016；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频和 Japan East Azure Speech 已在线。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-07-27。生产数据库已有受保护发布证据到 0018；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学和 Japan East Azure Speech 已在线。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
@@ -39,7 +39,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，并于 2026-07-27 经独立 plan/apply 同步至 0016。远端 history、lint/空 dry-run、加密恢复点、真实 Azure gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；生产事实源现为 0016。
+生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，并于 2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018。远端 history、lint/空 dry-run、加密恢复点、真实 Azure gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言。生产事实源现为 0018。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -96,7 +96,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0016，含弱网答题、持久音频队列与浏览器离线副本 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0018，含弱网答题、持久音频队列、浏览器离线副本与按意图独立续学 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |
