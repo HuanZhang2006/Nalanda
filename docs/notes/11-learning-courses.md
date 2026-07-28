@@ -74,9 +74,9 @@ TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参�
 
 ### 7.1 OpenRouter 翻译前测边界
 
-翻译前测不是 Courses 文件 AI 导入，也不是客户端模糊匹配。浏览器只发送当前 session/word、revision、UUID 和用户输入；NestJS 从 owner 可见的课程中取得英文与 translations，使用固定结构化 JSON schema 调用 `google/gemma-4-26b-a4b-it:free`。模型只返回 boolean 与短反馈，不能推进会话、授予积分或改写参考答案。
+翻译前测不是 Courses 文件 AI 导入，也不是客户端模糊匹配。浏览器只发送当前 session/word、revision、UUID 和用户输入；NestJS 从 owner 可见的课程中取得英文与 translations，使用固定 `{correct:boolean}` JSON schema 调用 `google/gemma-4-26b-a4b-it:free`。模型只决定语义 boolean，API 使用固定安全教学文案作为 feedback；两者都不能推进会话、授予积分或改写参考答案。
 
-`learning_spelling_translation_assessments` 只保存用户答案 SHA-256、provider/model、判定、token usage、租约与首次响应；输入正文仅在 API 请求内存中存在。相同 UUID/答案 hash 重放直接返回首次响应，错误翻译用同 UUID 原子写一次 spelling 错误；正确翻译要求后续 spelling attempt 复用该 UUID。超时、网络故障或非法结构化输出会释放租约且不记错。默认每用户 20 次/分钟、滚动 24 小时 200 次，生产 fake 明确禁止。
+`learning_spelling_translation_assessments` 只保存用户答案 SHA-256、provider/model、判定、token usage、租约与首次响应；输入正文仅在 API 请求内存中存在。相同 UUID/答案 hash 重放直接返回首次响应，错误翻译用同 UUID 原子写一次 spelling 错误；正确翻译要求后续 spelling attempt 复用该 UUID。超时、网络故障或两次都缺失合法 boolean 会释放租约且不记错；第一次 HTTP 200 结构无效可在同一 12 秒总预算内重试一次，空 feedback 则安全回退而不丢弃 boolean。默认每用户 20 次/分钟、滚动 24 小时 200 次，生产 fake 明确禁止。
 
 UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt RPC；结果页面无论正确或错误都显示正确英文与拆分后的 translations。生产启用必须同时有一次性数据库 RLS/幂等门禁、fake-provider Chromium 流程和独立真实 OpenRouter structured/API gate。
 
