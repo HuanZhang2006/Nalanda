@@ -29,7 +29,7 @@ Supabase 减少基础设施工作并提供统一身份，但 RLS 错误会直接
 
 ## 当前实现与目标差距
 
-- **当前：**生产已有 Auth、profiles、Materials、通知/反馈、社区、Schedule、points，以及 Courses 私有模型、幂等学习会话、按意图独立续学和 private TTS 队列/cache；migration history 已到 0018。
+- **当前：**生产已有 Auth、profiles、Materials、通知/反馈、社区、Schedule、points，以及 Courses 私有模型、幂等学习会话、按意图独立续学、private TTS 队列/cache 和 service-only 翻译评判；migration history 已到 0020。
 - **已收口：**0008–0010 的 Profile/points 与 0011–0018 的 Courses 边界均已生产发布。Courses 私有表只给 owner SELECT，客户端写与工作流 RPC 被撤销，API 用 service-role 专用事务入口；CI 自动执行 0007→latest、空库 lint、双用户 RLS/Storage/Courses 和 Playwright。
 - **当前风险：**community-media 仍是 public；feedback/notifications/帖子部分服务端字段尚未全面列级收口；注册绕过邮箱确认且无滥用控制；旧 Profile 余额只能保留为待审计 opening，无法自动证明未被旧漏洞篡改。
 - **目标：**继续完成逐字段权限审计；把 Storage 生命周期、导出/删除、审计、Realtime channel 授权和 staging 演练纳入同一模型。

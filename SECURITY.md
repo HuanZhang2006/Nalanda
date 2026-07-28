@@ -3,7 +3,7 @@
 > **本文内容：**说明 Nalanda 的漏洞报告方式、当前安全边界、已知风险、开发与发布安全基线，以及安全事件响应要求。  
 > **作用：**为研究者、贡献者和运维人员提供唯一的安全协作入口，避免把密钥、漏洞细节或用户数据暴露在公开渠道。  
 > **何时更新：**认证/授权、RLS、上传、AI、支付、部署拓扑或第三方处理者变化时；发现或修复高风险问题时；至少每季度复核一次。  
-> **状态基线：**2026-07-27。生产已有受保护发布证据到 Courses 0018；幂等弱网答题、service-only 音频队列、private Storage/浏览器缓存和按意图恢复边界已启用。0019–0020 的 OpenRouter 翻译前测仍是待发布候选。本文明确区分代码、测试与上线状态。
+> **状态基线：**2026-07-28。生产已有受保护发布证据到 Courses 0020；幂等弱网答题、service-only 音频队列与翻译评判、private Storage/浏览器缓存、按意图恢复、限时拼写和 OpenRouter 翻译前测均已启用。本文明确区分代码、测试与上线状态。
 
 ## 1. 支持范围
 
@@ -37,10 +37,10 @@
 | 私有资料 | `courses`、`materials` 和 `materials` bucket 按 `auth.uid()` 隔离 | 文件元数据删除不保证对象删除事务化 |
 | 社区 | 帖子/评论对已认证用户公共可读；社区媒体 bucket 当前为 public | 公共媒体 URL 不具有撤回、鉴权或防爬保证 |
 | Profile / points | 0008 用列级授权保护经济/等级/streak 字段；points 由只读账本、内部状态机和稳定业务键投影 | 这不等于 credits/VIP/支付已具备商业账本，也不等于有内容质量/每日上限防滥用 |
-| Courses API | NestJS bearer + owner 校验，写入经 service-role 专用事务 RPC；客户端只读私有行，传播公开读取经 API 脱敏；生产已到 0018 | service-role、feature flag 或 API 缺陷仍可绕过 RLS；provisional UI/倒计时不能作为成长事实 |
+| Courses API | NestJS bearer + owner 校验，写入经 service-role 专用事务 RPC；客户端只读私有行，传播公开读取经 API 脱敏；生产已到 0020 | service-role、feature flag 或 API 缺陷仍可绕过 RLS；provisional UI/倒计时不能作为成长事实 |
 | 分享/课程市场 | token 只存 SHA-256，publication 快照不可变，免费克隆独立且不能再传播，举报/管理员动作留事实 | 持链接者即可预览；当前只有最小治理，无申诉/通用审核台；Course Market 不代表 Note Market 已真实 |
 | Azure Speech | key 仅 API；reference 从 owner word/session 推导；WAV≤2 MB/8秒且格式校验；录音不存储；生产 Japan East 基础 gate 与 0015–0016 队列/重复词/裁剪评分 gate 已通过 | PR/Playwright 自动测试仍为 fake；一次发布 gate 不是持续可用率证明，TTS cache 不是用户录音 |
-| OpenRouter 翻译前测 | 0019 候选由 API 从 owner session/word 推导参考翻译；同 UUID/revision 租约与幂等；用户答案只存 hash；新表/RPC service-role-only | 生产尚未发布；fake/单次 smoke 不是语义质量证明，模型输出不能直接改成长事实 |
+| OpenRouter 翻译前测 | API 从 owner session/word 推导参考翻译；同 UUID/revision 租约与幂等；用户答案只存 hash；新表/RPC service-role-only；生产真实 gate 已通过 | fake/单次真实 smoke 都不是持续语义质量证明，模型输出不能直接改成长事实 |
 | API 其它能力 | health、register、me；旧业务多数直连 Supabase | AI 文件导入、支付、钱包和通用管理后台安全控制尚不存在 |
 | AI | FastAPI 为固定桩；当前生产编排未部署 AI 服务 | 配置文件中的 Claude/Redis 变量不代表能力已启用 |
 | 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
@@ -53,7 +53,7 @@
 2. `_add_points` 已对客户端和 service-role 撤权；`_notify`、`_set_point_event` 及 trigger helpers 已撤销客户端 EXECUTE，并固定 `search_path`。
 3. 点赞、评论、原创/转发和任务奖励写入 append-only `point_entries`，以持久业务键和 `point_event_states` 串行化；取消/删除冲正，重做只恢复同一净额。客户端不能写账本/状态表。
 
-这些控制由双用户 RLS 回归和 0007→最新历史升级覆盖。0011–0018 已按受保护流程进入生产：Courses 服务端工作流撤销客户端 EXECUTE，禁止客户端写内容/progress/badges/points，限制公开传播面；answer attempt 绑定 owner/session/revision 和 UUID 幂等键，持久音频队列表不向客户端开放，新增 RPC 仅 service-role 可执行。0019–0020 候选沿用同一边界，为翻译评判表撤销全部客户端表权限，并只授权 API claim/complete/release/spelling RPC。是否进入生产仍以[数据库发布记录](docs/operations/DATABASE_RELEASE_ROLLBACK.md)为准。
+这些控制由双用户 RLS 回归和 0007→最新历史升级覆盖。0011–0020 已按受保护流程进入生产：Courses 服务端工作流撤销客户端 EXECUTE，禁止客户端写内容/progress/badges/points，限制公开传播面；answer attempt 绑定 owner/session/revision 和 UUID 幂等键，持久音频队列表与翻译评判表不向客户端开放，新增 RPC 仅 service-role 可执行。0019–0020 只授权 API claim/complete/release/spelling RPC，并由 0020 对结构、RLS 和精确 grant 失败关闭。发布事实见[数据库发布记录](docs/operations/DATABASE_RELEASE_ROLLBACK.md)。
 
 仍开放的高优先级风险：
 
@@ -68,7 +68,7 @@
 9. NestJS 使用 service-role 访问 Courses，虽已限制 CORS 且语音/翻译评判/发布/举报有持久限额，但注册与普通 Courses API 仍没有通用 request rate limit；总/子 flags 必须默认关闭到生产迁移、监控和真实 Azure/OpenRouter smoke 完成。
 10. 课程分享是 bearer-link 模型，持链接者可读取当前词表；作者必须能撤销/轮换。市场 v1 的管理员来自环境 UUID 列表，尚无通用 RBAC/申诉；变更必须审计。
 11. Azure 录音虽然不持久化，但会在请求内转发第三方；供应商条款、区域、DPA/留存与真实成本告警必须在 production flag 前确认。供应商失败不得累计用户错误。
-12. OpenRouter 候选会在用户显式开启后转发当前英文、参考翻译与用户键入译文；必须复核其留存/训练/跨境/子处理者条款。模型误判是教学风险；供应商失败或非法结构化输出不得累计错误，语义基线失败应关闭最窄 flag。
+12. OpenRouter 翻译前测会在用户显式开启后转发当前英文、参考翻译与用户键入译文；仍须完成并持续复核其留存/训练/跨境/子处理者条款。模型误判是教学风险；供应商失败或非法结构化输出不得累计错误，语义基线失败应关闭最窄 flag。
 
 ## 5. 数据与密钥分级
 

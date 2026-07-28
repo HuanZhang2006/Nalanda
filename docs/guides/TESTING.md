@@ -418,6 +418,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 
 同日后续样本：PR #24 run `30263277807` 与 main run `30263794368` 完成 0007→0018、空库重建/lint、真实本地 Supabase RLS/Storage、jsdom 与 Chromium Playwright；历史八词冷单元和暂停 Unit 1→复习 Unit 2→恢复 Unit 1 的浏览器测试使用 Azure fake。只读 plan `30264327821` 只列 0017–0018；apply/deploy `30264979509` 创建恢复 artifact `8652623403`，并在切流前用真实 Japan East 账号验证 `generatedAssets=4`、`duplicateAssetsReused=4` 和评分 97。公网/服务器健康检查是发布证据，不把 fake Playwright 描述为真实供应商 E2E。
 
+2026-07-28 的限时拼写/翻译前测样本：PR #26–#29 与最终 main run `30374301472` 通过 0007→0020、空库重建/lint、真实本地 Supabase RLS/Storage、jsdom、API 和 Chromium Playwright；Playwright 的 Azure/OpenRouter 都是 fake。只读 plan `30366334157` 仅列 0019–0020，受保护 run `30367263486` 创建 artifact `8691620673` 并应用到 0020。最终生产部署以真实 Azure 验证 MP3/评分，以真实 OpenRouter 验证 structured 同义/无关判定，再通过真实 Courses API/数据库验证完全匹配 0 token、同 UUID `replayed=true` 和权威 spelling attempt；release 为 `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`。发布链中的 provider 契约、模型误判、replay 映射和单次 12 秒 timeout 都被 gate 阻断，不能把失败候选计作上线。
+
 ## 11. 新增测试约定
 
 1. 测试名描述用户行为/安全属性，不只写函数名。

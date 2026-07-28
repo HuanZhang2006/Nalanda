@@ -29,8 +29,8 @@
 | 服务器 SSH authorized key | 服务器 | 接受 CI/管理员连接 | 公钥 | 当前使用 |
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
-| `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；基础 Japan East gate 已通过，队列增量待独立发布 gate |
-| `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 可选拼写翻译语义评判 | 否 | 0019–0020 待发布；真实 gate 必需，fake 不得进入生产 |
+| `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；Japan East 基础、持久队列、重复词复用与裁剪评分 gate 均已通过 |
+| `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 可选拼写翻译语义评判 | 否 | 0019–0020 已发布；轮换真实 gate 必需，fake 不得进入生产 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
@@ -185,7 +185,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 `COURSE_MARKET_ADMIN_USER_IDS` 变更需双人复核 Supabase UUID：先添加新管理员并验证受审计 hide/restore，再移除旧 UUID、重启 API，并确认旧账号返回 `ADMIN_REQUIRED`。不得用共享 service-role 或开放 RPC 替代管理员列表。
 
-## 12. OpenRouter key（0019–0020 发布候选）
+## 12. OpenRouter key（生产当前使用）
 
 `OPENROUTER_API_KEY` 只由 NestJS 读取；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。生产同时在 GitHub `production` environment 和服务器 mode-600 `.env` 保存当前值：前者只用于受保护部署时经 SSH 标准输入安装，后者由 API 容器消费。仓库脚本拒绝不符合预期形状的输入，并保留其它 env 行。
 

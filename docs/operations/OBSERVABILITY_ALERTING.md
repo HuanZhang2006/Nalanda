@@ -17,7 +17,7 @@
 - Supabase 控制台可提供平台侧 Auth/数据库/Storage 日志与指标，具体可用项取决于项目配置。
 - Courses 举报达到配置阈值时 API 输出单行 JSON `event=course_report_threshold`；speech 配额/估算成本持久在 `learning_speech_usage`，429 使用稳定 `SPEECH_QUOTA_EXCEEDED`；这些当前仍需日志/SQL 人工查看，不是完整告警链。
 - 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
-- 0019 候选为翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。两者都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
+- 0019 翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。两者都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
 
 当前缺失：
 
@@ -41,9 +41,9 @@
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
 | FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
-| Courses API | 生产已启用至 0018 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/熟练度指标；health 不查 learning schema |
+| Courses API | 生产已启用至 0020 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/熟练度指标；health 不查 learning schema |
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
-| OpenRouter 翻译前测 | 0019–0020 待发布候选 | structured provider error、assessment duration/decision/token JSON event、数据库租约/配额、发布前真实 gate | 无持续准确率/延迟/额度/价格对账；用户输入不得进日志 |
+| OpenRouter 翻译前测 | 生产已启用 | structured provider error、assessment duration/decision/token JSON event、数据库租约/配额、发布真实 gate | 无持续准确率/延迟/额度/价格对账；用户输入不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
 | Redis/BullMQ | 未接入当前业务 | hybrid compose 有目标配置 | 无队列/worker 指标 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |

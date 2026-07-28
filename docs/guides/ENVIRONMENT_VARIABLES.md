@@ -39,7 +39,7 @@
 
 ### 3.1 Courses、市场、Azure Speech 与 OpenRouter
 
-这些变量只允许进入 API 运行环境，不得使用 `VITE_*`。生产 `/opt/nalanda/.env` 由运维维护；既有 Supabase/Azure/Courses 值不由 workflow 重建。0019–0020 发布候选新增的部署步骤只通过标准输入原子更新 OpenRouter 相关键并保持文件 mode 600，不打印 secret。
+这些变量只允许进入 API 运行环境，不得使用 `VITE_*`。生产 `/opt/nalanda/.env` 由运维维护；既有 Supabase/Azure/Courses 值不由 workflow 重建。0019–0020 发布新增的部署步骤只通过标准输入原子更新 OpenRouter 相关键并保持文件 mode 600，不打印 secret；2026-07-28 已用该路径完成真实 gate 和生产激活。
 
 | 变量 | 状态/默认 | 敏感级别 | 用途 |
 |---|---|---|---|
@@ -50,7 +50,7 @@
 | `FEATURE_COURSE_MARKET_ENABLED` | flag；production 默认 false | 公开配置 | Course Market、发布、克隆、举报/审核；关闭伪装 404。 |
 | `FEATURE_PRONUNCIATION_ENABLED` | flag；任何环境默认 false | 公开配置 | Azure TTS/评分入口；只有显式 true 才可调用。 |
 | `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` | flag；production 默认 false；当前生产 true | 公开配置 | 持久音频队列、manifest、未来五词预取与整单元离线音频；依赖 Courses/Pronunciation 同时开启。 |
-| `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` | flag；production 默认 false | 公开配置 | 拼写阶段的可选语义翻译前测；关闭时启动请求若要求 `translationFirst=true` 返回 503，普通拼写和限时功能不受影响。 |
+| `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` | flag；production 默认 false；当前生产 true | 公开配置 | 拼写阶段的可选语义翻译前测；关闭时启动请求若要求 `translationFirst=true` 返回 503，普通拼写和限时功能不受影响。 |
 | `AZURE_SPEECH_CIRCUIT_OPEN` | 可选，默认 false | 受限配置 | 紧急熔断；true 时语音统一 503，不影响文本学习。 |
 | `AZURE_SPEECH_KEY` | 语音启用时必需 | **最高机密** | Azure Speech subscription key，只在 API 容器。 |
 | `AZURE_SPEECH_REGION` | 语音启用时必需 | 受限配置 | Azure region，同时组成 TTS/STT endpoint。 |
