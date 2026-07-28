@@ -292,7 +292,21 @@ async function assessSpellingTranslation(user, course, unitId) {
   assert.equal(first.body.correct, true);
   assert.equal(first.body.replayed, false);
   assert.equal(first.body.attemptResult, null);
-  const replay = await request("idempotent OpenRouter translation replay",
+  const assessmentFacts = await request(
+    "normalized exact translation assessment facts",
+    `${supabaseUrl}/rest/v1/learning_spelling_translation_assessments`
+      + `?assessment_id=eq.${attemptId}`
+      + "&select=provider,model,prompt_tokens,completion_tokens,total_tokens",
+    { headers: adminHeaders },
+  );
+  assert.deepEqual(assessmentFacts.body, [{
+    provider: "nalanda-normalized-exact",
+    model: "normalized-exact-v1",
+    prompt_tokens: 0,
+    completion_tokens: 0,
+    total_tokens: 0,
+  }]);
+  const replay = await request("idempotent translation assessment replay",
     `${apiOrigin}/learning-sessions/${started.body.id}/spelling-translation-assessments`, {
       method: "POST",
       headers: authHeaders(user.token),
@@ -316,7 +330,9 @@ async function assessSpellingTranslation(user, course, unitId) {
   assert.equal(spelling.body.attemptId, attemptId);
   assert.equal(spelling.body.revision, started.body.revision + 1);
   return {
-    model: process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free",
+    provider: assessmentFacts.body[0].provider,
+    model: assessmentFacts.body[0].model,
+    totalTokens: assessmentFacts.body[0].total_tokens,
     replayed: replay.body.replayed,
     revision: spelling.body.revision,
   };
