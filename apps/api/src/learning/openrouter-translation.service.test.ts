@@ -77,7 +77,12 @@ describe("OpenRouter spelling translation adapter", () => {
     const providerRequest = vi.mocked(fetch).mock.calls[0];
     const body = JSON.parse(String((providerRequest[1] as RequestInit).body));
     expect(body.model).toBe("google/gemma-4-26b-a4b-it:free");
+    expect(body.max_tokens).toBe(24);
     expect(body.response_format.json_schema.strict).toBe(true);
+    expect(body.response_format.json_schema.schema.required).toEqual(["correct"]);
+    expect(body.response_format.json_schema.schema.properties).toEqual({
+      correct: { type: "boolean" },
+    });
     expect(body.messages[1].content).toContain("一种常见水果");
     expect(JSON.stringify(body)).not.toContain("test-secret");
     expect(learning.completeSpellingTranslationAssessment).toHaveBeenCalledWith(
@@ -110,6 +115,74 @@ describe("OpenRouter spelling translation adapter", () => {
     expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
   });
 
+  it("supplies safe feedback for the provider's boolean-only verdict", async () => {
+    process.env.OPENROUTER_API_KEY = "test-secret";
+    const { service, learning } = harness();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{ message: { content: JSON.stringify({
+        correct: true,
+      }) } }],
+      usage: { prompt_tokens: 202, completion_tokens: 10, total_tokens: 212 },
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(service.assess("user-a", sessionId, request("probe-0")))
+      .resolves.toEqual(result());
+    expect(learning.completeSpellingTranslationAssessment).toHaveBeenCalledWith(
+      "user-a", sessionId, wordId, attemptId, 4,
+      expect.stringMatching(/^[0-9a-f]{64}$/), expect.any(String),
+      expect.objectContaining({
+        correct: true,
+        feedback: "The meaning matches an accepted translation.",
+        usage: { promptTokens: 202, completionTokens: 10, totalTokens: 212 },
+      }),
+    );
+    expect(learning.releaseSpellingTranslationAssessment).not.toHaveBeenCalled();
+  });
+
+  it("accepts OpenRouter text-part content and supplies safe incorrect feedback", async () => {
+    process.env.OPENROUTER_API_KEY = "test-secret";
+    const { service, learning } = harness();
+    learning.completeSpellingTranslationAssessment.mockResolvedValue(result(false));
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      choices: [{
+        message: {
+          content: [{ type: "text", text: JSON.stringify({ correct: false }) }],
+        },
+      }],
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(service.assess("user-a", sessionId, request("vehicle")))
+      .resolves.toEqual(result(false));
+    expect(learning.completeSpellingTranslationAssessment).toHaveBeenCalledWith(
+      "user-a", sessionId, wordId, attemptId, 4,
+      expect.stringMatching(/^[0-9a-f]{64}$/), expect.any(String),
+      expect.objectContaining({
+        correct: false,
+        feedback: "The meaning does not match the accepted translations.",
+      }),
+    );
+  });
+
+  it("retries one malformed 200 response inside the original timeout budget", async () => {
+    process.env.OPENROUTER_API_KEY = "test-secret";
+    const { service, learning } = harness();
+    vi.stubGlobal("fetch", vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { reasoning: "provider returned no content" } }],
+      }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        choices: [{ message: { content: JSON.stringify({
+          correct: true,
+        }) } }],
+      }), { status: 200 })));
+
+    await expect(service.assess("user-a", sessionId, request("probe-0")))
+      .resolves.toEqual(result());
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(learning.completeSpellingTranslationAssessment).toHaveBeenCalledOnce();
+    expect(learning.releaseSpellingTranslationAssessment).not.toHaveBeenCalled();
+  });
+
   it("returns a retryable pending response while another identical request owns the lease", async () => {
     process.env.OPENROUTER_API_KEY = "test-secret";
     const { service, learning } = harness();
@@ -139,12 +212,14 @@ describe("OpenRouter spelling translation adapter", () => {
   it("rejects malformed provider JSON and releases the assessment for a safe retry", async () => {
     process.env.OPENROUTER_API_KEY = "test-secret";
     const { service, learning } = harness();
-    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      choices: [{ message: { content: "not-json" } }],
-    }), { status: 200 })));
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({
+        choices: [{ message: { content: "not-json" } }],
+      }), { status: 200 })));
     await expect(service.assess("user-a", sessionId, request("苹果"))).rejects.toMatchObject({
       response: { code: "TRANSLATION_PROVIDER_INVALID" },
     });
+    expect(fetch).toHaveBeenCalledTimes(2);
     expect(learning.releaseSpellingTranslationAssessment).toHaveBeenCalledOnce();
     expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
   });

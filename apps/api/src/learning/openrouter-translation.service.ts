@@ -30,6 +30,11 @@ type ProviderDecision = {
   };
 };
 
+const DEFAULT_FEEDBACK = {
+  correct: "The meaning matches an accepted translation.",
+  incorrect: "The meaning does not match the accepted translations.",
+} as const;
+
 function normalized(value: string) {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
 }
@@ -40,33 +45,47 @@ function safeTokenCount(value: unknown) {
 
 function parseDecision(payload: unknown): ProviderDecision {
   const root = payload && typeof payload === "object" ? payload as Record<string, any> : {};
-  const content = root.choices?.[0]?.message?.content;
+  const message = root.choices?.[0]?.message;
+  const content = message?.content;
+  const parsedMessage = message?.parsed;
   const text = typeof content === "string"
-    ? content.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, "")
-    : "";
+    ? content
+    : Array.isArray(content)
+      ? content.map((part) => typeof part?.text === "string" ? part.text : "").join("")
+      : "";
   let decision: unknown;
-  try { decision = JSON.parse(text); }
-  catch {
-    throw new BadGatewayException({
-      code: "TRANSLATION_PROVIDER_INVALID",
-      message: "翻译判分服务返回了无效结果",
-    });
+  if (parsedMessage && typeof parsedMessage === "object") {
+    decision = parsedMessage;
+  } else if (content && typeof content === "object" && !Array.isArray(content)) {
+    decision = content;
+  } else {
+    try {
+      decision = JSON.parse(
+        text.trim().replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/, ""),
+      );
+    } catch {
+      throw new BadGatewayException({
+        code: "TRANSLATION_PROVIDER_INVALID",
+        message: "翻译判分服务返回了无效结果",
+      });
+    }
   }
   const value = decision && typeof decision === "object"
     ? decision as Record<string, unknown>
     : {};
-  if (typeof value.correct !== "boolean"
-      || typeof value.feedback !== "string"
-      || !value.feedback.trim()
-      || value.feedback.trim().length > 240) {
+  if (typeof value.correct !== "boolean") {
     throw new BadGatewayException({
       code: "TRANSLATION_PROVIDER_INVALID",
       message: "翻译判分服务返回了无效结果",
     });
   }
+  const fallbackFeedback = value.correct ? DEFAULT_FEEDBACK.correct : DEFAULT_FEEDBACK.incorrect;
+  const providerFeedback = typeof value.feedback === "string" ? value.feedback.trim() : "";
+  const feedback = (providerFeedback || fallbackFeedback).slice(0, 240).trim()
+    || fallbackFeedback;
   return {
     correct: value.correct,
-    feedback: value.feedback.trim(),
+    feedback,
     usage: {
       promptTokens: safeTokenCount(root.usage?.prompt_tokens),
       completionTokens: safeTokenCount(root.usage?.completion_tokens),
@@ -129,84 +148,109 @@ export class OpenRouterTranslationService {
       };
     }
     const origin = process.env.PUBLIC_ORIGIN;
-    let response: Response;
-    try {
-      response = await fetch(config.endpoint, {
-        method: "POST",
-        signal: AbortSignal.timeout(config.timeoutMs),
-        headers: {
-          Authorization: `Bearer ${config.key}`,
-          "Content-Type": "application/json",
-          "X-OpenRouter-Title": "Nalanda spelling translation assessment",
-          ...(origin ? { "HTTP-Referer": origin } : {}),
-        },
-        body: JSON.stringify({
-          model: config.model,
-          temperature: 0,
-          max_tokens: 120,
-          response_format: {
-            type: "json_schema",
-            json_schema: {
-              name: "translation_judgment",
-              strict: true,
-              schema: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  correct: { type: "boolean" },
-                  feedback: { type: "string", maxLength: 240 },
-                },
-                required: ["correct", "feedback"],
-              },
+    const requestBody = JSON.stringify({
+      model: config.model,
+      temperature: 0,
+      max_tokens: 24,
+      response_format: {
+        type: "json_schema",
+        json_schema: {
+          name: "translation_judgment",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              correct: { type: "boolean" },
             },
+            required: ["correct"],
           },
-          messages: [
-            {
-              role: "system",
-              content: [
-                "Judge whether a learner's translation expresses at least one accepted meaning of the English term.",
-                "Accept synonyms, paraphrases, different word order, and harmless grammatical variation.",
-                "Reject unrelated, opposite, materially incomplete, or empty meanings.",
-                "Use only the supplied term and accepted translations.",
-                "Return concise JSON feedback without repeating the learner's full answer.",
-              ].join(" "),
-            },
-            {
-              role: "user",
-              content: JSON.stringify({
-                englishTerm: term,
-                acceptedTranslations: translations,
-                learnerTranslation: answer,
-              }),
-            },
-          ],
-        }),
-      });
-    } catch (error) {
-      if (error instanceof DOMException && error.name === "TimeoutError") {
-        throw new GatewayTimeoutException({
-          code: "TRANSLATION_PROVIDER_TIMEOUT",
-          message: "翻译判分服务连接超时",
+        },
+      },
+      messages: [
+        {
+          role: "system",
+          content: [
+            "Judge whether a learner's translation expresses at least one accepted meaning of the English term.",
+            "Accept synonyms, paraphrases, different word order, and harmless grammatical variation.",
+            "Reject unrelated, opposite, materially incomplete, or empty meanings.",
+            "Use only the supplied term and accepted translations.",
+            "Return only the requested boolean judgment.",
+          ].join(" "),
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            englishTerm: term,
+            acceptedTranslations: translations,
+            learnerTranslation: answer,
+          }),
+        },
+      ],
+    });
+    const deadline = Date.now() + config.timeoutMs;
+    let firstInvalid: HttpException | null = null;
+    for (let providerAttempt = 1; providerAttempt <= 2; providerAttempt += 1) {
+      const remainingMs = deadline - Date.now();
+      if (remainingMs < 1_000 && firstInvalid) throw firstInvalid;
+      let response: Response;
+      try {
+        response = await fetch(config.endpoint, {
+          method: "POST",
+          signal: AbortSignal.timeout(Math.max(1, remainingMs)),
+          headers: {
+            Authorization: `Bearer ${config.key}`,
+            "Content-Type": "application/json",
+            "X-OpenRouter-Title": "Nalanda spelling translation assessment",
+            ...(origin ? { "HTTP-Referer": origin } : {}),
+          },
+          body: requestBody,
+        });
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "TimeoutError") {
+          throw new GatewayTimeoutException({
+            code: "TRANSLATION_PROVIDER_TIMEOUT",
+            message: "翻译判分服务连接超时",
+          });
+        }
+        throw new BadGatewayException({
+          code: "TRANSLATION_PROVIDER_ERROR",
+          message: "翻译判分服务暂不可用",
         });
       }
-      throw new BadGatewayException({
-        code: "TRANSLATION_PROVIDER_ERROR",
-        message: "翻译判分服务暂不可用",
-      });
+      if (response.status === 429) {
+        throw new HttpException({
+          code: "TRANSLATION_PROVIDER_RATE_LIMIT",
+          message: "翻译判分服务繁忙，请稍后重试",
+        }, 503);
+      }
+      if (!response.ok) {
+        throw new BadGatewayException({
+          code: "TRANSLATION_PROVIDER_ERROR",
+          message: "翻译判分服务暂不可用",
+        });
+      }
+      try {
+        return parseDecision(await response.json().catch(() => null));
+      } catch (error) {
+        if (!(error instanceof HttpException)) throw error;
+        const code = String(
+          (error.getResponse() as Record<string, unknown>)?.code || "",
+        );
+        if (code !== "TRANSLATION_PROVIDER_INVALID" || providerAttempt === 2) throw error;
+        firstInvalid = error;
+        this.logger.warn(JSON.stringify({
+          event: "learning_spelling_translation_provider_retry",
+          provider: "openrouter",
+          model: config.model,
+          reason: code,
+        }));
+      }
     }
-    if (response.status === 429) {
-      throw new HttpException({
-        code: "TRANSLATION_PROVIDER_RATE_LIMIT",
-        message: "翻译判分服务繁忙，请稍后重试",
-      }, 503);
-    }
-    if (!response.ok) {
-      throw new BadGatewayException({
-        code: "TRANSLATION_PROVIDER_ERROR",
-        message: "翻译判分服务暂不可用",
-      });
-    }
-    return parseDecision(await response.json().catch(() => null));
+    throw firstInvalid ?? new BadGatewayException({
+      code: "TRANSLATION_PROVIDER_INVALID",
+      message: "翻译判分服务返回了无效结果",
+    });
   }
 
   async assess(

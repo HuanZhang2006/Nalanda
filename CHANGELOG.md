@@ -15,6 +15,10 @@
 - 拼写测试可选 3–300 秒限时；倒计时只在拼写输入可作答后开始，超时按当前内容自动提交一次。可选翻译前测先由服务端 OpenRouter structured output 判断语义，正确后才进入拼写，错误直接形成一次权威 spelling 错误。
 - 拼写结果无论正确或错误都显示正确英文与逐项翻译；翻译评判失败可重试且不记错。
 
+### Fixed
+
+- OpenRouter free route 偶发返回有效 boolean 但空 feedback，或 200 响应暂时缺少结构化 content。服务端契约收窄为只让模型决定 `{correct:boolean}`，用固定安全教学文案补齐 feedback；非法 200 在原 12 秒总预算内只重试一次，仍失败时释放租约且不记错。该修复不允许客户端自判，也不改变数据库权威。
+
 ### Security
 
 - OpenRouter key 仅进入本地/服务器 mode-600 API env 和 GitHub protected environment，不进入 Web、数据库、日志或仓库。生产显式拒绝 `OPENROUTER_FAKE=true`；新表与 RPC 对 public/anon/authenticated 全部关闭。
@@ -22,7 +26,7 @@
 
 ### Testing
 
-- 增加 fake-clock jsdom 的单次超时提交、翻译通过前不计时、语义错误手动推进、provider 失败不记错和双语结果渲染；API 覆盖 structured schema、幂等 replay、租约释放、超时/非法响应；双用户 RLS 覆盖客户端拒绝、hash-only 持久化、revision 与级联；Playwright 使用 OpenRouter fake，不作为真实供应商证据。
+- 增加 fake-clock jsdom 的单次超时提交、翻译通过前不计时、语义错误手动推进、provider 失败不记错和双语结果渲染；API 覆盖 boolean-only structured schema、安全 feedback 回退、缺失 content 的单次有界重试、幂等 replay、租约释放、超时/非法响应；双用户 RLS 覆盖客户端拒绝、hash-only 持久化、revision 与级联；Playwright 使用 OpenRouter fake，不作为真实供应商证据。
 - 发布工具新增 OpenRouter structured smoke 和生产 env 安装脚本测试。生产启用前必须另取得真实 OpenRouter 同义/无关判定及真实 Courses API 幂等证据。
 
 ## [0.7.1] - 2026-07-27

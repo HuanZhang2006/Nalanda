@@ -16,10 +16,10 @@
 
 1. 限时与翻译前测是 `learning_sessions.spelling_options` 的会话级不可变规则，缺省均关闭、默认时间 20 秒，合法范围 3–300 秒。只有 session revision 仍为 0 时启动请求可以写入设置。
 2. 倒计时由 Web 显示和触发，但超时仍通过正常权威 spelling attempt 提交；客户端计时不直接改变 retry pool、progress、points 或徽章。
-3. 翻译前测通过 NestJS 服务端 adapter 调用 OpenRouter，首个锁定模型为 `google/gemma-4-26b-a4b-it:free`，使用 temperature 0 和严格 JSON schema `{correct,feedback}`。浏览器不能提交参考 translations、model、provider 或 prompt。
+3. 翻译前测通过 NestJS 服务端 adapter 调用 OpenRouter，首个锁定模型为 `google/gemma-4-26b-a4b-it:free`，使用 temperature 0 和严格 JSON schema `{correct:boolean}`。模型只决定 boolean，API 生成固定安全 feedback；浏览器不能提交参考 translations、model、provider 或 prompt。
 4. NestJS 必须先由 owner/session/current-word RPC 领取评判租约与用户配额，再在请求内存中发送英文、参考 translations 与用户答案。数据库只保存答案 SHA-256、provider/model、boolean、短反馈、token usage、租约和首次响应；不保存用户输入正文。
 5. 翻译评判和随后的 spelling 使用同一个客户端 UUID 与 expected revision。翻译错误在同一数据库事务中形成一次 spelling 错误；翻译正确不推进 revision，但后续 spelling wrapper 必须确认该 UUID/revision 已有正确评判。相同 UUID/输入重放返回首次响应，不再次调用 provider 或重复推进。
-6. provider timeout、网络/5xx/429 或非法 structured output 释放租约并返回可重试错误，不记学习错误。revision 冲突继续以服务器快照处理。
+6. provider timeout、网络/5xx/429 或非法 structured output 释放租约并返回可重试错误，不记学习错误。HTTP 200 缺失合法 boolean 时可在同一 12 秒总预算内重试一次；空/缺失 feedback 不推翻合法 boolean，而使用固定安全文案。revision 冲突继续以服务器快照处理。
 7. 新表和所有 claim/complete/release/spelling RPC 对 `public/anon/authenticated` 无表权限/执行权，只授予 service_role；生产显式拒绝 `OPENROUTER_FAKE=true`。
 8. UI 在正确/错误结果都显示权威英文拼写与拆分 translations。provider feedback 只是教学说明，不成为参考答案或成长事实。
 9. 0019 保留旧 session start/attempt 签名供数据库先行和应用回退；生产异常先关闭最窄 feature flag或恢复上一不可变应用 release，数据库只做 forward-fix。

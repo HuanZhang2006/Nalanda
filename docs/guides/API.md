@@ -262,7 +262,7 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 }
 ```
 
-NestJS 从当前 owner/session/word 读取英文和权威 translations，再把这三项与用户答案在请求内存中交给 OpenRouter 的结构化 JSON 判定。浏览器不能提交参考答案或模型名。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
+NestJS 从当前 owner/session/word 读取英文和权威 translations，再把这三项与用户答案在请求内存中交给 OpenRouter 的 `{correct:boolean}` 结构化判定。浏览器不能提交参考答案或模型名；服务端用固定安全文案补齐 feedback，不把 provider 自由文本当权威词义。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
 
 ```json
 {
@@ -283,7 +283,7 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations，再把�
 }
 ```
 
-上例的 `sessionPatch` 省略了与普通 attempt 相同的字段。相同 UUID + 相同 answer hash 重放不会再次调用供应商或推进会话；复用 UUID 但改变 session/word/revision/answer 会拒绝。供应商超时、网络错误或非法结构化响应会释放租约并返回可重试错误，不记错；同一未过期租约返回 425，revision 冲突返回 409，用户限额返回 429。`expected` 和 UI 结果始终同时显示正确拼写与分开的翻译文本块，不把 provider 的自然语言反馈当成权威词义。
+上例的 `sessionPatch` 省略了与普通 attempt 相同的字段。相同 UUID + 相同 answer hash 重放不会再次调用供应商或推进会话；复用 UUID 但改变 session/word/revision/answer 会拒绝。供应商超时、网络错误或两次都缺失合法 boolean 会释放租约并返回可重试错误，不记错；第一次 HTTP 200 结构无效只在原总超时预算内重试一次。空 feedback 使用固定安全文案，不把有效 boolean 误当失败。同一未过期租约返回 425，revision 冲突返回 409，用户限额返回 429。`expected` 和 UI 结果始终同时显示正确拼写与分开的翻译文本块。
 
 数据库先行和不可变 Web/API 切换期间，0014 页面可能仍发送同时缺少 `attemptId` 与 `expectedRevision` 的旧完整请求；API 暂时只对这种“两者都缺失”的形状调用保留的五参数 service-role RPC，revision trigger 仍推进。任一字段单独缺失都会拒绝。正式 0015 Web、弱网重试与所有新集成必须使用上面的幂等契约；兼容分支与旧 RPC 在稳定窗口后通过新的向前迁移/应用版本一起删除。
 

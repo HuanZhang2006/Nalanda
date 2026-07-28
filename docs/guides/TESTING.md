@@ -15,7 +15,7 @@
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
 | 发布工具单元 | 11 个 Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、6 秒 VAD、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
-| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter、持久队列/配额/Storage miss/格式/超时/隐私，以及 OpenRouter 结构化判定/幂等/租约释放/非法响应 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
+| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter、持久队列/配额/Storage miss/格式/超时/隐私，以及 OpenRouter boolean-only 结构化判定、安全 feedback 回退、同预算单次重试、幂等/租约释放/非法响应 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和裁剪评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | OpenRouter 供应商 smoke | 固定合成英文/中文样本验证指定模型的 structured JSON：语义近义回答为 true、无关回答为 false；拒绝 fake，不打印正文/key/完整响应 | 是，产生两次小型 provider 请求 | `node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；生产还通过真实 Courses API 验证幂等与权威 attempt |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |

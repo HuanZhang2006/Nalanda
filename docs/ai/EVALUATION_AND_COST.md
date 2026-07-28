@@ -67,7 +67,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 ### 2.4 OpenRouter 翻译语义前测候选边界
 
-用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`，连同用户输入发送到 OpenRouter，指定 `google/gemma-4-26b-a4b-it:free` 和严格 JSON schema `{correct:boolean,feedback:string}`，temperature 0。客户端不能提供参考答案、model 或 provider 参数。模型输出不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
+用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`，连同用户输入发送到 OpenRouter，指定 `google/gemma-4-26b-a4b-it:free`、temperature 0 和严格 JSON schema `{correct:boolean}`。客户端不能提供参考答案、model 或 provider 参数。模型只决定语义 boolean；API 使用固定、非权威教学文案补齐 feedback，避免把自由文本输出当词义或因空 feedback 丢弃有效判定。模型输出不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
 
 最低固定评测集需包含：
 
@@ -78,7 +78,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 语义质量门在公开开放前必须用授权合成/专家标注集计算 precision、recall、false-accept/false-reject，并按单义/多义、词/短语和中英文分层。高风险错误是把无关翻译判对；阈值未批准前只能 private beta。真实 gate 的两条样本（同义为 true、无关为 false）只证明 endpoint/schema/key 当前可用，不代表质量 baseline。
 
-运行时记录脱敏 model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。默认 20 次/用户/分钟、滚动 24 小时 200 次，超时 12 秒；超时/供应商错误不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
+运行时记录脱敏 model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。默认 20 次/用户/分钟、滚动 24 小时 200 次，整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。超时/供应商错误不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
 
 ## 3. 可追溯生成记录
 
