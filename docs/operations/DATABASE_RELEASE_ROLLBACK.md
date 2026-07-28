@@ -226,13 +226,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - 切流前基础真实 Azure gate 在 `japaneast`/`en-US-JennyNeural` 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实队列/Storage/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。
 - 不可变 release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` 健康激活。独立公网与服务器复核确认 Web `200`、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 `401`，Web symlink 与 API image 都指向同一 release SHA。
 
-### 8.6 0019–0020 限时拼写与 OpenRouter 翻译前测发布清单（待执行）
+### 8.6 2026-07-28 Courses 0019–0020 发布记录
 
-- 只读 plan 必须确认生产停在 0018，唯一待办是 `20260728000019_learning_spelling_timer_translation.sql` 与 `20260728000020_verify_learning_spelling_release.sql`；plan run 不得创建恢复点、写数据库或部署应用。
-- apply 前保留加密恢复 artifact；升级夹具、空库 lint/reset 和双用户 RLS 必须验证 `spelling_options`、评判表无客户端权限、普通用户不能执行任何新 RPC、同 UUID 只产生一次 attempt、并发 revision 冲突、答案只存 SHA-256 和 Auth 删除级联。
-- 0019 保留七参数 `learning_start_session` 与原答题 RPC 供旧应用回退；新应用调用八参数 start 和受保护 spelling wrapper。数据库失败只能 forward-fix，不能 drop 新列/表；应用失败恢复上一不可变 release。
-- 部署在候选 image 启动前，通过标准输入把 GitHub `production` environment 的 OpenRouter key 安装到服务器 mode-600 `.env`，强制 `OPENROUTER_FAKE=false`。真实 smoke 用固定合成样本验证同义 true/无关 false；真实 API gate 验证 session 设置、同 UUID replay 和权威 spelling attempt。任一失败保持最窄 feature flag 关闭并不切流。
-- 完成后再补实际 commit、PR/main/plan/apply run、恢复 artifact/digest、远端 history、provider metrics、release ID、`deps.supabase=ok` 和匿名 `/api/me=401`。未取得这些证据时本节不得改成“已发布”。
+- PR #26–#29 完成功能与生产 gate 前向修复；最终发布提交为 `a4c230e1aa6f29abbd4fbe944a1b76c625107003`。PR/main CI 覆盖 quality、0007→0020、空库重建/database lint、真实本地双用户 RLS/Storage E2E 和 Chromium Playwright；浏览器供应商为 fake。
+- [只读 plan run `30366334157`](https://github.com/1590703336/Nalanda/actions/runs/30366334157) 显示生产 0001–0018 与本地一致，唯一待办是 `20260728000019_learning_spelling_timer_translation.sql` 和 `20260728000020_verify_learning_spelling_release.sql`；没有创建恢复点、写入数据库或部署应用。
+- [受保护 run `30367263486`](https://github.com/1590703336/Nalanda/actions/runs/30367263486) 在 apply 前创建并保留加密恢复点 `db-recovery-7c8b516ec4fc9086a6bae816966cb7f688c19746`，artifact `8691620673`、大小 318,626 bytes；apply 后远端 history 到 0020，lint 与 dry-run 通过。0019 保留旧签名供应用回退；数据库只 forward-fix。
+- 同一 run 的首个候选、随后 runs `30370419397` 和 `30372651419` 分别被真实 provider 契约、模型误判完全匹配合成答案和 replay 映射 gate 拦截，均自动恢复上一 Web/API，未逆向数据库。最终 main run `30374301472` 的一次真实 OpenRouter 12 秒超时也未激活候选，之后只重跑失败部署 job。
+- 最终真实 Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 返回 1,365 ms、253/27/280 tokens；候选 API 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，并查询评判事实确认 provider/model 为 `nalanda-normalized-exact/normalized-exact-v1`、0 token、同 UUID replay true、revision 1。
+- 不可变 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` 健康激活。独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root；生产 migration history 保持 0020。
 
 ## 9. 失败处置
 

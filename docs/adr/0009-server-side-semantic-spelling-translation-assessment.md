@@ -4,7 +4,7 @@
 > - **内容**：记录拼写测试的限时/翻译前测如何进入学习状态机，以及为何使用 NestJS 服务端 OpenRouter 适配层、hash-only 持久事实和同一 attempt UUID。
 > - **作用**：固定安全、隐私、幂等、供应商与回退边界，防止后续把模型判定、计时或奖励权威移到浏览器。
 > - **何时更新**：拼写设置语义、模型/供应商、prompt/schema、输入留存、配额、attempt/revision 契约、发布状态或替代 ADR 变化时。
-> - **状态**：Accepted；2026-07-27。0019–0020 与应用实现已在仓库，尚未完成受保护生产发布。
+> - **状态**：Accepted；2026-07-28。0019–0020 与应用已完成受保护生产发布。
 
 ## 背景
 
@@ -54,13 +54,12 @@
 
 ## 当前实现与目标差距
 
-- **仓库候选**：0019–0020、共享 TS 契约、NestJS adapter/API、React 设置/计时/结果、jsdom/API/RLS/Playwright 和真实 provider smoke 已实现。
-- **生产当前**：仍是 0018；功能 flag/key 尚未有本次发布证据。
-- **发布门**：完整 CI、只读 plan 仅列 0019–0020、加密恢复点、apply/lint/空 dry-run、真实 OpenRouter structured/API gate、真实 Azure 既有 gates、候选 readiness/auth 与公网 smoke。
+- **仓库与生产**：0019–0020、共享 TS 契约、NestJS adapter/API、React 设置/计时/结果、jsdom/API/RLS/Playwright 和真实 provider/API smoke 均已实现并发布；生产 history 为 0020。
+- **发布证据**：只读 plan `30366334157`、恢复/apply run `30367263486`、最终 main run `30374301472` 与 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`。中途失败候选全部自动恢复旧应用，数据库保持向前兼容。
 - **后续目标**：建立正式授权语义评测集与 false-accept/false-reject 阈值、持续 cost/latency dashboard、用户告知和供应商条款复审。模型/base URL 变更需重新评测，不作为普通 key 轮换处理。
 
 ## 验证与复审
 
-发布前必须证明：计时只提交一次；翻译通过前不启动计时；错误评判等待手动下一题；供应商失败不记错；正确/错误都展示英文和翻译；双用户不能读取表/执行 RPC；同 UUID 并发/重放只产生一个 attempt；数据库没有用户答案正文；真实 provider 对固定同义/无关样本返回有效 structured output。真实 smoke 只证明连通和最小语义，不替代质量评测。
+每次相关发布必须证明：计时只提交一次；翻译通过前不启动计时；错误评判等待手动下一题；供应商失败不记错；正确/错误都展示英文和翻译；双用户不能读取表/执行 RPC；同 UUID 并发/重放只产生一个 attempt；数据库没有用户答案正文；真实 provider 对固定同义/无关样本返回有效 structured output。真实 smoke 只证明连通和最小语义，不替代质量评测。
 
 触发复审：模型/路由/价格/隐私条款变化；false accept/false reject 超阈值；provider 5xx/timeout 持续异常；用户输入留存需求变化；或评判扩展到其它课程类别。

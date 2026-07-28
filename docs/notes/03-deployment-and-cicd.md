@@ -26,7 +26,7 @@
     ├─ web/   前端静态产物（宿主机 nginx 直接托管）
     └─ .env   后端密钥（仅服务器持有）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
-外部：Azure Speech（生产）、OpenRouter 翻译前测（0019–0020 待发布）、Stripe/Claude（规划）
+外部：Azure Speech（生产）、OpenRouter 翻译前测（生产）、Stripe/Claude（规划）
 ```
 
 > 登录版只需「web 静态 + api」，redis/ai 暂不部署以省内存。
@@ -76,7 +76,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 ### Secrets / 密钥分层
 - **repository Actions Secrets（当前实际位置）**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`；`production` environment 会在部署 job 中使用这些仓库级 Secrets。后续如迁移为 environment Secrets，应一次性迁移整组并验证。
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
-- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与供应商 key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音与音频预热 flags 已开启，Azure fake=false；0019 候选发布时由受保护步骤只更新 OpenRouter 域变量并强制 fake=false。TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
+- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与供应商 key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音、音频预热和翻译前测 flags 已开启，Azure/OpenRouter fake=false；受保护步骤只更新 OpenRouter 域变量。TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
@@ -159,12 +159,13 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 切流前基础 Japan East 真实 Azure smoke 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；队列 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。这些是真实供应商/Storage 证据，与 Playwright fake 明确分开。
 - release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` 已健康激活。独立公网复核为 Web 200、`deps.supabase=ok`、匿名 `/api/me` 401；服务器本机 Web symlink 指向该 release，API image 为 `nalanda-api:99313bd3763ce5bf1f7ffb252f821f7b21a67eec`。
 
-### 0019–0020 限时拼写与 OpenRouter 翻译前测（待发布）
+### 2026-07-28 · 0019–0020 限时拼写与 OpenRouter 翻译前测
 
-- 仓库候选新增 session spelling options、只保存答案 SHA-256 的评判表、service-role-only 事务 RPC、NestJS OpenRouter adapter、限时/翻译前测 UI、fake-provider jsdom/API/RLS/Playwright 和真实 provider smoke。
-- GitHub `production` environment 的 `OPENROUTER_API_KEY` 只通过 SSH 标准输入交给服务器安装脚本；脚本原子保留其它 `.env` 行并恢复 mode 600。key 不进入 artifact、命令参数、日志或 Web。
-- 受保护顺序固定为：PR/main 完整 CI → 只读 plan 只列 0019–0020 → 加密恢复点 → apply/lint/空 dry-run → 候选 image → 真实 Azure gates → 真实 OpenRouter structured/API gate → 本机 readiness/auth → 切 Web → 公网 smoke。数据库只 forward-fix，应用异常恢复上一不可变 release。
-- 本节当前不含 run、artifact、SHA 或生产 smoke，因此只描述候选流程；发布完成后必须用实际证据替换，不能提前写成已上线。
+- PR #26 合入 session spelling options、hash-only 评判表、service-role-only 事务 RPC、NestJS OpenRouter adapter、限时/翻译前测 UI 和分层测试；PR #27–#29 分别修复 boolean-only provider 契约、规范化完全匹配零 token 快速路径和幂等 replay 响应映射。最终 main SHA 为 `a4c230e1aa6f29abbd4fbe944a1b76c625107003`。
+- [只读 plan run `30366334157`](https://github.com/1590703336/Nalanda/actions/runs/30366334157) 只列 0019–0020；[受保护 run `30367263486`](https://github.com/1590703336/Nalanda/actions/runs/30367263486) 创建加密恢复 artifact `8691620673`（`db-recovery-7c8b516ec4fc9086a6bae816966cb7f688c19746`）后应用迁移，远端 history 到 0020，lint 与空 dry-run 通过。
+- `30367263486`、`30370419397` 和 `30372651419` 的候选应用分别因 provider 返回契约、合成完全匹配答案被模型误判、以及 claim 外层 replay 标志映射丢失而被 gate 拦截；每次都自动恢复上一 Web/API，数据库按 forward-fix 规则保持 0020。`30374301472` 首次执行还遇到一次本地 PostgREST 上游临时响应，RLS job 重跑 4/4 后通过；一次真实 OpenRouter 12 秒超时同样未激活候选。
+- 最终 main run [`30374301472`](https://github.com/1590703336/Nalanda/actions/runs/30374301472) 的第三次部署尝试通过：真实 Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 固定模型返回 1,365 ms、253/27/280 tokens；候选 Courses API 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，并持久证明 `nalanda-normalized-exact/normalized-exact-v1`、0 token、同 UUID `replayed=true`、revision 1。
+- release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` 健康激活。独立公网复核：`/api/health` 为 `status=ok`、`deps.supabase=ok`，匿名 `/api/me` 为 401，Web 返回 React root。真实发布 gate 是时点证据，不替代持续 OpenRouter 质量/延迟/费用监控。
 
 ## 8. 运维速查
 

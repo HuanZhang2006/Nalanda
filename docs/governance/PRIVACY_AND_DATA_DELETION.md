@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-07-27。本文不是法律意见或已发布隐私政策；Courses/0011–0018、弱网答题、离线合成音频、按意图独立续学与 Azure Speech 已生产启用。0019–0020 的 OpenRouter 翻译前测仍是待发布候选；文件 AI 导入仍未实现。
+> **状态基线：**2026-07-28。本文不是法律意见或已发布隐私政策；Courses/0011–0020、弱网答题、离线合成音频、按意图独立续学、Azure Speech 与 OpenRouter 翻译前测已生产启用；文件 AI 导入仍未实现。
 
 ## 1. 原则与责任
 
@@ -30,7 +30,7 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 举报/审核 | `learning_course_reports/moderation_actions` | 类别/说明、举报人、状态、管理员理由 | 举报人只能读自己的报告；动作客户端不可见；管理员/举报人删除后按 FK 删除或去标识 |
 | 课程徽章/成长 | `badge_definitions/user_badge_awards` + points | 熟练词/课程/复习日期成就和 +20 事实 | award 持久防重；删课程不回退，删 Auth 用户级联；不是商业权益 |
 | Speech | 请求内 WAV、`learning_attempts.provider_details`、`learning_speech_usage`、`learning_audio_assets`、private `vocabulary-audio` | Azure 朗读评分、分数/音素教学反馈、配额/估算成本、跨用户共享的合成 TTS 对象与生成队列 | 用户 WAV 仅内存转发后丢弃，不进 DB/Storage/log/backup；合成对象/队列不含 owner、翻译或录音；评分/用量随规则删除/去标识 |
-| 拼写翻译前测（候选） | 请求内用户译文、`learning_spelling_translation_assessments` | OpenRouter 只判断当前词的用户译文是否语义覆盖服务端参考翻译；服务端保存幂等/配额/教学反馈 | 用户译文正文仅在 API 请求内存中转发，不进 DB/log/backup；DB 只存 SHA-256、boolean、短反馈、provider/model/token 计量和首次响应，session/word/user 删除级联 |
+| 拼写翻译前测 | 请求内用户译文、`learning_spelling_translation_assessments` | 规范化完全匹配由 Nalanda 零 token 判定；OpenRouter 只判断非字面答案是否语义覆盖服务端参考翻译；服务端保存幂等/配额/教学反馈 | 用户译文正文仅在 API 请求内存中转发，不进 DB/log/backup；DB 只存 SHA-256、boolean、短反馈、provider/model/token 计量和首次响应，session/word/user 删除级联 |
 | 浏览器弱网副本 | IndexedDB attempt outbox、Cache Storage 音频 | 断网重试、未来五词预取和用户选择的单元音频离线副本 | 登出清除该账号待同步 outbox；音频按全局内容键存可重建副本，用户可删除，浏览器也可能在存储压力下回收 |
 | 通知/反馈 | `notifications`、`feedback` | 互动通知、用户工单 | owner-only；无运维端正式工单留存/删除流程 |
 | 原型/假数据 | 前端 bundle/内存 | 演示 Home、Notes、Market、AI | 不是用户事实源，不应进入用户导出 |
@@ -124,7 +124,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机、Supabase 和 Azure Speech；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。0019–0020 候选引入 OpenRouter 作为窄范围翻译语义处理者：仅在用户显式开启翻译前测并提交时发送英文、服务端参考 translations 和用户输入，不发送课程名、邮箱、学校、user ID、进度、token 或 service-role。生产启用前必须完成 OpenRouter 的数据留存/训练使用/子处理者/跨境/删除/事件 SLA 与用户告知评审；free 路由不降低该义务。Azure 也仍需持续维护对应 DPA/处理记录。Anthropic/Stripe/邮件/监控仍是未来处理者。
+当前运行依赖 GitHub、部署主机、Supabase、Azure Speech 和 OpenRouter；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。OpenRouter 是窄范围翻译语义处理者：仅在用户显式开启翻译前测、且答案不与任一参考翻译规范化完全匹配时，发送英文、服务端参考 translations 和用户输入；不发送课程名、邮箱、学校、user ID、进度、token 或 service-role。当前发布证据证明技术数据最小化与真实连接，不等于数据留存/训练使用/子处理者/跨境/删除/事件 SLA 与用户告知评审已经完成；这是上线后必须关闭的治理缺口，free 路由不降低该义务。Azure 也仍需持续维护对应 DPA/处理记录。Anthropic/Stripe/邮件/监控仍是未来处理者。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
 

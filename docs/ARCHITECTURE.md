@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-27。生产数据库已有受保护发布证据到 0018；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学和 Japan East Azure Speech 已在线。仓库 0019–0020 与对应应用代码是待发布候选，新增可选限时拼写和 OpenRouter 语义翻译前测；未通过 plan/apply/真实供应商 gate 前不算生产事实。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-07-28。生产数据库已有受保护发布证据到 0020；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学、可选限时拼写、OpenRouter 语义翻译前测和 Japan East Azure Speech 已在线。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
@@ -40,7 +40,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，并于 2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018。远端 history、lint/空 dry-run、加密恢复点、真实 Azure gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言。仓库 0019 给 session 增加 `spelling_options` 并建立只存答案 hash 的语义评判事实表与 service-only RPC，0020 做结构/RLS/grant 断言；它们仍需受保护发布。生产事实源现为 0018。
+生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018，并于 2026-07-28 同步至 0020。远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言；0019 给 session 增加 `spelling_options` 并建立只存答案 hash 的语义评判事实表与 service-only RPC，0020 做结构/RLS/grant 断言。生产事实源现为 0020。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -97,7 +97,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0018，含弱网答题、持久音频队列、浏览器离线副本与按意图独立续学；0019–0020 的限时拼写/OpenRouter 翻译前测为待发布候选 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0020，含弱网答题、持久音频队列、浏览器离线副本、按意图独立续学、限时拼写与 OpenRouter 翻译前测 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |
@@ -130,7 +130,7 @@ Nalanda/
 | POST | `/api/auth/register` | 无 | 用 service-role 创建 `email_confirm:true` 用户 |
 | GET | `/api/me` | Bearer | JWKS/HS256 守卫验签后回显 claims |
 
-JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验证配置的签名与声明边界。Courses 控制器另提供课程 CRUD、会话恢复/答题、复习日程、Profile 聚合、语音、分享、市场、克隆、举报和受配置管理员约束的审核接口；0019 候选还增加服务端 OpenRouter 语义翻译前测。完整表见 [API 文档](guides/API.md)。
+JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验证配置的签名与声明边界。Courses 控制器另提供课程 CRUD、会话恢复/答题、复习日程、Profile 聚合、语音、分享、市场、克隆、举报、受配置管理员约束的审核接口和服务端 OpenRouter 语义翻译前测。完整表见 [API 文档](guides/API.md)。
 
 新接口共用 `@nalanda/types` camelCase 契约，API 显式转换数据库 snake_case，并由全局异常过滤器统一返回 `{ code, message, fieldErrors? }`。语音有 per-user/全局预算限流；市场有发布/举报限流；翻译前测有数据库租约、UUID/answer-hash 幂等与用户配额。OpenRouter key/model 只存在于 API 环境，浏览器不能提交参考答案或 provider 参数；用户答案正文只在请求内存中转发，持久层只保留 hash、判定、计量和首次响应。当前仍没有通用队列、支付模块或自动 OpenAPI 生成。
 
@@ -174,7 +174,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 | 计划 | `study_goals`, `study_tasks` |
 | 成长积分 | `point_entries`, `point_event_states` |
 | 学习内容 | `learning_courses`, `learning_course_units`, `learning_course_words` |
-| 学习事实 | `learning_sessions`, `learning_session_items`, `learning_attempts`, `learning_word_progress`；0019 候选另有 `learning_spelling_translation_assessments` |
+| 学习事实 | `learning_sessions`, `learning_session_items`, `learning_attempts`, `learning_word_progress`, `learning_spelling_translation_assessments` |
 | 复习 | `learning_review_schedules` |
 | 分享市场 | `learning_course_shares`, `learning_course_publications`, `learning_course_reports`, `learning_course_moderation_actions` |
 | 课程徽章/语音配额 | `badge_definitions`, `user_badge_awards`, `learning_speech_usage` |
@@ -232,7 +232,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 ### 8.3 发布局限
 
 - API health 已验证 Supabase JWKS/PostgREST 基本 readiness，但不覆盖 Storage、注册写入、完整 RLS 或浏览器登录路径；Redis/AI 仍只看变量。
-- Azure Speech 与 OpenRouter 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。既有 Japan East smoke 已确认 TTS、scripted assessment 与音素结果；OpenRouter 候选仍必须在本次发布中取得真实 structured/API 证据。单次 gate 不代表持续可用率、准确率或费用对账。
+- Azure Speech 与 OpenRouter 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。2026-07-28 的最终 gate 已确认 Japan East TTS/scripted assessment、OpenRouter structured 判定和真实 Courses API 幂等/零 token 快速路径。单次 gate 不代表持续可用率、准确率或费用对账。
 - 数据库 release archive 仍不含 Storage 文件字节，且 CI 不自动逆向生产数据。
 - 不可变 image/release 目前仍主要保留在单台服务器，缺少异地 registry 和自动容量策略。
 - SSH 部署用户在当前文档中为 root。

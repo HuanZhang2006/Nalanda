@@ -98,6 +98,6 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 - CI 已通过 CLI migration history 发布，并在生产 migration 前完成本地重建/RLS E2E、dry-run 和加密恢复点；首次生产启用仍须人工 baseline 旧历史。
 - 仍需定期 staging 演练、Storage 文件异地备份、数据库恢复演练和 schema drift 告警。
 - 0011–0013 已于 2026-07-22、0014 已于 2026-07-23、0015–0018 已于 2026-07-27 通过受保护 plan/apply 发布。队列表不授予客户端任何读写，旧答题 RPC 在稳定窗口内保留供应用回滚，数据库仍只做 forward-fix；详细 run/artifact/真实 Azure 证据见发布手册第 8 节。
-- 0019–0020 当前只在仓库，尚未取得生产 plan/apply 证据。评判表不授予客户端任何权限，所有新 RPC 必须由双用户 RLS 负向测试和 0020 精确断言同时证明；生产仍是 0018。
+- 0019–0020 已于 2026-07-28 取得只读 plan `30366334157`、加密恢复点/apply `30367263486` 与最终应用发布 `30374301472` 证据。评判表不授予客户端任何权限，所有新 RPC 已由双用户 RLS 负向测试和 0020 精确断言同时证明；生产已到 0020。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。

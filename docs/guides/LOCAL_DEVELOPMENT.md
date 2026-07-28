@@ -301,7 +301,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移（仓库为 0020；生产在本候选发布前仍为 0018），而不是仍停在旧 migration history；是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新迁移（仓库与生产均为 0020），而不是仍停在旧 migration history；是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
 
 ### 翻译前测返回禁用、超时或配额错误
 

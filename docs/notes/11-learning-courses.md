@@ -4,7 +4,7 @@
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech/OpenRouter、分享市场或测试边界变化时。
-> - **状态基线**：2026-07-27。生产已发布 0011–0018；会话意图恢复与历史冷单元未来五词排队/缓存替换已完成受保护发布。0019–0020 的可选限时拼写与语义翻译前测是待发布候选。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-07-28。生产已发布 0011–0020；会话意图恢复、历史冷单元未来五词排队/缓存替换、可选限时拼写与语义翻译前测均已完成受保护发布。文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -82,7 +82,7 @@ UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt
 
 ## 8. 数据与安全证据
 
-0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017 追加并回填 `resume_key`，把 active session 唯一性从整门课程收窄到首次学习、临时复习或日程复习的具体请求意图，0018 验证新索引、函数定义和 service-role-only 权限。待发布的 0019 增加 session spelling options、答案 hash 评判事实与 service-only claim/complete/release/spelling RPC，0020 验证结构、RLS 与精确 grants。私有表只允许 owner 读；音频队列和翻译评判表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
+0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017 追加并回填 `resume_key`，把 active session 唯一性从整门课程收窄到首次学习、临时复习或日程复习的具体请求意图，0018 验证新索引、函数定义和 service-role-only 权限；0019 增加 session spelling options、答案 hash 评判事实与 service-only claim/complete/release/spelling RPC，0020 验证结构、RLS 与精确 grants。私有表只允许 owner 读；音频队列和翻译评判表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
 
 删除课程级联私有学习数据和日程，但保留同账号下已发 points/badge facts；用户删除遵循 Auth 外键级联，出版物、points 与 badge awards 随账号删除，只有 speech 成本行和 moderation action 以 `user_id/actor_id=NULL` 留下非账号化运营事实。Storage 清理仍须删除编排。细节见 ERD、API、安全、隐私、内容审核和积分产品规则。
 
@@ -97,6 +97,8 @@ UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt
 2026-07-27 的 PR #21 run `30243998633`、main run `30244402278`、只读 plan `30244967669` 与 apply/deploy `30245430630` 通过 quality、0007→0016、空库重建/database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright；Playwright 的 Azure 是 fake。plan 只列 0015–0016，apply 前保留 artifact `8644999285`，远端 history 到 0016。切流前 Japan East 真实 gate 验证 4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象、VAD 裁剪评分 97；release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` 激活后，独立公网复核为 Web 200、`deps.supabase=ok`、未认证 `/api/me` 401。
 
 同日后续 PR #24 run `30263277807` 与 main run `30263794368` 通过 0007→0018、空库重建/lint、真实本地双用户 RLS/Storage E2E、jsdom 和 Chromium Playwright；新增场景使用八词历史冷单元验证前五个 pending 立即提权、最多两个浏览器并发、manifest ready 后落 Cache Storage 并清除旧降级提示，也验证暂停 Unit 1 首次学习后可复习 Unit 2，完成后仍能恢复 Unit 1 原 cursor。只读 plan `30264327821` 仅列 0017–0018；apply/deploy `30264979509` 保留 artifact `8652623403`，远端 history 到 0018，激活 release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1`。Playwright 仍使用 fake provider；切流前独立真实 Japan East gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，公网和服务器复核为 Web 200、匿名 `/api/me` 401、`deps.supabase=ok`，运行 Web/API 均为同一 SHA。
+
+2026-07-28 的 PR #26–#29 完成功能与生产 gate 前向修复；只读 plan `30366334157` 仅列 0019–0020，受保护 run `30367263486` 创建 artifact `8691620673` 并把远端同步到 0020。前三个候选应用在 provider 契约、合成答案模型误判和 replay 映射处被 gate 拦截且自动恢复旧应用；最终 main run `30374301472` 激活 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`。真实 Japan East gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`；真实 OpenRouter 为 1,365 ms、280 tokens；候选 API 持久证明规范化完全匹配为 0 token 且相同 UUID `replayed=true`。独立公网复核为 `deps.supabase=ok`、匿名 `/api/me` 401 和 React root。
 
 复习日程必须引用本人该单元已完成的 initial session；由日程启动时服务端固定使用其 skills/scope，并在 review session 完成事务里写回 completed session。普通 Vitest/jsdom 不等于真实数据库 E2E；本地无 Supabase CLI/Docker 时 RLS 和 Playwright 会跳过或无法启动，只有一次性 Supabase CI 成功后才能称真实 E2E 已通过。
 
