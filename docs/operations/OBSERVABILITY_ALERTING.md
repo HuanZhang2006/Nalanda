@@ -17,7 +17,7 @@
 - Supabase 控制台可提供平台侧 Auth/数据库/Storage 日志与指标，具体可用项取决于项目配置。
 - Courses 举报达到配置阈值时 API 输出单行 JSON `event=course_report_threshold`；speech 配额/估算成本持久在 `learning_speech_usage`，429 使用稳定 `SPEECH_QUOTA_EXCEEDED`；这些当前仍需日志/SQL 人工查看，不是完整告警链。
 - 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
-- 0019 候选为 OpenRouter 翻译前测输出脱敏 `learning_spelling_translation_assessment` 事件，只含 model、duration、correct 和 prompt/completion/total token 计量；HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。两者都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
+- 0019 候选为翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。两者都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
 
 当前缺失：
 

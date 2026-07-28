@@ -115,6 +115,28 @@ describe("OpenRouter spelling translation adapter", () => {
     expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
   });
 
+  it("accepts a normalized exact translation without a fallible provider call", async () => {
+    process.env.OPENROUTER_API_KEY = "test-secret";
+    const { service, learning } = harness();
+    vi.stubGlobal("fetch", vi.fn());
+
+    await expect(service.assess("user-a", sessionId, request("  苹果  ")))
+      .resolves.toEqual(result());
+    expect(fetch).not.toHaveBeenCalled();
+    expect(learning.completeSpellingTranslationAssessment).toHaveBeenCalledWith(
+      "user-a", sessionId, wordId, attemptId, 4,
+      expect.stringMatching(/^[0-9a-f]{64}$/), expect.any(String),
+      expect.objectContaining({
+        correct: true,
+        feedback: "The meaning matches an accepted translation.",
+        provider: "nalanda-normalized-exact",
+        model: "normalized-exact-v1",
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      }),
+    );
+    expect(learning.releaseSpellingTranslationAssessment).not.toHaveBeenCalled();
+  });
+
   it("supplies safe feedback for the provider's boolean-only verdict", async () => {
     process.env.OPENROUTER_API_KEY = "test-secret";
     const { service, learning } = harness();
@@ -201,7 +223,7 @@ describe("OpenRouter spelling translation adapter", () => {
     process.env.OPENROUTER_API_KEY = "test-secret";
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new DOMException("timeout", "TimeoutError")));
-    await expect(service.assess("user-a", sessionId, request("苹果")))
+    await expect(service.assess("user-a", sessionId, request("一种常见的果实")))
       .rejects.toBeInstanceOf(GatewayTimeoutException);
     expect(learning.releaseSpellingTranslationAssessment).toHaveBeenCalledWith(
       "user-a", attemptId, expect.any(String), "TRANSLATION_PROVIDER_TIMEOUT",
@@ -216,7 +238,7 @@ describe("OpenRouter spelling translation adapter", () => {
       new Response(JSON.stringify({
         choices: [{ message: { content: "not-json" } }],
       }), { status: 200 })));
-    await expect(service.assess("user-a", sessionId, request("苹果"))).rejects.toMatchObject({
+    await expect(service.assess("user-a", sessionId, request("一种常见的果实"))).rejects.toMatchObject({
       response: { code: "TRANSLATION_PROVIDER_INVALID" },
     });
     expect(fetch).toHaveBeenCalledTimes(2);
