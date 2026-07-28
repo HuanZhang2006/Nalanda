@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
-  LearningAudioManifest, LearningCourseDetail, LearningCourseInput, LearningCourseSummary, LearningScope, LearningSkill,
-  VocabularyUnitInput,
+  LearningAudioManifest, LearningCourseDetail, LearningCourseInput, LearningCourseSummary, LearningScope,
+  LearningSkill, LearningSpellingOptions, VocabularyUnitInput,
 } from "@nalanda/types";
 import { coursesApi } from "./api";
 import { CourseEditor } from "./CourseEditor";
@@ -31,6 +31,20 @@ function quotaPausedAudioCount(manifest: LearningAudioManifest) {
   ).length;
 }
 type PasteUnit = { id: string; name: string; isSystem: boolean; text: string; errors: VocabularyParseError[] };
+type SessionPicker = {
+  course: LearningCourseDetail;
+  mode: "initial" | "review";
+  unitId: string;
+  skills: LearningSkill[];
+  scope: LearningScope;
+  scheduleId?: string;
+  spellingOptions: LearningSpellingOptions;
+};
+const defaultSpellingOptions = (): LearningSpellingOptions => ({
+  timeLimitEnabled: false,
+  timeLimitSeconds: 20,
+  translationFirst: false,
+});
 
 const CATEGORIES = [
   { id: "english_vocabulary", icon: "Aa", name: ["English vocabulary", "英语单词学习"], description: ["Flashcards, pronunciation, translation, spelling, and review across days", "词卡、发音、翻译、拼写与跨日复习"], enabled: true },
@@ -181,7 +195,7 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
   const [editing, setEditing] = useState<{ course: LearningCourseInput; existing: boolean } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [countModes, setCountModes] = useState<Record<string, boolean>>({});
-  const [picker, setPicker] = useState<{ course: LearningCourseDetail; mode: "initial" | "review"; unitId: string; skills: LearningSkill[]; scope: LearningScope; scheduleId?: string } | null>(null);
+  const [picker, setPicker] = useState<SessionPicker | null>(null);
   const [pickerAudio, setPickerAudio] = useState<{
     manifest: LearningAudioManifest | null;
     running: boolean;
@@ -195,27 +209,30 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
   useEffect(() => {
     if (!initialCourseId || !initialUnitId) return;
     coursesApi.detail(initialCourseId).then((course) => setPicker({ course, mode: "review", unitId: initialUnitId,
-      skills: ["pronunciation", "translation", "spelling"], scope: "unlearned", scheduleId: initialScheduleId })).catch((caught) => setError(apiMessage(caught, l("Could not open the scheduled review.", "无法打开日程复习"))));
+      skills: ["pronunciation", "translation", "spelling"], scope: "unlearned", scheduleId: initialScheduleId,
+      spellingOptions: defaultSpellingOptions() })).catch((caught) => setError(apiMessage(caught, l("Could not open the scheduled review.", "无法打开日程复习"))));
   }, [initialCourseId, initialUnitId, initialScheduleId, l]);
 
   const openStart = async (summary: LearningCourseSummary) => {
     if (summary.activeSessionId) return setSessionId(summary.activeSessionId);
     try {
       const course = await coursesApi.detail(summary.id);
-      if (!course.hasUnits) {
-        const session = await coursesApi.startSession(course.id, { unitId: course.units[0].id, mode: "initial", scope: "all", skills: ["pronunciation", "translation", "spelling"] }); setSessionId(session.id);
-      } else setPicker({ course, mode: "initial", unitId: course.units[0].id, skills: ["pronunciation", "translation", "spelling"], scope: "all" });
+      setPicker({ course, mode: "initial", unitId: course.units[0].id,
+        skills: ["pronunciation", "translation", "spelling"], scope: "all",
+        spellingOptions: defaultSpellingOptions() });
     } catch (caught) { setError(apiMessage(caught, l("Could not start learning.", "无法开始学习"))); }
   };
   const openReview = async (summary: LearningCourseSummary) => {
     try { const course = await coursesApi.detail(summary.id); setPicker({ course, mode: "review", unitId: course.units[0].id,
-      skills: ["pronunciation", "translation", "spelling"], scope: "unlearned" }); }
+      skills: ["pronunciation", "translation", "spelling"], scope: "unlearned",
+      spellingOptions: defaultSpellingOptions() }); }
     catch (caught) { setError(apiMessage(caught, l("Could not start review.", "无法开始复习"))); }
   };
   const startPicked = async () => {
     if (!picker || !picker.skills.length) return;
     try { const session = await coursesApi.startSession(picker.course.id, { unitId: picker.unitId, mode: picker.mode,
-      skills: picker.skills, scope: picker.mode === "initial" ? "all" : picker.scope, scheduleId: picker.scheduleId }); setPicker(null); setSessionId(session.id); }
+      skills: picker.skills, scope: picker.mode === "initial" ? "all" : picker.scope,
+      scheduleId: picker.scheduleId, spellingOptions: picker.spellingOptions }); setPicker(null); setSessionId(session.id); }
     catch (caught) { setError(apiMessage(caught, l("Could not start this session.", "无法开始本次会话"))); }
   };
 
@@ -314,7 +331,34 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
         onChange={(event) => setPicker({ ...picker, skills: event.target.checked ? [...picker.skills, skill] : picker.skills.filter((value) => value !== skill) })} /> {skill === "pronunciation" ? l("Pronunciation match", "发音匹配") : skill === "translation" ? l("Translation", "翻译") : l("Spelling", "拼写")}</label>)}</div>
         <div className="course-label">{l("Scope", "范围")}</div><div className="row"><label className="chip chip-outline"><input type="radio" checked={picker.scope === "all"} onChange={() => setPicker({ ...picker, scope: "all" })} /> {l("All words", "全部单词")}</label>
           <label className="chip chip-outline"><input type="radio" checked={picker.scope === "unlearned"} onChange={() => setPicker({ ...picker, scope: "unlearned" })} /> {l("Not yet mastered", "尚未熟练")}</label></div></>}
-      <div className="row mt-24" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPicker(null)}>{l("Cancel", "取消")}</button><button className="btn btn-primary" disabled={!picker.skills.length} onClick={() => void startPicked()}>{picker.mode === "initial" ? l("Start learning", "开始学习") : l("Start review", "开始复习")}</button></div>
+      {picker.skills.includes("spelling") && <fieldset className="course-spelling-settings mt-16">
+        <legend>{l("Spelling options", "拼写测试设置")}</legend>
+        <label className="course-setting-row"><input type="checkbox" checked={picker.spellingOptions.timeLimitEnabled}
+          onChange={(event) => setPicker({ ...picker, spellingOptions: { ...picker.spellingOptions, timeLimitEnabled: event.target.checked } })} />
+          <span>{l("Set a time limit for every word", "为每个单词设置限时")}</span></label>
+        {picker.spellingOptions.timeLimitEnabled && <label className="course-setting-detail">
+          <span>{l("Seconds per word", "每词秒数")}</span>
+          <input className="course-form-field" type="number" min={3} max={300} step={1}
+            aria-label={l("Seconds per spelling word", "每个拼写单词的秒数")}
+            value={picker.spellingOptions.timeLimitSeconds}
+            onChange={(event) => setPicker({ ...picker, spellingOptions: {
+              ...picker.spellingOptions, timeLimitSeconds: Number(event.target.value),
+            } })} />
+        </label>}
+        <label className="course-setting-row"><input type="checkbox" checked={picker.spellingOptions.translationFirst}
+          onChange={(event) => setPicker({ ...picker, spellingOptions: { ...picker.spellingOptions, translationFirst: event.target.checked } })} />
+          <span>{l("Test a typed translation before spelling", "拼写前先测试键入翻译")}</span></label>
+        <p className="faint mt-8">{l(
+          "Semantic translation checking accepts equivalent wording. Provider failures never count as a wrong answer.",
+          "翻译语义判分允许同义表达；供应商失败不会记为答错。",
+        )}</p>
+      </fieldset>}
+      <div className="row mt-24" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPicker(null)}>{l("Cancel", "取消")}</button><button className="btn btn-primary" disabled={!picker.skills.length
+        || (picker.spellingOptions.timeLimitEnabled && (
+          !Number.isSafeInteger(picker.spellingOptions.timeLimitSeconds)
+          || picker.spellingOptions.timeLimitSeconds < 3
+          || picker.spellingOptions.timeLimitSeconds > 300
+        ))} onClick={() => void startPicked()}>{picker.mode === "initial" ? l("Start learning", "开始学习") : l("Start review", "开始复习")}</button></div>
     </div></div></div>}
   </div>;
 }

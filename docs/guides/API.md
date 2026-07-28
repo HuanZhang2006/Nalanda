@@ -157,9 +157,11 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（0011–0018 生产已启用）
+## 4. Courses API（0011–0018 生产已启用；0019–0020 待发布）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
+
+0019–0020 候选契约增加拼写限时与 OpenRouter 语义翻译前测。它们已经存在于仓库，但只有生产 migration history、应用 release 和真实供应商 gate 均通过后才能标为生产启用。限时本身由 Web 执行；服务器仍以 immutable attempt 决定 retry pool、revision、进度和奖励。
 
 ### 4.1 课程内容
 
@@ -209,10 +211,11 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 
 | 方法 | 路径 | 请求 | 成功响应 |
 |---|---|---|---|
-| POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review", skills?, scope?, scheduleId? }` | 新建或恢复与请求意图完全匹配的 active `LearningSession` |
+| POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review", skills?, scope?, scheduleId?, spellingOptions? }` | 新建或恢复与请求意图完全匹配的 active `LearningSession` |
 | GET | `/api/learning-sessions/:id` | — | 当前 owner 的完整 session/items/state/revision；API 内部由一个 `learning_get_session_snapshot` RPC 读取 |
 | POST | `/api/learning-sessions/:id/recognition` | `{ wordId }` | `{ revision, sessionPatch }` |
 | POST | `/api/learning-sessions/:id/attempts` | `LearningAttemptRequest` | `LearningAttemptResult`；只返回本次事实与 session 增量 |
+| POST | `/api/learning-sessions/:id/spelling-translation-assessments` | `{ attemptId,expectedRevision,wordId,answer }` | `LearningSpellingTranslationAssessmentResult`；语义错误时已包含权威的 spelling `attemptResult` |
 | GET | `/api/learning-review-schedules` | — | `ReviewSchedule[]`，含课程/单元名、source/completed session ID |
 | POST | `/api/learning-units/:id/review-schedules` | `{ sourceSessionId, offsets: number[] }`，source 必须是本人该单元已完成的 initial session；offset 仅 3/7/15/30 | 当前用户全部 schedule |
 | DELETE | `/api/learning-review-schedules/:id` | — | `{ "ok": true }`，状态改 cancelled |
@@ -223,6 +226,18 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 0017 起，会话恢复键按服务端验证后的意图生成：首次学习使用 `course+unit+initial`，临时复习使用 `course+unit+scope+排序后的 skills`，日程复习使用 schedule ID。暂停的首次学习和另一单元复习可以同时保持 active；相同意图的并发请求仍由 advisory lock 与部分唯一索引收敛到同一 session。`activeSessionId` 是课程卡快捷入口，API 按 `lastActivityAt` 选择最近活动的一项，不代表课程只能存在一项未完成会话。
 
 active session 的 `unitId` 一定指向现存单元；若课程编辑删除了该单元，历史 session 会被终止并保留，其 `unitId` 可为 `null`，客户端应把它渲染为不可继续的历史记录。
+
+`spellingOptions` 只在选择了 spelling 时生效，缺省为：
+
+```json
+{
+  "timeLimitEnabled": false,
+  "timeLimitSeconds": 20,
+  "translationFirst": false
+}
+```
+
+`timeLimitSeconds` 必须是 3–300 的整数。恢复 revision 已经大于 0 的同意图会话时，服务器保留该会话原设置，避免另一个设备在中途改变规则；还没有 immutable fact 的 revision 0 会话可以由启动请求设置。开启计时后，每道拼写题进入可作答状态才开始倒计时；翻译前测开启时，倒计时从语义判定通过、拼写输入出现之后开始。超时按当前输入（允许空字符串）只提交一次，错误反馈仍等待用户手动进入下一题。
 
 ```json
 {
@@ -235,6 +250,40 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 ```
 
 发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。`attemptId` 必须是 UUID；`expectedRevision` 必须等于当前 session revision。服务端先按 `(user_id,session_id,attempt_id)` 查首次响应，再锁定 session、校验 revision，原子记录 append-only attempt、更新候补池/cursor/stage/progress/revision 并保存响应快照。相同 attempt UUID 的超时重放返回第一次结果且 `replayed=true`，不重复推进或加错；过期 revision 返回 `409 { code:"SESSION_REVISION_CONFLICT", message, currentRevision }`。
+
+开启翻译前测时，Web 先用同一个 `attemptId` 调用语义接口：
+
+```json
+{
+  "attemptId": "44444444-4444-4444-8444-444444444444",
+  "expectedRevision": 12,
+  "wordId": "33333333-3333-4333-8333-333333333333",
+  "answer": "参与某个活动"
+}
+```
+
+NestJS 从当前 owner/session/word 读取英文和权威 translations，再把这三项与用户答案在请求内存中交给 OpenRouter 的结构化 JSON 判定。浏览器不能提交参考答案或模型名。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
+
+```json
+{
+  "attemptId": "44444444-4444-4444-8444-444444444444",
+  "correct": false,
+  "expected": ["参加", "参与"],
+  "feedback": "The answer does not express the expected meaning.",
+  "revision": 13,
+  "replayed": false,
+  "attemptResult": {
+    "attemptId": "44444444-4444-4444-8444-444444444444",
+    "correct": false,
+    "expected": "take part in",
+    "revision": 13,
+    "replayed": false,
+    "sessionPatch": {}
+  }
+}
+```
+
+上例的 `sessionPatch` 省略了与普通 attempt 相同的字段。相同 UUID + 相同 answer hash 重放不会再次调用供应商或推进会话；复用 UUID 但改变 session/word/revision/answer 会拒绝。供应商超时、网络错误或非法结构化响应会释放租约并返回可重试错误，不记错；同一未过期租约返回 425，revision 冲突返回 409，用户限额返回 429。`expected` 和 UI 结果始终同时显示正确拼写与分开的翻译文本块，不把 provider 的自然语言反馈当成权威词义。
 
 数据库先行和不可变 Web/API 切换期间，0014 页面可能仍发送同时缺少 `attemptId` 与 `expectedRevision` 的旧完整请求；API 暂时只对这种“两者都缺失”的形状调用保留的五参数 service-role RPC，revision trigger 仍推进。任一字段单独缺失都会拒绝。正式 0015 Web、弱网重试与所有新集成必须使用上面的幂等契约；兼容分支与旧 RPC 在稳定窗口后通过新的向前迁移/应用版本一起删除。
 
@@ -492,7 +541,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权。0015–0016 同样拒绝客户端执行 snapshot、幂等 attempt、assessment target、音频 prepare/claim/finish/requeue/quota RPC，并拒绝读写队列表；0017 替换 `learning_start_session` 后再次显式撤权，0018 发布断言和双用户 RLS E2E 以普通用户逐项验证失败。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权。0015–0016 同样拒绝客户端执行 snapshot、幂等 attempt、assessment target、音频 prepare/claim/finish/requeue/quota RPC，并拒绝读写队列表；0017 替换 `learning_start_session` 后再次显式撤权，0018 发布断言和双用户 RLS E2E 以普通用户逐项验证失败。0019 的八参数 session start、翻译评判 claim/complete/release 和受保护 spelling wrapper 同样只授予 service_role，0020 以精确签名、RLS 和 grant 断言失败关闭。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 

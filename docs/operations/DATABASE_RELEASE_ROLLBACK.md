@@ -10,13 +10,13 @@
 
 1. 文档检查、TypeScript typecheck、默认测试和全部 workspace 构建；
 2. 启动完整本地 Supabase，自动暂存全部 0008+ 文件，先停在 0007 建立历史 points 夹具，再应用至最新迁移验证回填、opening 归零、Courses 增量与发布断言；随后从空库应用全部迁移；
-3. 运行 `db lint`，执行双用户 RLS/Storage/points/Courses E2E，再以 Azure fake 启动 Web/API 运行 Playwright Courses 主流程；
+3. 运行 `db lint`，执行双用户 RLS/Storage/points/Courses E2E，再以 Azure/OpenRouter fake 启动 Web/API 运行 Playwright Courses 主流程；
 4. 若 push 新增了迁移，质量与本地数据库门禁继续执行，但生产数据库和应用发布保持跳过；数据库 owner 必须先在该 `main` commit 上人工发起 `workflow_dispatch` 并选中 `plan_database_migrations`，核对 history/dry-run 后再另起一次执行选中 `apply_database_migrations`；
 5. 核对生产 Project Ref，显示远端 migration history 和 `db push --dry-run`；
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
 7. 若远端 history 为空，临时只保留 0001–0007 迁移，通过 public schema 零差异和 Storage policy/bucket 核验后才将这 7 个已存在版本标记为 applied；已建立的远端 history 必须是至少包含 0001–0007 的连续本地前缀；
 8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate，再在候选 API 上验证持久队列、private Storage、跨用户重复词复用和裁剪评分，成功后才激活 Web release。
+9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在候选 API 上验证持久队列、private Storage、跨用户重复词复用、裁剪评分以及翻译评判幂等/权威拼写提交，成功后才激活 Web release。
 
 已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。迁移文件或数据库发布控制 workflow/脚本发生变化，都会把普通 main push 保持在“只验证、不部署”状态，避免发布工具修复绕过尚未完成的数据库 release。普通 push 永不直接修改生产数据库；`plan_database_migrations` 只读且不部署应用，只有单独选中 `apply_database_migrations` 才创建恢复点并执行数据库发布，两者同时选中会失败。
 
@@ -225,6 +225,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - apply 后 local/remote history 均到 0018，远端 dry-run 为空、database lint 无 error，`learning_start_session` 的客户端执行权和新意图唯一索引断言通过。数据库仍只做 forward-fix；0017 与旧应用兼容，不以 down migration 回退。
 - 切流前基础真实 Azure gate 在 `japaneast`/`en-US-JennyNeural` 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实队列/Storage/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。
 - 不可变 release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` 健康激活。独立公网与服务器复核确认 Web `200`、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 `401`，Web symlink 与 API image 都指向同一 release SHA。
+
+### 8.6 0019–0020 限时拼写与 OpenRouter 翻译前测发布清单（待执行）
+
+- 只读 plan 必须确认生产停在 0018，唯一待办是 `20260728000019_learning_spelling_timer_translation.sql` 与 `20260728000020_verify_learning_spelling_release.sql`；plan run 不得创建恢复点、写数据库或部署应用。
+- apply 前保留加密恢复 artifact；升级夹具、空库 lint/reset 和双用户 RLS 必须验证 `spelling_options`、评判表无客户端权限、普通用户不能执行任何新 RPC、同 UUID 只产生一次 attempt、并发 revision 冲突、答案只存 SHA-256 和 Auth 删除级联。
+- 0019 保留七参数 `learning_start_session` 与原答题 RPC 供旧应用回退；新应用调用八参数 start 和受保护 spelling wrapper。数据库失败只能 forward-fix，不能 drop 新列/表；应用失败恢复上一不可变 release。
+- 部署在候选 image 启动前，通过标准输入把 GitHub `production` environment 的 OpenRouter key 安装到服务器 mode-600 `.env`，强制 `OPENROUTER_FAKE=false`。真实 smoke 用固定合成样本验证同义 true/无关 false；真实 API gate 验证 session 设置、同 UUID replay 和权威 spelling attempt。任一失败保持最窄 feature flag 关闭并不切流。
+- 完成后再补实际 commit、PR/main/plan/apply run、恢复 artifact/digest、远端 history、provider metrics、release ID、`deps.supabase=ok` 和匿名 `/api/me=401`。未取得这些证据时本节不得改成“已发布”。
 
 ## 9. 失败处置
 

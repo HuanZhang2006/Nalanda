@@ -11,7 +11,7 @@
 - 轮换必须包含四步：**创建/启用新凭据 → 更新全部消费者 → 验证 → 撤销旧凭据**。
 - 若凭据已确认泄露，优先撤销和控制影响；不能为了“可回退”继续保留旧泄露 key。
 - 供应商控制台流程和 key 类型可能变化。操作前在当前控制台确认是否支持双 key/重叠期、对 session/webhook 的影响和审计记录。
-- 当前没有 secret manager、自动到期、轮换日历或凭据使用审计的仓库实现；`/opt/nalanda/.env` 是服务器本地文件，CI 不更新它。
+- 当前没有 secret manager、自动到期、轮换日历或凭据使用审计的仓库实现；`/opt/nalanda/.env` 是服务器本地文件。受保护 deploy 只会通过标准输入原子更新 OpenRouter 域变量，不下载或重建整份文件。
 
 ## 2. 凭据清单
 
@@ -30,6 +30,7 @@
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
 | `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；基础 Japan East gate 已通过，队列增量待独立发布 gate |
+| `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 可选拼写翻译语义评判 | 否 | 0019–0020 待发布；真实 gate 必需，fake 不得进入生产 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
@@ -184,7 +185,22 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 `COURSE_MARKET_ADMIN_USER_IDS` 变更需双人复核 Supabase UUID：先添加新管理员并验证受审计 hide/restore，再移除旧 UUID、重启 API，并确认旧账号返回 `ADMIN_REQUIRED`。不得用共享 service-role 或开放 RPC 替代管理员列表。
 
-## 12. Stripe secret/webhook secret（尚未实现）
+## 12. OpenRouter key（0019–0020 发布候选）
+
+`OPENROUTER_API_KEY` 只由 NestJS 读取；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。生产同时在 GitHub `production` environment 和服务器 mode-600 `.env` 保存当前值：前者只用于受保护部署时经 SSH 标准输入安装，后者由 API 容器消费。仓库脚本拒绝不符合预期形状的输入，并保留其它 env 行。
+
+计划轮换：
+
+1. 在 OpenRouter 控制台创建新 key，记录 key ID/指纹、额度和 UTC 时间，不复制完整值到 ticket。
+2. 暂时关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`；普通拼写、限时拼写和既有学习进度继续。
+3. 安全更新 GitHub `production` environment secret；在受控发布中通过标准输入运行 `scripts/install-production-openrouter-env.sh`，确认 `/opt/nalanda/.env` 为 mode 600 且 `OPENROUTER_FAKE=false`。不得把 key 放在 shell 命令参数或 Actions 日志。
+4. 在候选 image 运行 `smoke-openrouter-translation.mjs`，用固定合成样本验证指定 model 的 structured JSON：语义近义回答为 true、无关回答为 false。再经真实 Courses API 验证同 UUID replay 不再次调用 provider、正确翻译后的权威 spelling attempt 与临时用户清理。
+5. 观察 provider error、latency/token 事件和供应商 usage；重新启用 feature。
+6. 撤销旧 key 并重复 structured smoke。若失败，保持功能关闭，不把 key 下发 Web 或改成客户端自行判分。
+
+泄露时立即关闭翻译前测、撤销 key、核查 usage/账单、GitHub/服务器/Actions 访问与 API 日志。数据库没有用户答案正文，但要审计 provider 请求时间窗和异常评判量。模型或 base URL 变化不是普通 key 轮换，必须独立评测并更新 ADR/成本文档。
+
+## 13. Stripe secret/webhook secret（尚未实现）
 
 当前没有支付 controller、webhook endpoint、订单/账本表或 Stripe SDK。`infra/hybrid-2g/.env.example` 和 Caddy 注释只是目标占位。
 
@@ -195,7 +211,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 必须保留 webhook event ID 幂等、事件重放、订单/credits 账本对账与退款告警。任何 key 轮换都不能通过直接改余额来“修复”。
 
-## 13. TLS/ACME
+## 14. TLS/ACME
 
 当前 nginx TLS 由服务器 certbot 管理。证书续期通常不需要应用 `.env` 变更，但 private key/ACME 账号泄露必须重新签发/撤销。
 
@@ -209,7 +225,7 @@ systemctl reload nginx
 
 轮换/续期后从外部检查证书 subject、issuer、有效期和完整链。监控阈值见 [可观测性与告警](./OBSERVABILITY_ALERTING.md)。
 
-## 14. 紧急泄露处置
+## 15. 紧急泄露处置
 
 1. 宣布安全事件，记录发现时间、凭据类型、环境、可能暴露位置和 incident commander。
 2. 立即撤销/禁用受影响 key；若无法无损切换，暂停对应入口。
@@ -221,7 +237,7 @@ systemctl reload nginx
 8. 验证旧 key 已失效、新 key 路径正常，持续提高监控等级。
 9. 复盘根因、实际影响、轮换耗时和永久修复。
 
-## 15. 建议轮换周期（待批准）
+## 16. 建议轮换周期（待批准）
 
 | 凭据 | 建议最长周期 | 立即轮换条件 |
 |---|---:|---|
@@ -230,6 +246,7 @@ systemctl reload nginx
 | Supabase Personal Access Token | 90 天或按任务短期 | 设备/日志泄露、权限变化 |
 | Anthropic/Stripe secret | 90 天 | usage 异常、泄露、供应商建议 |
 | Azure Speech key | 90 天 | usage/账单异常、泄露、人员/环境变化 |
+| OpenRouter key | 90 天 | usage/账单异常、泄露、模型/供应商访问策略变化 |
 | webhook signing secret | 180 天 | 签名异常、endpoint 泄露 |
 | JWT signing key | 按供应商能力和 session 策略 | key 泄露/算法变更/供应商通知 |
 | TLS 证书 | 自动续期；21/7/2 天告警 | private key 泄露 |
@@ -237,7 +254,7 @@ systemctl reload nginx
 
 周期是目标上限，不代表当前已经自动执行。每个 secret 必须有 owner、创建日、到期日、消费者、最近验证日和撤销证据。
 
-## 16. 轮换完成检查清单
+## 17. 轮换完成检查清单
 
 - [ ] 新凭据只存在于批准的 secret store/目标进程；
 - [ ] Web 中没有任何服务器 secret，静态 artifact 已按需重建；

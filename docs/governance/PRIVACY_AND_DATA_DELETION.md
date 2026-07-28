@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-07-27。本文不是法律意见或已发布隐私政策；Courses/0011–0018、弱网答题、离线合成音频、按意图独立续学与 Azure Speech 已生产启用，文件 AI 导入仍未实现。
+> **状态基线：**2026-07-27。本文不是法律意见或已发布隐私政策；Courses/0011–0018、弱网答题、离线合成音频、按意图独立续学与 Azure Speech 已生产启用。0019–0020 的 OpenRouter 翻译前测仍是待发布候选；文件 AI 导入仍未实现。
 
 ## 1. 原则与责任
 
@@ -30,6 +30,7 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 举报/审核 | `learning_course_reports/moderation_actions` | 类别/说明、举报人、状态、管理员理由 | 举报人只能读自己的报告；动作客户端不可见；管理员/举报人删除后按 FK 删除或去标识 |
 | 课程徽章/成长 | `badge_definitions/user_badge_awards` + points | 熟练词/课程/复习日期成就和 +20 事实 | award 持久防重；删课程不回退，删 Auth 用户级联；不是商业权益 |
 | Speech | 请求内 WAV、`learning_attempts.provider_details`、`learning_speech_usage`、`learning_audio_assets`、private `vocabulary-audio` | Azure 朗读评分、分数/音素教学反馈、配额/估算成本、跨用户共享的合成 TTS 对象与生成队列 | 用户 WAV 仅内存转发后丢弃，不进 DB/Storage/log/backup；合成对象/队列不含 owner、翻译或录音；评分/用量随规则删除/去标识 |
+| 拼写翻译前测（候选） | 请求内用户译文、`learning_spelling_translation_assessments` | OpenRouter 只判断当前词的用户译文是否语义覆盖服务端参考翻译；服务端保存幂等/配额/教学反馈 | 用户译文正文仅在 API 请求内存中转发，不进 DB/log/backup；DB 只存 SHA-256、boolean、短反馈、provider/model/token 计量和首次响应，session/word/user 删除级联 |
 | 浏览器弱网副本 | IndexedDB attempt outbox、Cache Storage 音频 | 断网重试、未来五词预取和用户选择的单元音频离线副本 | 登出清除该账号待同步 outbox；音频按全局内容键存可重建副本，用户可删除，浏览器也可能在存储压力下回收 |
 | 通知/反馈 | `notifications`、`feedback` | 互动通知、用户工单 | owner-only；无运维端正式工单留存/删除流程 |
 | 原型/假数据 | 前端 bundle/内存 | 演示 Home、Notes、Market、AI | 不是用户事实源，不应进入用户导出 |
@@ -83,7 +84,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 3. 取消 Stripe 订阅/未来续费，处理退款、争议、创作者应付和法定财务保留；不直接删除不可变账本；
 4. 删除/匿名化社区正文、评论、互动、关注、通知、反馈、课程、任务、个人笔记与 AI 产物；
 5. 枚举并删除 `materials/{user_id}/...`、`community-media/{user_id}/...` 及未来导出/AI bucket 对象，处理孤儿和历史版本；
-6. 删除学习课程、会话/attempt/progress/日程、shares、本人 publication/report/badges；核对 moderation actor 和 speech usage 按 FK 去标识。`vocabulary-audio` 是 private bucket 中按规范化内容共享的合成 cache，不含 owner 且不因单个用户删除而清空；
+6. 删除学习课程、会话/attempt/progress/日程、拼写翻译评判 hash/响应、shares、本人 publication/report/badges；核对 moderation actor 和 speech usage 按 FK 去标识。`vocabulary-audio` 是 private bucket 中按规范化内容共享的合成 cache，不含 owner 且不因单个用户删除而清空；
 7. 清除该账号浏览器 IndexedDB outbox；Cache Storage 音频无账号标识且可由用户单独清除，账号删除 UI 应提供同步清理；
 8. 删除解析块、embedding、prompt/cache、用户关联队列 payload、搜索索引和第三方供应商保存副本；全局 TTS 生成队列只保留无 owner 的内容键和运行元数据；
 9. 删除 Supabase Auth 用户，让受约束表级联；随后反向验证学习/private/public/成长事实和对象，不能只看 job 状态；
@@ -103,6 +104,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 | AI 临时输入/cache | 完成任务所需 | 默认 24 小时内清除 | 原始资料事实源仍按用户内容留存 |
 | 用户朗读 WAV | 单次评分请求 | Azure 响应/失败后立即从内存丢弃 | 浏览器裁剪为最多 6 秒；服务端兼容上限 8 秒/2 MB；不落盘、DB、Storage、日志或备份 |
 | 朗读评分/学习 attempts | 账户存续期/学习反馈 | 随课程或账户删除；必要安全证据另审批 | 只存分数、错误类型、音素反馈和本地日期 |
+| 翻译前测输入/判定 | 输入正文仅单请求；hash/判定随 session 存续 | 正文响应结束即丢弃；assessment 行随 session/word/user 级联 | OpenRouter 接收英文、参考 translations 与用户答案；数据库/普通日志不保存输入正文 |
 | TTS private 共享 cache/队列 | 性能/成本 | 可随时清空并重新排队生成 | 只有规范化英文的 hash/voice/格式/版本、合成对象和运行元数据，不含 user ID/录音 |
 | 浏览器 attempt outbox | 弱网同步 | 服务端确认后删除；登出立即清除该账号未同步项 | 包含本次答案、session/word/revision/attemptId；不得跨账号提交 |
 | 浏览器离线音频 | 用户选择的单元离线播放 | 用户可随时清除；浏览器可能主动回收 | Cache Storage 中的可重建合成副本，不包含用户录音或课程私有文本 |
@@ -122,11 +124,13 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机、Supabase 和 Azure Speech；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。仍必须完成/持续维护 Azure DPA/子处理者、识别结果留存、训练使用、删除/事件 SLA、跨境机制、退出方案与用户告知记录。Anthropic/Stripe/邮件/监控仍是未来处理者。
+当前运行依赖 GitHub、部署主机、Supabase 和 Azure Speech；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。0019–0020 候选引入 OpenRouter 作为窄范围翻译语义处理者：仅在用户显式开启翻译前测并提交时发送英文、服务端参考 translations 和用户输入，不发送课程名、邮箱、学校、user ID、进度、token 或 service-role。生产启用前必须完成 OpenRouter 的数据留存/训练使用/子处理者/跨境/删除/事件 SLA 与用户告知评审；free 路由不降低该义务。Azure 也仍需持续维护对应 DPA/处理记录。Anthropic/Stripe/邮件/监控仍是未来处理者。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
 
 Speech 只向 Azure 发送当前词的 reference text 和用户主动录制的短 WAV；不得发送课程标题、翻译、邮箱、学校、user ID 或分享 token。TTS 只发送英文 term。供应商失败后内存 buffer 仍必须释放，且不写用户错误次数。
+
+OpenRouter 失败、超时或结构化响应非法时必须释放请求正文和租约，不创建错误 attempt；生产日志只保留 model、耗时、boolean 与 token 数。模型反馈不是新的参考答案，也不得用于训练、市场发布、profile 推断或其它目的。
 
 ## 9. 未成年人和敏感资料
 

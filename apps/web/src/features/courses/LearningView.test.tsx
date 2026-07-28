@@ -65,6 +65,8 @@ function course(words: VocabularyWord[]): LearningCourseDetail {
 function session(words: VocabularyWord[], stage: LearningSession["stage"], cursor: number, nextQueue: string[] = []): LearningSession {
   return { id: ids[4], courseId: ids[0], unitId: ids[1], mode: "initial", scope: "all",
     selectedSkills: ["pronunciation", "translation", "spelling"], stage, active: true, revision: cursor,
+    spellingOptions: { timeLimitEnabled: false, timeLimitSeconds: 20, translationFirst: false },
+    spellingTranslationAssessment: null,
     state: { queue: words.map((entry) => entry.id), cursor, nextQueue, round: 1 },
     items: words.map((entry, position) => ({ word: entry, position, recognitionSeen: stage !== "recognition",
       pronunciationPassed: false, translationPassed: false, spellingPassed: false, wrongCount: 0 })) };
@@ -76,12 +78,15 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   serverCorrect?: boolean;
   audio?: "ready" | "pending-then-ready";
   mode?: "initial" | "review";
+  spellingOptions?: Partial<LearningSession["spellingOptions"]>;
+  translationAssessment?: "correct" | "wrong" | "error";
 } = {}) {
   let cursor = 0;
   let revision = 0;
   let retryQueue: string[] = [];
   let audioReady = options.audio !== "pending-then-ready";
   const attempts: Array<Record<string, unknown>> = [];
+  const translationAssessments: Array<Record<string, unknown>> = [];
   const audioRequests: string[] = [];
   let releaseAttempt: (() => void) | null = null;
   const currentSession = (
@@ -91,10 +96,69 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   ) => ({
     ...session(words, nextStage, nextCursor, nextRetryQueue),
     mode: options.mode || "initial",
+    spellingOptions: {
+      timeLimitEnabled: false,
+      timeLimitSeconds: 20,
+      translationFirst: false,
+      ...options.spellingOptions,
+    },
   });
   const fetchMock = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input);
     if (path.endsWith(`/api/learning-courses/${ids[0]}`)) return json(course(words));
+    if (path.endsWith(`/api/learning-sessions/${ids[4]}/spelling-translation-assessments`)) {
+      const request = JSON.parse(String(init.body)) as {
+        attemptId: string; expectedRevision: number; wordId: string; answer: string;
+      };
+      translationAssessments.push(request);
+      if (options.translationAssessment === "error") {
+        return json({ code: "TRANSLATION_PROVIDER_TIMEOUT", message: "timeout" }, 504);
+      }
+      const current = words[cursor];
+      const correct = options.translationAssessment !== "wrong";
+      if (correct) {
+        return json({
+          attemptId: request.attemptId,
+          correct: true,
+          expected: current.translations,
+          feedback: "Equivalent meaning accepted.",
+          revision,
+          replayed: false,
+          attemptResult: null,
+        }, 201);
+      }
+      cursor = Math.min(cursor + 1, words.length - 1);
+      revision += 1;
+      const next = currentSession(stage, cursor, [current.id]);
+      next.revision = revision;
+      return json({
+        attemptId: request.attemptId,
+        correct: false,
+        expected: current.translations,
+        feedback: "The meaning does not match.",
+        revision,
+        replayed: false,
+        attemptResult: {
+          attemptId: request.attemptId,
+          correct: false,
+          expected: current.term,
+          revision,
+          replayed: false,
+          sessionPatch: {
+            stage, active: true, state: next.state,
+            changedItem: {
+              wordId: request.wordId,
+              recognitionSeen: true,
+              pronunciationPassed: false,
+              translationPassed: false,
+              spellingPassed: false,
+              wrongCount: 1,
+            },
+            nextWordId: words[cursor]?.id || null,
+          },
+        },
+      }, 201);
+    }
     if (path.endsWith(`/api/learning-sessions/${ids[4]}/attempts`)) {
       const request = JSON.parse(String(init.body)) as {
         attemptId: string; expectedRevision: number; wordId: string; skill: string; answer: Record<string, unknown>;
@@ -186,7 +250,13 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
     throw new Error(`Unexpected fetch: ${path}`);
   });
   vi.stubGlobal("fetch", fetchMock);
-  return { attempts, audioRequests, fetchMock, releaseAttempt: () => releaseAttempt?.() };
+  return {
+    attempts,
+    translationAssessments,
+    audioRequests,
+    fetchMock,
+    releaseAttempt: () => releaseAttempt?.(),
+  };
 }
 
 describe("LearningView immediate feedback", () => {
@@ -417,6 +487,110 @@ describe("LearningView immediate feedback", () => {
     await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "Next question")!));
     expect(container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')?.value).toBe("");
     expect(container.textContent).not.toContain("Correct spelling: apple");
+  });
+
+  it("auto-submits exactly once when a timed spelling word expires", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果", "水果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const { attempts } = installApi(words, "spelling", {
+      spellingOptions: { timeLimitEnabled: true, timeLimitSeconds: 3 },
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    expect(container.querySelector('[role="timer"]')?.textContent).toContain("3s");
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_100); });
+    await settle();
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].answer).toEqual({ text: "" });
+    expect(container.textContent).toContain("No answer before time expired");
+    expect(container.textContent).toContain("Correct spelling: apple");
+    expect(container.textContent).toContain("苹果");
+    expect(container.textContent).toContain("水果");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(attempts).toHaveLength(1);
+    expect(container.textContent).toContain("Next question");
+  });
+
+  it("checks a typed translation before starting the spelling timer and shows both result fields", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "spelling", {
+      spellingOptions: { translationFirst: true, timeLimitEnabled: true, timeLimitSeconds: 8 },
+      translationAssessment: "correct",
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    expect(container.querySelector('[aria-label="Typed translation answer"]')).not.toBeNull();
+    expect(container.querySelector('[role="timer"]')).toBeNull();
+    await settle(() => inputValue(
+      container.querySelector<HTMLInputElement>('[aria-label="Typed translation answer"]')!,
+      "一种常见水果，也就是苹果",
+    ));
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Check translation")!));
+    expect(api.translationAssessments).toHaveLength(1);
+    expect(container.textContent).toContain("Translation accepted");
+    expect(container.querySelector('[aria-label="Spelling answer"]')).not.toBeNull();
+    expect(container.querySelector('[role="timer"]')?.textContent).toContain("8s");
+
+    const spelling = container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')!;
+    await settle(() => inputValue(spelling, "apple"));
+    await settle(() => {
+      spelling.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    });
+    expect(api.attempts).toHaveLength(1);
+    expect(api.attempts[0].attemptId).toBe(api.translationAssessments[0].attemptId);
+    expect(container.textContent).toContain("Spelling apple");
+    expect(container.textContent).toContain("Translation");
+    expect(container.textContent).toContain("苹果");
+  });
+
+  it("records a semantic translation failure as the spelling error and leaves feedback for manual advance", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "spelling", {
+      spellingOptions: { translationFirst: true },
+      translationAssessment: "wrong",
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => inputValue(
+      container.querySelector<HTMLInputElement>('[aria-label="Typed translation answer"]')!,
+      "香蕉",
+    ));
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Check translation")!));
+    expect(api.translationAssessments).toHaveLength(1);
+    expect(api.attempts).toHaveLength(0);
+    expect(container.textContent).toContain("Skipped because the translation was incorrect");
+    expect(container.textContent).toContain("Correct spelling: apple");
+    expect(container.textContent).toContain("苹果");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(container.textContent).toContain("Next question");
+    expect(container.textContent).toContain("Correct spelling: apple");
+  });
+
+  it("does not count a translation-provider failure as wrong and keeps a retryable form", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "spelling", {
+      spellingOptions: { translationFirst: true },
+      translationAssessment: "error",
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+    await settle(() => inputValue(
+      container.querySelector<HTMLInputElement>('[aria-label="Typed translation answer"]')!,
+      "苹果",
+    ));
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Check translation")!));
+
+    expect(api.translationAssessments).toHaveLength(1);
+    expect(api.attempts).toHaveLength(0);
+    expect(container.textContent).toContain("timed out");
+    expect(container.textContent).not.toContain("added to the next-round retry pool");
+    expect(container.querySelector('[aria-label="Typed translation answer"]')).not.toBeNull();
   });
 
   it("prioritizes and caches the next five cold review words before replacing browser speech", async () => {

@@ -149,6 +149,44 @@ describe("LearningService ownership and public boundaries", () => {
     expect(db.rpc).not.toHaveBeenCalled();
   });
 
+  it("validates and persists spelling options through the new start-session overload", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue(publicationId);
+    vi.spyOn(value, "getSession").mockResolvedValue({ id: publicationId } as any);
+    await value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "review",
+      scope: "all",
+      skills: ["spelling"],
+      spellingOptions: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 14,
+        translationFirst: true,
+      },
+    });
+    expect(db.rpc).toHaveBeenCalledWith("learning_start_session", expect.objectContaining({
+      p_spelling_options: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 14,
+        translationFirst: true,
+      },
+    }));
+
+    db.rpc.mockClear();
+    await expect(value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "review",
+      scope: "all",
+      skills: ["spelling"],
+      spellingOptions: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 2,
+        translationFirst: false,
+      },
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
   it("rejects pronunciation assessment lookup outside an active owned session before provider work", async () => {
     const { value, db } = service();
     db.rpc.mockRejectedValue(new SupabaseRequestError(
@@ -181,6 +219,17 @@ describe("LearningService ownership and public boundaries", () => {
       stage: "translation",
       active: true,
       revision: 7,
+      spelling_options: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 12,
+        translationFirst: true,
+      },
+      spelling_translation_assessment: {
+        attempt_id: attemptId,
+        word_id: attemptId,
+        revision: 7,
+        correct: true,
+      },
       state: { queue: [attemptId], cursor: 0, nextQueue: [], round: 1 },
       items: [{
         position: 0,
@@ -210,6 +259,17 @@ describe("LearningService ownership and public boundaries", () => {
     await expect(value.getSession("user-a", publicationId)).resolves.toMatchObject({
       id: publicationId,
       revision: 7,
+      spellingOptions: {
+        timeLimitEnabled: true,
+        timeLimitSeconds: 12,
+        translationFirst: true,
+      },
+      spellingTranslationAssessment: {
+        attemptId,
+        wordId: attemptId,
+        revision: 7,
+        correct: true,
+      },
       items: [{
         word: {
           term: "apple",
@@ -256,7 +316,7 @@ describe("LearningService ownership and public boundaries", () => {
       revision: 5,
       sessionPatch: { stage: "completed", active: false },
     });
-    expect(db.rpc).toHaveBeenCalledWith("learning_record_attempt", expect.objectContaining({
+    expect(db.rpc).toHaveBeenCalledWith("learning_record_spelling_attempt", expect.objectContaining({
       p_attempt_id: attemptId,
       p_expected_revision: 4,
     }));
