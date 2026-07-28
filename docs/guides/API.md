@@ -262,7 +262,7 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 }
 ```
 
-NestJS 从当前 owner/session/word 读取英文和权威 translations，再把这三项与用户答案在请求内存中交给 OpenRouter 的 `{correct:boolean}` 结构化判定。浏览器不能提交参考答案或模型名；服务端用固定安全文案补齐 feedback，不把 provider 自由文本当权威词义。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
+NestJS 从当前 owner/session/word 读取英文和权威 translations。用户答案经服务端 NFKC、空白和大小写规范化后若完全等于任一参考项，以 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不调用供应商；非字面答案才在请求内存中交给 OpenRouter 的 `{correct:boolean}` 结构化判定。浏览器不能提交参考答案或模型名；服务端用固定安全文案补齐 feedback，不把 provider 自由文本当权威词义。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
 
 ```json
 {

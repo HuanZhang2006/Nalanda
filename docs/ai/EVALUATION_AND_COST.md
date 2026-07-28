@@ -23,7 +23,7 @@
 - 当前生产 compose 不包含 AI 服务，NestJS 没有 AI 模块、job 或服务间调用。
 - Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
 - Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列、private Storage 事实源和客户端 VAD 裁剪已经在生产启用；fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
-- 0019 候选增加 NestJS OpenRouter adapter，固定使用 structured JSON 判定用户译文是否覆盖服务端参考 translations；输入正文不落库，服务端仍唯一写 spelling 错误事实。它默认关闭，生产尚未取得真实 provider/release 证据。
+- 0019 候选增加 NestJS 翻译评判 adapter：规范化后完全等于服务端参考 translation 的答案由服务端确定性判对；非字面同义/改写才使用 OpenRouter structured JSON。输入正文不落库，服务端仍唯一写 spelling 错误事实。它默认关闭，生产尚未取得真实 provider/release 证据。
 
 因此当前不得：收费扣 credits；把 placeholder 或文件入口标为已生成/已解析；把 Azure TTS 当成课程 AI 导入；把 health/key/fake 当真实供应商可用；用真实私有课件/录音做非受控测试；公开承诺准确率/成本/延迟。
 
@@ -67,7 +67,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 ### 2.4 OpenRouter 翻译语义前测候选边界
 
-用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`，连同用户输入发送到 OpenRouter，指定 `google/gemma-4-26b-a4b-it:free`、temperature 0 和严格 JSON schema `{correct:boolean}`。客户端不能提供参考答案、model 或 provider 参数。模型只决定语义 boolean；API 使用固定、非权威教学文案补齐 feedback，避免把自由文本输出当词义或因空 feedback 丢弃有效判定。模型输出不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
+用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定 `google/gemma-4-26b-a4b-it:free`、temperature 0 和严格 JSON schema `{correct:boolean}`。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback，避免把自由文本输出当词义或因空 feedback 丢弃有效判定。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
 
 最低固定评测集需包含：
 
@@ -78,7 +78,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 语义质量门在公开开放前必须用授权合成/专家标注集计算 precision、recall、false-accept/false-reject，并按单义/多义、词/短语和中英文分层。高风险错误是把无关翻译判对；阈值未批准前只能 private beta。真实 gate 的两条样本（同义为 true、无关为 false）只证明 endpoint/schema/key 当前可用，不代表质量 baseline。
 
-运行时记录脱敏 model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。默认 20 次/用户/分钟、滚动 24 小时 200 次，整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。超时/供应商错误不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
+运行时记录脱敏 provider/model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。确定性完全匹配记录零 token，便于与真实 OpenRouter 调用分开统计。默认 20 次/用户/分钟、滚动 24 小时 200 次，整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。超时/供应商错误不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
 
 ## 3. 可追溯生成记录
 

@@ -34,6 +34,8 @@ const DEFAULT_FEEDBACK = {
   correct: "The meaning matches an accepted translation.",
   incorrect: "The meaning does not match the accepted translations.",
 } as const;
+const EXACT_MATCH_PROVIDER = "nalanda-normalized-exact";
+const EXACT_MATCH_MODEL = "normalized-exact-v1";
 
 function normalized(value: string) {
   return value.normalize("NFKC").trim().replace(/\s+/gu, " ").toLocaleLowerCase();
@@ -304,26 +306,44 @@ export class OpenRouterTranslationService {
       }, 425);
     }
     const startedAt = Date.now();
+    const translations = Array.isArray(claim.translations)
+      ? claim.translations.map(String)
+      : [];
+    const exactMatch = translations.some(
+      (translation) => normalized(translation) === normalized(answer),
+    );
     let decision: ProviderDecision;
-    try {
-      decision = await this.provider(
-        String(claim.term),
-        Array.isArray(claim.translations) ? claim.translations.map(String) : [],
-        answer,
-        config,
-      );
-    } catch (error) {
-      const code = error instanceof HttpException
-        ? String((error.getResponse() as Record<string, unknown>)?.code || "TRANSLATION_PROVIDER_ERROR")
-        : "TRANSLATION_PROVIDER_ERROR";
-      await this.learning.releaseSpellingTranslationAssessment(
-        userId,
-        attemptId,
-        leaseToken,
-        code,
-      ).catch(() => false);
-      throw error;
+    if (exactMatch) {
+      decision = {
+        correct: true,
+        feedback: DEFAULT_FEEDBACK.correct,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      };
+    } else {
+      try {
+        decision = await this.provider(
+          String(claim.term),
+          translations,
+          answer,
+          config,
+        );
+      } catch (error) {
+        const code = error instanceof HttpException
+          ? String((error.getResponse() as Record<string, unknown>)?.code || "TRANSLATION_PROVIDER_ERROR")
+          : "TRANSLATION_PROVIDER_ERROR";
+        await this.learning.releaseSpellingTranslationAssessment(
+          userId,
+          attemptId,
+          leaseToken,
+          code,
+        ).catch(() => false);
+        throw error;
+      }
     }
+    const provider = exactMatch
+      ? EXACT_MATCH_PROVIDER
+      : config.fake ? "openrouter-fake" : "openrouter";
+    const model = exactMatch ? EXACT_MATCH_MODEL : config.model;
     const result = await this.learning.completeSpellingTranslationAssessment(
       userId,
       sessionId,
@@ -334,15 +354,15 @@ export class OpenRouterTranslationService {
       leaseToken,
       {
         ...decision,
-        provider: config.fake ? "openrouter-fake" : "openrouter",
-        model: config.model,
+        provider,
+        model,
       },
     );
     this.logger.log(JSON.stringify({
       event: "learning_spelling_translation_assessed",
       durationMs: Date.now() - startedAt,
-      provider: config.fake ? "openrouter-fake" : "openrouter",
-      model: config.model,
+      provider,
+      model,
       correct: result.correct,
       replayed: result.replayed,
       promptTokens: decision.usage.promptTokens,
