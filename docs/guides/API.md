@@ -157,11 +157,11 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（0011–0018 生产已启用；0019–0020 待发布）
+## 4. Courses API（0011–0020 生产已启用）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
-0019–0020 候选契约增加拼写限时与 OpenRouter 语义翻译前测。它们已经存在于仓库，但只有生产 migration history、应用 release 和真实供应商 gate 均通过后才能标为生产启用。限时本身由 Web 执行；服务器仍以 immutable attempt 决定 retry pool、revision、进度和奖励。
+0019–0020 契约增加拼写限时与 OpenRouter 语义翻译前测，已于 2026-07-28 通过生产 migration history、不可变应用 release、真实供应商和候选 API gate。限时本身由 Web 执行；服务器仍以 immutable attempt 决定 retry pool、revision、进度和奖励。
 
 ### 4.1 课程内容
 

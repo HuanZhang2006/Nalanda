@@ -3,15 +3,19 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-07-27。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-07-28。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
 ## [Unreleased]
 
+当前没有已合并但尚未发布的用户功能。
+
+## [0.8.0] - 2026-07-28
+
 ### Added
 
-- 新增 0019–0020 发布候选：`learning_sessions.spelling_options`、只保存用户译文 SHA-256 的 `learning_spelling_translation_assessments`、评判租约/配额/幂等响应，以及精确 RLS/grant 发布断言。
+- 新增 0019–0020：`learning_sessions.spelling_options`、只保存用户译文 SHA-256 的 `learning_spelling_translation_assessments`、评判租约/配额/幂等响应，以及精确 RLS/grant 发布断言。
 - 拼写测试可选 3–300 秒限时；倒计时只在拼写输入可作答后开始，超时按当前内容自动提交一次。可选翻译前测先由服务端 OpenRouter structured output 判断语义，正确后才进入拼写，错误直接形成一次权威 spelling 错误。
 - 拼写结果无论正确或错误都显示正确英文与逐项翻译；翻译评判失败可重试且不记错。
 
@@ -19,6 +23,7 @@
 
 - OpenRouter free route 偶发返回有效 boolean 但空 feedback，或 200 响应暂时缺少结构化 content。服务端契约收窄为只让模型决定 `{correct:boolean}`，用固定安全教学文案补齐 feedback；非法 200 在原 12 秒总预算内只重试一次，仍失败时释放租约且不记错。该修复不允许客户端自判，也不改变数据库权威。
 - OpenRouter free route 会把与服务端参考翻译逐字相同的合成占位答案偶发判错。NestJS 现先执行服务端 NFKC/空白/大小写规范化；与任一参考翻译完全一致时以 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不调用供应商，只有非字面同义/改写才交给 OpenRouter。该快速路径仍经过 owner、租约、配额、幂等和数据库权威事务。
+- 修复翻译评测的幂等 claim 已命中首次完成事实时，API 映射丢失外层 `replayed=true` 的问题；现在相同 UUID/答案重放明确返回 `true`，且不会重复调用供应商、推进会话或累计错误。
 
 ### Security
 
@@ -29,6 +34,12 @@
 
 - 增加 fake-clock jsdom 的单次超时提交、翻译通过前不计时、语义错误手动推进、provider 失败不记错和双语结果渲染；API 覆盖规范化完全匹配零供应商调用、boolean-only structured schema、安全 feedback 回退、缺失 content 的单次有界重试、幂等 replay、租约释放、超时/非法响应；双用户 RLS 覆盖客户端拒绝、hash-only 持久化、revision 与级联；Playwright 使用 OpenRouter fake，不作为真实供应商证据。
 - 发布工具新增 OpenRouter structured smoke 和生产 env 安装脚本测试。生产启用前必须另取得真实 OpenRouter 同义/无关判定及真实 Courses API 幂等证据。
+
+### Release
+
+- PR #26、#27、#28、#29 依次合入功能及三项生产 gate 前向修复；最终 main SHA `a4c230e1aa6f29abbd4fbe944a1b76c625107003` 的 run `30374301472` 通过 docs/lint/typecheck、Web/API tests、build、0007→0020、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake，不能作为真实供应商证据。
+- 只读 plan run `30366334157` 只列 0019–0020；受保护 run `30367263486` 创建加密恢复 artifact `8691620673`（`db-recovery-7c8b516ec4fc9086a6bae816966cb7f688c19746`）并把生产数据库同步到 0020。该 run 与随后 `30370419397`、`30372651419` 的候选应用分别因 provider 契约、合成答案模型误判和幂等 replay 映射被 gate 拦截，均自动恢复上一应用；数据库按规则保持 0020。
+- 最终 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` 激活前，真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 固定模型返回 1,365 ms、253/27/280 tokens；候选 Courses API 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，并持久证明 `nalanda-normalized-exact/normalized-exact-v1`、0 token、`replayed=true`、revision 1。独立公网复核确认 `deps.supabase=ok`、匿名 `/api/me` 401 和 React root。
 
 ## [0.7.1] - 2026-07-27
 
