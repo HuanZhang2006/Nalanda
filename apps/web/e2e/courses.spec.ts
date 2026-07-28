@@ -156,8 +156,8 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.getByRole("article").getByRole("button", { name: "复习" }).click();
   const reviewModal = page.locator(".modal");
   await reviewModal.locator("select").selectOption({ index: 1 });
-  await reviewModal.getByLabel("翻译").uncheck();
-  await reviewModal.getByLabel("拼写").uncheck();
+  await reviewModal.getByRole("checkbox", { name: "翻译", exact: true }).uncheck();
+  await reviewModal.getByRole("checkbox", { name: "拼写", exact: true }).uncheck();
   const reviewAudioRequests = new Set<string>();
   let forceAudioPending = true;
   await page.route(/\/api\/pronunciation\/audio\//, async (route) => {
