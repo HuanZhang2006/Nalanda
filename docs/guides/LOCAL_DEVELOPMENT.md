@@ -146,9 +146,19 @@ FEATURE_COURSE_SHARING_ENABLED=true
 FEATURE_COURSE_MARKET_ENABLED=true
 FEATURE_PRONUNCIATION_ENABLED=false
 FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=false
+FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=false
 ```
 
-非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
+非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音和翻译前测始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
+
+要测试真实语义翻译前测，在已被 Git 忽略的 `apps/api/.env` 中填写开发用 `OPENROUTER_API_KEY`，设置 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true`，并保留默认 model/base URL/timeout/配额。不要在命令行参数、浏览器 `VITE_*`、截图、issue 或测试 fixture 中放 key；文件权限建议设为 600。普通 UI/API 自动化使用 `OPENROUTER_FAKE=true`，它只做确定性路径测试且 production 会拒绝。真实单请求验证使用：
+
+```bash
+chmod 600 apps/api/.env
+node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
+```
+
+脚本只输出 model、耗时和 token 计量，不打印 key、用户答案或完整供应商响应。
 
 `/api/health` 会探测 JWKS 与 PostgREST profiles 空查询，失败返回 503；`REDIS_URL`/`AI_SERVICE_URL` 仍只影响状态展示。API 的 service-role key 还会调用 Courses 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
 
@@ -220,6 +230,7 @@ curl -I http://localhost:5173
 8. 创建分享、撤销后确认旧链接失效；上架免费 Course Market，用第二个开发账号克隆并确认副本进度为 0、不能再次传播。
 9. 开启音频预热后选定单元：确认 manifest 从 pending 变 ready，当前题及后四词进入浏览器 Cache Storage；“下载单元音频”可续传、显示失败/配额暂停并可删除本地副本。浏览器即使授予 persistent storage，仍可能在存储压力下回收。
 10. 在开发者工具设 Offline 后连续完成至少两题，确认反馈立即出现且完成页显示等待同步；恢复网络后同一 attempt UUID 串行提交，刷新不会重复累计错误。完整 Web app shell/PWA 离线启动不在此功能范围。
+11. 开始包含拼写的学习/复习时分别验证：不勾选时行为不变；勾选限时并设 3 秒时，输入出现后倒计时并只自动提交一次；同时勾选翻译前测时，计时必须等语义回答通过后才开始。语义错误直接形成一次 spelling 错误，供应商超时/失败只显示可重试错误，不增加 wrong count。正确和错误结果都要同时显示英文拼写与分开的翻译。
 
 本地当日无法验证“两次不同日期复习即熟练”时，不要手改生产数据；使用一次性本地 Supabase RLS fixture，测试会按 profile 时区生成两个不同 `local_date`。
 
@@ -290,7 +301,14 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移（当前仓库与生产均为 0018），而不是仍停在旧 migration history；是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新迁移（仓库为 0020；生产在本候选发布前仍为 0018），而不是仍停在旧 migration history；是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+
+### 翻译前测返回禁用、超时或配额错误
+
+- `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` 关闭时，要求 `translationFirst=true` 的 session 启动会失败；关闭该选项的拼写仍可用。
+- 确认 `OPENROUTER_API_KEY` 只在 API `.env`，model 为仓库锁定值，且没有在 production 设置 `OPENROUTER_FAKE=true`。
+- 供应商超时、5xx 或结构化响应非法不会记错，用户可用同一 attempt UUID 重试；425 表示同 UUID 的租约仍在处理，409 表示另一设备已推进 revision，429 表示持久用户配额已达到。
+- 不要把 provider 失败改成客户端“猜测判分”；服务端必须继续是错误事实、候补池和进度的权威。
 
 ### 发音按钮降级或评分不可用
 
@@ -308,7 +326,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；浏览器流程覆盖文本导入、弱网 outbox 和 Cache Storage，Azure 使用 fake。生产发布另有真实基础 Azure gate 与队列/Storage/重复词/VAD 评分 gate；真实供应商不在 PR 上消耗共享额度，仍缺 FastAPI contract 和 ESLint/格式化规则。
+- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；浏览器流程覆盖文本导入、弱网 outbox、Cache Storage、限时拼写和翻译前测，Azure/OpenRouter 使用 fake。生产发布另有真实 Azure gates 与真实 OpenRouter 结构化判定 gate；真实供应商不在 PR 上消耗共享额度，仍缺 FastAPI contract 和 ESLint/格式化规则。
 - **目标**：接入 Redis/BullMQ、API→AI 内部调用、真实解析/Claude 生成。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 

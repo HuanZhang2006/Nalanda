@@ -11,6 +11,7 @@ import {
   CreateReviewSchedulesDto,
   LearningAttemptDto,
   LearningCourseDto,
+  LearningSpellingTranslationAssessmentDto,
   ModerateCoursePublicationDto,
   PublishLearningCourseDto,
   RenameLearningCourseDto,
@@ -18,6 +19,7 @@ import {
 } from "./learning.dto";
 import { LearningService } from "./learning.service";
 import { LearningAudioService } from "./learning-audio.service";
+import { OpenRouterTranslationService } from "./openrouter-translation.service";
 
 @Controller()
 @UseGuards(SupabaseAuthGuard)
@@ -26,6 +28,7 @@ export class LearningController {
     private readonly learning: LearningService,
     private readonly flags: FeatureFlagsService,
     private readonly learningAudio: LearningAudioService,
+    private readonly translationAssessment: OpenRouterTranslationService,
   ) {}
 
   @Get("learning-courses")
@@ -53,6 +56,7 @@ export class LearningController {
   @Post("learning-courses/:id/sessions")
   async start(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() body: StartLearningSessionDto) {
     this.flags.courses();
+    if (body?.spellingOptions?.translationFirst) this.flags.spellingTranslation();
     const session = await this.learning.startSession(user.id, id, body);
     if (session.unitId && this.flags.audioPrewarmEnabled()) {
       void this.learningAudio.prepareUnit(user.id, session.unitId, 50).catch(() => undefined);
@@ -78,6 +82,15 @@ export class LearningController {
   @Post("learning-sessions/:id/attempts")
   attempt(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() body: LearningAttemptDto) {
     this.flags.courses(); return this.learning.recordAttempt(user.id, id, body);
+  }
+
+  @Post("learning-sessions/:id/spelling-translation-assessments")
+  assessSpellingTranslation(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Body() body: LearningSpellingTranslationAssessmentDto,
+  ) {
+    return this.translationAssessment.assess(user.id, id, body);
   }
 
   @Get("learning-review-schedules")

@@ -1,7 +1,8 @@
 import type {
   CreateCourseReportRequest, LearningAttemptRequest, LearningAttemptResult, LearningAudioManifest, LearningCourseDetail,
   LearningCourseInput, LearningCourseSummary, LearningProfileSummary, LearningSession,
-  LearningSessionMutationResult, PublicCoursePreview, ReviewSchedule, StartLearningSessionRequest,
+  LearningSessionMutationResult, LearningSpellingTranslationAssessmentRequest,
+  LearningSpellingTranslationAssessmentResult, PublicCoursePreview, ReviewSchedule, StartLearningSessionRequest,
 } from "@nalanda/types";
 import { apiJson } from "../../lib/api";
 
@@ -25,6 +26,14 @@ export const coursesApi = {
   recognition: (id: string, wordId: string) => apiJson<LearningSessionMutationResult>(`/api/learning-sessions/${id}/recognition`, json({ wordId })),
   attempt: (id: string, body: LearningAttemptRequest, signal?: AbortSignal) => apiJson<LearningAttemptResult>(
     `/api/learning-sessions/${id}/attempts`,
+    { ...json(body), signal },
+  ),
+  assessSpellingTranslation: (
+    id: string,
+    body: LearningSpellingTranslationAssessmentRequest,
+    signal?: AbortSignal,
+  ) => apiJson<LearningSpellingTranslationAssessmentResult>(
+    `/api/learning-sessions/${id}/spelling-translation-assessments`,
     { ...json(body), signal },
   ),
   prewarmAudio: (unitId: string) => apiJson<LearningAudioManifest>(`/api/learning-units/${unitId}/audio-prewarm`, json({})),

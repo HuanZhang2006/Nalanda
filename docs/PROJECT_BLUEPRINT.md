@@ -30,6 +30,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 已上线：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech；生产 flags 已开启，fake 未进入生产。
 - 已上线增量：0015–0016 把普通答题改成客户端一帧内预测反馈、`attemptId + expectedRevision` 幂等串行 outbox、单 RPC session snapshot，并用 Supabase Storage 持久队列与浏览器 Cache Storage 预取/下载单元音频；服务端仍唯一决定进度与成长事实。
 - 已上线增量：0017–0018 让当前词和未来四词不论 ready/pending 都立即缓存或提升生成优先级，持续轮询 manifest 并在 ready 后替换浏览器朗读；active session 改为按首次学习、临时复习或日程复习的精确意图恢复，暂停学习不会再劫持另一单元复习。
+- 待发布候选：0019–0020 为拼写测试增加可选 3–300 秒限时与可选 OpenRouter 语义翻译前测；服务端用同一 UUID/revision 管理租约、评判和权威 spelling attempt，数据库不保存用户输入正文。必须完成真实数据库、真实 OpenRouter 和生产发布 gate 后才能移入“已上线”。
 - 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
@@ -68,6 +69,8 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 首版英语单词学习已经上线：文本逐单元/整份多单元粘贴、精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习熟练度、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；生产已发布 0011–0018 并开启对应 flags，0014 增加朗读分数阈值候补池，0015–0016 增加 revision/幂等弱网答题与持久音频队列，0017–0018 允许暂停学习与其他单元复习按意图独立恢复。
 
 已上线的性能/弱网增量：答题 UI 在本地确定正误，服务端仍唯一决定 retry pool、cursor/stage、错误次数、完成、points 与徽章；IndexedDB outbox 按 revision 串行、用相同 attempt UUID 重放，冲突时拉单一 snapshot 并重放仍兼容的答案。音频按规范化词、locale、voice、格式和合成版本做全局 SHA-256，private Storage 是服务端唯一事实源，浏览器只保存可重建 Cache Storage 副本并允许用户删除；这不等于完整离线 PWA。
+
+当前仓库候选允许用户在包含 spelling 的学习/复习启动时选择不限时或 3–300 秒限时，并可先键入翻译。限时仅控制何时自动提交，不改变服务端权威；翻译由 NestJS 使用 OpenRouter 固定结构化 schema 评判，错误直接形成一次 spelling 错误，正确后才开始拼写计时。供应商故障不记错，答案正文不落库，结果无论正误都显示正确英文和拆分翻译。这是单词练习内的窄评判能力，不代表文件 AI 导入或通用生成链路完成。
 
 当前明确未实现：PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR/解析；按英语单词/知识点/阅读理解/题库训练选择 prompt；模型结构化输出与人工确认；导入评测集、token/成本和隐私留存。入口必须保持“AI 解析即将推出”，不能接受文件或暗示已调用模型。
 
@@ -274,6 +277,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | LEARN-02 | 复习熟练度、Schedule/Profile、徽章/+20 points | 已上线 | A+ | 跨日本地日期、指纹幂等；生产已发布 |
 | LEARN-03 | 分享、免费课程市场、举报与审核 | 已上线 | A+ | 不可变快照、flags；免费市场已开放 |
 | LEARN-04 | Azure TTS/朗读评分适配层 | 已上线 | A+ | fake 自动化 + Japan East 真实供应商 gate |
+| LEARN-05 | 限时拼写与语义翻译前测 | 待发布候选 | A+ | 0019–0020、OpenRouter structured output、真实 provider/生产 gate |
 | LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
 | AI-01 | 统一生成契约与任务模型 | 未完成 | B | OpenAPI、迁移 |
 | AI-02 | 解析、分块、引用、embedding | 桩 | B | FastAPI、pgvector |

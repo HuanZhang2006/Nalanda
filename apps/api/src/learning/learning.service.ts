@@ -21,6 +21,8 @@ import type {
   LearningSessionMutationResult,
   LearningSessionPatch,
   LearningSkill,
+  LearningSpellingOptions,
+  LearningSpellingTranslationAssessmentResult,
   PublicCoursePreview,
   ReviewSchedule,
 } from "@nalanda/types";
@@ -35,6 +37,11 @@ type CompatibleLearningAttemptRequest = Pick<
   "wordId" | "skill" | "answer"
 > & Partial<Pick<LearningAttemptRequest, "attemptId" | "expectedRevision">>;
 const q = (values: Record<string, string>) => new URLSearchParams(values);
+const DEFAULT_SPELLING_OPTIONS: LearningSpellingOptions = {
+  timeLimitEnabled: false,
+  timeLimitSeconds: 20,
+  translationFirst: false,
+};
 
 @Injectable()
 export class LearningService {
@@ -63,6 +70,12 @@ export class LearningService {
       if (/speech .*quota exceeded|speech monthly budget exceeded/i.test(error.message)) {
         throw new HttpException({ code: "SPEECH_QUOTA_EXCEEDED", message: "发音服务配额已用完，请稍后再试" }, 429);
       }
+      if (/translation assessment .*quota exceeded/i.test(error.message)) {
+        throw new HttpException({
+          code: "TRANSLATION_ASSESSMENT_RATE_LIMIT",
+          message: "翻译判分请求过于频繁，请稍后再试",
+        }, 429);
+      }
       if (code === "23505") throw new ConflictException({ code: "CONFLICT", message: error.message });
       if (code === "42501" || error.status === 403) throw new ForbiddenException({ code: "FORBIDDEN", message: error.message });
       if (code === "22023" || code === "23514" || error.status === 400) throw new BadRequestException({ code: "INVALID_REQUEST", message: error.message });
@@ -77,6 +90,29 @@ export class LearningService {
         ...unit,
         words: unit.words.map((word) => ({ ...word, ipa: word.ipa?.trim() || this.ipa.lookup(word.term) })),
       })),
+    };
+  }
+
+  private spellingOptions(value: unknown): LearningSpellingOptions {
+    if (value == null) return { ...DEFAULT_SPELLING_OPTIONS };
+    if (typeof value !== "object" || Array.isArray(value)) {
+      throw new BadRequestException({ code: "INVALID_SPELLING_OPTIONS", message: "拼写测试设置无效" });
+    }
+    const source = value as Record<string, unknown>;
+    if (typeof source.timeLimitEnabled !== "boolean"
+        || !Number.isSafeInteger(source.timeLimitSeconds)
+        || Number(source.timeLimitSeconds) < 3
+        || Number(source.timeLimitSeconds) > 300
+        || typeof source.translationFirst !== "boolean") {
+      throw new BadRequestException({
+        code: "INVALID_SPELLING_OPTIONS",
+        message: "拼写限时需为 3–300 秒，且所有开关必须明确设置",
+      });
+    }
+    return {
+      timeLimitEnabled: source.timeLimitEnabled,
+      timeLimitSeconds: Number(source.timeLimitSeconds),
+      translationFirst: source.translationFirst,
     };
   }
 
@@ -178,9 +214,11 @@ export class LearningService {
     const skills: LearningSkill[] = mode === "initial"
       ? ["pronunciation", "translation", "spelling"]
       : requestedSkills as LearningSkill[];
+    const spellingOptions = this.spellingOptions(body?.spellingOptions);
     const id = await this.call(() => this.db.rpc<string>("learning_start_session", {
       p_user_id: userId, p_course_id: courseId, p_unit_id: unitId,
       p_mode: mode, p_skills: skills, p_scope: scope as LearningScope, p_schedule_id: scheduleId,
+      p_spelling_options: spellingOptions,
     }));
     return this.getSession(userId, id);
   }
@@ -208,6 +246,13 @@ export class LearningService {
       id: session.id, courseId: session.course_id, unitId: session.unit_id,
       mode: session.mode, scope: session.scope, selectedSkills: session.selected_skills,
       stage: session.stage, active: session.active, revision: Number(session.revision || 0),
+      spellingOptions: this.spellingOptions(session.spelling_options),
+      spellingTranslationAssessment: session.spelling_translation_assessment ? {
+        attemptId: String(session.spelling_translation_assessment.attempt_id),
+        wordId: String(session.spelling_translation_assessment.word_id),
+        revision: Number(session.spelling_translation_assessment.revision),
+        correct: true,
+      } : null,
       state: session.state || {},
       items: (session.items || []).map((item: Row) => ({
         word: this.word(item.word, item.word?.progress),
@@ -257,12 +302,21 @@ export class LearningService {
       throw new BadRequestException({ code: "INVALID_REVISION", message: "会话版本无效" });
     }
     const startedAt = Date.now();
-    const row = await this.call(() => this.db.rpc<Row>("learning_record_attempt", {
+    const rpcName = body.skill === "spelling"
+      ? "learning_record_spelling_attempt"
+      : "learning_record_attempt";
+    const payload = body.skill === "spelling" ? {
+      p_user_id: userId, p_session_id: sessionId, p_word_id: body.wordId,
+      p_answer: body.answer || {},
+      p_attempt_id: body.attemptId,
+      p_expected_revision: body.expectedRevision,
+    } : {
       p_user_id: userId, p_session_id: sessionId, p_word_id: body.wordId,
       p_skill: body.skill, p_answer: body.answer || {},
       p_attempt_id: body.attemptId,
       p_expected_revision: body.expectedRevision,
-    }));
+    };
+    const row = await this.call(() => this.db.rpc<Row>(rpcName, payload));
     if (row.conflict) {
       this.logger.warn(JSON.stringify({
         event: "learning_attempt_revision_conflict",
@@ -276,14 +330,7 @@ export class LearningService {
         currentRevision: Number(row.current_revision),
       });
     }
-    const result: LearningAttemptResult = {
-      attemptId: String(row.attempt_id),
-      correct: Boolean(row.correct),
-      expected: row.expected as string | string[],
-      revision: Number(row.revision),
-      replayed: Boolean(row.replayed),
-      sessionPatch: this.sessionPatch(row.session_patch),
-    };
+    const result = this.attemptResult(row);
     this.logger.log(JSON.stringify({
       event: "learning_attempt_committed",
       durationMs: Date.now() - startedAt,
@@ -293,6 +340,112 @@ export class LearningService {
       revision: result.revision,
     }));
     return result;
+  }
+
+  private attemptResult(row: Row): LearningAttemptResult {
+    return {
+      attemptId: String(row.attempt_id),
+      correct: Boolean(row.correct),
+      expected: row.expected as string | string[],
+      revision: Number(row.revision),
+      replayed: Boolean(row.replayed),
+      sessionPatch: this.sessionPatch(row.session_patch),
+    };
+  }
+
+  async claimSpellingTranslationAssessment(
+    userId: string,
+    sessionId: string,
+    wordId: string,
+    assessmentId: string,
+    expectedRevision: number,
+    answerHash: string,
+    leaseToken: string,
+    leaseSeconds: number,
+    minuteLimit: number,
+    dayLimit: number,
+  ): Promise<Row> {
+    return this.call(() => this.db.rpc<Row>("learning_claim_spelling_translation_assessment", {
+      p_user_id: userId,
+      p_session_id: sessionId,
+      p_word_id: wordId,
+      p_assessment_id: assessmentId,
+      p_expected_revision: expectedRevision,
+      p_answer_hash: answerHash,
+      p_lease_token: leaseToken,
+      p_lease_seconds: leaseSeconds,
+      p_minute_limit: minuteLimit,
+      p_day_limit: dayLimit,
+    }));
+  }
+
+  async completeSpellingTranslationAssessment(
+    userId: string,
+    sessionId: string,
+    wordId: string,
+    assessmentId: string,
+    expectedRevision: number,
+    answerHash: string,
+    leaseToken: string,
+    decision: {
+      correct: boolean;
+      feedback: string;
+      provider: string;
+      model: string;
+      usage: { promptTokens: number | null; completionTokens: number | null; totalTokens: number | null };
+    },
+  ): Promise<LearningSpellingTranslationAssessmentResult> {
+    const row = await this.call(() => this.db.rpc<Row>(
+      "learning_complete_spelling_translation_assessment",
+      {
+        p_user_id: userId,
+        p_session_id: sessionId,
+        p_word_id: wordId,
+        p_assessment_id: assessmentId,
+        p_expected_revision: expectedRevision,
+        p_answer_hash: answerHash,
+        p_lease_token: leaseToken,
+        p_correct: decision.correct,
+        p_feedback: decision.feedback,
+        p_provider: decision.provider,
+        p_model: decision.model,
+        p_usage: decision.usage,
+      },
+    ));
+    if (row.conflict) {
+      throw new ConflictException({
+        code: "SESSION_REVISION_CONFLICT",
+        message: "学习进度已在其它位置更新",
+        currentRevision: Number(row.current_revision),
+      });
+    }
+    return this.spellingTranslationAssessmentResult(row);
+  }
+
+  spellingTranslationAssessmentResult(row: Row): LearningSpellingTranslationAssessmentResult {
+    return {
+      attemptId: String(row.attempt_id),
+      correct: Boolean(row.correct),
+      expected: Array.isArray(row.expected) ? row.expected.map(String) : [],
+      feedback: String(row.feedback || ""),
+      revision: Number(row.revision),
+      replayed: Boolean(row.replayed),
+      attemptResult: row.attempt_result ? this.attemptResult(row.attempt_result) : null,
+    };
+  }
+
+  releaseSpellingTranslationAssessment(
+    userId: string,
+    assessmentId: string,
+    leaseToken: string,
+    errorCode: string,
+  ) {
+    return this.call(() => this.db.rpc<boolean>("learning_release_spelling_translation_assessment", {
+      p_user_id: userId,
+      p_assessment_id: assessmentId,
+      p_lease_token: leaseToken,
+      p_error_code: errorCode,
+    }));
   }
 
   async createReviewSchedules(userId: string, unitId: string, sourceSessionId: unknown, offsets: unknown): Promise<ReviewSchedule[]> {

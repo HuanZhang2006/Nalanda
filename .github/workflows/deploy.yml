@@ -313,7 +313,9 @@ jobs:
           FEATURE_COURSE_MARKET_ENABLED=true \
           FEATURE_PRONUNCIATION_ENABLED=true \
           FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
+          FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
           AZURE_SPEECH_FAKE=true \
+          OPENROUTER_FAKE=true \
           PUBLIC_ORIGIN=http://127.0.0.1:5173 \
           pnpm --filter @nalanda/web test:playwright
 
@@ -498,7 +500,26 @@ jobs:
             nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
             scripts/smoke-azure-speech.mjs scripts/smoke-learning-audio-production.mjs \
             scripts/learning-audio-smoke-lib.mjs \
+            scripts/smoke-openrouter-translation.mjs \
+            scripts/openrouter-translation-smoke-lib.mjs \
+            scripts/install-production-openrouter-env.sh \
             "$SERVER_USER@$SERVER_HOST:/opt/nalanda/incoming/${GITHUB_SHA}/"
+
+      - name: Install the protected OpenRouter runtime configuration
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$OPENROUTER_API_KEY" ]] || {
+            echo "Missing protected input: OPENROUTER_API_KEY" >&2
+            exit 2
+          }
+          printf '%s\n' "$OPENROUTER_API_KEY" |
+            ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+              "$SERVER_USER@$SERVER_HOST" \
+              "bash /opt/nalanda/incoming/${GITHUB_SHA}/install-production-openrouter-env.sh /opt/nalanda"
 
       - name: Activate release and automatically roll back application on failure
         env:
@@ -635,6 +656,9 @@ jobs:
           [[ -s "$incoming/smoke-azure-speech.mjs" ]]
           [[ -s "$incoming/smoke-learning-audio-production.mjs" ]]
           [[ -s "$incoming/learning-audio-smoke-lib.mjs" ]]
+          [[ -s "$incoming/smoke-openrouter-translation.mjs" ]]
+          [[ -s "$incoming/openrouter-translation-smoke-lib.mjs" ]]
+          [[ -s "$incoming/install-production-openrouter-env.sh" ]]
           gzip -t "$incoming/nalanda-api.tar.gz"
           tar -tzf "$incoming/web.tgz" >/dev/null
 
@@ -653,6 +677,19 @@ jobs:
             -v "$incoming/smoke-azure-speech.mjs:/tmp/smoke-azure-speech.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-azure-speech.mjs; then
             echo "Real Azure Speech smoke failed; the new release was not activated." >&2
+            exit 1
+          fi
+
+          # The semantic spelling gate is also a real provider dependency.
+          # Validate the pinned model and structured-output contract before
+          # activating the API/Web release; no key or provider body is printed.
+          if ! docker run --rm \
+            --env-file "$root/.env" \
+            --entrypoint node \
+            -v "$incoming/smoke-openrouter-translation.mjs:/tmp/smoke-openrouter-translation.mjs:ro" \
+            -v "$incoming/openrouter-translation-smoke-lib.mjs:/tmp/openrouter-translation-smoke-lib.mjs:ro" \
+            "nalanda-api:$sha" /tmp/smoke-openrouter-translation.mjs; then
+            echo "Real OpenRouter translation smoke failed; the new release was not activated." >&2
             exit 1
           fi
 

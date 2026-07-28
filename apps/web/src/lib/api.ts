@@ -50,6 +50,15 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   SESSION_REVISION_CONFLICT: ["Progress changed on another device. Restoring the latest version.", "学习进度已在其它设备更新，正在恢复最新版本"],
   INVALID_REVISION: ["The learning-session version is invalid.", "学习会话版本无效"],
   RECORDING_TOO_QUIET: ["No clear speech was detected. Please record again.", "没有检测到清晰语音，请重新录制"],
+  INVALID_SPELLING_OPTIONS: ["Use a spelling time limit between 3 and 300 seconds.", "拼写限时需设置为 3–300 秒"],
+  INVALID_TRANSLATION_ANSWER: ["Enter a translation between 1 and 500 characters.", "请输入 1–500 个字符的翻译"],
+  TRANSLATION_ASSESSMENT_UNAVAILABLE: ["Semantic translation checking is temporarily unavailable.", "翻译语义判分暂不可用"],
+  TRANSLATION_ASSESSMENT_PENDING: ["The translation is still being checked. Please retry in a moment.", "翻译仍在判分，请稍后重试"],
+  TRANSLATION_ASSESSMENT_RATE_LIMIT: ["Translation checks are temporarily rate-limited. Please try again later.", "翻译判分请求过于频繁，请稍后重试"],
+  TRANSLATION_PROVIDER_RATE_LIMIT: ["The translation checker is busy. Please try again shortly.", "翻译判分服务繁忙，请稍后重试"],
+  TRANSLATION_PROVIDER_TIMEOUT: ["The translation checker timed out. Your answer was not counted as wrong.", "翻译判分超时，本次不会记为错误"],
+  TRANSLATION_PROVIDER_ERROR: ["The translation checker is temporarily unavailable. Your answer was not counted as wrong.", "翻译判分服务暂不可用，本次不会记为错误"],
+  TRANSLATION_PROVIDER_INVALID: ["The translation checker returned an invalid result. Please try again.", "翻译判分结果无效，请重试"],
 };
 
 function localizedApiError(code: string, source?: unknown) {

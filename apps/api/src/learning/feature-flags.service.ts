@@ -52,4 +52,20 @@ export class FeatureFlagsService {
     try { this.audioPrewarm(); return true; }
     catch { return false; }
   }
+
+  spellingTranslation() {
+    this.courses();
+    if (process.env.NODE_ENV === "production" && process.env.OPENROUTER_FAKE === "true") {
+      throw new ServiceUnavailableException({
+        code: "TRANSLATION_ASSESSMENT_UNAVAILABLE",
+        message: "生产环境禁止使用模拟翻译判分供应商",
+      });
+    }
+    if (!enabled("FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED")) {
+      throw new ServiceUnavailableException({
+        code: "TRANSLATION_ASSESSMENT_UNAVAILABLE",
+        message: "翻译语义判分暂不可用",
+      });
+    }
+  }
 }

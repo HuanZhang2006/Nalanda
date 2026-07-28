@@ -11,6 +11,8 @@ afterEach(() => {
   delete process.env.FEATURE_LEARNING_COURSES_ENABLED;
   delete process.env.FEATURE_PRONUNCIATION_ENABLED;
   delete process.env.FEATURE_LEARNING_AUDIO_PREWARM_ENABLED;
+  delete process.env.FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED;
+  delete process.env.OPENROUTER_FAKE;
 });
 
 describe("FeatureFlagsService speech boundary", () => {
@@ -26,5 +28,18 @@ describe("FeatureFlagsService speech boundary", () => {
 
     process.env.NODE_ENV = "production";
     expect(() => flags.audioPrewarm()).toThrow(ServiceUnavailableException);
+  });
+
+  it("rejects the fake OpenRouter adapter in production", () => {
+    process.env.FEATURE_LEARNING_COURSES_ENABLED = "true";
+    process.env.FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED = "true";
+    process.env.OPENROUTER_FAKE = "true";
+    const flags = new FeatureFlagsService();
+
+    process.env.NODE_ENV = "test";
+    expect(() => flags.spellingTranslation()).not.toThrow();
+
+    process.env.NODE_ENV = "production";
+    expect(() => flags.spellingTranslation()).toThrow(ServiceUnavailableException);
   });
 });

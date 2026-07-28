@@ -26,7 +26,7 @@
     ├─ web/   前端静态产物（宿主机 nginx 直接托管）
     └─ .env   后端密钥（仅服务器持有）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
-外部：Stripe（规划）、Claude（规划）
+外部：Azure Speech（生产）、OpenRouter 翻译前测（0019–0020 待发布）、Stripe/Claude（规划）
 ```
 
 > 登录版只需「web 静态 + api」，redis/ai 暂不部署以省内存。
@@ -61,11 +61,11 @@ server {
 
 步骤逻辑：
 1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API/Courses unit）、全部 workspace build。
-2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，随后销毁 fixture 栈并从全新空卷启动 latest/lint；Auth/PostgREST 有界 readiness 通过后运行双用户 RLS/Storage/points/Courses E2E，并以 Azure fake 跑 Playwright Courses。
+2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，随后销毁 fixture 栈并从全新空卷启动 latest/lint；Auth/PostgREST 有界 readiness 通过后运行双用户 RLS/Storage/points/Courses E2E，并以 Azure/OpenRouter fake 跑 Playwright Courses。
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
 5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
-6. **真实 Azure gate**：生产主机从 mode-600 `.env` 向新 image 注入 key/region。既有 gate 直接验证 MP3/PCM TTS、scripted assessment 与音素结果；0015+ 另启动新 API 候选，创建临时双用户/课程，验证队列首次生成、private Storage 命中、重复词 attempt count 不增加、浏览器同款裁剪 WAV 的评分及 revision/session patch。任一失败时尚未切换 Web。
+6. **真实供应商 gate**：生产主机从 mode-600 `.env` 向新 image 注入 Azure/OpenRouter keys。Azure gate 验证 MP3/PCM TTS、scripted assessment、队列/private Storage/重复词复用和裁剪评分；0019+ 另验证 OpenRouter structured 同义 true/无关 false，以及真实 Courses API 的同 UUID replay 和权威 spelling attempt。任一失败时尚未切换 Web。
 7. **激活**：API 本地 health 的 Supabase JWKS/PostgREST 双探针通过后原子切换 Web symlink，再从公网验证 Web/API。
 8. **应用回退**：任一激活后 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；新 release 始终要求 Supabase 双探针为 `ok`，回退验证只要求旧 API 进程契约可用且 `/api/me` 未认证返回 401，以兼容尚未提供依赖级 health 的旧 image；数据库不自动逆向。
 
@@ -76,7 +76,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 ### Secrets / 密钥分层
 - **repository Actions Secrets（当前实际位置）**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`；`production` environment 会在部署 job 中使用这些仓库级 Secrets。后续如迁移为 environment Secrets，应一次性迁移整组并验证。
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
-- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与 Azure key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音与音频预热 flags 已开启，Azure fake=false；TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
+- **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与供应商 key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音与音频预热 flags 已开启，Azure fake=false；0019 候选发布时由受保护步骤只更新 OpenRouter 域变量并强制 fake=false。TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
@@ -158,6 +158,13 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - [受保护 apply/deploy](https://github.com/1590703336/Nalanda/actions/runs/30264979509) 创建并保留加密恢复点 artifact `8652623403`，digest `sha256:22861e8f8ccba2d87fc673f468c75677d6df3a0e9d424111c66dc67d009d5ac3`，应用 0017–0018 后确认远端 history、权限断言、lint 与空 dry-run，再构建隔离的不可变 Web/API release。
 - 切流前基础 Japan East 真实 Azure smoke 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；队列 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。这些是真实供应商/Storage 证据，与 Playwright fake 明确分开。
 - release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` 已健康激活。独立公网复核为 Web 200、`deps.supabase=ok`、匿名 `/api/me` 401；服务器本机 Web symlink 指向该 release，API image 为 `nalanda-api:99313bd3763ce5bf1f7ffb252f821f7b21a67eec`。
+
+### 0019–0020 限时拼写与 OpenRouter 翻译前测（待发布）
+
+- 仓库候选新增 session spelling options、只保存答案 SHA-256 的评判表、service-role-only 事务 RPC、NestJS OpenRouter adapter、限时/翻译前测 UI、fake-provider jsdom/API/RLS/Playwright 和真实 provider smoke。
+- GitHub `production` environment 的 `OPENROUTER_API_KEY` 只通过 SSH 标准输入交给服务器安装脚本；脚本原子保留其它 `.env` 行并恢复 mode 600。key 不进入 artifact、命令参数、日志或 Web。
+- 受保护顺序固定为：PR/main 完整 CI → 只读 plan 只列 0019–0020 → 加密恢复点 → apply/lint/空 dry-run → 候选 image → 真实 Azure gates → 真实 OpenRouter structured/API gate → 本机 readiness/auth → 切 Web → 公网 smoke。数据库只 forward-fix，应用异常恢复上一不可变 release。
+- 本节当前不含 run、artifact、SHA 或生产 smoke，因此只描述候选流程；发布完成后必须用实际证据替换，不能提前写成已上线。
 
 ## 8. 运维速查
 

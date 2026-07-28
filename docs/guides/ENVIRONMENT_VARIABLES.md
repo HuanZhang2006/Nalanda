@@ -37,9 +37,9 @@
 | `AI_SERVICE_URL` | 当前仅状态标记 | 内部配置 | health | 当前 API 不调用 AI，只在健康响应显示是否设置。目标值为 AI 内网地址。 |
 | `NODE_ENV` | 部署配置 | 公开配置 | Node/Nest、Courses flags | `production` 时未设置的 Courses/分享/市场 flag 默认关闭；非生产时前三者默认开，语音始终默认关。 |
 
-### 3.1 Courses、市场与 Azure Speech
+### 3.1 Courses、市场、Azure Speech 与 OpenRouter
 
-这些变量只允许进入 API 运行环境，不得使用 `VITE_*`。生产 `/opt/nalanda/.env` 由运维维护，当前部署 workflow 不自动改写它。
+这些变量只允许进入 API 运行环境，不得使用 `VITE_*`。生产 `/opt/nalanda/.env` 由运维维护；既有 Supabase/Azure/Courses 值不由 workflow 重建。0019–0020 发布候选新增的部署步骤只通过标准输入原子更新 OpenRouter 相关键并保持文件 mode 600，不打印 secret。
 
 | 变量 | 状态/默认 | 敏感级别 | 用途 |
 |---|---|---|---|
@@ -50,6 +50,7 @@
 | `FEATURE_COURSE_MARKET_ENABLED` | flag；production 默认 false | 公开配置 | Course Market、发布、克隆、举报/审核；关闭伪装 404。 |
 | `FEATURE_PRONUNCIATION_ENABLED` | flag；任何环境默认 false | 公开配置 | Azure TTS/评分入口；只有显式 true 才可调用。 |
 | `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` | flag；production 默认 false；当前生产 true | 公开配置 | 持久音频队列、manifest、未来五词预取与整单元离线音频；依赖 Courses/Pronunciation 同时开启。 |
+| `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` | flag；production 默认 false | 公开配置 | 拼写阶段的可选语义翻译前测；关闭时启动请求若要求 `translationFirst=true` 返回 503，普通拼写和限时功能不受影响。 |
 | `AZURE_SPEECH_CIRCUIT_OPEN` | 可选，默认 false | 受限配置 | 紧急熔断；true 时语音统一 503，不影响文本学习。 |
 | `AZURE_SPEECH_KEY` | 语音启用时必需 | **最高机密** | Azure Speech subscription key，只在 API 容器。 |
 | `AZURE_SPEECH_REGION` | 语音启用时必需 | 受限配置 | Azure region，同时组成 TTS/STT endpoint。 |
@@ -66,12 +67,19 @@
 | `LEARNING_AUDIO_PREWARM_INTERVAL_MS` | 可选，3,100 | 受限配置 | worker 启动两次 Azure TTS 的最小间隔；实现拒绝小于 3,100 ms，默认配合全局单租约。 |
 | `LEARNING_AUDIO_SYNTHESIS_VERSION` | 可选，`1` | 受限配置 | 进入全局 SHA-256 缓存键；更换 voice/SSML/后处理语义时递增以安全重建，不原地覆盖旧键。 |
 | `AZURE_SPEECH_FAKE` | **仅测试**，默认 false | 测试配置 | 生成固定 WAV/评分；任何共享、staging 供应商 smoke 或生产必须未设置/false，API 在 `NODE_ENV=production` 时显式拒绝 true。 |
+| `OPENROUTER_API_KEY` | 翻译前测启用时必需 | **最高机密** | 只存在于 NestJS/受保护发布环境；以 Bearer token 调用 OpenRouter，绝不能进入 Web bundle、数据库、日志或提交。 |
+| `OPENROUTER_MODEL` | 可选，`google/gemma-4-26b-a4b-it:free` | 受限配置 | 语义评判模型；生产 gate 固定验证该模型，变更必须经过 ADR、评测与成本复核。 |
+| `OPENROUTER_BASE_URL` | 可选，`https://openrouter.ai/api/v1` | 公开配置 | OpenRouter API 基址；只允许 API 读取。 |
+| `OPENROUTER_TIMEOUT_MS` | 可选，12,000 | 公开配置 | 单次评判硬超时，实现限制 1,000–30,000 ms；超时释放数据库租约且不记学习错误。 |
+| `OPENROUTER_ASSESSMENTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户持久化的一分钟新评判上限；UUID 幂等重放不重复调用或计数。 |
+| `OPENROUTER_ASSESSMENTS_PER_DAY` | 可选，200 | 受限配置 | 每用户滚动 24 小时新评判上限。 |
+| `OPENROUTER_FAKE` | **仅测试**，默认 false | 测试配置 | 自动化用确定性 exact-match adapter；production 进程显式拒绝 true，不能作为真实供应商证据。 |
 | `COURSE_MARKET_DAILY_PUBLISH_LIMIT` | 可选，5 | 公开配置 | 每用户本地日期上架次数限制。 |
 | `COURSE_REPORT_DAILY_LIMIT` | 可选，20 | 公开配置 | 每用户本地日期举报次数限制。 |
 | `COURSE_REPORT_ALERT_THRESHOLD` | 可选，3 | 受限配置 | 同一目标 open 举报达到该值写结构化告警；不会自动下架。 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | 逗号分隔的 Supabase user UUID；授权隐藏/恢复/撤回市场版本，应纳入审批与轮换。 |
 
-所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*` 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
+所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*`、timeout 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
 
 ## 4. FastAPI AI 运行时变量
 
@@ -117,9 +125,10 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | `SUPABASE_DB_PASSWORD` | 有新迁移时必需 | **最高机密** | 远端 dry-run/dump/push/lint。 |
 | `SUPABASE_PROJECT_REF` | 有新迁移时必需 | 项目标识 | 与生产 Web URL 交叉确认。 |
 | `DB_BACKUP_ENCRYPTION_KEY` | 有新迁移时必需 | **最高机密** | 加密 14 天保留的 release recovery artifact；副本须离线保存。 |
+| `OPENROUTER_API_KEY` | 启用翻译前测时必需 | **最高机密** | GitHub `production` environment secret；部署 job 只经 SSH 标准输入交给服务器安装脚本，随后执行真实 provider gate。不得作为普通 repository variable。 |
 | `PUBLIC_ORIGIN` | workflow 非秘密 env | 公开配置 | 公网 smoke 的规范 origin；API 分享 URL 仍从服务器 `.env` 读取，二者必须一致。 |
 
-服务器 `/opt/nalanda/.env` 至少需要 Supabase 两项才能支持注册；启用 Courses 还必须写总/子 flags 和 `PUBLIC_ORIGIN`，启用语音/离线音频再写 Azure key/region、预热 flag、TTS 配额、间隔和 synthesis version。`SUPABASE_JWT_SECRET` 仅作旧 HS256 回退。CI**不会**创建、下载或更新这个文件；它只上传无密钥 smoke 脚本，并在生产主机内用该 `.env` 和新 API image 执行真实 Azure 基础 gate 及队列/Storage/重复词/评分 gate。API image Git SHA 位于非秘密 `.deploy.env` 并由 CI 原子更新。
+服务器 `/opt/nalanda/.env` 至少需要 Supabase 两项才能支持注册；启用 Courses 还必须写总/子 flags 和 `PUBLIC_ORIGIN`，启用语音/离线音频再写 Azure key/region、预热 flag、TTS 配额、间隔和 synthesis version；启用语义翻译前测还需 OpenRouter flag/key/model/配额并强制 fake=false。`SUPABASE_JWT_SECRET` 仅作旧 HS256 回退。CI 不下载该文件；OpenRouter 安装脚本在服务器本地保留其它行、原子替换本域变量并恢复 mode 600。CI 随后用该 `.env` 和新 API image 执行真实 Azure gates 与真实 OpenRouter 结构化判定 gate。API image Git SHA 位于非秘密 `.deploy.env` 并由 CI 原子更新。
 
 ## 7. Supabase RLS E2E 变量
 
@@ -135,7 +144,7 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 
 完整运行与清理流程见 [测试指南](./TESTING.md)。确认 ref 只防手滑，不授权在生产运行。
 
-Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECRET`、两项 `VITE_SUPABASE_*`，显式打开 Courses/分享/市场/发音/音频预热五个 flags，并设置 `AZURE_SPEECH_FAKE=true` 与本地 `PUBLIC_ORIGIN`。这些都是一次性 job 环境，不能复制成生产供应商验证配置。
+Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECRET`、两项 `VITE_SUPABASE_*`，显式打开 Courses/分享/市场/发音/音频预热/翻译前测 flags，并设置 `AZURE_SPEECH_FAKE=true`、`OPENROUTER_FAKE=true` 与本地 `PUBLIC_ORIGIN`。这些都是一次性 job 环境，不能复制成生产供应商验证配置。
 
 ## 8. `infra/hybrid-2g` 目标部署变量
 

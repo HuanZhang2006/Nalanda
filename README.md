@@ -19,7 +19,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除 |
 | Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；数据在 Supabase |
 | Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；“智能填充”为规则式生成 |
-| Courses / Course Market | ✅ 生产已上线英语词表文本导入、编辑、四阶段学习、复习、熟练度、Schedule/Profile、免费分享/市场、徽章与积分，以及即时反馈、幂等弱网答题、持久音频预热、浏览器离线音频和按学习/复习意图独立续学；生产迁移到 0018 |
+| Courses / Course Market | ✅ 生产已上线英语词表文本导入、编辑、四阶段学习、复习、熟练度、Schedule/Profile、免费分享/市场、徽章与积分，以及即时反馈、幂等弱网答题、持久音频预热、浏览器离线音频和按学习/复习意图独立续学；生产迁移到 0018。仓库的 0019–0020 候选新增可选限时拼写与服务端 OpenRouter 语义翻译前测，未完成受保护发布前不算生产能力 |
 | Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；通知当前是查询刷新，不是 Realtime |
 | Home | 🟡 高保真 mock，统计/课程/活动不是真实聚合 |
 | Notes / AI Create | 🟡 高保真 mock；FastAPI 只是桩，未形成解析/生成/落库链路 |
@@ -27,13 +27,13 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | Courses 文件导入 / 其他类别 | ⬜ PDF/Word/JSON/Markdown/HTML/图片仅有禁用入口；AI 解析、知识点/阅读理解/题库训练未实现 |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-07-22 发布 0011–0013、2026-07-23 发布 0014，并于 2026-07-27 通过两轮独立只读 plan、加密恢复点、apply、远端验证和 Japan East 真实 Azure gate 发布 0015–0018。Courses、分享、免费课程市场、幂等弱网答题、private Storage 音频队列、浏览器 Cache Storage 离线副本、按意图独立续学和真实 Azure Speech 均在线。文件 AI 导入仍是禁用入口；完整离线 PWA app shell 不在本次范围；credits/VIP 仍只是客户端不可写的预留缓存，不是商业账本。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
+旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-07-22 发布 0011–0013、2026-07-23 发布 0014，并于 2026-07-27 通过两轮独立只读 plan、加密恢复点、apply、远端验证和 Japan East 真实 Azure gate 发布 0015–0018。Courses、分享、免费课程市场、幂等弱网答题、private Storage 音频队列、浏览器 Cache Storage 离线副本、按意图独立续学和真实 Azure Speech 均在线。仓库新增的 0019–0020、限时拼写和 OpenRouter 翻译前测当前仍是待 CI/生产 gate 的发布候选：客户端只负责计时与显示，语义判定、错误事实、retry pool、进度和奖励继续由服务端决定；用户输入的翻译正文只在请求内存中转发，数据库仅留 SHA-256、判定和计量。文件 AI 导入仍是禁用入口；完整离线 PWA app shell 不在本次范围；credits/VIP 仍只是客户端不可写的预留缓存，不是商业账本。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
 
 ## 当前技术结构
 
 - Web：React 18 + Vite 鉴权壳，内部挂载 legacy DOM 应用。
 - 数据/Auth/Storage：Supabase PostgreSQL、Auth、Storage、RLS。
-- API：NestJS，提供 health/auth/me 与 Courses、会话/复习、语音、分享、课程市场和学习 Profile 聚合接口。
+- API：NestJS，提供 health/auth/me 与 Courses、会话/复习、语音、分享、课程市场、学习 Profile 聚合和可选 OpenRouter 语义翻译评判接口。
 - AI：FastAPI 骨架和固定桩输出，未接入生产。
 - 共享：pnpm + Turborepo；`packages/ui` 是 CSS 包，Courses 的 camelCase 契约由 `packages/types` 在 Web/API 共用。
 - 生产：GitHub Actions 构建，宿主 nginx 托管 Web，Docker 运行 API，Supabase 使用云服务。
@@ -44,7 +44,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 - `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
 - `apps/ai`：AI 桩。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：当前 18 个追加式迁移；0008–0010 完成安全/points 修复，0011–0013 建立 Courses 数据、事务工作流和发布断言，0014 补齐朗读阈值候补池与认词候补轮推进；0015–0016 增加会话 revision、幂等 attempt、单 RPC snapshot、服务端音频队列和结构/权限断言；0017–0018 增加按课程/单元/模式/范围/测试项或日程区分的会话意图恢复及发布断言。生产已于 2026-07-27 通过受保护发布确认同步到 0018。
+- `supabase/migrations`：当前 20 个追加式迁移；0008–0010 完成安全/points 修复，0011–0013 建立 Courses 数据、事务工作流和发布断言，0014 补齐朗读阈值候补池与认词候补轮推进；0015–0016 增加会话 revision、幂等 attempt、单 RPC snapshot、服务端音频队列和结构/权限断言；0017–0018 增加按课程/单元/模式/范围/测试项或日程区分的会话意图恢复及发布断言；0019–0020 是待发布的限时拼写、翻译语义判定事实表和权限断言。生产已于 2026-07-27 通过受保护发布确认同步到 0018，不能仅因仓库存在后两项就声称生产已应用。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/Redis 接入时的通用部署模板。
 
@@ -70,7 +70,7 @@ pnpm --filter @nalanda/web dev
 pnpm check   # docs:check + release-tool tests + code lint + typecheck + test + build
 ```
 
-默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，自动暂存 0008 及之后迁移来验证 0007 历史升级，再从空库重建、运行双用户 RLS/Storage/points/Courses E2E，并以 Azure fake + 固定 WAV 运行 Playwright Courses 主流程。0015–0016 还要求验证 attempt 幂等/冲突、队列私有性与跨用户缓存键；0017–0018 覆盖历史大单元无预下载复习、pending→ready 缓存替换、未来五词双并发上限，以及暂停学习与跨单元复习的独立恢复。生产应用激活前则由服务器 mode-600 `.env` 依次执行真实 Azure 基础 smoke，以及“队列首次生成→private Storage 命中→另一用户重复词零新增生成→裁剪 WAV 评分”的真实 gate。普通 jsdom/mock 结果不能称为真实数据库 E2E，fake 也不能称为供应商验证；手工连接托管项目时禁止指向生产，见[测试指南](docs/guides/TESTING.md)。
+默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，自动暂存 0008 及之后迁移来验证 0007 历史升级，再从空库重建、运行双用户 RLS/Storage/points/Courses E2E，并以 Azure/OpenRouter fake + 固定 WAV 运行 Playwright Courses 主流程。0015–0016 还要求验证 attempt 幂等/冲突、队列私有性与跨用户缓存键；0017–0018 覆盖历史大单元无预下载复习、pending→ready 缓存替换、未来五词双并发上限，以及暂停学习与跨单元复习的独立恢复；0019–0020 覆盖会话设置、计时自动提交、语义前测幂等/配额/隐私、客户端 RPC 拒绝和同一 attempt UUID 的权威拼写提交。生产应用激活前则由服务器 mode-600 `.env` 执行真实 Azure gates 和真实 OpenRouter 结构化语义判定 gate。普通 jsdom/mock 结果不能称为真实数据库 E2E，fake 也不能称为供应商验证；手工连接托管项目时禁止指向生产，见[测试指南](docs/guides/TESTING.md)。
 
 ## 静态设计原型
 

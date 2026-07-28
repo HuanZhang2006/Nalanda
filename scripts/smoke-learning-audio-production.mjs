@@ -22,6 +22,10 @@ assert.equal(azureRegion, "japaneast", "production Azure Speech region must be j
 assert.notEqual(process.env.AZURE_SPEECH_FAKE, "true", "production smoke refuses the fake provider");
 assert.equal(process.env.FEATURE_LEARNING_AUDIO_PREWARM_ENABLED, "true",
   "FEATURE_LEARNING_AUDIO_PREWARM_ENABLED must be true for the release gate");
+assert.equal(process.env.FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED, "true",
+  "FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED must be true for the release gate");
+assert.notEqual(process.env.OPENROUTER_FAKE, "true",
+  "production smoke refuses the fake OpenRouter provider");
 
 const suffix = randomBytes(5).toString("hex").replace(/[0-9]/g, (digit) =>
   String.fromCharCode(97 + Number(digit)));
@@ -249,6 +253,75 @@ async function assess(user, session, firstWordId) {
   return { bytes: wav.length, score: Number(result.body.pronunciationScore) };
 }
 
+async function assessSpellingTranslation(user, course, unitId) {
+  const started = await request("translation-first spelling review start",
+    `${apiOrigin}/learning-courses/${course.id}/sessions`, {
+      method: "POST",
+      headers: authHeaders(user.token),
+      body: JSON.stringify({
+        unitId,
+        mode: "review",
+        scope: "all",
+        skills: ["spelling"],
+        spellingOptions: {
+          timeLimitEnabled: true,
+          timeLimitSeconds: 15,
+          translationFirst: true,
+        },
+      }),
+    });
+  assert.deepEqual(started.body.spellingOptions, {
+    timeLimitEnabled: true,
+    timeLimitSeconds: 15,
+    translationFirst: true,
+  });
+  const firstWord = started.body.items[0].word;
+  const attemptId = randomUUID();
+  const body = {
+    attemptId,
+    expectedRevision: started.body.revision,
+    wordId: firstWord.id,
+    answer: firstWord.translations[0],
+  };
+  const first = await request("real API OpenRouter translation assessment",
+    `${apiOrigin}/learning-sessions/${started.body.id}/spelling-translation-assessments`, {
+      method: "POST",
+      headers: authHeaders(user.token),
+      body: JSON.stringify(body),
+    });
+  assert.equal(first.body.correct, true);
+  assert.equal(first.body.replayed, false);
+  assert.equal(first.body.attemptResult, null);
+  const replay = await request("idempotent OpenRouter translation replay",
+    `${apiOrigin}/learning-sessions/${started.body.id}/spelling-translation-assessments`, {
+      method: "POST",
+      headers: authHeaders(user.token),
+      body: JSON.stringify(body),
+    });
+  assert.equal(replay.body.correct, true);
+  assert.equal(replay.body.replayed, true);
+  const spelling = await request("verified spelling attempt",
+    `${apiOrigin}/learning-sessions/${started.body.id}/attempts`, {
+      method: "POST",
+      headers: authHeaders(user.token),
+      body: JSON.stringify({
+        attemptId,
+        expectedRevision: started.body.revision,
+        wordId: firstWord.id,
+        skill: "spelling",
+        answer: { text: firstWord.term },
+      }),
+    });
+  assert.equal(spelling.body.correct, true);
+  assert.equal(spelling.body.attemptId, attemptId);
+  assert.equal(spelling.body.revision, started.body.revision + 1);
+  return {
+    model: process.env.OPENROUTER_MODEL || "google/gemma-4-26b-a4b-it:free",
+    replayed: replay.body.replayed,
+    revision: spelling.body.revision,
+  };
+}
+
 try {
   await cleanProbeAssets();
   const firstUser = await createUser("a");
@@ -262,6 +335,11 @@ try {
   }
   const firstBytes = await getAudio(firstUser, firstManifest.assets[0]);
   const assessment = await assess(firstUser, first.session, first.course.units[0].words[0].id);
+  const translationAssessment = await assessSpellingTranslation(
+    firstUser,
+    first.course,
+    first.unitId,
+  );
 
   const secondUser = await createUser("b");
   const second = await createCourseAndSession(secondUser, "B");
@@ -286,6 +364,7 @@ try {
     duplicateAssetsReused: secondManifest.ready,
     assessmentScore: assessment.score,
     trimmedAssessmentBytes: assessment.bytes,
+    translationAssessment,
     durationMs: Date.now() - startedAt,
   }));
 } finally {
