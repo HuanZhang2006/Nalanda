@@ -297,7 +297,10 @@ export class OpenRouterTranslationService {
       }, 409);
     }
     if (claim.replayed) {
-      return this.learning.spellingTranslationAssessmentResult(claim.response_payload);
+      return {
+        ...this.learning.spellingTranslationAssessmentResult(claim.response_payload),
+        replayed: true,
+      };
     }
     if (claim.pending) {
       throw new HttpException({

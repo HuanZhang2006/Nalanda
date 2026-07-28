@@ -27,7 +27,7 @@ function harness() {
     }),
     completeSpellingTranslationAssessment: vi.fn().mockResolvedValue(result()),
     releaseSpellingTranslationAssessment: vi.fn().mockResolvedValue(true),
-    spellingTranslationAssessmentResult: vi.fn().mockReturnValue({ ...result(), replayed: true }),
+    spellingTranslationAssessmentResult: vi.fn().mockReturnValue(result()),
   };
   const flags = { spellingTranslation: vi.fn() };
   return {
@@ -113,6 +113,9 @@ describe("OpenRouter spelling translation adapter", () => {
       .resolves.toMatchObject({ attemptId, replayed: true });
     expect(fetch).not.toHaveBeenCalled();
     expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
+    expect(learning.spellingTranslationAssessmentResult).toHaveBeenCalledWith({
+      attempt_id: attemptId,
+    });
   });
 
   it("accepts a normalized exact translation without a fallible provider call", async () => {
