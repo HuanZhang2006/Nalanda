@@ -519,6 +519,26 @@ describe("LearningView immediate feedback", () => {
     expect(container.textContent).not.toContain("Correct spelling: apple");
   });
 
+  it("keeps a correct spelling and its translations visible for 1.5 seconds", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果", "水果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    installApi(words, "spelling");
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    const spelling = container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')!;
+    await settle(() => inputValue(spelling, "apple"));
+    await settle(() => { spelling.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(container.textContent).toContain("Spelling apple");
+    expect(container.textContent).toContain("苹果");
+    expect(container.textContent).toContain("水果");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1_499); });
+    expect(container.textContent).toContain("Spelling apple");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    expect(container.textContent).not.toContain("Spelling apple");
+  });
+
   it("auto-submits exactly once when a timed spelling word expires", async () => {
     vi.useFakeTimers();
     const words = [word(ids[2], "apple", ["苹果", "水果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
@@ -553,6 +573,9 @@ describe("LearningView immediate feedback", () => {
 
     expect(container.querySelector('[aria-label="Typed translation answer"]')).not.toBeNull();
     expect(container.querySelector('[role="timer"]')).toBeNull();
+    expect(container.textContent).toContain("Spelling countdown");
+    expect(container.textContent).toContain("8s");
+    expect(container.textContent).toContain("Starts after the translation is accepted");
     await settle(() => inputValue(
       container.querySelector<HTMLInputElement>('[aria-label="Typed translation answer"]')!,
       "一种常见水果，也就是苹果",
@@ -574,6 +597,15 @@ describe("LearningView immediate feedback", () => {
     expect(container.textContent).toContain("Spelling apple");
     expect(container.textContent).toContain("Translation");
     expect(container.textContent).toContain("苹果");
+  });
+
+  it("makes an untimed spelling session explicit instead of silently omitting the timer", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    installApi(words, "spelling");
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    expect(container.querySelector('[role="timer"]')).toBeNull();
+    expect(container.textContent).toContain("No time limit for this session");
   });
 
   it("records a semantic translation failure as the spelling error and leaves feedback for manual advance", async () => {

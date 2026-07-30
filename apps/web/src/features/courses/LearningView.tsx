@@ -33,6 +33,7 @@ import {
 
 const STAGES = ["recognition", "pronunciation", "translation", "spelling"] as const;
 const CORRECT_FEEDBACK_MS = 520;
+const SPELLING_CORRECT_FEEDBACK_MS = 1_500;
 const AUDIO_QUOTA_CODES = new Set([
   "SPEECH_TTS_RATE_LIMIT",
   "SPEECH_TTS_MONTHLY_LIMIT",
@@ -234,12 +235,15 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     return retained;
   };
 
-  const scheduleCorrectAdvance = (attemptId: string) => {
+  const scheduleCorrectAdvance = (
+    attemptId: string,
+    skill: LearningAttemptRequest["skill"],
+  ) => {
     window.setTimeout(() => {
       const current = feedbackRef.current;
       if (aliveRef.current && current?.request.attemptId === attemptId
           && current.result.correct) advanceFeedback();
-    }, CORRECT_FEEDBACK_MS);
+    }, skill === "spelling" ? SPELLING_CORRECT_FEEDBACK_MS : CORRECT_FEEDBACK_MS);
   };
 
   const scheduleFlush = (milliseconds: number) => {
@@ -272,7 +276,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           if (activeFeedback?.request.attemptId === result.attemptId) {
             setCurrentFeedback({ ...activeFeedback, result, serverResult: result });
             if (!activeFeedback.result.correct && result.correct) {
-              scheduleCorrectAdvance(result.attemptId);
+              scheduleCorrectAdvance(result.attemptId, activeFeedback.request.skill);
             }
           } else {
             const currentSession = sessionRef.current;
@@ -435,6 +439,21 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const activeSpellingAttemptId = spellingTranslationResult?.correct
     ? spellingTranslationResult.attemptId
     : restoredSpellingTranslation?.attemptId || spellingAttemptId;
+  const spellingTimerWaiting = session?.stage === "spelling"
+    && spellingOptions.timeLimitEnabled
+    && spellingOptions.translationFirst
+    && !translationReady
+    && Boolean(current)
+    && !feedback;
+  const spellingTimerActive = session?.stage === "spelling"
+    && spellingOptions.timeLimitEnabled
+    && translationReady
+    && Boolean(current)
+    && !feedback;
+  const spellingTimerDisplayMs = spellingTimeRemainingMs
+    ?? (spellingTimerActive || spellingTimerWaiting
+      ? spellingOptions.timeLimitSeconds * 1_000
+      : null);
   useEffect(() => {
     setSelected([]);
     setSpelling("");
@@ -602,7 +621,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       await flushOutbox();
     });
     if (prediction.result.correct) {
-      scheduleCorrectAdvance(request.attemptId);
+      scheduleCorrectAdvance(request.attemptId, request.skill);
     }
   };
   const continueAfterFeedback = () => { if (!busy) advanceFeedback(); };
@@ -901,6 +920,25 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       : l("Answers synced successfully.", "答案同步成功。")}</div>}
     {notice && <div role="status" className="course-feedback">{notice}</div>}
     <div className="card course-study-card">
+      {session.stage === "spelling" && current && !feedback && (spellingOptions.timeLimitEnabled
+        ? <div
+            className={`course-spelling-timer ${spellingTimerWaiting ? "waiting" : ""} ${!spellingTimerWaiting && (spellingTimerDisplayMs ?? 0) <= 5_000 ? "urgent" : ""}`}
+            role={spellingTimerWaiting ? "status" : "timer"}
+            aria-live="polite"
+          >
+            <span>{spellingTimerWaiting
+              ? l("Spelling countdown", "拼写倒计时")
+              : l("Time left", "剩余时间")}</span>
+            <b>{Math.ceil((spellingTimerDisplayMs ?? spellingOptions.timeLimitSeconds * 1_000) / 1_000)}s</b>
+            {spellingTimerWaiting && <small>{l(
+              "Starts after the translation is accepted",
+              "翻译通过后开始计时",
+            )}</small>}
+          </div>
+        : <div className="course-spelling-untimed" role="status">{l(
+          "No time limit for this session",
+          "本次拼写测试不限时",
+        )}</div>)}
       {!current ? <div>{l("Syncing the next stage…", "正在同步下一阶段…")}</div> : session.stage === "recognition" ? <>
         <div className="course-term">{current.term}</div><div className="course-ipa">{current.ipa || l("IPA not available", "音标待补充")}</div>
         <div className="row mt-16"><button className="btn" onClick={() => playWord(current, audioManifest, setAudioNotice, l)}>🔊 {l("US pronunciation", "美式发音")}</button>
@@ -966,10 +1004,6 @@ export function LearningView({ sessionId, onExit, onChanged }: {
             "Translation accepted. Now spell the English term.",
             "翻译已通过，现在请拼写英文。",
           )}</div>}
-          {spellingTimeRemainingMs != null && <div className={`course-spelling-timer mt-16 ${spellingTimeRemainingMs <= 5_000 ? "urgent" : ""}`} role="timer" aria-live="polite">
-            <span>{l("Time left", "剩余时间")}</span>
-            <b>{Math.ceil(spellingTimeRemainingMs / 1_000)}s</b>
-          </div>}
           <input className={`course-form-field course-spelling-answer mt-24 ${feedback?.skill === "spelling" ? feedback.result.correct ? "is-correct" : "is-wrong" : ""}`} style={{ maxWidth: 420, textAlign: "center", fontSize: 20 }} autoFocus
             aria-label={l("Spelling answer", "拼写答案")} value={spelling} onChange={(event) => setSpelling(event.target.value)}
             disabled={busy || Boolean(feedback)} onKeyDown={(event) => { if (event.key === "Enter" && spelling.trim()) submitSpelling(); }} />
