@@ -345,22 +345,48 @@
 .course-spelling-gate { display: flex; width: 100%; flex-direction: column; align-items: center; }
 
 .course-spelling-timer {
-  display: inline-flex;
-  min-width: 138px;
+  display: grid;
+  width: min(100%, 420px);
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
-  justify-content: space-between;
   gap: 18px;
-  padding: 8px 12px;
+  margin-bottom: 20px;
+  padding: 11px 14px;
   border: 1px solid var(--accent-line);
   border-radius: 10px;
   background: var(--accent-tint);
   color: var(--accent);
 }
 
+.course-spelling-timer b {
+  min-width: 3ch;
+  font-size: calc(19px * var(--fs));
+  line-height: 1;
+  text-align: right;
+}
+
+.course-spelling-timer small {
+  grid-column: 1 / -1;
+  margin-top: -10px;
+  color: var(--ink-soft);
+}
+
+.course-spelling-timer.waiting {
+  border-color: var(--border);
+  background: var(--panel);
+  color: var(--ink);
+}
+
 .course-spelling-timer.urgent {
   border-color: color-mix(in srgb, var(--pink) 45%, var(--border));
   background: color-mix(in srgb, var(--pink) 10%, var(--card));
   color: var(--pink);
+}
+
+.course-spelling-untimed {
+  margin-bottom: 20px;
+  color: var(--ink-soft);
+  font-size: calc(13px * var(--fs));
 }
 
 .course-spelling-result { width: 100%; color: var(--ink); }
