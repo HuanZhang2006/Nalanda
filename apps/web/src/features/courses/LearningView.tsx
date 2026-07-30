@@ -130,6 +130,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const [course, setCourse] = useState<LearningCourseDetail | null>(null);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
+  const [syncStatus, setSyncStatus] = useState<"idle" | "pending" | "success">("idle");
   const [audioNotice, setAudioNotice] = useState<AudioFallbackNotice | null>(null);
   const [busy, setBusy] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
@@ -193,6 +194,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   };
 
   const restoreAfterConflict = async () => {
+    setSyncStatus("idle");
     const latest = await coursesApi.session(sessionId);
     const pending = await listPendingAttempts(userIdRef.current, sessionId);
     let optimistic = latest;
@@ -283,6 +285,9 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           }
           const remaining = await listPendingAttempts(userId, sessionId);
           setPendingCount(remaining.length);
+          if (remaining.length === 0) {
+            setSyncStatus((current) => current === "pending" ? "success" : current);
+          }
           if (!result.sessionPatch.active && !feedbackRef.current && remaining.length === 0) onChanged();
         } catch (caught) {
           if (!aliveRef.current || userId !== userIdRef.current) {
@@ -310,10 +315,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
             retryCount,
             nextAttemptAt: Date.now() + delay,
           });
-          setNotice(l(
-            "Your answer is saved on this device and will sync when the connection recovers.",
-            "答案已保存在本机，将在网络恢复后自动同步。",
-          ));
+          setSyncStatus("pending");
           scheduleFlush(delay);
           break;
         }
@@ -358,6 +360,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     let active = true;
     aliveRef.current = true;
     setError("");
+    setSyncStatus("idle");
     load().catch((caught) => {
       if (active) setError(caught instanceof Error ? caught.message : l("Could not load this session.", "会话加载失败"));
     });
@@ -399,6 +402,11 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       void stopRef.current?.().catch(() => null);
     };
   }, [sessionId, l]);
+  useEffect(() => {
+    if (syncStatus !== "success") return;
+    const timer = window.setTimeout(() => setSyncStatus("idle"), 2_000);
+    return () => window.clearTimeout(timer);
+  }, [syncStatus]);
   useEffect(() => {
     if (feedback && (!feedback.result.correct || error)) nextQuestionRef.current?.focus();
   }, [error, feedback]);
@@ -885,6 +893,12 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     <div className="bar" style={{ marginBottom: 16 }}><i style={{ width: `${Math.round(q.cursor / Math.max(1, q.queue.length) * 100)}%` }} /></div>
     {error && <div role="alert" className="course-feedback wrong">{error}</div>}
     {audioNotice && <div role="status" className="course-feedback">{audioNotice.message}</div>}
+    {syncStatus !== "idle" && <div role="status" className="course-feedback">{syncStatus === "pending"
+      ? l(
+        "Your answer is saved on this device and will sync when the connection recovers.",
+        "答案已保存在本机，将在网络恢复后自动同步。",
+      )
+      : l("Answers synced successfully.", "答案同步成功。")}</div>}
     {notice && <div role="status" className="course-feedback">{notice}</div>}
     <div className="card course-study-card">
       {!current ? <div>{l("Syncing the next stage…", "正在同步下一阶段…")}</div> : session.stage === "recognition" ? <>
