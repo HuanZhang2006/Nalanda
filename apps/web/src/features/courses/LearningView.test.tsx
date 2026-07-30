@@ -80,6 +80,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   mode?: "initial" | "review";
   spellingOptions?: Partial<LearningSession["spellingOptions"]>;
   translationAssessment?: "correct" | "wrong" | "error";
+  attemptTimeouts?: number;
 } = {}) {
   let cursor = 0;
   let revision = 0;
@@ -88,6 +89,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   const attempts: Array<Record<string, unknown>> = [];
   const translationAssessments: Array<Record<string, unknown>> = [];
   const audioRequests: string[] = [];
+  let pendingAttemptTimeouts = options.attemptTimeouts || 0;
   let releaseAttempt: (() => void) | null = null;
   const currentSession = (
     nextStage: LearningSession["stage"],
@@ -164,6 +166,10 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
         attemptId: string; expectedRevision: number; wordId: string; skill: string; answer: Record<string, unknown>;
       };
       attempts.push(request);
+      if (pendingAttemptTimeouts > 0) {
+        pendingAttemptTimeouts -= 1;
+        return json({ code: "ATTEMPT_TIMEOUT", message: "timeout" }, 504);
+      }
       const current = words[cursor];
       const predictedCorrect = request.skill === "pronunciation"
         ? request.answer.wordId === request.wordId
@@ -256,6 +262,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
     audioRequests,
     fetchMock,
     releaseAttempt: () => releaseAttempt?.(),
+    timeoutNextAttempt: () => { pendingAttemptTimeouts += 1; },
   };
 }
 
@@ -386,6 +393,29 @@ describe("LearningView immediate feedback", () => {
     await settle();
     expect(api.attempts).toHaveLength(2);
     expect(api.attempts.map((entry) => entry.expectedRevision)).toEqual([0, 1]);
+  });
+
+  it("clears the local-answer notice after sync and shows it again after a later timeout", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "translation", { attemptTimeouts: 1 });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "苹果")!));
+    expect(container.textContent).toContain("saved on this device");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await settle();
+    expect(container.textContent).not.toContain("saved on this device");
+    expect(container.textContent).toContain("Answers synced successfully");
+    expect(container.querySelector(".course-term")?.textContent).toBe("banana");
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(2_100); });
+    expect(container.textContent).not.toContain("Answers synced successfully");
+
+    api.timeoutNextAttempt();
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "香蕉")!));
+    expect(container.textContent).toContain("saved on this device");
   });
 
   it("keeps a server-corrected error visible instead of running the provisional success timer", async () => {
