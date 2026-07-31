@@ -29,6 +29,8 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 
 旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-07-22 发布 0011–0013、2026-07-23 发布 0014，2026-07-27 发布 0015–0018，2026-07-28 发布 0019–0020，并于 2026-07-31 通过独立只读 plan、加密恢复点、apply、远端验证和不可变应用发布同步到 0022。限时拼写与翻译前测已在线：客户端只负责计时与显示，语义判定、错误事实、retry pool、进度和奖励继续由服务端决定；规范化完全匹配由服务端零 token 判定，非字面同义/改写才调用 OpenRouter；拼写答案与原始词条在 Web 和数据库两侧执行同一 NFKC、Unicode 空白、ASCII 大小写及标点变体归一化，标点仍不可省略。用户输入正文只在请求内存中转发，数据库仅留 SHA-256、判定和计量。文件 AI 导入仍是禁用入口；完整离线 PWA app shell 不在本次范围；credits/VIP 仍只是客户端不可写的预留缓存，不是商业账本。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
 
+仓库 0023–0024 已实现仅标点遗漏、替换或增加时仍判对，但它在新的只读 plan、恢复点和 apply 完成前仍是待发布能力；本 README 的生产状态表继续以 0022 为准。
+
 ## 当前技术结构
 
 - Web：React 18 + Vite 鉴权壳，内部挂载 legacy DOM 应用。
@@ -44,7 +46,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 - `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
 - `apps/ai`：AI 桩。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：当前 22 个追加式迁移；0008–0010 完成安全/points 修复，0011–0013 建立 Courses 数据、事务工作流和发布断言，0014 补齐朗读阈值候补池与认词候补轮推进；0015–0016 增加会话 revision、幂等 attempt、单 RPC snapshot、服务端音频队列和结构/权限断言；0017–0018 增加按课程/单元/模式/范围/测试项或日程区分的会话意图恢复及发布断言；0019–0020 增加限时拼写、翻译语义判定事实表和权限断言；0021–0022 统一 Web/数据库 Unicode 拼写归一化并验证函数结果和权限。生产已于 2026-07-31 通过受保护发布确认同步到 0022。
+- `supabase/migrations`：当前 24 个追加式迁移；0008–0010 完成安全/points 修复，0011–0013 建立 Courses 数据、事务工作流和发布断言，0014 补齐朗读阈值候补池与认词候补轮推进；0015–0016 增加会话 revision、幂等 attempt、单 RPC snapshot、服务端音频队列和结构/权限断言；0017–0018 增加按意图恢复及发布断言；0019–0020 增加限时拼写与翻译语义判定；0021–0022 统一 Unicode 拼写归一化；0023–0024 增加仅标点差异容错及边界/权限断言。生产已于 2026-07-31 同步到 0022，后两项仍待受保护发布。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/Redis 接入时的通用部署模板。
 
@@ -70,7 +72,7 @@ pnpm --filter @nalanda/web dev
 pnpm check   # docs:check + release-tool tests + code lint + typecheck + test + build
 ```
 
-默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，自动暂存 0008 及之后迁移来验证 0007 历史升级，再从空库重建、运行双用户 RLS/Storage/points/Courses E2E，并以 Azure/OpenRouter fake + 固定 WAV 运行 Playwright Courses 主流程。0015–0016 还要求验证 attempt 幂等/冲突、队列私有性与跨用户缓存键；0017–0018 覆盖历史大单元无预下载复习、pending→ready 缓存替换、未来五词双并发上限，以及暂停学习与跨单元复习的独立恢复；0019–0020 覆盖会话设置、计时自动提交、语义前测幂等/配额/隐私、客户端 RPC 拒绝和同一 attempt UUID 的权威拼写提交；0021–0022 覆盖全角/半角全大写、撇号/连字符变体、不可省略标点、零错误次数/空候补池及内部 helper 客户端拒绝。生产应用激活前则由服务器 mode-600 `.env` 执行真实 Azure gates 和真实 OpenRouter 结构化语义判定 gate。普通 jsdom/mock 结果不能称为真实数据库 E2E，fake 也不能称为供应商验证；手工连接托管项目时禁止指向生产，见[测试指南](docs/guides/TESTING.md)。
+默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，自动暂存 0008 及之后迁移来验证 0007 历史升级，再从空库重建、运行双用户 RLS/Storage/points/Courses E2E，并以 Azure/OpenRouter fake + 固定 WAV 运行 Playwright Courses 主流程。0015–0016 还要求验证 attempt 幂等/冲突、队列私有性与跨用户缓存键；0017–0018 覆盖历史冷音频与独立恢复；0019–0020 覆盖限时/翻译前测；0021–0022 覆盖 Unicode 大小写/兼容字符；0023–0024 覆盖标点遗漏/替换/增加、真实字母/空格错误、零错误次数/空候补池及内部 helper 客户端拒绝。生产应用激活前则由服务器 mode-600 `.env` 执行真实 Azure gates 和真实 OpenRouter 结构化语义判定 gate。普通 jsdom/mock 结果不能称为真实数据库 E2E，fake 也不能称为供应商验证；手工连接托管项目时禁止指向生产，见[测试指南](docs/guides/TESTING.md)。
 
 ## 静态设计原型
 
