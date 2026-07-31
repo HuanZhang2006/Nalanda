@@ -243,6 +243,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - apply 后远端 history 到 0022，0022 函数结果/权限断言、remote database lint 和空 dry-run 均通过。0021 保留旧五参数答题签名及 HTTP 契约供应用回退；数据库仍只采用 forward-fix。
 - 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。未使用真实用户会话在生产提交答案，因此不能把本次记录描述为生产用户流程 E2E。
 
+### 8.8 2026-07-31 Courses 0023–0024 发布记录
+
+- 发布提交：`9b62951a8895aa6cf3ff0f9dce8395df239e6089`；PR #37 run `30620350644`、main run `30620879282` 和受保护 run `30624104943` 通过 quality、0007→0024、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。真实数据库用例验证仅标点差异不增加错误或候补；Playwright 的外部供应商仍为 fake。
+- [只读 plan run `30623522232`](https://github.com/1590703336/Nalanda/actions/runs/30623522232) 显示生产 0001–0022 与本地一致，唯一待办为 0023–0024；恢复、apply 与 deploy 步骤全部跳过。
+- [受保护 apply/deploy run `30624104943`](https://github.com/1590703336/Nalanda/actions/runs/30624104943) 在 apply 前创建并保留 `db-recovery-9b62951a8895aa6cf3ff0f9dce8395df239e6089`，artifact `8790816378`、大小 366,417 bytes、digest `sha256:887b1ac42c267ca7bb1cde810920702dde64f8d74112b3b39def6254d5bf0fca`，保留至 2026-08-14。
+- apply 后远端 history 到 0024，0024 结果/函数定义/权限断言、remote database lint 和空 dry-run 均通过。0023 保留旧五参数答题签名及 HTTP 契约供应用回退；数据库仍只采用 forward-fix。
+- 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。未使用真实用户会话在生产提交答案，因此不能把本次记录描述为生产用户流程 E2E。
+
 ## 9. 失败处置
 
 ### 9.1 本地重建、lint 或 RLS E2E 失败
