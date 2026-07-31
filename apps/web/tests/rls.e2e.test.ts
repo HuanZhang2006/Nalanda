@@ -630,6 +630,9 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_skill: "spelling", p_answer: { text: terms[0].term },
       p_attempt_id: randomUUID(), p_expected_revision: 0,
     })).error).not.toBeNull();
+    expect((await a.rpc("_learning_normalize_spelling_text", {
+      p_value: "WORD-01",
+    })).error).not.toBeNull();
     expect((await a.rpc("learning_get_session_snapshot", {
       p_user_id: aId, p_session_id: randomUUID(),
     })).error).not.toBeNull();
@@ -809,6 +812,42 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await admin.from("learning_sessions").select("revision")
       .eq("id", rollbackSession).single()).data).toEqual({ revision: 1 });
     expect((await admin.from("learning_sessions").delete().eq("id", rollbackSession)).error).toBeNull();
+
+    // Current spelling attempts use one deterministic normalization contract
+    // in Web and PostgreSQL. ASCII/full-width uppercase and typographic
+    // punctuation are accepted without relaxing the requirement to type the
+    // punctuation itself.
+    const normalizedSpellingSession = await startReview(courseId, unitId, ["spelling"]);
+    const fullWidthUppercase = await rpc<any>("learning_record_spelling_attempt", {
+      p_user_id: aId,
+      p_session_id: normalizedSpellingSession,
+      p_word_id: terms[0].id,
+      p_answer: { text: "ＷＯＲＤ－０１" },
+      p_attempt_id: randomUUID(),
+      p_expected_revision: 0,
+    });
+    expect(fullWidthUppercase).toMatchObject({ correct: true, revision: 1 });
+    const asciiUppercase = await rpc<any>("learning_record_spelling_attempt", {
+      p_user_id: aId,
+      p_session_id: normalizedSpellingSession,
+      p_word_id: terms[1].id,
+      p_answer: { text: terms[1].term.toUpperCase() },
+      p_attempt_id: randomUUID(),
+      p_expected_revision: 1,
+    });
+    expect(asciiUppercase).toMatchObject({ correct: true, revision: 2 });
+    expect((await admin.from("learning_session_items").select("word_id,wrong_count")
+      .eq("session_id", normalizedSpellingSession)
+      .in("word_id", [terms[0].id, terms[1].id])
+      .order("position")).data).toEqual([
+      { word_id: terms[0].id, wrong_count: 0 },
+      { word_id: terms[1].id, wrong_count: 0 },
+    ]);
+    expect((await admin.from("learning_sessions").select("state")
+      .eq("id", normalizedSpellingSession).single()).data?.state)
+      .toMatchObject({ cursor: 2, nextQueue: [] });
+    expect((await admin.from("learning_sessions").delete()
+      .eq("id", normalizedSpellingSession)).error).toBeNull();
 
     // The v2 attempt path is idempotent even when the same request races on
     // two API instances. A stale revision returns a conflict payload without

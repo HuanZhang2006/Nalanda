@@ -4,6 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningCourseDetail, LearningSession, VocabularyWord } from "@nalanda/types";
 import { setLocale } from "../../i18n";
 import { clearPendingAttemptsForUser } from "./attemptOutbox";
+import { normalizeSpellingText } from "./learningSessionState";
 import { beginWavRecording } from "./recording";
 import { LearningView } from "./LearningView";
 
@@ -176,7 +177,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
         ? request.answer.wordId === request.wordId
         : request.skill === "translation"
           ? JSON.stringify([...(request.answer.translations as string[])].sort()) === JSON.stringify([...current.translations].sort())
-          : String(request.answer.text).toLowerCase() === current.term.toLowerCase();
+          : normalizeSpellingText(String(request.answer.text)) === normalizeSpellingText(current.term);
       const correct = options.serverCorrect ?? predictedCorrect;
       cursor = Math.min(cursor + 1, words.length - 1);
       revision += 1;
@@ -569,12 +570,13 @@ describe("LearningView immediate feedback", () => {
   it("keeps a correct spelling and its translations visible for 1.5 seconds", async () => {
     vi.useFakeTimers();
     const words = [word(ids[2], "apple", ["苹果", "水果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
-    installApi(words, "spelling");
+    const { attempts } = installApi(words, "spelling");
     await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
 
     const spelling = container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')!;
-    await settle(() => inputValue(spelling, "apple"));
+    await settle(() => inputValue(spelling, "ＡＰＰＬＥ"));
     await settle(() => { spelling.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+    expect(attempts[0]?.answer).toEqual({ text: "ＡＰＰＬＥ" });
     expect(container.textContent).toContain("Spelling apple");
     expect(container.textContent).toContain("苹果");
     expect(container.textContent).toContain("水果");
