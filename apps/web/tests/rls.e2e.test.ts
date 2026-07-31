@@ -633,6 +633,12 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.rpc("_learning_normalize_spelling_text", {
       p_value: "WORD-01",
     })).error).not.toBeNull();
+    expect((await a.rpc("_learning_spelling_without_punctuation", {
+      p_value: "WORD-01", p_punctuation_as_space: false,
+    })).error).not.toBeNull();
+    expect((await a.rpc("_learning_spelling_text_matches", {
+      p_answer: "WORD 01", p_expected: "word-01",
+    })).error).not.toBeNull();
     expect((await a.rpc("learning_get_session_snapshot", {
       p_user_id: aId, p_session_id: randomUUID(),
     })).error).not.toBeNull();
@@ -814,15 +820,15 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await admin.from("learning_sessions").delete().eq("id", rollbackSession)).error).toBeNull();
 
     // Current spelling attempts use one deterministic normalization contract
-    // in Web and PostgreSQL. ASCII/full-width uppercase and typographic
-    // punctuation are accepted without relaxing the requirement to type the
-    // punctuation itself.
+    // in Web and PostgreSQL. Case, compatibility characters, and
+    // punctuation-only differences are accepted without hiding letter or
+    // word-boundary errors.
     const normalizedSpellingSession = await startReview(courseId, unitId, ["spelling"]);
     const fullWidthUppercase = await rpc<any>("learning_record_spelling_attempt", {
       p_user_id: aId,
       p_session_id: normalizedSpellingSession,
       p_word_id: terms[0].id,
-      p_answer: { text: "ＷＯＲＤ－０１" },
+      p_answer: { text: "ＷＯＲＤ ０１" },
       p_attempt_id: randomUUID(),
       p_expected_revision: 0,
     });
@@ -831,7 +837,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_user_id: aId,
       p_session_id: normalizedSpellingSession,
       p_word_id: terms[1].id,
-      p_answer: { text: terms[1].term.toUpperCase() },
+      p_answer: { text: "WORD02!" },
       p_attempt_id: randomUUID(),
       p_expected_revision: 1,
     });
