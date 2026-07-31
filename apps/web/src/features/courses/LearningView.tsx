@@ -467,7 +467,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     setActiveAudioId("");
     setSelectedMatchId("");
     setAudioNotice(null);
-  }, [currentId, session?.stage]);
+  }, [currentId, q.cursor, q.round, session?.stage]);
 
   const translationOptions = useMemo(() => {
     if (!current || !course) return [];
