@@ -28,6 +28,16 @@ function normalize(value: string) {
   return value.trim().replace(/\s+/g, " ").toLowerCase();
 }
 
+export function normalizeSpellingText(value: string) {
+  return value
+    .normalize("NFKC")
+    .replace(/[\u02bb\u02bc\u2018\u2019\uff07]/gu, "'")
+    .replace(/[\u2010-\u2015\u2212\ufe63\uff0d]/gu, "-")
+    .trim()
+    .replace(/\s+/gu, " ")
+    .replace(/[A-Z]/g, (character) => character.toLowerCase());
+}
+
 export function evaluateAttempt(
   word: VocabularyWord,
   skill: LearningSkill,
@@ -39,7 +49,7 @@ export function evaluateAttempt(
     const expected = [...word.translations].map(normalize).sort();
     return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
   }
-  return normalize(answer.text || "") === word.normalizedTerm;
+  return normalizeSpellingText(answer.text || "") === normalizeSpellingText(word.term);
 }
 
 function nextStage(session: LearningSession, items: LearningSession["items"]) {

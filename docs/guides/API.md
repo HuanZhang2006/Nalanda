@@ -249,7 +249,9 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 }
 ```
 
-发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。`attemptId` 必须是 UUID；`expectedRevision` 必须等于当前 session revision。服务端先按 `(user_id,session_id,attempt_id)` 查首次响应，再锁定 session、校验 revision，原子记录 append-only attempt、更新候补池/cursor/stage/progress/revision 并保存响应快照。相同 attempt UUID 的超时重放返回第一次结果且 `replayed=true`，不重复推进或加错；过期 revision 返回 `409 { code:"SESSION_REVISION_CONFLICT", message, currentRevision }`。
+发音匹配使用 `answer.wordId`，拼写使用 `answer.text`。拼写的 Web provisional 判定和 PostgreSQL 权威判定使用同一算法：先做 NFKC，再把弯/直撇号及常见连字符变体规范成 ASCII，合并首尾/重复 Unicode 空白，最后只对英语 `A–Z` 做确定性小写转换；答案和课程原始 `term` 两侧都执行，不能信任客户端携带的 `normalizedTerm`。因此 `APPLE`、`ＡＰＰＬＥ` 与 `apple` 等价，`YOU’RE` 与 `YOU'RE` 等价，但遗漏撇号、连字符或句点仍是错误。
+
+`attemptId` 必须是 UUID；`expectedRevision` 必须等于当前 session revision。服务端先按 `(user_id,session_id,attempt_id)` 查首次响应，再锁定 session、校验 revision，原子记录 append-only attempt、更新候补池/cursor/stage/progress/revision 并保存响应快照。相同 attempt UUID 的超时重放返回第一次结果且 `replayed=true`，不重复推进或加错；过期 revision 返回 `409 { code:"SESSION_REVISION_CONFLICT", message, currentRevision }`。
 
 开启翻译前测时，Web 先用同一个 `attemptId` 调用语义接口：
 

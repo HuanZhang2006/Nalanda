@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260728000020_verify_learning_spelling_release.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-28 通过受保护发布同步到 0020。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260731000022_verify_learning_spelling_unicode_normalization.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-28 通过受保护发布同步到 0020；0021–0022 在完成只读 plan、加密恢复点和 apply 前只能视为待发布结构。
 
 - **仓库最终结构**：32 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。生产在应用 0019 前仍为 31 张 public 表。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
@@ -511,9 +511,9 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helper | 固化尝试本地日期、词集合 SHA-256 与服务端内部课程快照；公开 API 另经 `publicSnapshot` 删除私有 ID/进度 |
 | `_refresh_learning_growth` | 完成学习/复习 | 发放课程 +20 points 和九级徽章；持久业务键/award PK 防重复 |
 | `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPC | owner 校验下原子保存、精确能力重置、改名和级联删除 |
-| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载；0017 按 course/unit/mode/scope/skills 或 schedule 的服务端意图键恢复，避免复习另一单元误返回暂停学习 session |
+| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载；0017 按 course/unit/mode/scope/skills 或 schedule 的服务端意图键恢复，避免复习另一单元误返回暂停学习 session；0021 的七参数权威拼写路径对答案与原始 `term` 两侧调用 `_learning_normalize_spelling_text` |
 | `learning_get_session_snapshot`, `_learning_session_patch`, `_learning_increment_session_revision` | API/内部 RPC 与 trigger helper | 一次返回 session/items/words/progress；写事务返回小增量；`learning_attempts AFTER INSERT` 推进 revision，保证旧应用回滚写入也不会绕过版本时钟 |
-| `_learning_normalize_spelling_options`, `learning_claim/complete/release_spelling_translation_assessment`, `learning_record_spelling_attempt` | API/内部 RPC | 固化限时/翻译前测选项；按 UUID/revision/answer hash 领取供应商租约与配额、保存判定；翻译错误原子写一次 spelling 错误，翻译正确后要求同 UUID 的 spelling 提交；供应商失败释放租约且不记错 |
+| `_learning_normalize_spelling_options`, `_learning_normalize_spelling_text`, `learning_claim/complete/release_spelling_translation_assessment`, `learning_record_spelling_attempt` | API/内部 RPC | 固化限时/翻译前测选项；拼写文本以 NFKC、标点变体、Unicode 空白及 ASCII case fold 取得跨 Web/数据库一致表示，但不允许省略标点；按 UUID/revision/answer hash 领取供应商租约与配额、保存判定；翻译错误原子写一次 spelling 错误，翻译正确后要求同 UUID 的 spelling 提交；供应商失败释放租约且不记错 |
 | `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
 | `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；按受控整体分数阈值原子加入/移除当前认词候补项；持久化用户频率和全局预算预留 |
 | `_learning_audio_cache_key`, `learning_prepare_unit_audio`, `learning_prepare_word_audio`, `learning_get_unit_audio_manifest` | 服务端音频 RPC | 计算全局内容哈希、owner 校验后按单元/单词幂等入队、返回不暴露 Storage 的用户级 manifest |
