@@ -410,6 +410,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
 | Courses 音频/离线 | cache key/VAD unit + API queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
 | Courses 限时拼写/翻译前测 | fake-clock jsdom + API structured response/timeout unit + 双用户 RLS/幂等/配额 + fake-provider Playwright + 发布前真实 OpenRouter structured/API gate；不得把模型输出直接当客户端事实 |
+| Courses 拼写规范化 | Web 单元/jsdom 覆盖 NFKC/Unicode 空白/全角大小写/标点变体与不可省略标点 + 一次性真实 Supabase E2E 验证 raw answer、revision、`wrong_count`、retry pool 和客户端 helper 拒绝 |
 | AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
 | nginx/compose/CI | build image + staging deploy + 外部 health/login |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
@@ -419,6 +420,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 同日后续样本：PR #24 run `30263277807` 与 main run `30263794368` 完成 0007→0018、空库重建/lint、真实本地 Supabase RLS/Storage、jsdom 与 Chromium Playwright；历史八词冷单元和暂停 Unit 1→复习 Unit 2→恢复 Unit 1 的浏览器测试使用 Azure fake。只读 plan `30264327821` 只列 0017–0018；apply/deploy `30264979509` 创建恢复 artifact `8652623403`，并在切流前用真实 Japan East 账号验证 `generatedAssets=4`、`duplicateAssetsReused=4` 和评分 97。公网/服务器健康检查是发布证据，不把 fake Playwright 描述为真实供应商 E2E。
 
 2026-07-28 的限时拼写/翻译前测样本：PR #26–#29 与最终 main run `30374301472` 通过 0007→0020、空库重建/lint、真实本地 Supabase RLS/Storage、jsdom、API 和 Chromium Playwright；Playwright 的 Azure/OpenRouter 都是 fake。只读 plan `30366334157` 仅列 0019–0020，受保护 run `30367263486` 创建 artifact `8691620673` 并应用到 0020。最终生产部署以真实 Azure 验证 MP3/评分，以真实 OpenRouter 验证 structured 同义/无关判定，再通过真实 Courses API/数据库验证完全匹配 0 token、同 UUID `replayed=true` 和权威 spelling attempt；release 为 `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`。发布链中的 provider 契约、模型误判、replay 映射和单次 12 秒 timeout 都被 gate 阻断，不能把失败候选计作上线。
+
+2026-07-31 的 Unicode 拼写规范化样本：PR #35、main 和受保护 run `30616540480` 通过 0007→0022、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。真实数据库断言 `ＷＯＲＤ－０１` 和 ASCII `WORD-02` 都判对、revision 递增、`wrong_count=0`、retry pool 为空，并拒绝普通客户端执行 helper；只读 plan `30616030488` 仅列 0021–0022，受保护 run 保留 artifact `8787805291` 后应用并激活 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1`。发布中的真实 Azure/OpenRouter gate 证明依赖未回归，但与拼写大小写行为无直接因果；没有真实用户生产答题 E2E。
 
 ## 11. 新增测试约定
 

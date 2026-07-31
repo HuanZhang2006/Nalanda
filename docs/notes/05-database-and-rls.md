@@ -50,6 +50,8 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0018_verify_learning_audio_review_fix.sql` | 断言 0017 列/意图唯一索引/活动排序索引、函数定义及 service-role-only 权限 |
 | `0019_learning_spelling_timer_translation.sql` | session 拼写选项、只保存答案 hash 的翻译评判事实、租约/配额/幂等响应，以及 service-only 翻译评判与 spelling wrapper RPC；保留旧签名供应用回退 |
 | `0020_verify_learning_spelling_release.sql` | 断言 0019 列、评判表 RLS/客户端撤权、新 RPC 精确签名与 service-role-only grants |
+| `0021_learning_spelling_unicode_normalization.sql` | 新增内部 Unicode 拼写归一化 helper，并让七参数权威 attempt RPC 对原始答案和课程 `term` 使用同一规范化契约；保留原始提交文本 |
+| `0022_verify_learning_spelling_unicode_normalization.sql` | 断言全角大写、Unicode 空白、撇号/连字符变体和标点保留语义，并验证 helper/七参数 RPC 只允许 service role |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
@@ -99,5 +101,6 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 - 仍需定期 staging 演练、Storage 文件异地备份、数据库恢复演练和 schema drift 告警。
 - 0011–0013 已于 2026-07-22、0014 已于 2026-07-23、0015–0018 已于 2026-07-27 通过受保护 plan/apply 发布。队列表不授予客户端任何读写，旧答题 RPC 在稳定窗口内保留供应用回滚，数据库仍只做 forward-fix；详细 run/artifact/真实 Azure 证据见发布手册第 8 节。
 - 0019–0020 已于 2026-07-28 取得只读 plan `30366334157`、加密恢复点/apply `30367263486` 与最终应用发布 `30374301472` 证据。评判表不授予客户端任何权限，所有新 RPC 已由双用户 RLS 负向测试和 0020 精确断言同时证明；生产已到 0020。
+- 0021–0022 已于 2026-07-31 取得只读 plan `30616030488`、加密恢复 artifact `8787805291`、受保护 apply/deploy `30616540480` 和 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 证据。真实一次性 Supabase E2E 验证全角/半角全大写不增加错误或候补，0022 断言 helper/RPC 对客户端不可执行；生产已到 0022。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。

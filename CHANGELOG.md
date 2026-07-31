@@ -3,11 +3,13 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-07-30。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-07-31。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
 ## [Unreleased]
+
+## [0.8.1] - 2026-07-31
 
 ### Fixed
 
@@ -15,6 +17,17 @@
 - Courses 弱网答题提示改为独立的等待/成功状态：待同步答案全部获得服务器确认后显示“答案同步成功”两秒并自动消失，后续再次超时会恢复本地保存提示；正常在线答题不会逐题显示同步成功。
 - 拼写测试答对后，正确拼写与翻译的反馈停留时间由约 520 ms 延长到 1.5 秒；翻译选择题和发音匹配仍保持原有快速推进节奏。拼写题卡会固定显示当前计时状态：翻译前测期间显示配置秒数及“翻译通过后开始计时”，进入拼写输入后显示实时倒计时，不限时会话也会明确标注。
 - 翻译多选题在单词进入新一轮候补池时会重置上一轮的本地选项；即使候补池只剩同一个词，也不会携带旧的错误选项或阻止正确答案进入下一阶段。
+
+### Testing
+
+- Web 单元/jsdom 覆盖全角全大写、弯撇号、连字符变体、不可省略标点及原始答案提交；真实一次性 Supabase RLS E2E 以 `ＷＯＲＤ－０１` 和 `WORD-02` 验证服务器均判对、revision 单调推进、`wrong_count=0` 且候补池为空，同时验证客户端不能执行内部规范化 helper。
+- PR #35 和 main/受保护发布 run 均通过 docs/lint/typecheck、Web/API tests、build、0007→0022 升级、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍是 fake，真实供应商证据只来自生产激活 gate。
+
+### Release
+
+- PR [#35](https://github.com/1590703336/Nalanda/pull/35) 合入 main SHA `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`；[只读 plan run `30616030488`](https://github.com/1590703336/Nalanda/actions/runs/30616030488) 只列 0021–0022，没有创建恢复点、写入数据库或部署应用。
+- [受保护 apply/deploy run `30616540480`](https://github.com/1590703336/Nalanda/actions/runs/30616540480) 在 apply 前保留加密恢复 artifact `8787805291`（`db-recovery-fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`，digest `sha256:fd553ea9c4898d72928db64bcbd979e13dff50f6b50a2138ec7113958709c199`），把远端 history 同步到 0022，并通过远端函数验证、lint 和空 dry-run。
+- 不可变 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 激活前通过真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate；独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回 React root。
 
 ## [0.8.0] - 2026-07-28
 
