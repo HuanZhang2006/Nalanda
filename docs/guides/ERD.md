@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260731000024_verify_learning_spelling_punctuation_tolerance.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 通过只读 plan `30616030488` 和受保护 apply/deploy `30616540480` 同步到 0022；0023–0024 在完成新的独立 plan、恢复点和 apply 前只能视为仓库待发布结构。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260731000024_verify_learning_spelling_punctuation_tolerance.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 先通过只读 plan `30616030488` / 受保护 apply `30616540480` 同步到 0022，再通过只读 plan `30623522232` / 受保护 apply `30624104943` 同步到 0024；当前仓库与生产结构一致。
 
 - **仓库与生产结构**：32 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
@@ -523,7 +523,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013–0022 持续检查 append-only、RLS、精确函数签名与 service-role grant；0023 的两个新标点 helper 和替换后的七参数 attempt RPC 再次撤销客户端权限，0024 验证容错结果、函数确实调用 matcher 及精确权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013–0024 持续检查 append-only、RLS、精确函数签名与 service-role grant；0023 的两个新标点 helper 和替换后的七参数 attempt RPC 再次撤销客户端权限，0024 验证容错结果、函数确实调用 matcher 及精确权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
 
 ## 8. 索引清单
 

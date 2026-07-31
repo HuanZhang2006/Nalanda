@@ -423,6 +423,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 
 2026-07-31 的 Unicode 拼写规范化样本：PR #35、main 和受保护 run `30616540480` 通过 0007→0022、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。真实数据库断言 `ＷＯＲＤ－０１` 和 ASCII `WORD-02` 都判对、revision 递增、`wrong_count=0`、retry pool 为空，并拒绝普通客户端执行 helper；只读 plan `30616030488` 仅列 0021–0022，受保护 run 保留 artifact `8787805291` 后应用并激活 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1`。发布中的真实 Azure/OpenRouter gate 证明依赖未回归，但与拼写大小写行为无直接因果；没有真实用户生产答题 E2E。
 
+同日的标点容错样本：PR #37 run `30620350644`、main run `30620879282` 和受保护 run `30624104943` 通过 0007→0024、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。Web 与真实数据库分别断言 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin` 通过，真实字母错误与无标点参与的词间空格错误失败，正确样本的 revision 递增、`wrong_count=0`、retry pool 为空，客户端不能执行内部 matcher；只读 plan `30623522232` 仅列 0023–0024，受保护 run 保留 artifact `8790816378` 后应用并激活 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1`。Playwright 供应商仍为 fake；真实 Azure/OpenRouter 仅证明生产依赖 gate，且没有真实用户生产答题 E2E。
+
 ## 11. 新增测试约定
 
 1. 测试名描述用户行为/安全属性，不只写函数名。

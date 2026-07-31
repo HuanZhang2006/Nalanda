@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-07-31
+
 ### Changed
 
 - 拼写题现在把“仅标点不同”判为正确：标点遗漏、替换或增加不会进入候补池，例如 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin` 均可通过。字母、数字、词序和没有标点参与的词间空格仍必须正确，`ice cream` / `icecream` 仍判错。
@@ -16,7 +18,14 @@
 
 ### Testing
 
-- 增加标点遗漏/替换/增加、全角大写、真实字母错误和无标点空格错误的 Web 单元/jsdom；追加 0023–0024 数据库迁移、自验证及双用户 RLS 用例，验证标点容错不增加 `wrong_count`/候补池且内部 helper 仍拒绝客户端执行。生产在受保护 plan/apply 完成前仍停在 0022。
+- 增加标点遗漏/替换/增加、全角大写、真实字母错误和无标点空格错误的 Web 单元/jsdom；追加 0023–0024 数据库迁移、自验证及双用户 RLS 用例，验证标点容错不增加 `wrong_count`/候补池且内部 helper 仍拒绝客户端执行。
+- PR #37、main 与受保护发布 run 均通过 docs/lint/typecheck、Web/API tests、build、0007→0024 升级、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍是 fake，真实供应商证据只来自生产激活 gate。
+
+### Release
+
+- PR [#37](https://github.com/1590703336/Nalanda/pull/37) 合入 main SHA `9b62951a8895aa6cf3ff0f9dce8395df239e6089`；PR run `30620350644` 和 main run `30620879282` 完整通过。[只读 plan run `30623522232`](https://github.com/1590703336/Nalanda/actions/runs/30623522232) 确认远端停在 0022 且唯一待办为 0023–0024，没有创建恢复点、写入数据库或部署应用。
+- [受保护 apply/deploy run `30624104943`](https://github.com/1590703336/Nalanda/actions/runs/30624104943) 在 apply 前保留加密恢复 artifact `8790816378`（`db-recovery-9b62951a8895aa6cf3ff0f9dce8395df239e6089`，366,417 bytes，digest `sha256:887b1ac42c267ca7bb1cde810920702dde64f8d74112b3b39def6254d5bf0fca`，保留至 2026-08-14），随后把远端 history 同步到 0024，并通过函数/权限断言、database lint 与空 dry-run。
+- 不可变 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（2,790 ms、253/27/280 tokens）和候选 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 200 并返回 React root。没有使用真实用户账号在生产提交拼写答案；迁移自验证与一次性真实 Supabase E2E 是本次判定行为证据。
 
 ## [0.8.1] - 2026-07-31
 
