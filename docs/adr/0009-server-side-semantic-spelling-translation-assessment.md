@@ -54,7 +54,7 @@
 
 ## 当前实现与目标差距
 
-- **仓库与生产**：0019–0020、共享 TS 契约、NestJS adapter/API、React 设置/计时/结果、jsdom/API/RLS/Playwright 和真实 provider/API smoke 均已实现并发布；0021–0022 后续统一确定性拼写归一化但不改变本 ADR 的模型边界，当前生产 history 为 0022。
+- **仓库与生产**：0019–0020、共享 TS 契约、NestJS adapter/API、React 设置/计时/结果、jsdom/API/RLS/Playwright 和真实 provider/API smoke 均已实现并发布；0021–0024 后续统一确定性拼写归一化并加入仅标点差异容错，但不改变本 ADR 的模型边界，当前生产 history 为 0024。
 - **发布证据**：只读 plan `30366334157`、恢复/apply run `30367263486`、最终 main run `30374301472` 与 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`。中途失败候选全部自动恢复旧应用，数据库保持向前兼容。
 - **后续目标**：建立正式授权语义评测集与 false-accept/false-reject 阈值、持续 cost/latency dashboard、用户告知和供应商条款复审。模型/base URL 变更需重新评测，不作为普通 key 轮换处理。
 

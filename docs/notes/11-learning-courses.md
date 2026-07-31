@@ -4,7 +4,7 @@
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech/OpenRouter、分享市场或测试边界变化时。
-> - **状态基线**：2026-07-31。生产已发布 0011–0022；仓库 0023–0024 已实现“仅标点不同也判对”，完成受保护发布前仍只能描述为待发布。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-07-31。生产已发布 0011–0024，“仅标点不同也判对”已通过受保护发布启用。文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -101,6 +101,8 @@ UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt
 2026-07-28 的 PR #26–#29 完成功能与生产 gate 前向修复；只读 plan `30366334157` 仅列 0019–0020，受保护 run `30367263486` 创建 artifact `8691620673` 并把远端同步到 0020。前三个候选应用在 provider 契约、合成答案模型误判和 replay 映射处被 gate 拦截且自动恢复旧应用；最终 main run `30374301472` 激活 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`。真实 Japan East gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`；真实 OpenRouter 为 1,365 ms、280 tokens；候选 API 持久证明规范化完全匹配为 0 token 且相同 UUID `replayed=true`。独立公网复核为 `deps.supabase=ok`、匿名 `/api/me` 401 和 React root。
 
 2026-07-31 的 PR #35 把 Web 与数据库拼写判定收敛到同一 Unicode 契约；PR/main CI 和受保护 run `30616540480` 均通过 0007→0022、空库重建/lint、真实本地双用户 RLS/Storage E2E、jsdom/API 与 Chromium Playwright。只读 plan `30616030488` 仅列 0021–0022；apply 前保留 artifact `8787805291`，远端 history 到 0022。不可变 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 激活前通过真实 Japan East Azure、真实 OpenRouter 和候选 Courses API gate；独立公网复核为 `deps.supabase=ok`、匿名 `/api/me` 401 和 React root。自动化没有借用真实用户会话在生产提交拼写答案；生产 SQL 自验证和一次性真实 Supabase E2E 分别证明迁移结果与答题行为。
+
+同日 PR #37 把仅标点遗漏、替换或增加纳入相同 Web/数据库判定契约。PR run `30620350644`、main run `30620879282` 与受保护 run `30624104943` 均通过 0007→0024、空库重建/lint、真实本地双用户 RLS/Storage E2E、jsdom/API 与 Chromium Playwright；只读 plan `30623522232` 唯一列出 0023–0024。apply 前保留 artifact `8790816378`，远端 history 到 0024；release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` 激活前通过真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate。独立公网复核为 `deps.supabase=ok`、匿名 `/api/me` 401 和 React root。仍未借用真实用户会话在生产提交答案，因此不得把这些 gate 描述为生产用户流程 E2E。
 
 复习日程必须引用本人该单元已完成的 initial session；由日程启动时服务端固定使用其 skills/scope，并在 review session 完成事务里写回 completed session。普通 Vitest/jsdom 不等于真实数据库 E2E；本地无 Supabase CLI/Docker 时 RLS 和 Playwright 会跳过或无法启动，只有一次性 Supabase CI 成功后才能称真实 E2E 已通过。
 
