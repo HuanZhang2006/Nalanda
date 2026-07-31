@@ -6,9 +6,9 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260731000022_verify_learning_spelling_unicode_normalization.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-28 通过受保护发布同步到 0020；0021–0022 在完成只读 plan、加密恢复点和 apply 前只能视为待发布结构。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260731000022_verify_learning_spelling_unicode_normalization.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 通过只读 plan `30616030488` 和保留加密恢复点的受保护 apply/deploy `30616540480` 同步到 0022。
 
-- **仓库最终结构**：32 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。生产在应用 0019 前仍为 31 张 public 表。
+- **仓库与生产结构**：32 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
 
 ## 2. 当前 ERD
@@ -523,7 +523,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权。0015 对 snapshot、七参数 attempt、assessment target、音频 prepare/claim/finish/requeue/quota 及 helper 全部再次撤销客户端 EXECUTE，0016 检查表 RLS、revision trigger、精确函数签名和 service-role grant；0017 替换 `learning_start_session` 后再次撤权，0018 检查 `resume_key`、意图唯一索引与精确 service-role grant；0019 的八参数 session start、翻译评判 claim/complete/release 与受保护 spelling wrapper 只授予 service_role，0020 检查新列、表 RLS 和精确 grant。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权。0015 对 snapshot、七参数 attempt、assessment target、音频 prepare/claim/finish/requeue/quota 及 helper 全部再次撤销客户端 EXECUTE，0016 检查表 RLS、revision trigger、精确函数签名和 service-role grant；0017 替换 `learning_start_session` 后再次撤权，0018 检查 `resume_key`、意图唯一索引与精确 service-role grant；0019 的八参数 session start、翻译评判 claim/complete/release 与受保护 spelling wrapper 只授予 service_role，0020 检查新列、表 RLS 和精确 grant；0021 的 `_learning_normalize_spelling_text` 和替换后的七参数 attempt RPC 同样只授予 service role，0022 同时断言大小写/兼容字符/标点归一化结果与精确权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
 
 ## 8. 索引清单
 
