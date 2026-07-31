@@ -3,6 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningCourseDetail, LearningSession, VocabularyWord } from "@nalanda/types";
 import { setLocale } from "../../i18n";
+import { clearPendingAttemptsForUser } from "./attemptOutbox";
 import { beginWavRecording } from "./recording";
 import { LearningView } from "./LearningView";
 
@@ -305,7 +306,12 @@ describe("LearningView immediate feedback", () => {
     }
   });
 
-  afterEach(async () => { await settle(() => root.unmount()); vi.unstubAllGlobals(); vi.mocked(beginWavRecording).mockReset(); });
+  afterEach(async () => {
+    await settle(() => root.unmount());
+    await clearPendingAttemptsForUser("user-a");
+    vi.unstubAllGlobals();
+    vi.mocked(beginWavRecording).mockReset();
+  });
 
   it("does not mistake Supabase INITIAL_SESSION for a cross-account login", async () => {
     const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
@@ -359,6 +365,47 @@ describe("LearningView immediate feedback", () => {
     await settle(() => click(nextQuestion!));
     expect(container.querySelector(".course-term")?.textContent).toBe("banana");
     expect(container.textContent).not.toContain("added to the next-round retry pool");
+  });
+
+  it("clears multi-select answers when the same word starts a new retry round", async () => {
+    vi.useFakeTimers();
+    const words = [
+      word(ids[2], "other", ["另外的", "其他的"], 0),
+      word(ids[3], "unit", ["单元"], 1),
+    ];
+    installApi(words, "translation", { holdAttempt: true });
+    await settle(() => root.render(
+      <LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />,
+    ));
+    const option = (text: string) => [...container.querySelectorAll(".course-option")]
+      .find((entry) => entry.textContent === text)!;
+    const nextQuestion = () => [...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Next question")!;
+
+    // Put "other" in the retry pool, then answer the remaining first-round word.
+    await settle(() => click(option("单元")));
+    await settle(() => click(nextQuestion()));
+    expect(container.querySelector(".course-term")?.textContent).toBe("unit");
+    await settle(() => click(option("单元")));
+    await act(async () => { await vi.advanceTimersByTimeAsync(520); });
+    expect(container.querySelector(".course-term")?.textContent).toBe("other");
+    expect(container.textContent).toContain("Round 2");
+
+    // Fail the only retry item. Round 3 contains the same word at the same
+    // cursor, so the round boundary must still clear the previous wrong choice.
+    await settle(() => click(option("单元")));
+    expect(option("单元").getAttribute("aria-pressed")).toBe("true");
+    await settle(() => click(nextQuestion()));
+    expect(container.querySelector(".course-term")?.textContent).toBe("other");
+    expect(container.textContent).toContain("Round 3");
+    expect(option("单元").getAttribute("aria-pressed")).toBe("false");
+    expect(option("单元").classList.contains("selected")).toBe(false);
+
+    await settle(() => click(option("另外的")));
+    await settle(() => click(option("其他的")));
+    expect(container.textContent).toContain("Correct — continuing");
+    await act(async () => { await vi.advanceTimersByTimeAsync(520); });
+    expect(container.textContent).toContain("Spelling");
   });
 
   it("renders provisional feedback before the answer request resolves", async () => {
