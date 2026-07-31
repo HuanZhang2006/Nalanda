@@ -64,6 +64,18 @@ describe("optimistic learning-session reducer", () => {
     expect(evaluateAttempt(target, "spelling", { text: " TAKE   PART IN " })).toBe(true);
   });
 
+  it("normalizes uppercase compatibility characters without relaxing punctuation requirements", () => {
+    const fullWidth = word(ids[2], "apple", ["苹果"], 0);
+    const apostrophe = word(ids[2], "You're welcome.", ["不客气。"], 0);
+    const hyphen = word(ids[2], "check-in", ["登记"], 0);
+
+    expect(evaluateAttempt(fullWidth, "spelling", { text: "ＡＰＰＬＥ" })).toBe(true);
+    expect(evaluateAttempt(apostrophe, "spelling", { text: "YOU’RE WELCOME." })).toBe(true);
+    expect(evaluateAttempt(hyphen, "spelling", { text: "CHECK‑IN" })).toBe(true);
+    expect(evaluateAttempt(apostrophe, "spelling", { text: "YOURE WELCOME." })).toBe(false);
+    expect(evaluateAttempt(hyphen, "spelling", { text: "CHECK IN" })).toBe(false);
+  });
+
   it("adds an incorrect pronunciation target to the next-round pool and advances locally", () => {
     const value = session("pronunciation");
     const result = predictAttempt(value, request(value, ids[1], { wordId: ids[2] }));
