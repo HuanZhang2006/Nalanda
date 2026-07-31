@@ -167,6 +167,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 最终 main run [`30374301472`](https://github.com/1590703336/Nalanda/actions/runs/30374301472) 的第三次部署尝试通过：真实 Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 固定模型返回 1,365 ms、253/27/280 tokens；候选 Courses API 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，并持久证明 `nalanda-normalized-exact/normalized-exact-v1`、0 token、同 UUID `replayed=true`、revision 1。
 - release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` 健康激活。独立公网复核：`/api/health` 为 `status=ok`、`deps.supabase=ok`，匿名 `/api/me` 为 401，Web 返回 React root。真实发布 gate 是时点证据，不替代持续 OpenRouter 质量/延迟/费用监控。
 
+### 2026-07-31 · 0021–0022 Unicode 拼写判定一致性
+
+- PR [#35](https://github.com/1590703336/Nalanda/pull/35) 合入 main SHA `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`。PR run `30615023445`、main run `30615555388` 和受保护 run `30616540480` 均通过 quality、0007→0022、空库重建/database lint、真实本地 Supabase RLS/Storage E2E 与 Chromium Playwright；浏览器供应商仍为 fake。
+- [只读 plan run `30616030488`](https://github.com/1590703336/Nalanda/actions/runs/30616030488) 确认远端停在 0020，唯一待办为 `20260731000021_learning_spelling_unicode_normalization.sql` 和 `20260731000022_verify_learning_spelling_unicode_normalization.sql`；没有执行恢复点、写入或部署。
+- [受保护 apply/deploy run `30616540480`](https://github.com/1590703336/Nalanda/actions/runs/30616540480) 在 apply 前保留加密恢复 artifact `8787805291`（digest `sha256:fd553ea9c4898d72928db64bcbd979e13dff50f6b50a2138ec7113958709c199`），随后确认远端 history 到 0022、函数验证、database lint 与空 dry-run。
+- 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 固定模型返回 10,597 ms、253/27/280 tokens；候选 Courses API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。
+- release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 健康激活。独立公网复核：`/api/health` 为 `status=ok`、`deps.supabase=ok`，匿名 `/api/me` 为 401，Web 返回 React root 和新构建资源。没有使用真实用户账号在生产提交答案；生产迁移自验证与一次性真实 Supabase E2E 是本次拼写判定证据。
+
 ## 8. 运维速查
 
 ```bash

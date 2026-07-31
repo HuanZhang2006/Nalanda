@@ -157,11 +157,11 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（0011–0020 生产已启用）
+## 4. Courses API（0011–0022 生产已启用）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
-0019–0020 契约增加拼写限时与 OpenRouter 语义翻译前测，已于 2026-07-28 通过生产 migration history、不可变应用 release、真实供应商和候选 API gate。限时本身由 Web 执行；服务器仍以 immutable attempt 决定 retry pool、revision、进度和奖励。
+0019–0020 契约增加拼写限时与 OpenRouter 语义翻译前测，已于 2026-07-28 通过生产 migration history、不可变应用 release、真实供应商和候选 API gate。0021–0022 不改变 HTTP 请求/响应结构，只让七参数权威答题 RPC 对用户答案与课程原始 `term` 执行和 Web 相同的 NFKC、Unicode 空白/标点变体及 ASCII case 归一化，并已于 2026-07-31 受保护发布。限时本身由 Web 执行；服务器仍以 immutable attempt 决定 retry pool、revision、进度和奖励。
 
 ### 4.1 课程内容
 
@@ -543,7 +543,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权。0015–0016 同样拒绝客户端执行 snapshot、幂等 attempt、assessment target、音频 prepare/claim/finish/requeue/quota RPC，并拒绝读写队列表；0017 替换 `learning_start_session` 后再次显式撤权，0018 发布断言和双用户 RLS E2E 以普通用户逐项验证失败。0019 的八参数 session start、翻译评判 claim/complete/release 和受保护 spelling wrapper 同样只授予 service_role，0020 以精确签名、RLS 和 grant 断言失败关闭。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013 以精确函数签名断言这个边界；0014 替换评分与认词推进函数后再次撤权。0015–0016 同样拒绝客户端执行 snapshot、幂等 attempt、assessment target、音频 prepare/claim/finish/requeue/quota RPC，并拒绝读写队列表；0017 替换 `learning_start_session` 后再次显式撤权，0018 发布断言和双用户 RLS E2E 以普通用户逐项验证失败。0019 的八参数 session start、翻译评判 claim/complete/release 和受保护 spelling wrapper 同样只授予 service_role，0020 以精确签名、RLS 和 grant 断言失败关闭；0021 的拼写归一化 helper 与替换后的七参数 attempt RPC 再次显式撤权，0022 对 helper 结果和两者的精确权限执行发布断言。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 

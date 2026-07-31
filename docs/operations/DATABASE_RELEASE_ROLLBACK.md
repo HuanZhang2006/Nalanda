@@ -235,6 +235,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - 最终真实 Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 返回 1,365 ms、253/27/280 tokens；候选 API 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，并查询评判事实确认 provider/model 为 `nalanda-normalized-exact/normalized-exact-v1`、0 token、同 UUID replay true、revision 1。
 - 不可变 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` 健康激活。独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root；生产 migration history 保持 0020。
 
+### 8.7 2026-07-31 Courses 0021–0022 发布记录
+
+- 发布提交：`fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`；PR #35 run `30615023445`、main run `30615555388` 和受保护 run `30616540480` 通过 quality、0007→0022、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。真实数据库用例验证全角/半角全大写均不增加错误或候补；Playwright 的外部供应商仍为 fake。
+- [只读 plan run `30616030488`](https://github.com/1590703336/Nalanda/actions/runs/30616030488) 显示生产 0001–0020 与本地一致，唯一待办为 0021–0022；恢复、apply 与 deploy 步骤全部跳过。
+- [受保护 apply/deploy run `30616540480`](https://github.com/1590703336/Nalanda/actions/runs/30616540480) 在 apply 前创建并保留 `db-recovery-fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`，artifact `8787805291`、大小 362,385 bytes、digest `sha256:fd553ea9c4898d72928db64bcbd979e13dff50f6b50a2138ec7113958709c199`，保留至 2026-08-14。
+- apply 后远端 history 到 0022，0022 函数结果/权限断言、remote database lint 和空 dry-run 均通过。0021 保留旧五参数答题签名及 HTTP 契约供应用回退；数据库仍只采用 forward-fix。
+- 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。未使用真实用户会话在生产提交答案，因此不能把本次记录描述为生产用户流程 E2E。
+
 ## 9. 失败处置
 
 ### 9.1 本地重建、lint 或 RLS E2E 失败
