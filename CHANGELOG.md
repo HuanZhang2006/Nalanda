@@ -9,6 +9,15 @@
 
 ## [Unreleased]
 
+### Changed
+
+- 拼写题现在把“仅标点不同”判为正确：标点遗漏、替换或增加不会进入候补池，例如 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin` 均可通过。字母、数字、词序和没有标点参与的词间空格仍必须正确，`ice cream` / `icecream` 仍判错。
+- Web 即时反馈与七参数数据库权威 attempt RPC 共用相同的“保留标点、移除标点、把标点视为空格”三路比较；原始答案继续写入 append-only attempt，retry pool、错误次数、进度和奖励仍只由服务器决定。
+
+### Testing
+
+- 增加标点遗漏/替换/增加、全角大写、真实字母错误和无标点空格错误的 Web 单元/jsdom；追加 0023–0024 数据库迁移、自验证及双用户 RLS 用例，验证标点容错不增加 `wrong_count`/候补池且内部 helper 仍拒绝客户端执行。生产在受保护 plan/apply 完成前仍停在 0022。
+
 ## [0.8.1] - 2026-07-31
 
 ### Fixed

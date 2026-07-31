@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260731000022_verify_learning_spelling_unicode_normalization.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 通过只读 plan `30616030488` 和保留加密恢复点的受保护 apply/deploy `30616540480` 同步到 0022。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260731000024_verify_learning_spelling_punctuation_tolerance.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 通过只读 plan `30616030488` 和受保护 apply/deploy `30616540480` 同步到 0022；0023–0024 在完成新的独立 plan、恢复点和 apply 前只能视为仓库待发布结构。
 
 - **仓库与生产结构**：32 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
@@ -511,9 +511,9 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helper | 固化尝试本地日期、词集合 SHA-256 与服务端内部课程快照；公开 API 另经 `publicSnapshot` 删除私有 ID/进度 |
 | `_refresh_learning_growth` | 完成学习/复习 | 发放课程 +20 points 和九级徽章；持久业务键/award PK 防重复 |
 | `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPC | owner 校验下原子保存、精确能力重置、改名和级联删除 |
-| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0014 让 recognition 也先消费朗读低分候补池再推进；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载；0017 按 course/unit/mode/scope/skills 或 schedule 的服务端意图键恢复，避免复习另一单元误返回暂停学习 session；0021 的七参数权威拼写路径对答案与原始 `term` 两侧调用 `_learning_normalize_spelling_text` |
+| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载；0017 按请求意图恢复；0021 统一 Unicode 规范化，0023 的七参数权威拼写路径改为调用 `_learning_spelling_text_matches` |
 | `learning_get_session_snapshot`, `_learning_session_patch`, `_learning_increment_session_revision` | API/内部 RPC 与 trigger helper | 一次返回 session/items/words/progress；写事务返回小增量；`learning_attempts AFTER INSERT` 推进 revision，保证旧应用回滚写入也不会绕过版本时钟 |
-| `_learning_normalize_spelling_options`, `_learning_normalize_spelling_text`, `learning_claim/complete/release_spelling_translation_assessment`, `learning_record_spelling_attempt` | API/内部 RPC | 固化限时/翻译前测选项；拼写文本以 NFKC、标点变体、Unicode 空白及 ASCII case fold 取得跨 Web/数据库一致表示，但不允许省略标点；按 UUID/revision/answer hash 领取供应商租约与配额、保存判定；翻译错误原子写一次 spelling 错误，翻译正确后要求同 UUID 的 spelling 提交；供应商失败释放租约且不记错 |
+| `_learning_normalize_spelling_options`, `_learning_normalize_spelling_text`, `_learning_spelling_without_punctuation`, `_learning_spelling_text_matches`, `learning_claim/complete/release_spelling_translation_assessment`, `learning_record_spelling_attempt` | API/内部 RPC | 固化限时/翻译前测选项；拼写先做 NFKC/空白/ASCII case fold，再以保留标点、移除标点、标点视为空格三路比较，仅放宽标点差异；按 UUID/revision/answer hash 领取供应商租约与配额、保存判定并原子形成权威 attempt |
 | `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
 | `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；按受控整体分数阈值原子加入/移除当前认词候补项；持久化用户频率和全局预算预留 |
 | `_learning_audio_cache_key`, `learning_prepare_unit_audio`, `learning_prepare_word_audio`, `learning_get_unit_audio_manifest` | 服务端音频 RPC | 计算全局内容哈希、owner 校验后按单元/单词幂等入队、返回不暴露 Storage 的用户级 manifest |
@@ -523,7 +523,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013 逐一用精确签名断言这些权限、append-only 边界、RLS、九个徽章和 owner 链；0014 替换评分/认词函数后再次显式撤权。0015 对 snapshot、七参数 attempt、assessment target、音频 prepare/claim/finish/requeue/quota 及 helper 全部再次撤销客户端 EXECUTE，0016 检查表 RLS、revision trigger、精确函数签名和 service-role grant；0017 替换 `learning_start_session` 后再次撤权，0018 检查 `resume_key`、意图唯一索引与精确 service-role grant；0019 的八参数 session start、翻译评判 claim/complete/release 与受保护 spelling wrapper 只授予 service_role，0020 检查新列、表 RLS 和精确 grant；0021 的 `_learning_normalize_spelling_text` 和替换后的七参数 attempt RPC 同样只授予 service role，0022 同时断言大小写/兼容字符/标点归一化结果与精确权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013–0022 持续检查 append-only、RLS、精确函数签名与 service-role grant；0023 的两个新标点 helper 和替换后的七参数 attempt RPC 再次撤销客户端权限，0024 验证容错结果、函数确实调用 matcher 及精确权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
 
 ## 8. 索引清单
 

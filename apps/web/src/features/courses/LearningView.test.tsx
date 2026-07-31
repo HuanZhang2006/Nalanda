@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningCourseDetail, LearningSession, VocabularyWord } from "@nalanda/types";
 import { setLocale } from "../../i18n";
 import { clearPendingAttemptsForUser } from "./attemptOutbox";
-import { normalizeSpellingText } from "./learningSessionState";
+import { spellingTextMatches } from "./learningSessionState";
 import { beginWavRecording } from "./recording";
 import { LearningView } from "./LearningView";
 
@@ -177,7 +177,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
         ? request.answer.wordId === request.wordId
         : request.skill === "translation"
           ? JSON.stringify([...(request.answer.translations as string[])].sort()) === JSON.stringify([...current.translations].sort())
-          : normalizeSpellingText(String(request.answer.text)) === normalizeSpellingText(current.term);
+          : spellingTextMatches(String(request.answer.text), current.term);
       const correct = options.serverCorrect ?? predictedCorrect;
       cursor = Math.min(cursor + 1, words.length - 1);
       revision += 1;
@@ -586,6 +586,25 @@ describe("LearningView immediate feedback", () => {
 
     await act(async () => { await vi.advanceTimersByTimeAsync(1); });
     expect(container.textContent).not.toContain("Spelling apple");
+  });
+
+  it("shows immediate correct feedback when only spelling punctuation differs", async () => {
+    vi.useFakeTimers();
+    const words = [
+      word(ids[2], "You're welcome.", ["不客气"], 0),
+      word(ids[3], "check-in", ["登记"], 1),
+    ];
+    const { attempts } = installApi(words, "spelling");
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    const spelling = container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')!;
+    await settle(() => inputValue(spelling, "YOURE WELCOME!"));
+    await settle(() => { spelling.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+
+    expect(attempts[0]?.answer).toEqual({ text: "YOURE WELCOME!" });
+    expect(container.querySelector(".course-spelling-answer.is-correct")).not.toBeNull();
+    expect(container.textContent).toContain("Spelling You're welcome.");
+    expect(container.textContent).toContain("不客气");
   });
 
   it("auto-submits exactly once when a timed spelling word expires", async () => {

@@ -38,6 +38,27 @@ export function normalizeSpellingText(value: string) {
     .replace(/[A-Z]/g, (character) => character.toLowerCase());
 }
 
+const SPELLING_PUNCTUATION_PATTERN =
+  /[!"#$%&'()*+,\-.\/:;<=>?@\[\]\\^_`{|}~¡¿«»‹›“”„‟‘’‚‛‐‑‒–—―…·•‧、。〈〉《》「」『』【】〔〕〖〗〘〙〚〛]/gu;
+
+function normalizeSpellingWithoutPunctuation(value: string, punctuationAsSpace: boolean) {
+  return normalizeSpellingText(value)
+    .replace(SPELLING_PUNCTUATION_PATTERN, punctuationAsSpace ? " " : "")
+    .trim()
+    .replace(/\s+/gu, " ");
+}
+
+export function spellingTextMatches(answer: string, expected: string) {
+  const normalizedAnswer = normalizeSpellingText(answer);
+  const normalizedExpected = normalizeSpellingText(expected);
+  if (normalizedAnswer === normalizedExpected) return true;
+
+  return normalizeSpellingWithoutPunctuation(answer, false)
+      === normalizeSpellingWithoutPunctuation(expected, false)
+    || normalizeSpellingWithoutPunctuation(answer, true)
+      === normalizeSpellingWithoutPunctuation(expected, true);
+}
+
 export function evaluateAttempt(
   word: VocabularyWord,
   skill: LearningSkill,
@@ -49,7 +70,7 @@ export function evaluateAttempt(
     const expected = [...word.translations].map(normalize).sort();
     return actual.length === expected.length && actual.every((value, index) => value === expected[index]);
   }
-  return normalizeSpellingText(answer.text || "") === normalizeSpellingText(word.term);
+  return spellingTextMatches(answer.text || "", word.term);
 }
 
 function nextStage(session: LearningSession, items: LearningSession["items"]) {

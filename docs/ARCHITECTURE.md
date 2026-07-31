@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-31。生产数据库已有受保护发布证据到 0022；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学、可选限时拼写、OpenRouter 语义翻译前测、Web/数据库一致的 Unicode 拼写归一化和 Japan East Azure Speech 已在线。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-07-31。生产数据库已有受保护发布证据到 0022；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学、可选限时拼写、OpenRouter 语义翻译前测、Web/数据库一致的 Unicode 拼写归一化和 Japan East Azure Speech 已在线。仓库 0023–0024 已实现“仅标点不同也判对”，但在独立 plan/apply 前不得描述为生产已启用。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
