@@ -157,7 +157,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（生产 0011–0024；仓库 0011–0028）
+## 4. Courses API（生产与仓库均为 0011–0028）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -165,7 +165,7 @@ curl -fsS http://localhost:3000/api/me \
 
 0023–0024 继续保持 HTTP 契约不变，但把仅有标点遗漏、替换或增加的答案判为正确；字母、数字、词序与无标点参与的词间空格错误仍判错。该行为已于 2026-07-31 通过独立 plan/apply 发布到生产。
 
-仓库 `Unreleased` 的 0025–0028 增加显式取消会话、拼写轮末确认、考试模式与真实 provider 配额预留；生产仍停在 0024，只有受保护发布完成后才能把下表新增端点视为线上可用。
+0025–0028 增加显式取消会话、拼写轮末确认、考试模式与真实 provider 配额预留；已于 2026-08-01 通过独立只读 plan `30706279006` 和受保护 apply/deploy `30706731292` 发布到生产，下表新增端点已在线。
 
 ### 4.1 课程内容
 

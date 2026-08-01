@@ -429,6 +429,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 
 同日的标点容错样本：PR #37 run `30620350644`、main run `30620879282` 和受保护 run `30624104943` 通过 0007→0024、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。Web 与真实数据库分别断言 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin` 通过，真实字母错误与无标点参与的词间空格错误失败，正确样本的 revision 递增、`wrong_count=0`、retry pool 为空，客户端不能执行内部 matcher；只读 plan `30623522232` 仅列 0023–0024，受保护 run 保留 artifact `8790816378` 后应用并激活 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1`。Playwright 供应商仍为 fake；真实 Azure/OpenRouter 仅证明生产依赖 gate，且没有真实用户生产答题 E2E。
 
+2026-08-01 的取消、轮末复盘、考试和滚动配额样本：PR #40 run `30705662543`、main run `30705946921` 与受保护 run `30706731292` 通过 0007→0028、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖 owner-only 取消、取消后恢复隔离、每轮错题确认与打乱重考、考试阈值/实时正确率/通过投影，以及只有真实 provider 请求才占用滚动 24 小时 500 次额度；只读 plan `30706279006` 仅列 0025–0028，受保护 run 保留 artifact `8820657507` 后应用并激活 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1`。Playwright 的 Azure/OpenRouter 仍为 fake；真实 Japan East Azure、真实 OpenRouter 与候选 Courses API/Storage gate 是独立发布证据。生产 UI 只读检查未提交真实用户答案，因此不能描述为生产考试 E2E。
+
 ## 11. 新增测试约定
 
 1. 测试名描述用户行为/安全属性，不只写函数名。
