@@ -4,7 +4,7 @@
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech/OpenRouter、分享市场或测试边界变化时。
-> - **状态基线**：2026-07-31。生产已发布 0011–0024，“仅标点不同也判对”已通过受保护发布启用。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-08-01。生产已发布 0011–0024；仓库 `Unreleased` 的 0025–0028 增加显式取消会话、拼写轮末复盘、考试模式和真实 provider 配额预留，尚未发布。文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -34,12 +34,22 @@ Courses、学习/复习、公开分享与 Course Market 共用 Web 的 `nalanda-
 
 未完成会话按请求意图独立恢复，而不是按整门课程强制唯一。首次学习以课程+单元为意图；临时复习还包含范围与排序后的测试项；日程复习以 schedule ID 为意图。因而暂停 Unit 1 首次学习后可以开始 Unit 2 复习，两者进度都保留；相同意图的并发开始仍由 advisory lock 与部分唯一索引返回同一个 session。课程卡快捷继续最近活动的一项，完成临时复习后会再次看到仍未完成的首次学习。会话的阶段、位置、候补池、单词项和实际答题都写入数据库，因此刷新或换设备能继续。
 
+进行中页面区分两种退出语义：“暂停并返回”只离开页面，原 active session 继续按意图恢复；“取消学习”需二次确认，经 NestJS/service-role RPC 锁定并终止会话、推进 revision，之后同一意图会创建新 session。已确认 attempts、错误次数和熟练度历史保留，未完成复习日程仍可重新开始；服务器确认取消后，浏览器只清除该账号该 session 尚未同步的 IndexedDB 答案，不能清除其它学习会话。
+
 1. **认单词**：顺序展示英文、IPA、全部翻译和发音；朗读评分可选。整体 `PronScore` 默认 70 分通过，低分会持久进入本阶段候补池；结果页显示真实阈值和候补状态，并可立即“重新朗读并评分”，达标重读会移除该候补项。
 2. **发音记忆**：每批最多五词，音频列和词列分别打乱；选中发音对应词后立即提交并在所选项显示结果。答对短暂动画后自动推进；错配记到目标词并进入下一轮候补池，错误状态持续保留，直到用户点击“下一题”。
 3. **翻译记忆**：一个翻译时点击选项立即判定；多个翻译时逐个确认正确项，最后一个正确项自动提交，任一错误项立即判错。干扰项来自课程内其他翻译；答对自动推进，答错持续显示错误选项与正确答案并等待手动“下一题”，不恢复 Check/Continue 两步确认。
 4. **拼写记忆**：播放发音后输入。Web 即时判定和数据库权威判定都对答案与课程原始 `term` 执行 NFKC、Unicode 空白合并、ASCII 大小写折叠，并用相同标点集合依次比较原文、移除标点后的文本、把标点视为空格后的文本。仅标点遗漏、替换或增加会判对，例如 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin`；字母、数字、词序和没有标点参与的词间空格仍必须正确，因此 `ice cream` / `icecream` 判错。Enter 或一次提交确定答案。开始包含 spelling 的 session 时可选择不限时或 3–300 秒限时；限时从拼写输入真正可作答时开始，归零后按当前内容（可为空）只自动提交一次。还可开启翻译前测：用户先键入翻译，由服务端 OpenRouter 语义评判；正确后才显示拼写输入并开始计时，错误则直接形成该词一次 spelling 错误。答对自动推进；任何错误的字符差异、正确英文与每项翻译持续显示，用户点击“下一题”后才推进。
 
-每个测试阶段执行“首轮全部词 → 本轮错误池 → 下一轮错误池”，直至全部通过。识别推进和每次答案都由 owner 校验后的 service-role RPC 原子更新，客户端不能直接伪造会话、尝试或 progress。
+每个测试阶段执行“首轮全部词 → 本轮错误池 → 下一轮错误池”，直至全部通过。0027 起，拼写阶段每轮结束且存在错词时不会自动进入候补轮：session 持久保存 `awaitingRetryConfirmation/retrySummaryIds/retryFromRound`，UI 列出本轮全部错词的英文、IPA、逐项翻译和读音。最后几题必须先获服务器确认；用户再点击“打乱顺序并开始下一轮”，service-role RPC 才推进 revision、清除确认标记并按 session/轮次确定性打乱候补词。确认期间普通 attempt 与翻译评判 claim 都由数据库 trigger 拒绝，刷新或换设备仍停留在同一复盘页。
+
+识别推进和每次答案都由 owner 校验后的 service-role RPC 原子更新，客户端不能直接伪造会话、尝试或 progress。
+
+### 3.1 考试模式
+
+课程卡提供独立考试入口。用户选择一个单元和 1–100% 的第一轮正确率要求，默认 90%；考试强制使用本单元全部词、随机顺序、仅 `spelling` 能力和翻译前测，仍可选择拼写限时。翻译错误会直接形成该词一次权威 spelling 错误；翻译正确后继续拼写，所以每个词在第一轮恰好形成一个决定考试分数的 spelling attempt。页面实时显示服务器 state 中的 `examCorrect/examAnswered/examAccuracyPercent`，刷新后可恢复。
+
+是否通过只看完整第一轮的正确率；后续错题轮用于补练，不能把未通过的考试改成通过。即使第一轮已达标，仍须完成轮末复盘和全部错题重考，session 进入 `completed` 后数据库 trigger 才把所选单元全部词的 `initial_translation_passed`、`initial_spelling_passed` 和 `learned_at` 写为已学习，并再运行现有成长/课程完成投影。未达线时完成错题补练也不会写 `learned_at`；用户可重新开始一场新考试。考试不会伪造发音/认词复习日期，也不改变 points、徽章或合格课程的既有幂等规则。
 
 ## 4. 复习、熟练度和 Schedule
 
@@ -76,19 +86,21 @@ TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参�
 
 翻译前测不是 Courses 文件 AI 导入，也不是客户端模糊匹配。浏览器只发送当前 session/word、revision、UUID 和用户输入；NestJS 从 owner 可见的课程中取得英文与 translations。规范化后完全等于任一参考翻译时由版本化服务端规则确定性判对且不调用供应商；只有非字面同义/改写才使用固定 `{correct:boolean}` JSON schema 调用 `google/gemma-4-26b-a4b-it:free`。模型只决定非字面语义 boolean，API 使用固定安全教学文案作为 feedback；两条路径都不能自行推进会话、授予积分或改写参考答案。
 
-`learning_spelling_translation_assessments` 只保存用户答案 SHA-256、provider/model、判定、token usage、租约与首次响应；输入正文仅在 API 请求内存中存在。相同 UUID/答案 hash 重放直接返回首次响应，错误翻译用同 UUID 原子写一次 spelling 错误；正确翻译要求后续 spelling attempt 复用该 UUID。超时、网络故障或两次都缺失合法 boolean 会释放租约且不记错；第一次 HTTP 200 结构无效可在同一 12 秒总预算内重试一次，空 feedback 则安全回退而不丢弃 boolean。默认每用户 20 次/分钟、滚动 24 小时 200 次，生产 fake 明确禁止。
+`learning_spelling_translation_assessments` 只保存用户答案 SHA-256、provider/model、判定、token usage、租约、`quota_counted/quota_counted_at` 与首次响应；输入正文仅在 API 请求内存中存在。相同 UUID/答案 hash 重放直接返回首次响应，错误翻译用同 UUID 原子写一次 spelling 错误；正确翻译要求后续 spelling attempt 复用该 UUID。超时、网络故障或两次都缺失合法 boolean 会释放租约且不记错；第一次 HTTP 200 结构无效可在同一 12 秒总预算内重试一次，空 feedback 则安全回退而不丢弃 boolean。
+
+0027 将“领取幂等租约”和“消耗供应商配额”拆开：规范化完全匹配、已完成重放以及仅创建 pending/processing 行都不占配额；只有 NestJS 即将调用真实 OpenRouter 时，才通过用户级 advisory lock 原子写入 `quota_counted=true/quota_counted_at=now()`。分钟和 24 小时窗口都从这个真实预留时刻计算，而不是从可能更早的 assessment 创建时间计算。同一 UUID 的供应商/网络重试不重复消耗产品额度。默认每用户 20 次/分钟、滚动 24 小时 500 次；达到任一限制返回独立稳定错误码及精确 `retryAfterSeconds`，Web 显示预计恢复时间。真实供应商失败已经产生外部请求，因此保留该次配额事实，但释放评判租约且不记学习错误；生产 fake 明确禁止。
 
 UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt RPC；结果页面无论正确或错误都显示正确英文与拆分后的 translations。生产启用必须同时有一次性数据库 RLS/幂等门禁、fake-provider Chromium 流程和独立真实 OpenRouter structured/API gate。
 
 ## 8. 数据与安全证据
 
-0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017–0018 增加按意图恢复及验证；0019–0020 增加限时拼写、翻译评判及发布断言；0021–0022 统一 Unicode 拼写归一化；0023 新增内部标点移除/匹配 helper 并替换七参数权威答题 RPC，0024 验证容错边界、函数定义与 service-role-only 权限。私有表只允许 owner 读；音频队列和翻译评判表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
+0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017–0018 增加按意图恢复及验证；0019–0020 增加限时拼写、翻译评判及发布断言；0021–0022 统一 Unicode 拼写归一化；0023–0024 增加标点容错；0025–0026 增加显式取消会话及断言；0027 增加 `exam` mode、轮末确认、考试进度 trigger 与真实 provider 配额预留，0028 验证结构、trigger 和 service-role-only 权限。私有表只允许 owner 读；音频队列和翻译评判表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
 
 删除课程级联私有学习数据和日程，但保留同账号下已发 points/badge facts；用户删除遵循 Auth 外键级联，出版物、points 与 badge awards 随账号删除，只有 speech 成本行和 moderation action 以 `user_id/actor_id=NULL` 留下非账号化运营事实。Storage 清理仍须删除编排。细节见 ERD、API、安全、隐私、内容审核和积分产品规则。
 
 ## 9. 验收边界
 
-仓库测试覆盖逐单元/整份多单元解析、全局错误行列、编辑器批量追加与已有词重复、独立翻译字段、排序、状态恢复、候补池、跨日熟练度、编辑重置、积分指纹、API 鉴权/限流/Azure fake/公开脱敏、双用户 RLS、Playwright 主流程及 0007 升级夹具。0019–0020 另覆盖限时/翻译前测；0021–0022 覆盖全角/半角全大写及原始答案；0023–0024 覆盖标点遗漏/替换/增加、真正字母和空格错误、零 `wrong_count`/空候补池及新增 helper 客户端拒绝。Chromium 流程会实际断言 `.content` 可滚动、滚到底后“添加单元”进入 viewport，再继续保存和完整学习流程；这项布局验证不能由 jsdom 的零布局模型替代。
+仓库测试覆盖逐单元/整份多单元解析、全局错误行列、编辑器批量追加与已有词重复、独立翻译字段、排序、状态恢复、候补池、跨日熟练度、编辑重置、积分指纹、API 鉴权/限流/Azure fake/公开脱敏、双用户 RLS、Playwright 主流程及 0007 升级夹具。0019–0020 另覆盖限时/翻译前测；0021–0022 覆盖全角/半角全大写及原始答案；0023–0024 覆盖标点容错；0025–0026 覆盖显式取消；0027–0028 覆盖每轮错词清单与确认门、候补顺序重排、考试默认/自定义阈值和实时正确率、未达线不写熟练度/达线后整单元写入，以及 exact/replay 零配额、真实 provider 原子预留、滚动 500 次限制和客户端拒绝。Chromium 流程会实际断言 `.content` 可滚动、滚到底后“添加单元”进入 viewport，再继续保存和完整学习流程；这项布局验证不能由 jsdom 的零布局模型替代。
 
 2026-07-22 的 PR run `29932310309` 与 main run `29932840103` 均通过 quality、0007→latest、空库重建、数据库 lint、一次性本地 Supabase 的双用户 RLS/Storage/Courses E2E 和 Chromium Playwright。Playwright 使用 Azure fake；main 发布另在激活前运行生产主机的真实 Azure gate，但本次 UI/文本导入变更没有修改语音行为。最终不可变 release 为 `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`，公网复核包含 Web 200、`deps.supabase=ok`、未认证 `/api/me` 401，以及用户示例成功拆成 `Starter Unit 1`/`Starter Unit 2`、独立翻译输入和底部操作可达。
 

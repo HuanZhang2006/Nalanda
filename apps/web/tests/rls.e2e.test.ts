@@ -642,6 +642,9 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.rpc("learning_get_session_snapshot", {
       p_user_id: aId, p_session_id: randomUUID(),
     })).error).not.toBeNull();
+    expect((await a.rpc("learning_cancel_session", {
+      p_user_id: aId, p_session_id: randomUUID(),
+    })).error).not.toBeNull();
     expect((await a.rpc("learning_start_session", {
       p_user_id: aId, p_course_id: courseId, p_unit_id: unitId, p_mode: "review",
       p_skills: ["spelling"], p_scope: "all", p_schedule_id: null,
@@ -652,6 +655,24 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_assessment_id: randomUUID(), p_expected_revision: 0,
       p_answer_hash: "a".repeat(64), p_lease_token: randomUUID(),
       p_lease_seconds: 30, p_minute_limit: 20, p_day_limit: 200,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_claim_spelling_translation_assessment_v2", {
+      p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
+      p_assessment_id: randomUUID(), p_expected_revision: 0,
+      p_answer_hash: "a".repeat(64), p_lease_token: randomUUID(),
+      p_lease_seconds: 30,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_reserve_spelling_translation_quota", {
+      p_user_id: aId, p_assessment_id: randomUUID(), p_lease_token: randomUUID(),
+      p_minute_limit: 20, p_day_limit: 500,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_start_exam_session", {
+      p_user_id: aId, p_course_id: courseId, p_unit_id: unitId,
+      p_spelling_options: { timeLimitEnabled: false, timeLimitSeconds: 20, translationFirst: true },
+      p_pass_percent: 90,
+    })).error).not.toBeNull();
+    expect((await a.rpc("learning_continue_spelling_retry_round", {
+      p_user_id: aId, p_session_id: randomUUID(),
     })).error).not.toBeNull();
     expect((await a.rpc("learning_record_spelling_attempt", {
       p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
@@ -806,6 +827,40 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
         active: true,
       }),
     ]));
+    const foreignCancellation = await admin.rpc("learning_cancel_session", {
+      p_user_id: bId,
+      p_session_id: initialSession,
+    });
+    expect(foreignCancellation.error).not.toBeNull();
+    const cancelled = await rpc<any>("learning_cancel_session", {
+      p_user_id: aId,
+      p_session_id: initialSession,
+    });
+    expect(cancelled).toMatchObject({
+      session_id: initialSession,
+      active: false,
+      revision: 1,
+      cancelled: true,
+    });
+    expect(await rpc<any>("learning_cancel_session", {
+      p_user_id: aId,
+      p_session_id: initialSession,
+    })).toMatchObject({
+      session_id: initialSession,
+      active: false,
+      revision: 1,
+      cancelled: false,
+    });
+    const restartedInitialSession = await rpc<string>("learning_start_session", {
+      p_user_id: aId,
+      p_course_id: parallelCourseId,
+      p_unit_id: initialUnitId,
+      p_mode: "initial",
+      p_skills: ["pronunciation", "translation", "spelling"],
+      p_scope: "all",
+      p_schedule_id: null,
+    });
+    expect(restartedInitialSession).not.toBe(initialSession);
     await rpc("learning_delete_course", {
       p_user_id: aId,
       p_course_id: parallelCourseId,
@@ -943,12 +998,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_answer_hash: semanticAnswerHash,
       p_lease_token: semanticLease,
       p_lease_seconds: 30,
-      p_minute_limit: 20,
-      p_day_limit: 200,
     };
-    expect(await rpc<any>("learning_claim_spelling_translation_assessment", semanticClaimArgs))
+    expect(await rpc<any>("learning_claim_spelling_translation_assessment_v2", semanticClaimArgs))
       .toMatchObject({ claimed: true, term: terms[0].term, translations: terms[0].translations });
-    expect(await rpc<any>("learning_claim_spelling_translation_assessment", {
+    expect(await rpc<any>("learning_claim_spelling_translation_assessment_v2", {
       ...semanticClaimArgs,
       p_lease_token: randomUUID(),
     })).toMatchObject({ pending: true });
@@ -962,9 +1015,9 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_lease_token: semanticLease,
       p_correct: true,
       p_feedback: "Equivalent meaning accepted.",
-      p_provider: "openrouter",
-      p_model: "google/gemma-4-26b-a4b-it:free",
-      p_usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
+      p_provider: "nalanda-normalized-exact",
+      p_model: "normalized-exact-v1",
+      p_usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
     });
     expect(acceptedTranslation).toMatchObject({
       attempt_id: semanticAttemptId,
@@ -1009,7 +1062,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const wrongTranslationId = randomUUID();
     const wrongLease = randomUUID();
     const wrongHash = createHash("sha256").update("完全错误").digest("hex");
-    await rpc("learning_claim_spelling_translation_assessment", {
+    await rpc("learning_claim_spelling_translation_assessment_v2", {
       ...semanticClaimArgs,
       p_word_id: terms[1].id,
       p_assessment_id: wrongTranslationId,
@@ -1017,6 +1070,20 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_answer_hash: wrongHash,
       p_lease_token: wrongLease,
     });
+    expect(await rpc<any>("learning_reserve_spelling_translation_quota", {
+      p_user_id: aId,
+      p_assessment_id: wrongTranslationId,
+      p_lease_token: wrongLease,
+      p_minute_limit: 20,
+      p_day_limit: 500,
+    })).toMatchObject({ reserved: true, replayed: false });
+    expect(await rpc<any>("learning_reserve_spelling_translation_quota", {
+      p_user_id: aId,
+      p_assessment_id: wrongTranslationId,
+      p_lease_token: wrongLease,
+      p_minute_limit: 20,
+      p_day_limit: 500,
+    })).toMatchObject({ reserved: true, replayed: true });
     const rejectedTranslation = await rpc<any>("learning_complete_spelling_translation_assessment", {
       p_user_id: aId,
       p_session_id: semanticSession,
@@ -1058,7 +1125,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await admin.from("learning_attempts").select("id")
       .in("attempt_id", [semanticAttemptId, wrongTranslationId])).data).toHaveLength(2);
     const storedSemantic = await admin.from("learning_spelling_translation_assessments")
-      .select("assessment_id,answer_hash,status,correct,provider,model,prompt_tokens,total_tokens")
+      .select("assessment_id,answer_hash,status,correct,provider,model,prompt_tokens,total_tokens,quota_counted,quota_counted_at")
       .in("assessment_id", [semanticAttemptId, wrongTranslationId])
       .order("created_at");
     expect(storedSemantic.error).toBeNull();
@@ -1066,12 +1133,49 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(new Set(storedSemantic.data!.map((entry) => entry.answer_hash)))
       .toEqual(new Set([semanticAnswerHash, wrongHash]));
     expect(storedSemantic.data!.every((entry) => entry.status === "completed")).toBe(true);
+    expect(storedSemantic.data!.find((entry) => entry.assessment_id === semanticAttemptId)?.quota_counted).toBe(false);
+    expect(storedSemantic.data!.find((entry) => entry.assessment_id === semanticAttemptId)?.quota_counted_at).toBeNull();
+    expect(storedSemantic.data!.find((entry) => entry.assessment_id === wrongTranslationId))
+      .toMatchObject({ quota_counted: true, quota_counted_at: expect.any(String) });
+
+    const limitedAssessmentId = randomUUID();
+    const limitedLease = randomUUID();
+    const limitedHash = createHash("sha256").update("需要模型评判的另一个回答").digest("hex");
+    await rpc("learning_claim_spelling_translation_assessment_v2", {
+      ...semanticClaimArgs,
+      p_word_id: terms[2].id,
+      p_assessment_id: limitedAssessmentId,
+      p_expected_revision: 2,
+      p_answer_hash: limitedHash,
+      p_lease_token: limitedLease,
+    });
+    const minuteLimited = await admin.rpc("learning_reserve_spelling_translation_quota", {
+      p_user_id: aId,
+      p_assessment_id: limitedAssessmentId,
+      p_lease_token: limitedLease,
+      p_minute_limit: 1,
+      p_day_limit: 500,
+    });
+    expect(minuteLimited.error?.message).toMatch(/minute quota exceeded/i);
+    expect(minuteLimited.error?.hint).toMatch(/^retry_after_seconds=\d+$/);
+    const dayLimited = await admin.rpc("learning_reserve_spelling_translation_quota", {
+      p_user_id: aId,
+      p_assessment_id: limitedAssessmentId,
+      p_lease_token: limitedLease,
+      p_minute_limit: 20,
+      p_day_limit: 1,
+    });
+    expect(dayLimited.error?.message).toMatch(/daily quota exceeded/i);
+    expect(dayLimited.error?.hint).toMatch(/^retry_after_seconds=\d+$/);
+    expect((await admin.from("learning_spelling_translation_assessments")
+      .select("quota_counted,quota_counted_at").eq("assessment_id", limitedAssessmentId).single()).data)
+      .toEqual({ quota_counted: false, quota_counted_at: null });
     expect((await b.from("learning_spelling_translation_assessments")
-      .select("assessment_id").in("assessment_id", [semanticAttemptId, wrongTranslationId])).error)
+      .select("assessment_id").in("assessment_id", [semanticAttemptId, wrongTranslationId, limitedAssessmentId])).error)
       .not.toBeNull();
     expect((await admin.from("learning_sessions").delete().eq("id", semanticSession)).error).toBeNull();
     expect((await admin.from("learning_spelling_translation_assessments")
-      .select("assessment_id").in("assessment_id", [semanticAttemptId, wrongTranslationId])).data)
+      .select("assessment_id").in("assessment_id", [semanticAttemptId, wrongTranslationId, limitedAssessmentId])).data)
       .toEqual([]);
 
     const preparedAudio = await rpc<any>("learning_prepare_unit_audio", {
@@ -1227,6 +1331,186 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(learningSummary.badges.map((badge: any) => badge.code)).toEqual(expect.arrayContaining(["vocab_words_bronze", "vocab_courses_bronze"]));
     expect((await b.from("user_badge_awards").select("badge_code").eq("user_id", aId)).data).toEqual([]);
     expect((await a.from("study_tasks").select("id", { count: "exact", head: true })).count).toBe(tasksBefore.count);
+
+    // Exam pass/fail is fixed by first-round accuracy. Missed words pause at a
+    // durable summary, require explicit confirmation, and only a passed,
+    // fully completed exam marks its selected unit learned.
+    const examCourseId = randomUUID();
+    const examUnitId = randomUUID();
+    const examTerms = Array.from({ length: 4 }, (_, index) => ({
+      id: randomUUID(),
+      term: `exam-${index + 1}`,
+      translations: [`考试翻译${index + 1}`],
+      ipa: null,
+    }));
+    await rpc("learning_upsert_course", {
+      p_user_id: aId,
+      p_payload: {
+        id: examCourseId,
+        title: "Exam state machine",
+        category: "english_vocabulary",
+        hasUnits: false,
+        locale: "en-US",
+        units: [{ id: examUnitId, name: "默认单元", isSystem: true, words: examTerms }],
+      },
+    });
+    const examById = new Map(examTerms.map((entry) => [entry.id, entry]));
+    const startExam = (passPercent: number) => rpc<string>("learning_start_exam_session", {
+      p_user_id: aId,
+      p_course_id: examCourseId,
+      p_unit_id: examUnitId,
+      p_spelling_options: {
+        timeLimitEnabled: false,
+        timeLimitSeconds: 20,
+        translationFirst: true,
+      },
+      p_pass_percent: passPercent,
+    });
+    const answerExam = async (sessionId: string, correct: boolean) => {
+      const snapshot = await rpc<any>("learning_get_session_snapshot", {
+        p_user_id: aId,
+        p_session_id: sessionId,
+      });
+      const wordId = snapshot.state.queue[snapshot.state.cursor];
+      const examWord = examById.get(wordId)!;
+      const assessmentId = randomUUID();
+      const lease = randomUUID();
+      const hash = createHash("sha256").update(correct ? examWord.translations[0] : "错误翻译").digest("hex");
+      await rpc("learning_claim_spelling_translation_assessment_v2", {
+        p_user_id: aId,
+        p_session_id: sessionId,
+        p_word_id: wordId,
+        p_assessment_id: assessmentId,
+        p_expected_revision: snapshot.revision,
+        p_answer_hash: hash,
+        p_lease_token: lease,
+        p_lease_seconds: 30,
+      });
+      const translation = await rpc<any>("learning_complete_spelling_translation_assessment", {
+        p_user_id: aId,
+        p_session_id: sessionId,
+        p_word_id: wordId,
+        p_assessment_id: assessmentId,
+        p_expected_revision: snapshot.revision,
+        p_answer_hash: hash,
+        p_lease_token: lease,
+        p_correct: correct,
+        p_feedback: correct ? "Exact meaning accepted." : "Meaning rejected.",
+        p_provider: "nalanda-normalized-exact",
+        p_model: "normalized-exact-v1",
+        p_usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      });
+      if (correct) {
+        await rpc("learning_record_spelling_attempt", {
+          p_user_id: aId,
+          p_session_id: sessionId,
+          p_word_id: wordId,
+          p_answer: { text: examWord.term },
+          p_attempt_id: assessmentId,
+          p_expected_revision: snapshot.revision,
+        });
+      } else {
+        expect(translation.attempt_result).toMatchObject({ correct: false });
+      }
+      return wordId as string;
+    };
+
+    const failedExamSession = await startExam(75);
+    await answerExam(failedExamSession, false);
+    await answerExam(failedExamSession, false);
+    await answerExam(failedExamSession, true);
+    await answerExam(failedExamSession, true);
+    const failedSummary = await rpc<any>("learning_get_session_snapshot", {
+      p_user_id: aId,
+      p_session_id: failedExamSession,
+    });
+    expect(failedSummary).toMatchObject({ active: true, state: {
+      examRequiredPercent: 75,
+      examAccuracyPercent: 50,
+      examPassed: false,
+      awaitingRetryConfirmation: true,
+    } });
+    await rpc("learning_continue_spelling_retry_round", {
+      p_user_id: aId,
+      p_session_id: failedExamSession,
+    });
+    await answerExam(failedExamSession, true);
+    await answerExam(failedExamSession, true);
+    expect(await rpc<any>("learning_get_session_snapshot", {
+      p_user_id: aId,
+      p_session_id: failedExamSession,
+    })).toMatchObject({ stage: "completed", active: false, state: { examPassed: false } });
+    const progressAfterFailedExam = await admin.from("learning_word_progress")
+      .select("learned_at").eq("user_id", aId)
+      .in("word_id", examTerms.map((entry) => entry.id));
+    expect(progressAfterFailedExam.error).toBeNull();
+    expect(progressAfterFailedExam.data?.every((entry) => entry.learned_at == null)).toBe(true);
+
+    const examSession = await startExam(50);
+    await answerExam(examSession, false);
+    await answerExam(examSession, false);
+    await answerExam(examSession, true);
+    await answerExam(examSession, true);
+    const examSummary = await rpc<any>("learning_get_session_snapshot", {
+      p_user_id: aId,
+      p_session_id: examSession,
+    });
+    expect(examSummary).toMatchObject({ mode: "exam", stage: "spelling", active: true, state: {
+      examRequiredPercent: 50,
+      examAnswered: 4,
+      examCorrect: 2,
+      examAccuracyPercent: 50,
+      examFirstRoundComplete: true,
+      examPassed: true,
+      awaitingRetryConfirmation: true,
+      retryFromRound: 1,
+    } });
+    expect(examSummary.state.retrySummaryIds).toHaveLength(2);
+    const blockedAtSummary = await admin.rpc("learning_record_attempt", {
+      p_user_id: aId,
+      p_session_id: examSession,
+      p_word_id: examSummary.state.queue[0],
+      p_skill: "spelling",
+      p_answer: { text: examById.get(examSummary.state.queue[0])!.term },
+      p_attempt_id: randomUUID(),
+      p_expected_revision: examSummary.revision,
+    });
+    expect(blockedAtSummary.error).not.toBeNull();
+    const continuedExam = await rpc<any>("learning_continue_spelling_retry_round", {
+      p_user_id: aId,
+      p_session_id: examSession,
+    });
+    expect(continuedExam).toMatchObject({ revision: examSummary.revision + 1, session_patch: {
+      stage: "spelling", active: true, state: { cursor: 0, nextQueue: [], round: 2 },
+    } });
+    expect(new Set(continuedExam.session_patch.state.queue)).toEqual(new Set(examSummary.state.retrySummaryIds));
+    expect(continuedExam.session_patch.state.awaitingRetryConfirmation).toBeUndefined();
+    expect(await rpc<any>("learning_continue_spelling_retry_round", {
+      p_user_id: aId,
+      p_session_id: examSession,
+    })).toMatchObject({
+      revision: continuedExam.revision,
+      session_patch: { state: { round: 2, cursor: 0 } },
+    });
+    await answerExam(examSession, true);
+    await answerExam(examSession, true);
+    const completedExam = await rpc<any>("learning_get_session_snapshot", {
+      p_user_id: aId,
+      p_session_id: examSession,
+    });
+    expect(completedExam).toMatchObject({ mode: "exam", stage: "completed", active: false, state: {
+      examAccuracyPercent: 50,
+      examPassed: true,
+    } });
+    const examProgress = await admin.from("learning_word_progress")
+      .select("word_id,initial_translation_passed,initial_spelling_passed,learned_at")
+      .eq("user_id", aId)
+      .in("word_id", examTerms.map((entry) => entry.id));
+    expect(examProgress.error).toBeNull();
+    expect(examProgress.data).toHaveLength(4);
+    expect(examProgress.data!.every((entry) => entry.initial_translation_passed
+      && entry.initial_spelling_passed && entry.learned_at)).toBe(true);
+    expect((await admin.from("learning_courses").delete().eq("id", examCourseId)).error).toBeNull();
 
     // Sharing/market records are not anonymous PostgREST surfaces.
     const shareToken = "active-share-token-for-rls-e2e";

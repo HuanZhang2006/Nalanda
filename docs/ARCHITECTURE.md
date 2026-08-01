@@ -97,7 +97,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0024，含弱网答题、持久音频队列、浏览器离线副本、按意图独立续学、限时拼写、OpenRouter 翻译前测、Unicode 拼写归一化与仅标点差异容错 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0024。仓库 `Unreleased` 0025–0028 另含显式取消、拼写轮末复盘、考试模式及真实 provider 配额预留，尚未成为生产事实 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |

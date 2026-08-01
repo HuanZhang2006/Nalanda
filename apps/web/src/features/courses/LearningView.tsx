@@ -18,6 +18,7 @@ import {
   requestPersistentAudioStorage,
 } from "./audioCache";
 import {
+  clearPendingAttemptsForSession,
   clearPendingAttemptsForUser,
   listPendingAttempts,
   PendingLearningAttempt,
@@ -28,6 +29,7 @@ import {
 import {
   applySessionPatch,
   predictAttempt,
+  readExamState,
   readQueueState,
 } from "./learningSessionState";
 
@@ -134,6 +136,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const [syncStatus, setSyncStatus] = useState<"idle" | "pending" | "success">("idle");
   const [audioNotice, setAudioNotice] = useState<AudioFallbackNotice | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
   const [spelling, setSpelling] = useState("");
   const [spellingTranslation, setSpellingTranslation] = useState("");
@@ -163,6 +166,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const feedbackRef = useRef<AttemptFeedback | null>(null);
   const userIdRef = useRef("");
   const flushingRef = useRef(false);
+  const cancellingRef = useRef(false);
   const flushTimerRef = useRef<number | null>(null);
   const downloadRef = useRef<AbortController | null>(null);
   const audioPrefetchRetryTimerRef = useRef<number | null>(null);
@@ -253,13 +257,13 @@ export function LearningView({ sessionId, onExit, onChanged }: {
 
   const flushOutbox = async () => {
     const userId = userIdRef.current;
-    if (!userId || flushingRef.current || !aliveRef.current) return;
+    if (!userId || flushingRef.current || cancellingRef.current || !aliveRef.current) return;
     flushingRef.current = true;
     try {
       const entries = await listPendingAttempts(userId, sessionId);
       setPendingCount(entries.length);
       for (const entry of entries) {
-        if (!aliveRef.current) break;
+        if (!aliveRef.current || cancellingRef.current) break;
         if (entry.nextAttemptAt > Date.now()) {
           scheduleFlush(entry.nextAttemptAt - Date.now());
           break;
@@ -270,6 +274,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
             : undefined;
           const result = await coursesApi.attempt(sessionId, entry.request, signal);
           await removePendingAttempt(entry.attemptId);
+          if (cancellingRef.current) break;
           if (!aliveRef.current || userId !== userIdRef.current) break;
           setConfirmedRevision((value) => Math.max(value, result.revision));
           const activeFeedback = feedbackRef.current;
@@ -294,6 +299,10 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           }
           if (!result.sessionPatch.active && !feedbackRef.current && remaining.length === 0) onChanged();
         } catch (caught) {
+          if (cancellingRef.current) {
+            await removePendingAttempt(entry.attemptId);
+            break;
+          }
           if (!aliveRef.current || userId !== userIdRef.current) {
             await removePendingAttempt(entry.attemptId);
             break;
@@ -326,7 +335,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       }
     } finally {
       flushingRef.current = false;
-      if (aliveRef.current && userId === userIdRef.current) {
+      if (aliveRef.current && userId === userIdRef.current && !cancellingRef.current) {
         const remaining = await listPendingAttempts(userId, sessionId);
         setPendingCount(remaining.length);
         if (remaining.length) {
@@ -415,7 +424,42 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     if (feedback && (!feedback.result.correct || error)) nextQuestionRef.current?.focus();
   }, [error, feedback]);
 
-  const q = session ? readQueueState(session) : { queue: [], nextQueue: [], cursor: 0, round: 1 };
+  const cancelLearning = async () => {
+    const currentSession = sessionRef.current;
+    if (!currentSession || cancellingRef.current) return;
+    const confirmed = window.confirm(l(
+      "Cancel this learning session? Confirmed answers and mastery history will be kept, but this session cannot be resumed. Answers still waiting to sync will be discarded.",
+      "确定取消本次学习吗？已确认的答案和熟练度历史会保留，但本次会话将无法继续；仍待同步的答案会被丢弃。",
+    ));
+    if (!confirmed) return;
+    cancellingRef.current = true;
+    setCancelling(true);
+    setError("");
+    if (flushTimerRef.current != null) {
+      window.clearTimeout(flushTimerRef.current);
+      flushTimerRef.current = null;
+    }
+    try {
+      await coursesApi.cancelSession(currentSession.id);
+      await clearPendingAttemptsForSession(userIdRef.current, currentSession.id);
+      setPendingCount(0);
+      setSyncStatus("idle");
+      setCurrentFeedback(null);
+      onChanged();
+      onExit();
+    } catch (caught) {
+      cancellingRef.current = false;
+      setCancelling(false);
+      setError(caught instanceof Error
+        ? caught.message
+        : l("Could not cancel this learning session.", "无法取消本次学习。"));
+    }
+  };
+
+  const q = session ? readQueueState(session) : {
+    queue: [], nextQueue: [], cursor: 0, round: 1,
+    awaitingRetryConfirmation: false, retrySummaryIds: [], retryFromRound: null,
+  };
   const currentId = q.queue[q.cursor];
   const current = session?.items.find((item) => item.word.id === currentId)?.word || null;
   const batchStart = Math.floor(q.cursor / 5) * 5;
@@ -423,6 +467,9 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     .map((id) => session.items.find((item) => item.word.id === id)?.word).filter(Boolean) as VocabularyWord[] : [];
   const audioBatch = session ? stableShuffle(batch, `${session.id}:${session.stage}:${q.round}:${batchStart}:audio`) : [];
   const wordBatch = [...audioBatch].reverse();
+  const retrySummaryWords = session ? q.retrySummaryIds
+    .map((id) => session.items.find((item) => item.word.id === id)?.word)
+    .filter((word): word is VocabularyWord => Boolean(word)) : [];
   const spellingOptions = session?.spellingOptions || {
     timeLimitEnabled: false,
     timeLimitSeconds: 20,
@@ -440,12 +487,14 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     ? spellingTranslationResult.attemptId
     : restoredSpellingTranslation?.attemptId || spellingAttemptId;
   const spellingTimerWaiting = session?.stage === "spelling"
+    && !q.awaitingRetryConfirmation
     && spellingOptions.timeLimitEnabled
     && spellingOptions.translationFirst
     && !translationReady
     && Boolean(current)
     && !feedback;
   const spellingTimerActive = session?.stage === "spelling"
+    && !q.awaitingRetryConfirmation
     && spellingOptions.timeLimitEnabled
     && translationReady
     && Boolean(current)
@@ -587,7 +636,8 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     > = {},
     requestAttemptId: string = crypto.randomUUID(),
   ) => {
-    if (!session || feedback || !["pronunciation", "translation", "spelling"].includes(session.stage)) return;
+    if (!session || feedback || readQueueState(session).awaitingRetryConfirmation
+        || !["pronunciation", "translation", "spelling"].includes(session.stage)) return;
     const skill = session.stage as "pronunciation" | "translation" | "spelling";
     const request: LearningAttemptRequest = {
       attemptId: requestAttemptId,
@@ -625,6 +675,28 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     }
   };
   const continueAfterFeedback = () => { if (!busy) advanceFeedback(); };
+
+  const continueSpellingRetryRound = async () => {
+    const currentSession = sessionRef.current;
+    if (!currentSession || !q.awaitingRetryConfirmation || busy || pendingCount > 0) return;
+    setBusy(true);
+    setError("");
+    try {
+      const result = await coursesApi.continueSpellingRetryRound(currentSession.id);
+      setConfirmedRevision(result.revision);
+      setCurrentSession(applySessionPatch(
+        currentSession,
+        result.revision,
+        result.sessionPatch,
+      ));
+    } catch (caught) {
+      setError(caught instanceof Error
+        ? caught.message
+        : l("Could not start the next retry round.", "无法开始下一轮错题重考。"));
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const assessBlob = async (blob: Blob) => {
     if (!session || !current) return;
@@ -725,9 +797,19 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       if (caught instanceof ApiClientError && caught.code === "SESSION_REVISION_CONFLICT") {
         await restoreAfterConflict();
       } else {
-        setError(caught instanceof Error
+        const retryAfter = caught instanceof ApiClientError
+          && caught.retryAfterSeconds && caught.retryAfterSeconds > 0
+          ? l(
+            ` Allowance refreshes in about ${caught.retryAfterSeconds >= 3_600
+              ? `${Math.ceil(caught.retryAfterSeconds / 3_600)} hour(s)`
+              : `${Math.ceil(caught.retryAfterSeconds / 60)} minute(s)`}.`,
+            `额度约在 ${caught.retryAfterSeconds >= 3_600
+              ? `${Math.ceil(caught.retryAfterSeconds / 3_600)} 小时`
+              : `${Math.ceil(caught.retryAfterSeconds / 60)} 分钟`}后恢复。`,
+          ) : "";
+        setError(`${caught instanceof Error
           ? caught.message
-          : l("Could not check this translation. It was not counted as wrong.", "无法判定该翻译，本次不会记为错误。"));
+          : l("Could not check this translation. It was not counted as wrong.", "无法判定该翻译，本次不会记为错误。")}${retryAfter}`);
       }
     } finally {
       setSpellingTranslationBusy(false);
@@ -736,7 +818,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
 
   const submitSpelling = (timedOut = false) => {
     if (!session || !current || feedback || spellingSubmittedRef.current
-        || session.stage !== "spelling" || !translationReady) return;
+        || session.stage !== "spelling" || q.awaitingRetryConfirmation || !translationReady) return;
     if (!timedOut && !spelling.trim()) return;
     spellingSubmittedRef.current = true;
     void attempt(
@@ -751,6 +833,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   useEffect(() => {
     const seconds = spellingOptions.timeLimitSeconds;
     if (session?.stage !== "spelling"
+        || q.awaitingRetryConfirmation
         || !spellingOptions.timeLimitEnabled
         || !translationReady
         || !current
@@ -783,6 +866,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     session?.stage,
     spellingTranslationBusy,
     translationReady,
+    q.awaitingRetryConfirmation,
   ]);
 
   const downloadOfflineAudio = async () => {
@@ -874,6 +958,21 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       try { if (reviewOffsets.length) await coursesApi.schedule(unitId, session.id, reviewOffsets); onChanged(); onExit(); }
       catch (caught) { setError(caught instanceof Error ? caught.message : l("Could not save the review schedule.", "复习计划保存失败")); setBusy(false); }
     };
+    if (session.mode === "exam") {
+      const exam = readExamState(session);
+      return <div className="wrap course-session courses-root"><div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}><CourseLocaleButton /></div><div className="card course-study-card" role="status">
+        <div className="course-empty-icon">{exam.passed ? "✓" : "!"}</div><div className="eyebrow">{l("Exam complete", "考试完成")}</div>
+        <h1 className="page-title">{exam.passed ? l("Exam passed", "考试通过") : l("Exam not passed", "考试未通过")}</h1>
+        <p className="page-sub" style={{ textAlign: "center" }}>{l(
+          `First-round accuracy: ${exam.accuracyPercent}% · Required: ${exam.requiredPercent}%.`,
+          `第一轮正确率：${exam.accuracyPercent}% · 要求：${exam.requiredPercent}%。`,
+        )}</p>
+        <div className={`course-feedback mt-16 ${exam.passed ? "is-correct" : "wrong"}`}>{exam.passed
+          ? l("All words in this unit are now counted as learned.", "本单元全部词汇现已计入已学习。")
+          : l("Retry practice is complete, but this attempt did not meet the required first-round accuracy. The unit was not marked learned; start a new exam to try again.", "错题补练已完成，但本次第一轮正确率未达要求；本单元不会标为已学习，可重新开始一次考试。")}</div>
+        <button className="btn btn-primary mt-24" onClick={onExit}>{l("Back to courses", "返回课程")}</button>
+      </div></div>;
+    }
     return <div className="wrap course-session courses-root"><div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}><CourseLocaleButton /></div><div className="card course-study-card">
       <div className="course-empty-icon">✓</div><div className="eyebrow">{l("Session complete", "会话完成")}</div>
       <h1 className="page-title">{session.mode === "initial" ? l(`${unit?.name || "This unit"}: first learning complete`, `${unit?.name || "本单元"} 首次学习完成`) : l("Review complete", "本次复习完成")}</h1>
@@ -894,11 +993,16 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const feedbackWord = feedback
     ? session.items.find((item) => item.word.id === feedback.wordId)?.word || null
     : null;
+  const examDisplaySession = feedback?.serverResult
+    ? applySessionPatch(session, feedback.serverResult.revision, feedback.serverResult.sessionPatch)
+    : feedback?.predictedSession || session;
+  const examState = session.mode === "exam" ? readExamState(examDisplaySession) : null;
+  const visibleStages = session.mode === "exam" ? (["spelling"] as const) : STAGES;
   return <div className="wrap course-session courses-root">
-    <div className="row between wrap-flex" style={{ marginBottom: 14 }}><div><div className="eyebrow">{course.title} · {l(`Round ${q.round}`, `第 ${q.round} 轮`)}</div>
-      <h1 className="page-title">{label(session.stage)}</h1></div><div className="row wrap-flex"><button className="btn btn-sm" onClick={() => void downloadOfflineAudio()}>
+    <div className="row between wrap-flex" style={{ marginBottom: 14 }}><div><div className="eyebrow">{course.title} · {session.mode === "exam" ? l(`Exam · Round ${q.round}`, `考试 · 第 ${q.round} 轮`) : l(`Round ${q.round}`, `第 ${q.round} 轮`)}</div>
+      <h1 className="page-title">{session.mode === "exam" ? l("Spelling exam", "拼写考试") : label(session.stage)}</h1></div><div className="row wrap-flex"><button className="btn btn-sm" onClick={() => void downloadOfflineAudio()}>
         {offlineAudio.running ? l("Stop audio download", "停止音频下载") : l("Download unit audio", "下载单元音频")}
-      </button>{offlineAudio.cached > 0 && <button className="btn btn-sm" onClick={() => void removeOfflineAudio()}>{l("Remove offline audio", "删除离线音频")}</button>}<CourseLocaleButton /><button className="btn" onClick={onExit}>{l("Pause and return", "暂停并返回")}</button></div></div>
+      </button>{offlineAudio.cached > 0 && <button className="btn btn-sm" onClick={() => void removeOfflineAudio()}>{l("Remove offline audio", "删除离线音频")}</button>}<CourseLocaleButton /><button className="btn" disabled={cancelling} onClick={onExit}>{l("Pause and return", "暂停并返回")}</button><button className="btn btn-danger" disabled={cancelling} onClick={() => void cancelLearning()}>{cancelling ? l("Cancelling…", "取消中…") : l("Cancel learning", "取消学习")}</button></div></div>
     {(offlineAudio.running || offlineAudio.total > 0) && <div className="faint" style={{ marginBottom: 10 }}>{l(
       `${offlineAudio.cached}/${offlineAudio.total} audio files stored locally · ${offlineAudio.pending} preparing · ${offlineAudio.quotaPaused} quota-paused · ${offlineAudio.failed} failed${offlineAudio.persistent ? " · persistent storage requested" : ""}`,
       `已在本地保存 ${offlineAudio.cached}/${offlineAudio.total} 个音频 · ${offlineAudio.pending} 个准备中 · ${offlineAudio.quotaPaused} 个因配额暂停 · ${offlineAudio.failed} 个失败${offlineAudio.persistent ? " · 已申请持久存储" : ""}`,
@@ -907,8 +1011,14 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       `${pendingCount} answer${pendingCount === 1 ? "" : "s"} waiting for server confirmation.`,
       `${pendingCount} 个答案等待服务器确认。`,
     )}</div>}
-    <div className="course-stage-track">{STAGES.map((stage) => <div key={stage} className={`course-stage-step ${session.stage === stage ? "active" : ""}`}>{label(stage)}</div>)}</div>
-    <div className="row between" style={{ marginBottom: 8 }}><span className="faint">{session.mode === "initial" ? l(`First-learning progress ${initialPercent}%`, `首次学习完成度 ${initialPercent}%`) : l(`${session.selectedSkills.length} review skills`, `复习项目 ${session.selectedSkills.length} 项`)}</span><span className="faint">{l(`Round ${Math.min(q.cursor + 1, q.queue.length)}/${q.queue.length} · Retry pool ${q.nextQueue.length}`, `本轮 ${Math.min(q.cursor + 1, q.queue.length)}/${q.queue.length} · 候补 ${q.nextQueue.length}`)}</span></div>
+    <div className="course-stage-track" style={{ gridTemplateColumns: `repeat(${visibleStages.length}, minmax(0, 1fr))` }}>{visibleStages.map((stage) => <div key={stage} className={`course-stage-step ${session.stage === stage ? "active" : ""}`}>{session.mode === "exam" ? l("Translation + spelling", "翻译 + 拼写") : label(stage)}</div>)}</div>
+    <div className="row between" style={{ marginBottom: 8 }}><span className="faint">{session.mode === "initial" ? l(`First-learning progress ${initialPercent}%`, `首次学习完成度 ${initialPercent}%`) : session.mode === "exam" && examState ? l(
+      `Live first-round accuracy ${examState.accuracyPercent}% (${examState.correct}/${examState.answered}) · Required ${examState.requiredPercent}%`,
+      `第一轮实时正确率 ${examState.accuracyPercent}%（${examState.correct}/${examState.answered}）· 要求 ${examState.requiredPercent}%`,
+    ) : l(`${session.selectedSkills.length} review skills`, `复习项目 ${session.selectedSkills.length} 项`)}</span><span className="faint">{q.awaitingRetryConfirmation ? l(
+      `${q.retrySummaryIds.length} missed word${q.retrySummaryIds.length === 1 ? "" : "s"} from round ${q.retryFromRound}`,
+      `第 ${q.retryFromRound} 轮错词 ${q.retrySummaryIds.length} 个`,
+    ) : l(`Round ${Math.min(q.cursor + 1, q.queue.length)}/${q.queue.length} · Retry pool ${q.nextQueue.length}`, `本轮 ${Math.min(q.cursor + 1, q.queue.length)}/${q.queue.length} · 候补 ${q.nextQueue.length}`)}</span></div>
     <div className="bar" style={{ marginBottom: 16 }}><i style={{ width: `${Math.round(q.cursor / Math.max(1, q.queue.length) * 100)}%` }} /></div>
     {error && <div role="alert" className="course-feedback wrong">{error}</div>}
     {audioNotice && <div role="status" className="course-feedback">{audioNotice.message}</div>}
@@ -920,6 +1030,30 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       : l("Answers synced successfully.", "答案同步成功。")}</div>}
     {notice && <div role="status" className="course-feedback">{notice}</div>}
     <div className="card course-study-card">
+      {q.awaitingRetryConfirmation ? <div className="course-retry-summary">
+        <div className="eyebrow">{l(`Round ${q.retryFromRound} complete`, `第 ${q.retryFromRound} 轮完成`)}</div>
+        <h2 className="serif">{l(
+          `${retrySummaryWords.length} word${retrySummaryWords.length === 1 ? "" : "s"} to retry`,
+          `${retrySummaryWords.length} 个错词需要重考`,
+        )}</h2>
+        <p className="muted mt-8">{l(
+          "Review every missed word below. The next round starts only after you confirm, and its order will be reshuffled.",
+          "请先复盘本轮全部错词。确认后才会进入下一轮，错词顺序会重新打乱。",
+        )}</p>
+        <div className="course-retry-word-list mt-16">{retrySummaryWords.map((word) => <article className="course-retry-word" key={word.id}>
+          <button className="btn btn-sm" aria-label={l(`Play ${word.term}`, `播放 ${word.term}`)} onClick={() => void playWord(word, audioManifest, setAudioNotice, l)}>🔊</button>
+          <div><b className="mono">{word.term}</b><div className="course-ipa">{word.ipa || l("IPA not available", "音标待补充")}</div></div>
+          <div className="course-result-translations">{word.translations.map((translation) => <em key={translation}>{translation}</em>)}</div>
+        </article>)}</div>
+        {pendingCount > 0 && <div className="course-feedback mt-16" role="status">{l(
+          "The last answers are still waiting for server confirmation. The next round becomes available after synchronization.",
+          "最后几题仍在等待服务器确认；同步完成后才能开始下一轮。",
+        )}</div>}
+        <button className="btn btn-primary btn-lg mt-24" disabled={busy || pendingCount > 0}
+          onClick={() => void continueSpellingRetryRound()}>{busy
+            ? l("Preparing next round…", "正在准备下一轮…")
+            : l("Shuffle and start next round", "打乱顺序并开始下一轮")}</button>
+      </div> : <>
       {session.stage === "spelling" && current && !feedback && (spellingOptions.timeLimitEnabled
         ? <div
             className={`course-spelling-timer ${spellingTimerWaiting ? "waiting" : ""} ${!spellingTimerWaiting && (spellingTimerDisplayMs ?? 0) <= 5_000 ? "urgent" : ""}`}
@@ -1037,6 +1171,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           ? l("Loading…", "加载中…")
           : error ? l("Try next question again", "重试下一题") : l("Next question", "下一题")}</button>}
       </div>}
+      </>}
     </div>
   </div>;
 }

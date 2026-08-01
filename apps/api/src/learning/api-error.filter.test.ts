@@ -1,4 +1,4 @@
-import { ServiceUnavailableException } from "@nestjs/common";
+import { HttpException, ServiceUnavailableException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { ApiErrorFilter } from "./api-error.filter";
 
@@ -33,5 +33,26 @@ describe("ApiErrorFilter", () => {
 
     expect(status).toHaveBeenCalledWith(503);
     expect(json).toHaveBeenCalledWith({ code: "INTERNAL_ERROR", message: "provider failed" });
+  });
+
+  it("preserves quota recovery timing on the normalized API envelope", () => {
+    const json = vi.fn();
+    const status = vi.fn(() => ({ json }));
+    const host = {
+      switchToHttp: () => ({ getResponse: () => ({ status }) }),
+    };
+
+    new ApiErrorFilter().catch(new HttpException({
+      code: "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
+      message: "allowance used",
+      retryAfterSeconds: 321,
+    }, 429), host as never);
+
+    expect(status).toHaveBeenCalledWith(429);
+    expect(json).toHaveBeenCalledWith({
+      code: "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
+      message: "allowance used",
+      retryAfterSeconds: 321,
+    });
   });
 });

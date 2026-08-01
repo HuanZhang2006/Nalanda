@@ -15,7 +15,7 @@
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
 | 发布工具单元 | 11 个 Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、6 秒 VAD、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
-| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter、持久队列/配额/Storage miss/格式/超时/隐私，以及翻译规范化完全匹配零供应商调用、OpenRouter boolean-only 结构化判定、安全 feedback 回退、同预算单次重试、幂等/租约释放/非法响应 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
+| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、考试启动/阈值、轮次确认、Azure adapter、持久队列/配额/Storage，以及翻译 exact/replay 零供应商配额、真实 provider reservation、OpenRouter structured 判定、幂等/租约释放/非法响应 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和裁剪评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | OpenRouter 供应商 smoke | 固定合成英文/中文样本验证指定模型的 structured JSON：语义近义回答为 true、无关回答为 false；拒绝 fake，不打印正文/key/完整响应 | 是，产生两次小型 provider 请求 | `node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；生产还通过真实 Courses API 验证幂等与权威 attempt |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
@@ -80,8 +80,8 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 | `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
-| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、AI 文件占位、逐单元与整份多单元纠错、独立翻译字段、编辑器批量追加/已有词重复、排序、保存失败、进度切换、会话恢复和 API error |
-| `apps/web/src/features/courses/LearningView.test.tsx` | Promise 未完成时即时反馈、服务端纠正、翻译/发音匹配/拼写错误手动推进、正确 520 ms 自动推进、慢请求期间后续 outbox 串行续传、朗读阈值/候补/显式重读，以及八词历史冷单元前五词 pending 提权、ready 缓存替换和过期降级提示清除 |
+| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、文本导入/编辑/排序/错误、进度与恢复，以及考试入口、默认 90%/自定义阈值、强制翻译前测和 API 请求契约 |
+| `apps/web/src/features/courses/LearningView.test.tsx` | 即时反馈/服务端纠正/outbox、拼写轮末错词清单（英文/翻译/IPA/音频）与手动确认、下一轮重排、考试实时第一轮正确率/完成结果，以及音频预取/缓存/朗读降级 |
 | `apps/web/src/features/courses/learningSessionState.test.ts` | 客户端/数据库一致的正误规则、retry pool、stage transition、完成预测和权威 patch 替换 |
 | `apps/web/src/features/courses/attemptOutbox.test.ts` | IndexedDB 缺失时内存降级、按 user/session/revision 排序、重试退避和账号级清理 |
 | `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage 命中跳过网络、202 pending 不缓存、ready 响应缓存、逐资源状态回调与最多两个并发 |
@@ -188,7 +188,9 @@ git check-ignore .env.rls.local
 - 发帖积分达到等级阈值后的 points/level/name；
 - study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
 - 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
-- Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage，也不能执行特权 RPC；Profile timezone 只接受 IANA 名称；
+- Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage/翻译配额，也不能执行取消、考试、轮次确认、配额预留等特权 RPC；Profile timezone 只接受 IANA 名称；
+- 考试以服务端乱序队列覆盖完整单元：轮末确认期间 attempt 被拒绝，确认后错词集合不变且重排；第一轮未达线不写 learned，达线并完成补练后才把整单元标为 learned；
+- 翻译完全匹配 claim 不计 provider 配额，真实 provider reservation 只计一次，分钟/滚动 24 小时限制通过数据库锁并发收敛；
 - 0015–0016 的 snapshot/七参数 attempt/单元与单词 prepare/claim/finish/quota RPC 均不能由 anon/authenticated 执行，普通用户不能读写 `learning_audio_assets`；
 - 同 attempt UUID 的并发请求只追加一个事实/一次 wrong_count 并重放首次响应；相同 revision 的不同 answer 只有一项提交，另一项返回 revision conflict；旧五参数 RPC 仍会推进 revision，支持应用回滚；
 - 两个用户相同规范化词集合得到相同 20 个 cache key 且不重复建任务；错误 owner 不能 prepare 他人 word；并发 claim 只有一个全局租约，配额暂停不会消耗生成重试次数；
@@ -292,7 +294,7 @@ PUBLIC_ORIGIN=http://127.0.0.1:5173 \
 pnpm --filter @nalanda/web test:playwright
 ```
 
-确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→粘贴整份多单元文本→格式纠错/滚动/排序→保存→四阶段→刷新恢复→3 天复习日程→免费发布→第二账号市场克隆/0%；并额外验证整单元音频进入 Cache Storage、两次 answer 请求断网进入 outbox、恢复网络后同步，以及 session picker 传入 20 秒限时 + 翻译前测、语义通过后才进入拼写并显示英文/翻译结果。这里的音频和翻译语义由 API fake provider 产生，仅证明浏览器/API/本地 Supabase 协作，不证明 Azure 或 OpenRouter。它是真 Chromium 布局与 offline/cache 行为，不是截图视觉回归。
+确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元导入/纠错/滚动/排序→保存→四阶段→刷新恢复→复习日程→发布/克隆；并验证音频 Cache Storage、断网 outbox、限时 + 翻译前测。0027 场景再从课程卡启动 50% 阈值考试，以服务端实际乱序队列答出一对一错，断言实时正确率、轮末错词复盘与手动确认，完成重考后显示考试通过。这里的音频和翻译语义由 API fake provider 产生，仅证明浏览器/API/本地 Supabase 协作，不证明 Azure 或 OpenRouter。它是真 Chromium 布局与 offline/cache 行为，不是截图视觉回归。
 
 同一修复的 jsdom 层分别断言：整份导入生成预期单元、多个翻译渲染为独立输入、编辑器批量追加成功，以及与已有词重复时出现 `DUPLICATE_EXISTING_TERM` 且不追加。jsdom 不计算真实尺寸，所以“底部操作是否可达”必须保留在 Playwright 层。
 
@@ -411,6 +413,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Courses 音频/离线 | cache key/VAD unit + API queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
 | Courses 限时拼写/翻译前测 | fake-clock jsdom + API structured response/timeout unit + 双用户 RLS/幂等/配额 + fake-provider Playwright + 发布前真实 OpenRouter structured/API gate；不得把模型输出直接当客户端事实 |
 | Courses 拼写规范化 | Web 单元/jsdom 覆盖 NFKC/Unicode 空白/全角大小写、标点遗漏/替换/增加及真实字母/空格错误 + 一次性真实 Supabase E2E 验证 raw answer、revision、`wrong_count`、retry pool 和客户端 helper 拒绝 |
+| Courses 拼写轮末复盘/考试 | state 单元 + jsdom 验证持久错词清单/确认门/实时正确率；API unit 验证固定 exam 规则；真实 Supabase E2E 验证 trigger、重排、通过/未通过熟练投影与权限；fake-provider Playwright 验证浏览器完整流程 |
+| OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
 | nginx/compose/CI | build image + staging deploy + 外部 health/login |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |

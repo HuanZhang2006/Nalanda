@@ -19,6 +19,8 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   INVALID_COURSE: ["The course content is invalid. Review the highlighted fields.", "课程内容校验失败，请检查标红字段"],
   INVALID_TITLE: ["The course name must be 1–80 characters.", "课程名称需为 1–80 个字符"],
   INVALID_MODE: ["The learning mode is invalid.", "学习模式无效"],
+  INVALID_EXAM: ["The exam settings are invalid.", "考试设置无效"],
+  INVALID_EXAM_PASS_PERCENT: ["Set the required exam accuracy between 1% and 100%.", "考试正确率要求需为 1%–100%。"],
   INVALID_SCOPE: ["The review scope is invalid.", "复习范围无效"],
   INVALID_SKILLS: ["Choose 1–3 distinct review skills.", "请选择 1–3 个不重复的复习项目"],
   INVALID_SKILL: ["The test type is invalid.", "测试类型无效"],
@@ -55,6 +57,8 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   TRANSLATION_ASSESSMENT_UNAVAILABLE: ["Semantic translation checking is temporarily unavailable.", "翻译语义判分暂不可用"],
   TRANSLATION_ASSESSMENT_PENDING: ["The translation is still being checked. Please retry in a moment.", "翻译仍在判分，请稍后重试"],
   TRANSLATION_ASSESSMENT_RATE_LIMIT: ["Translation checks are temporarily rate-limited. Please try again later.", "翻译判分请求过于频繁，请稍后重试"],
+  TRANSLATION_ASSESSMENT_MINUTE_LIMIT: ["Too many translation checks in one minute. Please retry shortly.", "一分钟内翻译判分次数过多，请稍后重试"],
+  TRANSLATION_ASSESSMENT_DAILY_LIMIT: ["The 24-hour translation-check allowance has been used. Please retry after it refreshes.", "24 小时翻译判分额度已用完，请在额度恢复后重试"],
   TRANSLATION_PROVIDER_RATE_LIMIT: ["The translation checker is busy. Please try again shortly.", "翻译判分服务繁忙，请稍后重试"],
   TRANSLATION_PROVIDER_TIMEOUT: ["The translation checker timed out. Your answer was not counted as wrong.", "翻译判分超时，本次不会记为错误"],
   TRANSLATION_PROVIDER_ERROR: ["The translation checker is temporarily unavailable. Your answer was not counted as wrong.", "翻译判分服务暂不可用，本次不会记为错误"],
@@ -100,6 +104,7 @@ export class ApiClientError extends Error {
     message: string,
     readonly fieldErrors?: Record<string, string>,
     readonly currentRevision?: number,
+    readonly retryAfterSeconds?: number,
   ) { super(message); }
 }
 
@@ -111,7 +116,8 @@ export async function apiJson<T>(path: string, init: RequestInit = {}, authentic
     throw new ApiClientError(response.status, code,
       localizeErrors ? localizedApiError(code, body?.message) : String(body?.message || localize("Request failed. Please try again.", "请求失败，请重试", getLocale())),
       body?.fieldErrors as Record<string, string> | undefined,
-      typeof body?.currentRevision === "number" ? body.currentRevision : undefined);
+      typeof body?.currentRevision === "number" ? body.currentRevision : undefined,
+      typeof body?.retryAfterSeconds === "number" ? body.retryAfterSeconds : undefined);
   }
   return body as T;
 }

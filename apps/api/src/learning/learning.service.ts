@@ -18,6 +18,7 @@ import type {
   LearningProfileSummary,
   LearningScope,
   LearningSession,
+  LearningSessionCancelResult,
   LearningSessionMutationResult,
   LearningSessionPatch,
   LearningSkill,
@@ -69,6 +70,24 @@ export class LearningService {
       }
       if (/speech .*quota exceeded|speech monthly budget exceeded/i.test(error.message)) {
         throw new HttpException({ code: "SPEECH_QUOTA_EXCEEDED", message: "发音服务配额已用完，请稍后再试" }, 429);
+      }
+      const quotaHint = typeof error.body === "object" && error.body && "hint" in error.body
+        ? String((error.body as { hint: unknown }).hint || "") : "";
+      const retryAfterMatch = quotaHint.match(/retry_after_seconds=(\d+)/i);
+      const retryAfterSeconds = retryAfterMatch ? Number(retryAfterMatch[1]) : undefined;
+      if (/translation assessment minute quota exceeded/i.test(error.message)) {
+        throw new HttpException({
+          code: "TRANSLATION_ASSESSMENT_MINUTE_LIMIT",
+          message: "一分钟内翻译判分次数过多，请稍后重试",
+          ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+        }, 429);
+      }
+      if (/translation assessment daily quota exceeded/i.test(error.message)) {
+        throw new HttpException({
+          code: "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
+          message: "24 小时翻译判分额度已用完，请在额度恢复后重试",
+          ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+        }, 429);
       }
       if (/translation assessment .*quota exceeded/i.test(error.message)) {
         throw new HttpException({
@@ -194,7 +213,7 @@ export class LearningService {
     assertUuid(courseId, "courseId");
     const unitId = assertUuid(String(body?.unitId || ""), "unitId");
     const mode = body?.mode == null ? "initial" : String(body.mode);
-    if (mode !== "initial" && mode !== "review") {
+    if (mode !== "initial" && mode !== "review" && mode !== "exam") {
       throw new BadRequestException({ code: "INVALID_MODE", message: "学习模式无效" });
     }
     const scope = body?.scope == null ? "all" : String(body.scope);
@@ -211,15 +230,37 @@ export class LearningService {
     )) {
       throw new BadRequestException({ code: "INVALID_SKILLS", message: "请选择 1–3 个不重复的复习项目" });
     }
+    if (mode === "exam" && scheduleId) {
+      throw new BadRequestException({ code: "INVALID_EXAM", message: "考试模式不能关联复习日程" });
+    }
     const skills: LearningSkill[] = mode === "initial"
       ? ["pronunciation", "translation", "spelling"]
-      : requestedSkills as LearningSkill[];
-    const spellingOptions = this.spellingOptions(body?.spellingOptions);
-    const id = await this.call(() => this.db.rpc<string>("learning_start_session", {
-      p_user_id: userId, p_course_id: courseId, p_unit_id: unitId,
-      p_mode: mode, p_skills: skills, p_scope: scope as LearningScope, p_schedule_id: scheduleId,
-      p_spelling_options: spellingOptions,
-    }));
+      : mode === "exam" ? ["spelling"] : requestedSkills as LearningSkill[];
+    const rawSpellingOptions = this.spellingOptions(body?.spellingOptions);
+    const spellingOptions = mode === "exam"
+      ? { ...rawSpellingOptions, translationFirst: true }
+      : rawSpellingOptions;
+    const examPassPercent = body?.examPassPercent == null ? 90 : Number(body.examPassPercent);
+    if (mode === "exam" && (
+      !Number.isSafeInteger(examPassPercent)
+      || examPassPercent < 1
+      || examPassPercent > 100
+    )) {
+      throw new BadRequestException({ code: "INVALID_EXAM_PASS_PERCENT", message: "考试正确率要求需为 1–100 的整数" });
+    }
+    const id = mode === "exam"
+      ? await this.call(() => this.db.rpc<string>("learning_start_exam_session", {
+        p_user_id: userId,
+        p_course_id: courseId,
+        p_unit_id: unitId,
+        p_spelling_options: spellingOptions,
+        p_pass_percent: examPassPercent,
+      }))
+      : await this.call(() => this.db.rpc<string>("learning_start_session", {
+        p_user_id: userId, p_course_id: courseId, p_unit_id: unitId,
+        p_mode: mode, p_skills: skills, p_scope: scope as LearningScope, p_schedule_id: scheduleId,
+        p_spelling_options: spellingOptions,
+      }));
     return this.getSession(userId, id);
   }
 
@@ -269,6 +310,47 @@ export class LearningService {
       revision: result.revision,
     }));
     return result;
+  }
+
+  async cancelSession(userId: string, sessionId: string): Promise<LearningSessionCancelResult> {
+    assertUuid(sessionId, "sessionId");
+    let row: Row;
+    try {
+      row = await this.call(() => this.db.rpc<Row>("learning_cancel_session", {
+        p_user_id: userId,
+        p_session_id: sessionId,
+      }));
+    } catch (error) {
+      if (error instanceof SupabaseRequestError && (
+        String(error.body && typeof error.body === "object" && "code" in error.body
+          ? (error.body as { code: unknown }).code : "") === "P0002"
+        || /learning session not found/i.test(error.message)
+      )) {
+        throw new NotFoundException({ code: "SESSION_NOT_FOUND", message: "学习会话不存在" });
+      }
+      throw error;
+    }
+    return {
+      sessionId: String(row.session_id),
+      active: false,
+      revision: Number(row.revision),
+      cancelled: Boolean(row.cancelled),
+    };
+  }
+
+  async continueSpellingRetryRound(
+    userId: string,
+    sessionId: string,
+  ): Promise<LearningSessionMutationResult> {
+    assertUuid(sessionId, "sessionId");
+    const row = await this.call(() => this.db.rpc<Row>(
+      "learning_continue_spelling_retry_round",
+      { p_user_id: userId, p_session_id: sessionId },
+    ));
+    return {
+      revision: Number(row.revision),
+      sessionPatch: this.sessionPatch(row.session_patch),
+    };
   }
 
   async markRecognition(userId: string, sessionId: string, wordId: string): Promise<LearningSessionMutationResult> {
@@ -362,10 +444,8 @@ export class LearningService {
     answerHash: string,
     leaseToken: string,
     leaseSeconds: number,
-    minuteLimit: number,
-    dayLimit: number,
   ): Promise<Row> {
-    return this.call(() => this.db.rpc<Row>("learning_claim_spelling_translation_assessment", {
+    return this.call(() => this.db.rpc<Row>("learning_claim_spelling_translation_assessment_v2", {
       p_user_id: userId,
       p_session_id: sessionId,
       p_word_id: wordId,
@@ -374,6 +454,20 @@ export class LearningService {
       p_answer_hash: answerHash,
       p_lease_token: leaseToken,
       p_lease_seconds: leaseSeconds,
+    }));
+  }
+
+  reserveSpellingTranslationQuota(
+    userId: string,
+    assessmentId: string,
+    leaseToken: string,
+    minuteLimit: number,
+    dayLimit: number,
+  ) {
+    return this.call(() => this.db.rpc<Row>("learning_reserve_spelling_translation_quota", {
+      p_user_id: userId,
+      p_assessment_id: assessmentId,
+      p_lease_token: leaseToken,
       p_minute_limit: minuteLimit,
       p_day_limit: dayLimit,
     }));

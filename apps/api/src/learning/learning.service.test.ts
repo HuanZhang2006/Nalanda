@@ -20,6 +20,39 @@ afterEach(() => {
 });
 
 describe("LearningService ownership and public boundaries", () => {
+  it("cancels an owned session through the service-only transaction RPC", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue({
+      session_id: courseId,
+      active: false,
+      revision: 7,
+      cancelled: true,
+    });
+
+    await expect(value.cancelSession("user-a", courseId)).resolves.toEqual({
+      sessionId: courseId,
+      active: false,
+      revision: 7,
+      cancelled: true,
+    });
+    expect(db.rpc).toHaveBeenCalledWith("learning_cancel_session", {
+      p_user_id: "user-a",
+      p_session_id: courseId,
+    });
+  });
+
+  it("does not reveal another user's learning session when cancelling", async () => {
+    const { value, db } = service();
+    db.rpc.mockRejectedValue(new SupabaseRequestError(
+      "learning session not found",
+      404,
+      { code: "P0002" },
+    ));
+
+    await expect(value.cancelSession("user-a", courseId))
+      .rejects.toBeInstanceOf(NotFoundException);
+  });
+
   it("selects the most recently active session for the course resume shortcut", async () => {
     const { value, db } = service();
     db.select
@@ -185,6 +218,78 @@ describe("LearningService ownership and public boundaries", () => {
       },
     })).rejects.toBeInstanceOf(BadRequestException);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("starts a shuffled translation-plus-spelling exam with a validated first-round pass mark", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue(publicationId);
+    vi.spyOn(value, "getSession").mockResolvedValue({ id: publicationId, mode: "exam" } as any);
+
+    await value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "exam",
+      examPassPercent: 92,
+      spellingOptions: {
+        timeLimitEnabled: false,
+        timeLimitSeconds: 20,
+        translationFirst: false,
+      },
+    });
+    expect(db.rpc).toHaveBeenCalledWith("learning_start_exam_session", {
+      p_user_id: "user-a",
+      p_course_id: courseId,
+      p_unit_id: publicationId,
+      p_spelling_options: {
+        timeLimitEnabled: false,
+        timeLimitSeconds: 20,
+        translationFirst: true,
+      },
+      p_pass_percent: 92,
+    });
+
+    db.rpc.mockClear();
+    await expect(value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "exam",
+      examPassPercent: 0,
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("continues a confirmed spelling retry round through one service-only RPC", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue({
+      revision: 8,
+      session_patch: {
+        stage: "spelling", active: true,
+        state: { queue: [publicationId], cursor: 0, nextQueue: [], round: 2 },
+        changed_item: null,
+        next_word_id: publicationId,
+      },
+    });
+    await expect(value.continueSpellingRetryRound("user-a", courseId))
+      .resolves.toMatchObject({ revision: 8, sessionPatch: { stage: "spelling" } });
+    expect(db.rpc).toHaveBeenCalledWith("learning_continue_spelling_retry_round", {
+      p_user_id: "user-a", p_session_id: courseId,
+    });
+  });
+
+  it("maps durable semantic-assessment windows to distinct 429 codes and retry timing", async () => {
+    const { value, db } = service();
+    db.rpc.mockRejectedValue(new SupabaseRequestError(
+      "translation assessment daily quota exceeded",
+      400,
+      { code: "P0001", hint: "retry_after_seconds=321" },
+    ));
+    await expect(value.reserveSpellingTranslationQuota(
+      "user-a", attemptId, publicationId, 20, 500,
+    )).rejects.toMatchObject({
+      status: 429,
+      response: {
+        code: "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
+        retryAfterSeconds: 321,
+      },
+    });
   });
 
   it("rejects pronunciation assessment lookup outside an active owned session before provider work", async () => {
