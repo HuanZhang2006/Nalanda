@@ -56,7 +56,7 @@ export class LearningController {
   @Post("learning-courses/:id/sessions")
   async start(@CurrentUser() user: AuthUser, @Param("id") id: string, @Body() body: StartLearningSessionDto) {
     this.flags.courses();
-    if (body?.spellingOptions?.translationFirst) this.flags.spellingTranslation();
+    if (body?.mode === "exam" || body?.spellingOptions?.translationFirst) this.flags.spellingTranslation();
     const session = await this.learning.startSession(user.id, id, body);
     if (session.unitId && this.flags.audioPrewarmEnabled()) {
       void this.learningAudio.prepareUnit(user.id, session.unitId, 50).catch(() => undefined);
@@ -72,6 +72,18 @@ export class LearningController {
       void this.learningAudio.prepareUnit(user.id, session.unitId, 50).catch(() => undefined);
     }
     return session;
+  }
+
+  @Post("learning-sessions/:id/cancel")
+  cancelSession(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    this.flags.courses();
+    return this.learning.cancelSession(user.id, id);
+  }
+
+  @Post("learning-sessions/:id/spelling-retry-rounds/continue")
+  continueSpellingRetryRound(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    this.flags.courses();
+    return this.learning.continueSpellingRetryRound(user.id, id);
   }
 
   @Post("learning-sessions/:id/recognition")

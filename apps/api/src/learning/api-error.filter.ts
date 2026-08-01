@@ -32,11 +32,13 @@ export class ApiErrorFilter implements ExceptionFilter {
       : status >= 500 ? "服务暂时不可用" : error instanceof Error ? error.message : "请求失败";
     const fieldErrors = source.fieldErrors || nested.fieldErrors;
     const currentRevision = source.currentRevision ?? nested.currentRevision;
+    const retryAfterSeconds = source.retryAfterSeconds ?? nested.retryAfterSeconds;
     response.status(status).json({
       code,
       message,
       ...(fieldErrors ? { fieldErrors } : {}),
       ...(typeof currentRevision === "number" ? { currentRevision } : {}),
+      ...(typeof retryAfterSeconds === "number" ? { retryAfterSeconds } : {}),
     });
   }
 }

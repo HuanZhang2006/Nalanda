@@ -1,7 +1,7 @@
 import type {
   CreateCourseReportRequest, LearningAttemptRequest, LearningAttemptResult, LearningAudioManifest, LearningCourseDetail,
   LearningCourseInput, LearningCourseSummary, LearningProfileSummary, LearningSession,
-  LearningSessionMutationResult, LearningSpellingTranslationAssessmentRequest,
+  LearningSessionCancelResult, LearningSessionMutationResult, LearningSpellingTranslationAssessmentRequest,
   LearningSpellingTranslationAssessmentResult, PublicCoursePreview, ReviewSchedule, StartLearningSessionRequest,
 } from "@nalanda/types";
 import { apiJson } from "../../lib/api";
@@ -23,6 +23,12 @@ export const coursesApi = {
   remove: (id: string) => apiJson<{ ok: true }>(`/api/learning-courses/${id}`, { method: "DELETE" }),
   startSession: (courseId: string, body: StartLearningSessionRequest) => apiJson<LearningSession>(`/api/learning-courses/${courseId}/sessions`, json(body)),
   session: (id: string) => apiJson<LearningSession>(`/api/learning-sessions/${id}`),
+  cancelSession: (id: string) => apiJson<LearningSessionCancelResult>(
+    `/api/learning-sessions/${id}/cancel`, json({}),
+  ),
+  continueSpellingRetryRound: (id: string) => apiJson<LearningSessionMutationResult>(
+    `/api/learning-sessions/${id}/spelling-retry-rounds/continue`, json({}),
+  ),
   recognition: (id: string, wordId: string) => apiJson<LearningSessionMutationResult>(`/api/learning-sessions/${id}/recognition`, json({ wordId })),
   attempt: (id: string, body: LearningAttemptRequest, signal?: AbortSignal) => apiJson<LearningAttemptResult>(
     `/api/learning-sessions/${id}/attempts`,

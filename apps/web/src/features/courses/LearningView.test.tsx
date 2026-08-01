@@ -3,7 +3,7 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LearningCourseDetail, LearningSession, VocabularyWord } from "@nalanda/types";
 import { setLocale } from "../../i18n";
-import { clearPendingAttemptsForUser } from "./attemptOutbox";
+import { clearPendingAttemptsForUser, listPendingAttempts, putPendingAttempt } from "./attemptOutbox";
 import { spellingTextMatches } from "./learningSessionState";
 import { beginWavRecording } from "./recording";
 import { LearningView } from "./LearningView";
@@ -79,10 +79,11 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   holdAttempt?: boolean;
   serverCorrect?: boolean;
   audio?: "ready" | "pending-then-ready";
-  mode?: "initial" | "review";
+  mode?: "initial" | "review" | "exam";
   spellingOptions?: Partial<LearningSession["spellingOptions"]>;
   translationAssessment?: "correct" | "wrong" | "error";
   attemptTimeouts?: number;
+  sessionState?: Record<string, unknown>;
 } = {}) {
   let cursor = 0;
   let revision = 0;
@@ -91,25 +92,64 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   const attempts: Array<Record<string, unknown>> = [];
   const translationAssessments: Array<Record<string, unknown>> = [];
   const audioRequests: string[] = [];
+  const cancellations: string[] = [];
+  const retryContinues: string[] = [];
   let pendingAttemptTimeouts = options.attemptTimeouts || 0;
   let releaseAttempt: (() => void) | null = null;
   const currentSession = (
     nextStage: LearningSession["stage"],
     nextCursor: number,
     nextRetryQueue: string[] = [],
-  ) => ({
-    ...session(words, nextStage, nextCursor, nextRetryQueue),
-    mode: options.mode || "initial",
-    spellingOptions: {
+  ) => {
+    const value = {
+      ...session(words, nextStage, nextCursor, nextRetryQueue),
+      mode: options.mode || "initial",
+      selectedSkills: options.mode === "exam"
+        ? ["spelling"] as LearningSession["selectedSkills"]
+        : session(words, nextStage, nextCursor, nextRetryQueue).selectedSkills,
+      spellingOptions: {
       timeLimitEnabled: false,
       timeLimitSeconds: 20,
       translationFirst: false,
       ...options.spellingOptions,
     },
-  });
+    };
+    value.state = { ...value.state, ...options.sessionState };
+    value.revision = revision;
+    value.active = nextStage !== "completed";
+    return value;
+  };
   const fetchMock = vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
     const path = String(input);
     if (path.endsWith(`/api/learning-courses/${ids[0]}`)) return json(course(words));
+    if (path.endsWith(`/api/learning-sessions/${ids[4]}/cancel`)) {
+      cancellations.push(path);
+      return json({ sessionId: ids[4], active: false, revision: revision + 1, cancelled: true });
+    }
+    if (path.endsWith(`/api/learning-sessions/${ids[4]}/spelling-retry-rounds/continue`)) {
+      retryContinues.push(path);
+      revision += 1;
+      const currentQueue = Array.isArray(options.sessionState?.queue)
+        ? [...options.sessionState.queue].map(String).reverse()
+        : words.map((entry) => entry.id).reverse();
+      options.sessionState = {
+        ...options.sessionState,
+        queue: currentQueue,
+        cursor: 0,
+        nextQueue: [],
+        awaitingRetryConfirmation: false,
+        retrySummaryIds: undefined,
+        retryFromRound: undefined,
+      };
+      const next = currentSession(stage, 0, []);
+      return json({
+        revision,
+        sessionPatch: {
+          stage, active: true, state: next.state,
+          changedItem: null, nextWordId: currentQueue[0] || null,
+        },
+      });
+    }
     if (path.endsWith(`/api/learning-sessions/${ids[4]}/spelling-translation-assessments`)) {
       const request = JSON.parse(String(init.body)) as {
         attemptId: string; expectedRevision: number; wordId: string; answer: string;
@@ -179,6 +219,21 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
           ? JSON.stringify([...(request.answer.translations as string[])].sort()) === JSON.stringify([...current.translations].sort())
           : spellingTextMatches(String(request.answer.text), current.term);
       const correct = options.serverCorrect ?? predictedCorrect;
+      if (options.mode === "exam" && Number(options.sessionState?.round || 1) === 1) {
+        const answered = Number(options.sessionState?.examAnswered || 0) + 1;
+        const correctCount = Number(options.sessionState?.examCorrect || 0) + (correct ? 1 : 0);
+        const total = Number(options.sessionState?.examTotal || words.length);
+        const required = Number(options.sessionState?.examRequiredPercent || 90);
+        const accuracy = Math.round(correctCount / Math.max(1, answered) * 1_000) / 10;
+        options.sessionState = {
+          ...options.sessionState,
+          examAnswered: answered,
+          examCorrect: correctCount,
+          examAccuracyPercent: accuracy,
+          examFirstRoundComplete: answered >= total,
+          examPassed: answered >= total ? accuracy >= required : null,
+        };
+      }
       cursor = Math.min(cursor + 1, words.length - 1);
       revision += 1;
       const next = currentSession(stage, cursor, retryQueue);
@@ -262,6 +317,8 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
     attempts,
     translationAssessments,
     audioRequests,
+    cancellations,
+    retryContinues,
     fetchMock,
     releaseAttempt: () => releaseAttempt?.(),
     timeoutNextAttempt: () => { pendingAttemptTimeouts += 1; },
@@ -340,6 +397,65 @@ describe("LearningView immediate feedback", () => {
     });
     await settle();
     expect(container.querySelector(".course-term")?.textContent).toBe("apple");
+    expect(onExit).not.toHaveBeenCalled();
+  });
+
+  it("cancels the active session, discards only its unsynced answers, and returns", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "translation");
+    const onExit = vi.fn();
+    const onChanged = vi.fn();
+    const confirm = vi.fn(() => true);
+    vi.stubGlobal("confirm", confirm);
+    await putPendingAttempt({
+      attemptId: ids[5], userId: "user-a", sessionId: ids[4], createdAt: 1,
+      retryCount: 1, nextAttemptAt: Date.now() + 60_000,
+      request: {
+        attemptId: ids[5], expectedRevision: 0, wordId: ids[2], skill: "translation",
+        answer: { translations: ["苹果"] },
+      },
+    });
+
+    await settle(() => root.render(
+      <LearningView sessionId={ids[4]} onExit={onExit} onChanged={onChanged} />,
+    ));
+    const pause = [...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Pause and return");
+    const cancel = [...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Cancel learning");
+    expect(pause).toBeTruthy();
+    expect(cancel).toBeTruthy();
+
+    await settle(() => click(cancel!));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("cannot be resumed"));
+    expect(api.cancellations).toEqual([`/api/learning-sessions/${ids[4]}/cancel`]);
+    expect(await listPendingAttempts("user-a", ids[4])).toEqual([]);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    expect(onExit).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the bilingual destructive action and leaves the session active when confirmation is declined", async () => {
+    setLocale("zh", { persist: false });
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "recognition");
+    const onExit = vi.fn();
+    const confirm = vi.fn(() => false);
+    vi.stubGlobal("confirm", confirm);
+
+    await settle(() => root.render(
+      <LearningView sessionId={ids[4]} onExit={onExit} onChanged={() => {}} />,
+    ));
+    expect([...container.querySelectorAll("button")]
+      .some((entry) => entry.textContent === "暂停并返回")).toBe(true);
+    const cancel = [...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "取消学习");
+    expect(cancel).toBeTruthy();
+
+    await settle(() => click(cancel!));
+
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining("无法继续"));
+    expect(api.cancellations).toEqual([]);
     expect(onExit).not.toHaveBeenCalled();
   });
 
@@ -565,6 +681,85 @@ describe("LearningView immediate feedback", () => {
     await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "Next question")!));
     expect(container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')?.value).toBe("");
     expect(container.textContent).not.toContain("Correct spelling: apple");
+  });
+
+  it("lists every missed spelling word with meaning and audio before a confirmed shuffled retry round", async () => {
+    const words = [
+      { ...word(ids[2], "apple", ["苹果", "水果"], 0), ipa: "ˈæpəl" },
+      { ...word(ids[3], "banana", ["香蕉"], 1), ipa: "bəˈnænə" },
+    ];
+    const api = installApi(words, "spelling", {
+      sessionState: {
+        queue: [ids[2], ids[3]], cursor: 0, nextQueue: [], round: 2,
+        awaitingRetryConfirmation: true,
+        retrySummaryIds: [ids[2], ids[3]], retryFromRound: 1,
+      },
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={vi.fn()} onChanged={vi.fn()} />));
+
+    expect(container.textContent).toContain("Round 1 complete");
+    expect(container.textContent).toContain("2 words to retry");
+    expect(container.textContent).toContain("apple");
+    expect(container.textContent).toContain("ˈæpəl");
+    expect(container.textContent).toContain("苹果");
+    expect(container.textContent).toContain("banana");
+    expect(container.querySelector('[aria-label="Spelling answer"]')).toBeNull();
+
+    const start = [...container.querySelectorAll("button")].find((entry) =>
+      entry.textContent?.includes("Shuffle and start next round"))!;
+    await settle(() => click(start));
+    expect(api.retryContinues).toHaveLength(1);
+    expect(container.textContent).not.toContain("Round 1 complete");
+    expect(container.querySelector('[aria-label="Spelling answer"]')).not.toBeNull();
+  });
+
+  it("shows server-compatible live first-round exam accuracy while testing translation and spelling", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    installApi(words, "spelling", {
+      mode: "exam",
+      spellingOptions: { translationFirst: true },
+      translationAssessment: "correct",
+      sessionState: {
+        queue: [ids[2], ids[3]], cursor: 0, nextQueue: [], round: 1,
+        examRequiredPercent: 90, examTotal: 2, examAnswered: 0,
+        examCorrect: 0, examAccuracyPercent: 0, examPassed: null,
+        examFirstRoundComplete: false,
+      },
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={vi.fn()} onChanged={vi.fn()} />));
+    expect(container.textContent).toContain("Live first-round accuracy 0% (0/0) · Required 90%");
+    await settle(() => inputValue(
+      container.querySelector<HTMLInputElement>('[aria-label="Typed translation answer"]')!,
+      "苹果",
+    ));
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) =>
+      entry.textContent === "Check translation")!));
+    const spelling = container.querySelector<HTMLInputElement>('[aria-label="Spelling answer"]')!;
+    await settle(() => inputValue(spelling, "apple"));
+    await settle(() => { spelling.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })); });
+
+    expect(container.textContent).toContain("Live first-round accuracy 100% (1/1) · Required 90%");
+    expect(container.textContent).toContain("Spelling exam");
+  });
+
+  it("reports whether a completed exam changed the unit's learned progress", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    installApi(words, "completed", {
+      mode: "exam",
+      spellingOptions: { translationFirst: true },
+      sessionState: {
+        queue: words.map((entry) => entry.id), cursor: 2, nextQueue: [], round: 2,
+        examRequiredPercent: 90, examTotal: 2, examAnswered: 2,
+        examCorrect: 2, examAccuracyPercent: 100, examPassed: true,
+        examFirstRoundComplete: true,
+      },
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={vi.fn()} onChanged={vi.fn()} />));
+
+    expect(container.textContent).toContain("Exam passed");
+    expect(container.textContent).toContain("First-round accuracy: 100% · Required: 90%");
+    expect(container.textContent).toContain("All words in this unit are now counted as learned.");
+    expect(container.textContent).not.toContain("In 3 days");
   });
 
   it("keeps a correct spelling and its translations visible for 1.5 seconds", async () => {

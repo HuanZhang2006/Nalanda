@@ -34,6 +34,24 @@ async function signOut(page: Page) {
   await expect(page.getByRole("button", { name: "注册", exact: true })).toBeVisible();
 }
 
+async function currentLearningQuestion(page: Page, courseTitle: string) {
+  return page.evaluate(async (title) => {
+    const stored = Array.from({ length: localStorage.length }, (_, index) => localStorage.getItem(localStorage.key(index)!)).map((value) => {
+      try { return value ? JSON.parse(value) : null; } catch { return null; }
+    }).find((value) => value?.access_token);
+    if (!stored?.access_token) throw new Error("Supabase browser session token not found");
+    const headers = { Authorization: `Bearer ${stored.access_token}` };
+    const courses = await (await fetch("/api/learning-courses", { headers })).json();
+    const course = courses.find((entry: { title: string }) => entry.title === title);
+    if (!course?.activeSessionId) throw new Error("active learning session not found");
+    const session = await (await fetch(`/api/learning-sessions/${course.activeSessionId}`, { headers })).json();
+    const wordId = session.state.queue[session.state.cursor];
+    const word = session.items.find((entry: { word: { id: string } }) => entry.word.id === wordId)?.word;
+    if (!word) throw new Error("active learning word not found");
+    return { term: word.term as string, translation: word.translations[0] as string };
+  }, courseTitle);
+}
+
 async function assessWithFixedWav(page: Page, courseTitle: string) {
   const result = await page.evaluate(async (title) => {
     const stored = Array.from({ length: localStorage.length }, (_, index) => localStorage.getItem(localStorage.key(index)!)).map((value) => {
@@ -67,6 +85,7 @@ async function assessWithFixedWav(page: Page, courseTitle: string) {
 }
 
 test("create, validate, resume, learn, schedule, publish, and clone a vocabulary course", async ({ page }) => {
+  test.setTimeout(180_000);
   const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   const password = `Nalanda-${nonce}!`;
   // The local Supabase stack intentionally survives a Playwright retry. A
@@ -272,6 +291,45 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.getByRole("button", { name: "全部", exact: true }).click();
   await expect(page.getByText(`复习 ${courseTitle}`, { exact: false })).toBeVisible();
   await openCourses(page);
+
+  // Exam mode shuffles the selected unit, fixes pass/fail from first-round
+  // accuracy, pauses before retrying missed words, then marks the unit learned
+  // only after the confirmed retry round finishes.
+  await page.getByRole("article").getByRole("button", { name: "考试" }).click();
+  const examModal = page.locator(".modal");
+  await examModal.locator("select").selectOption({ index: 0 });
+  await expect(examModal.getByLabel("考试要求正确率")).toHaveValue("90");
+  await examModal.getByLabel("考试要求正确率").fill("50");
+  await expect(examModal.getByLabel("拼写前先测试键入翻译")).toBeChecked();
+  await expect(examModal.getByLabel("拼写前先测试键入翻译")).toBeDisabled();
+  await examModal.getByRole("button", { name: "开始考试" }).click();
+  await expect(page.getByRole("heading", { name: "拼写考试" })).toBeVisible();
+  await expect(page.getByText(/第一轮实时正确率 0%/)).toBeVisible();
+
+  const missedExamWord = await currentLearningQuestion(page, courseTitle);
+  await page.getByLabel("键入翻译答案").fill("完全错误的翻译");
+  await page.getByRole("button", { name: "提交翻译" }).click();
+  await expect(page.getByText("因翻译错误而跳过")).toBeVisible();
+  await page.getByRole("button", { name: "下一题", exact: true }).click();
+  const correctExamWord = await currentLearningQuestion(page, courseTitle);
+  await page.getByLabel("键入翻译答案").fill(correctExamWord.translation);
+  await page.getByRole("button", { name: "提交翻译" }).click();
+  await page.getByLabel("拼写答案").fill(correctExamWord.term);
+  await page.getByLabel("拼写答案").press("Enter");
+  await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden({ timeout: 5_000 });
+  await expect(page.getByText("1 个错词需要重考")).toBeVisible();
+  await expect(page.getByText(missedExamWord.term, { exact: true })).toBeVisible();
+  await expect(page.getByText(missedExamWord.translation, { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "打乱顺序并开始下一轮" }).click();
+  const retryExamWord = await currentLearningQuestion(page, courseTitle);
+  expect(retryExamWord.term).toBe(missedExamWord.term);
+  await page.getByLabel("键入翻译答案").fill(retryExamWord.translation);
+  await page.getByRole("button", { name: "提交翻译" }).click();
+  await page.getByLabel("拼写答案").fill(retryExamWord.term);
+  await page.getByLabel("拼写答案").press("Enter");
+  await expect(page.getByRole("heading", { name: "考试通过" })).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/第一轮正确率：50% · 要求：50%/)).toBeVisible();
+  await page.getByRole("button", { name: "返回课程" }).click();
 
   const dialogs = async (dialog: import("@playwright/test").Dialog) => {
     if (dialog.type() === "prompt") await dialog.accept("A free E2E vocabulary course");

@@ -59,7 +59,7 @@ export type LearningCourseCategory =
   | "reading_comprehension"
   | "question_bank";
 export type LearningSkill = "pronunciation" | "translation" | "spelling";
-export type LearningSessionMode = "initial" | "review";
+export type LearningSessionMode = "initial" | "review" | "exam";
 export type LearningStage = "recognition" | LearningSkill | "completed";
 export type LearningScope = "all" | "unlearned";
 
@@ -177,6 +177,8 @@ export interface StartLearningSessionRequest {
   scope?: LearningScope;
   scheduleId?: string;
   spellingOptions?: LearningSpellingOptions;
+  /** First-round accuracy required for an exam to mark its unit learned. */
+  examPassPercent?: number;
 }
 
 export interface LearningAttemptRequest {
@@ -233,6 +235,13 @@ export interface LearningSpellingTranslationAssessmentResult {
 export interface LearningSessionMutationResult {
   revision: number;
   sessionPatch: LearningSessionPatch;
+}
+
+export interface LearningSessionCancelResult {
+  sessionId: string;
+  active: false;
+  revision: number;
+  cancelled: boolean;
 }
 
 export type LearningAudioAssetStatus = "missing" | "pending" | "processing" | "ready" | "failed";

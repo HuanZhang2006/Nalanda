@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { LearningAttemptRequest, LearningSession, VocabularyWord } from "@nalanda/types";
-import { applySessionPatch, evaluateAttempt, predictAttempt } from "./learningSessionState";
+import { applySessionPatch, evaluateAttempt, predictAttempt, readExamState, readQueueState } from "./learningSessionState";
 
 const ids = [
   "11111111-1111-4111-8111-111111111111",
@@ -112,6 +112,80 @@ describe("optimistic learning-session reducer", () => {
     spelling.state = { queue: [ids[1]], cursor: 0, nextQueue: [], round: 1 };
     const completed = predictAttempt(spelling, request(spelling, ids[1], { text: "take part in" }));
     expect(completed.session).toMatchObject({ stage: "completed", active: false, revision: 1 });
+  });
+
+  it("pauses after a spelling round and preserves every missed word for confirmation", () => {
+    const value = session("spelling");
+    value.state = { queue: [ids[1], ids[2]], cursor: 1, nextQueue: [ids[1]], round: 1 };
+    const predicted = predictAttempt(value, request(value, ids[2], { text: "apply" }));
+
+    expect(readQueueState(predicted.session)).toMatchObject({
+      queue: [ids[1], ids[2]],
+      cursor: 0,
+      round: 2,
+      awaitingRetryConfirmation: true,
+      retrySummaryIds: [ids[1], ids[2]],
+      retryFromRound: 1,
+    });
+  });
+
+  it("tracks an exam's first-round accuracy without letting retry rounds change pass status", () => {
+    const value = session("spelling");
+    value.mode = "exam";
+    value.selectedSkills = ["spelling"];
+    value.spellingOptions.translationFirst = true;
+    value.state = {
+      queue: [ids[1], ids[2]], cursor: 0, nextQueue: [], round: 1,
+      examRequiredPercent: 90, examTotal: 2, examAnswered: 0,
+      examCorrect: 0, examAccuracyPercent: 0, examPassed: null,
+      examFirstRoundComplete: false,
+    };
+    const first = predictAttempt(value, request(value, ids[1], { text: "wrong" }));
+    const secondRequest = request(first.session, ids[2], { text: "apple" });
+    const second = predictAttempt(first.session, secondRequest);
+
+    expect(readExamState(second.session)).toEqual({
+      total: 2,
+      answered: 2,
+      correct: 1,
+      accuracyPercent: 50,
+      requiredPercent: 90,
+      firstRoundComplete: true,
+      passed: false,
+    });
+    expect(readQueueState(second.session).awaitingRetryConfirmation).toBe(true);
+
+    const retry = predictAttempt({
+      ...second.session,
+      state: {
+        ...second.session.state,
+        awaitingRetryConfirmation: false,
+        retrySummaryIds: undefined,
+        retryFromRound: undefined,
+      },
+    }, request(second.session, ids[1], { text: "take part in" }));
+    expect(readExamState(retry.session).passed).toBe(false);
+  });
+
+  it("does not let a rounded display percentage turn a below-threshold exam into a pass", () => {
+    const value = session("spelling");
+    value.mode = "exam";
+    value.selectedSkills = ["spelling"];
+    value.state = {
+      queue: [ids[1]], cursor: 0, nextQueue: [], round: 1,
+      examRequiredPercent: 90, examTotal: 2_000, examAnswered: 1_999,
+      examCorrect: 1_798, examAccuracyPercent: 89.9, examPassed: null,
+      examFirstRoundComplete: false,
+    };
+
+    const result = predictAttempt(value, request(value, ids[1], { text: "take part in" }));
+    expect(readExamState(result.session)).toMatchObject({
+      answered: 2_000,
+      correct: 1_799,
+      accuracyPercent: 90,
+      firstRoundComplete: true,
+      passed: false,
+    });
   });
 
   it("replaces provisional state with an authoritative server patch", () => {

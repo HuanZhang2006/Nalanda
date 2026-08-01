@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  clearPendingAttemptsForSession,
   clearPendingAttemptsForUser,
   listPendingAttempts,
   putPendingAttempt,
@@ -37,5 +38,22 @@ describe("learning attempt IndexedDB outbox", () => {
     expect(await listPendingAttempts("another-user", sessionId)).toEqual([]);
     expect(retryDelay(0)).toBeGreaterThanOrEqual(1_000);
     expect(retryDelay(20)).toBeLessThanOrEqual(36_000);
+  });
+
+  it("discards only the cancelled session's pending answers", async () => {
+    await putPendingAttempt({
+      attemptId: "cancelled", userId, sessionId, createdAt: 1, retryCount: 1, nextAttemptAt: 10,
+      request: { attemptId: "cancelled", expectedRevision: 0, wordId: "word-a", skill: "spelling", answer: { text: "a" } },
+    });
+    await putPendingAttempt({
+      attemptId: "kept", userId, sessionId: "another-session", createdAt: 2, retryCount: 0, nextAttemptAt: 0,
+      request: { attemptId: "kept", expectedRevision: 0, wordId: "word-b", skill: "spelling", answer: { text: "b" } },
+    });
+
+    await clearPendingAttemptsForSession(userId, sessionId);
+
+    expect(await listPendingAttempts(userId, sessionId)).toEqual([]);
+    expect((await listPendingAttempts(userId, "another-session")).map((entry) => entry.attemptId))
+      .toEqual(["kept"]);
   });
 });

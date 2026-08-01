@@ -26,6 +26,7 @@ function harness() {
       translations: ["苹果", "一种水果"],
     }),
     completeSpellingTranslationAssessment: vi.fn().mockResolvedValue(result()),
+    reserveSpellingTranslationQuota: vi.fn().mockResolvedValue({ reserved: true }),
     releaseSpellingTranslationAssessment: vi.fn().mockResolvedValue(true),
     spellingTranslationAssessmentResult: vi.fn().mockReturnValue(result()),
   };
@@ -72,7 +73,10 @@ describe("OpenRouter spelling translation adapter", () => {
     expect(flags.spellingTranslation).toHaveBeenCalledOnce();
     expect(learning.claimSpellingTranslationAssessment).toHaveBeenCalledWith(
       "user-a", sessionId, wordId, attemptId, 4,
-      expect.stringMatching(/^[0-9a-f]{64}$/), expect.any(String), 22, 20, 200,
+      expect.stringMatching(/^[0-9a-f]{64}$/), expect.any(String), 22,
+    );
+    expect(learning.reserveSpellingTranslationQuota).toHaveBeenCalledWith(
+      "user-a", attemptId, expect.any(String), 20, 500,
     );
     const providerRequest = vi.mocked(fetch).mock.calls[0];
     const body = JSON.parse(String((providerRequest[1] as RequestInit).body));
@@ -112,6 +116,7 @@ describe("OpenRouter spelling translation adapter", () => {
     await expect(service.assess("user-a", sessionId, request("苹果")))
       .resolves.toMatchObject({ attemptId, replayed: true });
     expect(fetch).not.toHaveBeenCalled();
+    expect(learning.reserveSpellingTranslationQuota).not.toHaveBeenCalled();
     expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
     expect(learning.spellingTranslationAssessmentResult).toHaveBeenCalledWith({
       attempt_id: attemptId,
@@ -126,6 +131,7 @@ describe("OpenRouter spelling translation adapter", () => {
     await expect(service.assess("user-a", sessionId, request("  苹果  ")))
       .resolves.toEqual(result());
     expect(fetch).not.toHaveBeenCalled();
+    expect(learning.reserveSpellingTranslationQuota).not.toHaveBeenCalled();
     expect(learning.completeSpellingTranslationAssessment).toHaveBeenCalledWith(
       "user-a", sessionId, wordId, attemptId, 4,
       expect.stringMatching(/^[0-9a-f]{64}$/), expect.any(String),
@@ -220,6 +226,23 @@ describe("OpenRouter spelling translation adapter", () => {
       response: { code: "TRANSLATION_ASSESSMENT_PENDING" },
     } satisfies Partial<HttpException>);
     expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
+  });
+
+  it("releases an unprocessed claim when the durable 24-hour provider quota is full", async () => {
+    process.env.OPENROUTER_API_KEY = "test-secret";
+    const { service, learning } = harness();
+    learning.reserveSpellingTranslationQuota.mockRejectedValue(new HttpException({
+      code: "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
+      retryAfterSeconds: 120,
+    }, 429));
+    vi.stubGlobal("fetch", vi.fn());
+
+    await expect(service.assess("user-a", sessionId, request("一种常见水果")))
+      .rejects.toMatchObject({ status: 429 });
+    expect(fetch).not.toHaveBeenCalled();
+    expect(learning.releaseSpellingTranslationAssessment).toHaveBeenCalledWith(
+      "user-a", attemptId, expect.any(String), "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
+    );
   });
 
   it("releases the lease and records no attempt when OpenRouter times out", async () => {

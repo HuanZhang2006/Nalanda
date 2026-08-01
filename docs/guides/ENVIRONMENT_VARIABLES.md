@@ -71,8 +71,8 @@
 | `OPENROUTER_MODEL` | 可选，`google/gemma-4-26b-a4b-it:free` | 受限配置 | 语义评判模型；生产 gate 固定验证该模型，变更必须经过 ADR、评测与成本复核。 |
 | `OPENROUTER_BASE_URL` | 可选，`https://openrouter.ai/api/v1` | 公开配置 | OpenRouter API 基址；只允许 API 读取。 |
 | `OPENROUTER_TIMEOUT_MS` | 可选，12,000 | 公开配置 | 单次评判硬超时，实现限制 1,000–30,000 ms；超时释放数据库租约且不记学习错误。 |
-| `OPENROUTER_ASSESSMENTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户持久化的一分钟新评判上限；UUID 幂等重放不重复调用或计数。 |
-| `OPENROUTER_ASSESSMENTS_PER_DAY` | 可选，200 | 受限配置 | 每用户滚动 24 小时新评判上限。 |
+| `OPENROUTER_ASSESSMENTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户一分钟真实 provider 评判上限；确定性完全匹配、UUID 幂等重放和仅领取租约都不计数。 |
+| `OPENROUTER_ASSESSMENTS_PER_DAY` | 可选，500 | 受限配置 | 每用户滚动 24 小时真实 provider 评判上限；达到上限时响应包含预计恢复秒数。 |
 | `OPENROUTER_FAKE` | **仅测试**，默认 false | 测试配置 | 自动化用确定性 exact-match adapter；production 进程显式拒绝 true，不能作为真实供应商证据。 |
 | `COURSE_MARKET_DAILY_PUBLISH_LIMIT` | 可选，5 | 公开配置 | 每用户本地日期上架次数限制。 |
 | `COURSE_REPORT_DAILY_LIMIT` | 可选，20 | 公开配置 | 每用户本地日期举报次数限制。 |
@@ -80,6 +80,8 @@
 | `COURSE_MARKET_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | 逗号分隔的 Supabase user UUID；授权隐藏/恢复/撤回市场版本，应纳入审批与轮换。 |
 
 所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*`、timeout 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
+
+`OPENROUTER_ASSESSMENTS_PER_DAY=500` 是仓库 `Unreleased` 的默认值和生产环境安装脚本目标值；修改本文或 `.env.example` 不会改写正在运行的服务器。生产在应用/0027–0028 受保护发布并原子更新 `/opt/nalanda/.env` 前仍按上一 release 的显式值运行，发布报告必须单独核对容器内生效值且不得打印 key。
 
 ## 4. FastAPI AI 运行时变量
 

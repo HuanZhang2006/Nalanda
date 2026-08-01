@@ -54,6 +54,10 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0022_verify_learning_spelling_unicode_normalization.sql` | 断言全角大写、Unicode 空白、撇号/连字符变体和标点保留语义，并验证 helper/七参数 RPC 只允许 service role |
 | `0023_learning_spelling_punctuation_tolerance.sql` | 新增内部标点移除/匹配 helper，以原文、移除标点、标点视为空格三路比较替换七参数权威拼写判定；不改变 HTTP/attempt/进度契约 |
 | `0024_verify_learning_spelling_punctuation_tolerance.sql` | 断言仅标点差异通过、真实字母/空格错误失败、RPC 确实使用 matcher，以及新 helper/attempt 的精确权限 |
+| `0025_learning_session_cancel.sql` | 增加 owner-only、行锁、revision 推进且保留历史事实的幂等取消学习会话 RPC |
+| `0026_verify_learning_session_cancel.sql` | 断言取消 RPC 的 owner/并发边界与 service-role-only 精确权限 |
+| `0027_learning_exam_retry_quota.sql` | 增加 exam mode/第一轮正确率事实、拼写轮末确认与重排、考试通过后的单元熟练投影，并把语义评判 claim 与真实 provider 配额预留拆开 |
+| `0028_verify_learning_exam_retry_quota.sql` | 断言 exam constraints、`quota_counted`、三组 trigger 及考试/轮次/配额 RPC 的 service-role-only 权限 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
@@ -105,5 +109,6 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 - 0019–0020 已于 2026-07-28 取得只读 plan `30366334157`、加密恢复点/apply `30367263486` 与最终应用发布 `30374301472` 证据。评判表不授予客户端任何权限，所有新 RPC 已由双用户 RLS 负向测试和 0020 精确断言同时证明；生产已到 0020。
 - 0021–0022 已于 2026-07-31 取得只读 plan `30616030488`、加密恢复 artifact `8787805291`、受保护 apply/deploy `30616540480` 和 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 证据。真实一次性 Supabase E2E 验证全角/半角全大写不增加错误或候补，0022 断言 helper/RPC 对客户端不可执行；生产已到 0022。
 - 0023–0024 已于 2026-07-31 通过 PR run `30620350644`、main run `30620879282`、只读 plan `30623522232` 和受保护 apply/deploy `30624104943` 发布。apply 前保留恢复 artifact `8790816378`；远端 history、0024 自验证、database lint 与空 dry-run 均通过，生产已到 0024。
+- 0025–0028 当前只存在于仓库 `Unreleased`：0025–0026 用于显式取消 active 会话，0027–0028 用于考试/拼写轮末确认/真实 provider 配额预留及验证。生产仍是 0024，必须经过独立只读 plan、恢复点和受保护 apply 才能改变此状态。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。
