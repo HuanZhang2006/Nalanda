@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260801000028_verify_learning_exam_retry_quota.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 先通过只读 plan `30616030488` / 受保护 apply `30616540480` 同步到 0022，再通过只读 plan `30623522232` / 受保护 apply `30624104943` 同步到 0024；0025–0028 当前仅在仓库 `Unreleased`，因此仓库结构领先生产四项迁移。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260801000028_verify_learning_exam_retry_quota.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 同步到 0024，并于 2026-08-01 通过只读 plan `30706279006` / 受保护 apply `30706731292` 同步到 0028；当前仓库与生产结构一致。
 
 - **仓库与生产结构**：32 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
