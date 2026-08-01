@@ -12,15 +12,50 @@ type QueueState = {
   nextQueue: string[];
   cursor: number;
   round: number;
+  awaitingRetryConfirmation: boolean;
+  retrySummaryIds: string[];
+  retryFromRound: number | null;
 };
 
 export function readQueueState(session: LearningSession): QueueState {
-  const raw = session.state as { queue?: unknown; nextQueue?: unknown; cursor?: unknown; round?: unknown };
+  const raw = session.state as {
+    queue?: unknown;
+    nextQueue?: unknown;
+    cursor?: unknown;
+    round?: unknown;
+    awaitingRetryConfirmation?: unknown;
+    retrySummaryIds?: unknown;
+    retryFromRound?: unknown;
+  };
   return {
     queue: Array.isArray(raw.queue) ? raw.queue.map(String) : session.items.map((item) => item.word.id),
     nextQueue: Array.isArray(raw.nextQueue) ? raw.nextQueue.map(String) : [],
     cursor: Math.max(0, Number(raw.cursor || 0)),
     round: Math.max(1, Number(raw.round || 1)),
+    awaitingRetryConfirmation: raw.awaitingRetryConfirmation === true,
+    retrySummaryIds: Array.isArray(raw.retrySummaryIds)
+      ? raw.retrySummaryIds.map(String) : [],
+    retryFromRound: Number.isSafeInteger(Number(raw.retryFromRound))
+      && Number(raw.retryFromRound) > 0 ? Number(raw.retryFromRound) : null,
+  };
+}
+
+export function readExamState(session: LearningSession) {
+  const raw = session.state as Record<string, unknown>;
+  const total = Math.max(1, Number(raw.examTotal || session.items.length || 1));
+  const answered = Math.max(0, Math.min(total, Number(raw.examAnswered || 0)));
+  const correct = Math.max(0, Math.min(answered, Number(raw.examCorrect || 0)));
+  const accuracyPercent = answered > 0
+    ? Math.round(correct / answered * 1_000) / 10
+    : 0;
+  return {
+    total,
+    answered,
+    correct,
+    accuracyPercent,
+    requiredPercent: Math.max(1, Math.min(100, Number(raw.examRequiredPercent || 90))),
+    firstRoundComplete: raw.examFirstRoundComplete === true,
+    passed: typeof raw.examPassed === "boolean" ? raw.examPassed : null,
   };
 }
 
@@ -126,6 +161,9 @@ export function predictAttempt(
   let cursor = q.cursor;
   let nextQueue = [...q.nextQueue];
   let round = q.round;
+  let retrySummaryIds: string[] = [];
+  let retryFromRound: number | null = null;
+  let awaitingRetryConfirmation = false;
   const activeWord = queue[cursor];
 
   if (request.skill === "pronunciation") {
@@ -146,8 +184,29 @@ export function predictAttempt(
   } : item);
   if (!correct && !nextQueue.includes(request.wordId)) nextQueue.push(request.wordId);
 
+  let examPatch: Record<string, unknown> = {};
+  if (session.mode === "exam" && request.skill === "spelling" && round === 1) {
+    const exam = readExamState(session);
+    const answered = exam.answered + 1;
+    const correctCount = exam.correct + (correct ? 1 : 0);
+    const accuracyPercent = Math.round(correctCount / Math.max(1, answered) * 1_000) / 10;
+    examPatch = {
+      examAnswered: answered,
+      examCorrect: correctCount,
+      examAccuracyPercent: accuracyPercent,
+      examFirstRoundComplete: answered >= exam.total,
+      examPassed: answered >= exam.total
+        ? correctCount * 100 >= exam.requiredPercent * exam.total : null,
+    };
+  }
+
   if (cursor + 1 >= queue.length) {
     if (nextQueue.length) {
+      if (request.skill === "spelling") {
+        retrySummaryIds = [...nextQueue];
+        retryFromRound = round;
+        awaitingRetryConfirmation = true;
+      }
       queue = nextQueue;
       cursor = 0;
       nextQueue = [];
@@ -169,10 +228,16 @@ export function predictAttempt(
   }
   const state = {
     ...session.state,
+    ...examPatch,
     queue,
     cursor,
     nextQueue,
     round,
+    ...(awaitingRetryConfirmation ? {
+      awaitingRetryConfirmation: true,
+      retrySummaryIds,
+      retryFromRound,
+    } : {}),
   };
   const changed = items.find((item) => item.word.id === request.wordId)!;
   const patch: LearningSessionPatch = {

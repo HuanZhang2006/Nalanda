@@ -33,12 +33,13 @@ function quotaPausedAudioCount(manifest: LearningAudioManifest) {
 type PasteUnit = { id: string; name: string; isSystem: boolean; text: string; errors: VocabularyParseError[] };
 type SessionPicker = {
   course: LearningCourseDetail;
-  mode: "initial" | "review";
+  mode: "initial" | "review" | "exam";
   unitId: string;
   skills: LearningSkill[];
   scope: LearningScope;
   scheduleId?: string;
   spellingOptions: LearningSpellingOptions;
+  examPassPercent: number;
 };
 const defaultSpellingOptions = (): LearningSpellingOptions => ({
   timeLimitEnabled: false,
@@ -165,9 +166,9 @@ function Wizard({ onCancel, onReady }: { onCancel: () => void; onReady: (value: 
   </div>;
 }
 
-function CourseCard({ course, countMode, setCountMode, onStart, onReview, onEdit, onRename, onShare, onRevokeShare, onPublish, onDelete }: {
+function CourseCard({ course, countMode, setCountMode, onStart, onReview, onExam, onEdit, onRename, onShare, onRevokeShare, onPublish, onDelete }: {
   course: LearningCourseSummary; countMode: boolean; setCountMode: (value: boolean) => void;
-  onStart: () => void; onReview: () => void; onEdit: () => void; onRename: () => void; onShare: () => void; onRevokeShare: () => void; onPublish: () => void; onDelete: () => void;
+  onStart: () => void; onReview: () => void; onExam: () => void; onEdit: () => void; onRename: () => void; onShare: () => void; onRevokeShare: () => void; onPublish: () => void; onDelete: () => void;
 }) {
   const { l } = useI18n();
   return <article className="card hoverable course-card"><div className="row between"><span className="chip chip-accent">{l("English vocabulary", "英语单词")}</span>{course.originAuthorName && <span className="faint" style={{ fontSize: 11 }}>{l(`From ${course.originAuthorName}`, `来自 ${course.originAuthorName}`)}</span>}</div>
@@ -176,7 +177,7 @@ function CourseCard({ course, countMode, setCountMode, onStart, onReview, onEdit
       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") setCountMode(!countMode); }}><div className="row between"><b>{countMode ? `${course.learnedCount}/${course.wordCount}` : `${course.progressPercent}%`}</b><span className="faint">{countMode ? l("Learned / total", "已学习/全部") : l("Mastery", "熟练度")}</span></div>
       <div className="bar mt-8"><i style={{ width: `${course.progressPercent}%` }} /></div></div>
     <div className="course-card-actions"><button className="btn btn-primary btn-sm" onClick={onStart}>{course.activeSessionId ? l("Continue learning", "继续学习") : l("Start learning", "开始学习")}</button>
-      <button className="btn btn-sm" onClick={onReview}>{l("Review", "复习")}</button><button className="btn btn-sm" onClick={onEdit}>{l("Edit", "编辑")}</button>
+      <button className="btn btn-sm" onClick={onReview}>{l("Review", "复习")}</button><button className="btn btn-sm" onClick={onExam}>{l("Exam", "考试")}</button><button className="btn btn-sm" onClick={onEdit}>{l("Edit", "编辑")}</button>
       <button className="btn btn-sm" onClick={onRename}>{l("Rename", "改名")}</button><button className="btn btn-sm" onClick={onShare} disabled={!course.canRepublish}>{l("Share", "分享")}</button>
       <button className="btn btn-sm" onClick={onRevokeShare} disabled={!course.canRepublish}>{l("Revoke share", "撤销分享")}</button>
       <button className="btn btn-sm" onClick={onPublish} disabled={!course.canRepublish}>{l("Publish", "上架市场")}</button><button className="btn btn-sm" onClick={onDelete}>{l("Delete", "删除")}</button></div>
@@ -210,7 +211,7 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
     if (!initialCourseId || !initialUnitId) return;
     coursesApi.detail(initialCourseId).then((course) => setPicker({ course, mode: "review", unitId: initialUnitId,
       skills: ["pronunciation", "translation", "spelling"], scope: "unlearned", scheduleId: initialScheduleId,
-      spellingOptions: defaultSpellingOptions() })).catch((caught) => setError(apiMessage(caught, l("Could not open the scheduled review.", "无法打开日程复习"))));
+      spellingOptions: defaultSpellingOptions(), examPassPercent: 90 })).catch((caught) => setError(apiMessage(caught, l("Could not open the scheduled review.", "无法打开日程复习"))));
   }, [initialCourseId, initialUnitId, initialScheduleId, l]);
 
   const openStart = async (summary: LearningCourseSummary) => {
@@ -219,20 +220,37 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
       const course = await coursesApi.detail(summary.id);
       setPicker({ course, mode: "initial", unitId: course.units[0].id,
         skills: ["pronunciation", "translation", "spelling"], scope: "all",
-        spellingOptions: defaultSpellingOptions() });
+        spellingOptions: defaultSpellingOptions(), examPassPercent: 90 });
     } catch (caught) { setError(apiMessage(caught, l("Could not start learning.", "无法开始学习"))); }
   };
   const openReview = async (summary: LearningCourseSummary) => {
     try { const course = await coursesApi.detail(summary.id); setPicker({ course, mode: "review", unitId: course.units[0].id,
       skills: ["pronunciation", "translation", "spelling"], scope: "unlearned",
-      spellingOptions: defaultSpellingOptions() }); }
+      spellingOptions: defaultSpellingOptions(), examPassPercent: 90 }); }
     catch (caught) { setError(apiMessage(caught, l("Could not start review.", "无法开始复习"))); }
+  };
+  const openExam = async (summary: LearningCourseSummary) => {
+    try {
+      const course = await coursesApi.detail(summary.id);
+      setPicker({
+        course,
+        mode: "exam",
+        unitId: course.units[0].id,
+        skills: ["spelling"],
+        scope: "all",
+        spellingOptions: { ...defaultSpellingOptions(), translationFirst: true },
+        examPassPercent: 90,
+      });
+    } catch (caught) {
+      setError(apiMessage(caught, l("Could not start the exam.", "无法开始考试")));
+    }
   };
   const startPicked = async () => {
     if (!picker || !picker.skills.length) return;
     try { const session = await coursesApi.startSession(picker.course.id, { unitId: picker.unitId, mode: picker.mode,
       skills: picker.skills, scope: picker.mode === "initial" ? "all" : picker.scope,
-      scheduleId: picker.scheduleId, spellingOptions: picker.spellingOptions }); setPicker(null); setSessionId(session.id); }
+      scheduleId: picker.scheduleId, spellingOptions: picker.spellingOptions,
+      examPassPercent: picker.mode === "exam" ? picker.examPassPercent : undefined }); setPicker(null); setSessionId(session.id); }
     catch (caught) { setError(apiMessage(caught, l("Could not start this session.", "无法开始本次会话"))); }
   };
 
@@ -309,14 +327,14 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
       <h2 className="serif" style={{ fontSize: 24 }}>{l("No learning courses yet", "还没有学习课程")}</h2><p className="muted mt-8">{l("Start with an English vocabulary list. Learning, review, and mastery stay recorded here.", "从一份英语词表开始，学习、复习和熟练度会在这里持续记录。")}</p>
       <button className="btn btn-primary mt-24" onClick={() => setWizard(true)}>{l("Create your first course", "创建第一门课程")}</button></div>
       : <div className="course-list">{courses.map((course) => <CourseCard key={course.id} course={course} countMode={Boolean(countModes[course.id])}
-        setCountMode={(value) => setCountModes((current) => ({ ...current, [course.id]: value }))} onStart={() => void openStart(course)} onReview={() => void openReview(course)} onEdit={() => void edit(course.id)}
+        setCountMode={(value) => setCountModes((current) => ({ ...current, [course.id]: value }))} onStart={() => void openStart(course)} onReview={() => void openReview(course)} onExam={() => void openExam(course)} onEdit={() => void edit(course.id)}
         onRename={async () => { const title = window.prompt(l("New course name", "新的课程名称"), course.title)?.trim(); if (!title || title === course.title) return; try { await coursesApi.rename(course.id, title); toast(l("Course renamed", "课程已改名"), "check"); await load(); } catch (caught) { setError(apiMessage(caught, l("Rename failed.", "改名失败"))); } }}
         onShare={async () => { try { const share = await coursesApi.share(course.id); await navigator.clipboard?.writeText(share.url).catch(() => undefined); window.prompt(l("Share link (copy attempted)", "分享链接（已尝试复制）"), share.url); } catch (caught) { setError(apiMessage(caught, l("Could not create a share link.", "无法创建分享链接"))); } }}
         onRevokeShare={async () => { try { const active = await coursesApi.shares(course.id); if (!active.length) return toast(l("There are no active share links.", "当前没有有效分享链接"), "info"); if (!window.confirm(l("Revoke the current share link? Anyone with the old link will no longer be able to preview or clone it.", "撤销当前分享链接？持有旧链接的人将无法继续预览或克隆。"))) return; await coursesApi.revokeShare(active[0].id); toast(l("Share link revoked", "分享链接已撤销"), "check"); } catch (caught) { setError(apiMessage(caught, l("Could not revoke the share link.", "无法撤销分享链接"))); } }}
         onPublish={async () => { const description = window.prompt(l("Course description (500 characters maximum)", "课程简介（最多 500 字）"), "") ?? null; if (description == null || !window.confirm(l("I confirm that I have the right to publish this text and agree to offer the course for free.", "我确认拥有这些文本内容的发布权利，并同意课程免费提供。"))) return; try { await coursesApi.publish(course.id, description); toast(l("Course version published as free", "课程版本已上架，市场中显示为免费"), "check"); } catch (caught) { setError(apiMessage(caught, l("Could not publish the course.", "无法上架课程"))); } }}
         onDelete={async () => { if (!window.confirm(l(`Delete “${course.title}”? Its learning history and review schedules will be deleted. Awarded points and badge history are retained.`, `删除“${course.title}”？学习记录和复习计划会一并删除，已发放积分与徽章历史保留。`))) return; try { await coursesApi.remove(course.id); toast(l("Course deleted", "课程已删除"), "check"); await load(); } catch (caught) { setError(apiMessage(caught, l("Could not delete the course.", "无法删除课程"))); } }} />)}</div>}
     {picker && <div className="scrim" onMouseDown={(event) => event.target === event.currentTarget && setPicker(null)}><div className="modal"><div className="modal-pad">
-      <div className="row between"><h2>{picker.mode === "initial" ? l("Choose a unit", "选择学习单元") : l("Start review", "开始复习")}</h2><button className="icon-btn" aria-label={l("Close", "关闭")} onClick={() => setPicker(null)}>×</button></div>
+      <div className="row between"><h2>{picker.mode === "initial" ? l("Choose a unit", "选择学习单元") : picker.mode === "exam" ? l("Start an exam", "开始考试") : l("Start review", "开始复习")}</h2><button className="icon-btn" aria-label={l("Close", "关闭")} onClick={() => setPicker(null)}>×</button></div>
       <label className="course-label">{l("Unit", "单元")}</label><select className="course-form-field" value={picker.unitId} onChange={(event) => setPicker({ ...picker, unitId: event.target.value })}>{picker.course.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.isSystem ? l("All vocabulary", "全部词表") : unit.name} · {l(`${unit.words.length} words`, `${unit.words.length} 词`)}</option>)}</select>
       <div className="row wrap-flex mt-12"><button className="btn btn-sm" onClick={() => void downloadPickedUnit()}>{pickerAudio.running
         ? l("Stop audio download", "停止音频下载")
@@ -331,6 +349,12 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
         onChange={(event) => setPicker({ ...picker, skills: event.target.checked ? [...picker.skills, skill] : picker.skills.filter((value) => value !== skill) })} /> {skill === "pronunciation" ? l("Pronunciation match", "发音匹配") : skill === "translation" ? l("Translation", "翻译") : l("Spelling", "拼写")}</label>)}</div>
         <div className="course-label">{l("Scope", "范围")}</div><div className="row"><label className="chip chip-outline"><input type="radio" checked={picker.scope === "all"} onChange={() => setPicker({ ...picker, scope: "all" })} /> {l("All words", "全部单词")}</label>
           <label className="chip chip-outline"><input type="radio" checked={picker.scope === "unlearned"} onChange={() => setPicker({ ...picker, scope: "unlearned" })} /> {l("Not yet mastered", "尚未熟练")}</label></div></>}
+      {picker.mode === "exam" && <div className="course-feedback mt-16">{l(
+        "All words in this unit are shuffled. The exam asks for a typed translation and then the English spelling. First-round accuracy decides whether the exam passes; retry rounds are still required for missed words.",
+        "本单元全部词汇会打乱顺序，先键入翻译，再拼写英文。是否通过只取决于第一轮正确率；错词仍需完成后续候补轮。",
+      )}<label className="course-setting-detail mt-12"><span>{l("Required accuracy (%)", "要求正确率（%）")}</span><input className="course-form-field" type="number" min={1} max={100} step={1}
+        aria-label={l("Exam required accuracy", "考试要求正确率")} value={picker.examPassPercent}
+        onChange={(event) => setPicker({ ...picker, examPassPercent: Number(event.target.value) })} /></label></div>}
       {picker.skills.includes("spelling") && <fieldset className="course-spelling-settings mt-16">
         <legend>{l("Spelling options", "拼写测试设置")}</legend>
         <label className="course-setting-row"><input type="checkbox" checked={picker.spellingOptions.timeLimitEnabled}
@@ -346,6 +370,7 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
             } })} />
         </label>}
         <label className="course-setting-row"><input type="checkbox" checked={picker.spellingOptions.translationFirst}
+          disabled={picker.mode === "exam"}
           onChange={(event) => setPicker({ ...picker, spellingOptions: { ...picker.spellingOptions, translationFirst: event.target.checked } })} />
           <span>{l("Test a typed translation before spelling", "拼写前先测试键入翻译")}</span></label>
         <p className="faint mt-8">{l(
@@ -354,11 +379,12 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
         )}</p>
       </fieldset>}
       <div className="row mt-24" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPicker(null)}>{l("Cancel", "取消")}</button><button className="btn btn-primary" disabled={!picker.skills.length
+        || (picker.mode === "exam" && (!Number.isSafeInteger(picker.examPassPercent) || picker.examPassPercent < 1 || picker.examPassPercent > 100))
         || (picker.spellingOptions.timeLimitEnabled && (
           !Number.isSafeInteger(picker.spellingOptions.timeLimitSeconds)
           || picker.spellingOptions.timeLimitSeconds < 3
           || picker.spellingOptions.timeLimitSeconds > 300
-        ))} onClick={() => void startPicked()}>{picker.mode === "initial" ? l("Start learning", "开始学习") : l("Start review", "开始复习")}</button></div>
+        ))} onClick={() => void startPicked()}>{picker.mode === "initial" ? l("Start learning", "开始学习") : picker.mode === "exam" ? l("Start exam", "开始考试") : l("Start review", "开始复习")}</button></div>
     </div></div></div>}
   </div>;
 }

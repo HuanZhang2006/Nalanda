@@ -141,6 +141,22 @@ export async function clearPendingAttemptsForUser(userId: string) {
     .map((entry) => removePendingAttempt(entry.attemptId)));
 }
 
+export async function clearPendingAttemptsForSession(userId: string, sessionId: string) {
+  [...memory.values()].forEach((entry) => {
+    if (entry.userId === userId && entry.sessionId === sessionId) {
+      memory.delete(entry.attemptId);
+    }
+  });
+  const entries = await transaction<PendingLearningAttempt[]>("readonly", (store, done) => {
+    const request = store.getAll();
+    request.onsuccess = () => done(request.result as PendingLearningAttempt[]);
+    request.onerror = () => done([]);
+  }, () => []);
+  await Promise.all(entries
+    .filter((entry) => entry.userId === userId && entry.sessionId === sessionId)
+    .map((entry) => removePendingAttempt(entry.attemptId)));
+}
+
 export function retryDelay(retryCount: number) {
   const base = Math.min(30_000, 1_000 * (2 ** Math.min(5, retryCount)));
   return base + Math.floor(Math.random() * Math.max(1, base * 0.2));

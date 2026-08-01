@@ -131,7 +131,7 @@ export class OpenRouterTranslationService {
       endpoint,
       timeoutMs: boundedEnvironmentNumber("OPENROUTER_TIMEOUT_MS", 12_000, 1_000, 30_000),
       minuteLimit: positiveEnvironmentNumber("OPENROUTER_ASSESSMENTS_PER_MINUTE", 20, true),
-      dayLimit: positiveEnvironmentNumber("OPENROUTER_ASSESSMENTS_PER_DAY", 200, true),
+      dayLimit: positiveEnvironmentNumber("OPENROUTER_ASSESSMENTS_PER_DAY", 500, true),
     };
   }
 
@@ -286,8 +286,6 @@ export class OpenRouterTranslationService {
       answerHash,
       leaseToken,
       Math.ceil(config.timeoutMs / 1_000) + 10,
-      config.minuteLimit,
-      config.dayLimit,
     );
     if (claim.conflict) {
       throw new HttpException({
@@ -324,6 +322,15 @@ export class OpenRouterTranslationService {
       };
     } else {
       try {
+        if (!config.fake) {
+          await this.learning.reserveSpellingTranslationQuota(
+            userId,
+            attemptId,
+            leaseToken,
+            config.minuteLimit,
+            config.dayLimit,
+          );
+        }
         decision = await this.provider(
           String(claim.term),
           translations,

@@ -27,6 +27,7 @@ test("production OpenRouter installer preserves unrelated values and replaces ma
   assert.match(content, /SUPABASE_URL=https:\/\/example\.supabase\.co/);
   assert.match(content, /FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true/);
   assert.match(content, /OPENROUTER_MODEL=google\/gemma-4-26b-a4b-it:free/);
+  assert.match(content, /OPENROUTER_ASSESSMENTS_PER_DAY=500/);
   assert.equal(content.match(/^OPENROUTER_API_KEY=/gm)?.length, 1);
   assert.ok(content.includes(`OPENROUTER_API_KEY=${testKey}`));
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);

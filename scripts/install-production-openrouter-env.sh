@@ -26,7 +26,7 @@ awk '
   printf 'OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n'
   printf 'OPENROUTER_TIMEOUT_MS=12000\n'
   printf 'OPENROUTER_ASSESSMENTS_PER_MINUTE=20\n'
-  printf 'OPENROUTER_ASSESSMENTS_PER_DAY=200\n'
+  printf 'OPENROUTER_ASSESSMENTS_PER_DAY=500\n'
   printf 'OPENROUTER_FAKE=false\n'
 } >> "$temporary"
 chmod 600 "$temporary"

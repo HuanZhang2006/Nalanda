@@ -40,6 +40,7 @@ export class StartLearningSessionDto implements StartLearningSessionRequest {
   scope?: LearningScope;
   scheduleId?: string;
   spellingOptions?: LearningSpellingOptions;
+  examPassPercent?: number;
 }
 
 export class LearningAttemptDto implements LearningAttemptRequest {

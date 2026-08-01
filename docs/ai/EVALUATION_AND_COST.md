@@ -78,7 +78,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 语义质量门仍须用授权合成/专家标注集计算 precision、recall、false-accept/false-reject，并按单义/多义、词/短语和中英文分层。高风险错误是把无关翻译判对；当前真实 gate 的两条样本（同义为 true、无关为 false）只证明 endpoint/schema/key 当前可用，不代表质量 baseline，因此功能必须保留独立紧急 flag，不能对外承诺准确率。
 
-运行时记录脱敏 provider/model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。确定性完全匹配记录零 token，便于与真实 OpenRouter 调用分开统计。默认 20 次/用户/分钟、滚动 24 小时 200 次，整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。超时/供应商错误不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
+运行时记录脱敏 provider/model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。0027 把幂等 claim 与 provider-backed assessment reservation 分开：确定性完全匹配、已完成重放和未发出外部请求的租约都保持 `quota_counted=false/quota_counted_at=null`，仅在真实 OpenRouter 请求发出前按用户原子写入 true/当前时间；滚动窗口不再误用较早的 assessment 创建时间。同一 UUID 的网络/供应商重试不重复占产品额度。默认 20 次/用户/分钟、滚动 24 小时 500 次；429 携带精确恢复秒数。整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。真实请求超时/供应商错误仍保留该次额度事实，但不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
 
 2026-07-28 的最终真实 gate 使用固定 `google/gemma-4-26b-a4b-it:free` 返回 1,365 ms、253 prompt tokens、27 completion tokens、280 total tokens；同一发布中的真实 Courses API 完全匹配路径持久记录 `nalanda-normalized-exact/normalized-exact-v1`、0 token 与 `replayed=true`。此前同一发布链有一次 12 秒 provider timeout 并按设计阻止候选激活，重试成功不能替代持续延迟/可用率或语义质量统计。
 

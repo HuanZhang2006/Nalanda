@@ -440,6 +440,31 @@
   font-style: normal;
 }
 
+.course-retry-summary {
+  width: min(100%, 820px);
+  text-align: center;
+}
+
+.course-retry-word-list {
+  display: grid;
+  gap: 8px;
+  width: 100%;
+}
+
+.course-retry-word {
+  display: grid;
+  grid-template-columns: auto minmax(150px, .75fr) minmax(180px, 1.25fr);
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+  text-align: left;
+}
+
+.course-retry-word .course-ipa { margin-top: 3px; }
+
 .course-diff-bad { background: color-mix(in srgb, var(--pink) 25%, transparent); color: var(--pink); text-decoration: underline; }
 .course-phonemes { display: flex; gap: 5px; flex-wrap: wrap; justify-content: center; margin-top: 10px; }
 .course-phoneme { padding: 4px 7px; border-radius: 7px; background: var(--shade-2); font-family: var(--font-mono); }
@@ -469,6 +494,8 @@
   .course-result-grid { grid-template-columns: 1fr; }
   .course-result-note { grid-template-columns: 1fr; }
   .course-result-note small { grid-column: 1; }
+  .course-retry-word { grid-template-columns: auto minmax(0, 1fr); }
+  .course-retry-word .course-result-translations { grid-column: 2; }
 }
 
 @media (prefers-reduced-motion: reduce) {

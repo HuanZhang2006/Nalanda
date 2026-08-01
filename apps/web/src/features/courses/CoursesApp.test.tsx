@@ -230,6 +230,60 @@ describe("Courses React UI", () => {
     });
   });
 
+  it("starts exam mode with a configurable 90% default and a forced typed-translation gate", async () => {
+    setLocale("en", { persist: false });
+    const summary = { id: ids[0], title: "Exam course", category: "english_vocabulary", hasUnits: true, locale: "en-US", unitCount: 1,
+      wordCount: 4, learnedCount: 0, progressPercent: 0, activeSessionId: null, canRepublish: true,
+      originPublicationId: null, originShareId: null, originAuthorName: null, updatedAt: new Date().toISOString() };
+    const words = ["apple", "pear", "orange", "banana"].map((term, index) => ({ id: ids[index + 2], term, normalizedTerm: term,
+      translations: [`translation-${index}`], ipa: null, position: index, progress }));
+    const detail = { ...summary, units: [{ id: ids[1], name: "Unit 1", position: 0, isSystem: false, words }] };
+    const started = { id: ids[7], courseId: ids[0], unitId: ids[1], mode: "exam", scope: "all",
+      selectedSkills: ["spelling"], stage: "spelling", active: true, revision: 0,
+      spellingOptions: { timeLimitEnabled: false, timeLimitSeconds: 20, translationFirst: true },
+      spellingTranslationAssessment: null,
+      state: { queue: words.map((word) => word.id), cursor: 0, nextQueue: [], round: 1,
+        examRequiredPercent: 95, examTotal: 4, examAnswered: 0, examCorrect: 0 },
+      items: words.map((word, position) => ({ word, position, recognitionSeen: false,
+        pronunciationPassed: false, translationPassed: false, spellingPassed: false, wrongCount: 0 })) };
+    let startBody: Record<string, any> | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+      const path = String(input);
+      if (path.endsWith(`/learning-courses/${ids[0]}/sessions`)) {
+        startBody = JSON.parse(String(init.body));
+        return response(started, 201);
+      }
+      if (path.endsWith(`/learning-sessions/${ids[7]}`)) return response(started);
+      if (path.endsWith(`/learning-courses/${ids[0]}`)) return response(detail);
+      if (path.includes("/audio-prewarm") || path.includes("/audio-manifest")) {
+        return response({ unitId: ids[1], total: 4, ready: 0, pending: 4, failed: 0, synthesisVersion: "1",
+          assets: words.map((word) => ({ wordId: word.id, cacheKey: word.id, status: "pending",
+            audioUrl: `/api/pronunciation/audio/${word.id}`, lastErrorCode: null })) });
+      }
+      return response([summary]);
+    }));
+
+    await settle(() => root.render(<CoursesApp />));
+    await settle(() => clickText(container, "Exam"));
+    const modal = container.querySelector(".modal")!;
+    const required = modal.querySelector<HTMLInputElement>('[aria-label="Exam required accuracy"]')!;
+    const translationGate = [...modal.querySelectorAll("label")].find((label) =>
+      label.textContent?.includes("Test a typed translation"))!.querySelector("input") as HTMLInputElement;
+    expect(required.value).toBe("90");
+    expect(translationGate.checked).toBe(true);
+    expect(translationGate.disabled).toBe(true);
+    await settle(() => setValue(required, "95"));
+    await settle(() => clickText(modal, "Start exam"));
+
+    expect(startBody).toMatchObject({
+      mode: "exam",
+      skills: ["spelling"],
+      scope: "all",
+      examPassPercent: 95,
+      spellingOptions: { translationFirst: true },
+    });
+  });
+
   it("toggles mastery counts and resumes the unique persisted session", async () => {
     setLocale("zh");
     const summary = { id: ids[0], title: "Resume me", category: "english_vocabulary", hasUnits: false, locale: "en-US", unitCount: 1,
