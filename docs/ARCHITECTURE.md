@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-07-31。生产数据库已有受保护发布证据到 0024；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学、可选限时拼写、OpenRouter 语义翻译前测、Web/数据库一致的 Unicode 拼写归一化、仅标点差异容错和 Japan East Azure Speech 已在线。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-01。生产数据库已有受保护发布证据到 0028；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学与显式取消、可选限时拼写、OpenRouter 语义翻译前测、轮末错题复盘、考试模式、Web/数据库一致的 Unicode 拼写归一化、仅标点差异容错和 Japan East Azure Speech 已在线。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
@@ -40,7 +40,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018，2026-07-28 同步至 0020，并于 2026-07-31 经两轮独立发布依次同步至 0022 和 0024。远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言；0019 给 session 增加 `spelling_options` 并建立只存答案 hash 的语义评判事实表与 service-only RPC，0020 做结构/RLS/grant 断言；0021 让七参数权威拼写 RPC 对用户答案与课程原始 `term` 使用同一 NFKC/Unicode 空白/ASCII case 归一化，0022 验证结果和 service-role-only 权限；0023 加入仅标点差异 matcher 并替换七参数权威路径，0024 验证比较边界和精确权限。生产事实源现为 0024。
+生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018，2026-07-28 同步至 0020，2026-07-31 同步至 0024，并于 2026-08-01 同步至 0028。远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言；0019–0020 增加 `spelling_options`、hash-only 语义评判事实与 service-only RPC；0021–0022 统一 NFKC/Unicode 空白/ASCII case 拼写归一化；0023–0024 加入仅标点差异 matcher 与验证；0025–0026 增加显式取消 RPC；0027–0028 增加考试事实、轮末确认、真实 provider 配额预留和精确权限断言。生产事实源现为 0028。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -97,7 +97,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0024。仓库 `Unreleased` 0025–0028 另含显式取消、拼写轮末复盘、考试模式及真实 provider 配额预留，尚未成为生产事实 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0028，含显式取消、拼写轮末复盘、考试模式及真实 provider 配额预留 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |

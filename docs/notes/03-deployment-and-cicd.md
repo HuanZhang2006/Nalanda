@@ -183,6 +183,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 固定模型返回 2,790 ms、253/27/280 tokens；候选 Courses API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。
 - release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` 健康激活。独立公网复核：Web 200 且返回 React root，`/api/health` 为 `status=ok`、`deps.supabase=ok`，匿名 `/api/me` 为 401。没有使用真实用户会话在生产提交拼写答案；生产迁移自验证与一次性真实 Supabase E2E 是本次判定行为证据。
 
+### 2026-08-01 · 0025–0028 取消、轮末复盘、考试与滚动配额
+
+- PR [#40](https://github.com/1590703336/Nalanda/pull/40) 合入 main SHA `93354a56044470fb5d2b1fd6aeabcf82f459bb52`。PR run `30705662543` 与 main run `30705946921` 通过 docs/lint/typecheck、Web/API tests、build、0007→0028、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright；Playwright 的 Azure/OpenRouter 仍为 fake。
+- [只读 plan run `30706279006`](https://github.com/1590703336/Nalanda/actions/runs/30706279006) 确认生产远端完整到 0024，唯一待办为 0025–0028；恢复、apply 和应用部署全部跳过。
+- [受保护 apply/deploy run `30706731292`](https://github.com/1590703336/Nalanda/actions/runs/30706731292) 在 apply 前保留 `db-recovery-93354a56044470fb5d2b1fd6aeabcf82f459bb52`，artifact `8820657507`、约 418 KB、digest `sha256:02ea6fef5481756b17f79fbbd82c023d9c9ba085accfc1e28f9a268d24645ad9`，保留 14 天。apply 后远端 history 到 0028，结构/权限断言、remote database lint 与空 dry-run 均通过；数据库继续只采用 forward-fix。
+- 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8 和 4 个音素；真实 OpenRouter 固定模型返回 9,364 ms、253/27/280 tokens；候选 Courses API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`，并验证 exact translation replay、revision 1。
+- 不可变 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` 健康激活。独立公网复核确认 Web 返回 React root 和新构建资源，`/api/health` 为 `status=ok` 且 `deps.supabase=ok`，匿名 `/api/me` 为 401；认证 Chromium 只读检查确认现有课程卡和 90% 默认考试配置可见，未开始考试、未提交真实用户答案，因此这不是生产用户答题 E2E。
+
 ## 8. 运维速查
 
 ```bash

@@ -3,19 +3,23 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-07-31。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-08-01。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
 ## [Unreleased]
 
+当前无待发布条目。
+
+## [0.9.0] - 2026-08-01
+
 ### Added
 
 - 进行中的 Courses 学习/复习页在“暂停并返回”旁新增中英文“取消学习”。确认后会话以服务端事务显式终止且不能恢复；已确认的 attempts、错误次数和熟练度历史保留，关联复习日程不被取消，之后可以开始一条新会话。
-- 新增 0025–0026：owner 校验、行锁和 revision 推进的 `learning_cancel_session`，以及精确函数定义与 service-role-only 权限断言。生产仍以 0024 为事实基线，合并和受保护发布完成前不得把这两项写成已上线。
+- 新增 0025–0026：owner 校验、行锁和 revision 推进的 `learning_cancel_session`，以及精确函数定义与 service-role-only 权限断言。
 - 每一轮拼写结束且存在错词时，新增持久化轮末复盘页，逐项显示英文、IPA、独立翻译和读音；用户确认后，服务器才打乱错词顺序并开始下一轮。
 - 新增独立考试模式：默认要求第一轮正确率 90%，支持 1–100% 自定义、实时显示第一轮正确率，并把所选单元全部词打乱后只考“翻译前测 + 拼写”。第一轮通过且所有错题补练完成后，服务端才把该单元词汇标为已学习。
-- 新增 0027–0028：`exam` 会话、第一轮考试事实、拼写候补轮确认边界、语义评判实际供应商配额预留和对应结构/权限断言。生产仍停在 0024。
+- 新增 0027–0028：`exam` 会话、第一轮考试事实、拼写候补轮确认边界、语义评判实际供应商配额预留和对应结构/权限断言。
 
 ### Changed
 
@@ -30,6 +34,13 @@
 
 - 增加取消按钮/确认/返回、session-scoped outbox 清理、API 映射/跨 owner 隐藏、RPC 幂等取消/revision 和客户端拒绝执行的 Web、API 与真实 Supabase 回归覆盖。
 - 增加轮末错词清单/音频/手动确认、候补顺序重排、考试默认/自定义阈值、实时正确率、通过后单元熟练度，以及确定性匹配零配额、真实 provider 预留、滚动限额与权限边界的 API、jsdom、RLS 和 Playwright 覆盖。
+
+### Release
+
+- PR [#40](https://github.com/1590703336/Nalanda/pull/40) 合入 main SHA `93354a56044470fb5d2b1fd6aeabcf82f459bb52`；PR run `30705662543` 与 main run `30705946921` 均通过 quality、0007→0028、空库重建/database lint、真实本地 Supabase RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake。
+- [只读 plan run `30706279006`](https://github.com/1590703336/Nalanda/actions/runs/30706279006) 确认生产远端完整到 0024，唯一待办为 0025–0028；恢复、apply 和应用部署步骤均跳过。
+- [受保护 apply/deploy run `30706731292`](https://github.com/1590703336/Nalanda/actions/runs/30706731292) 在 apply 前保留加密 artifact `8820657507`（`db-recovery-93354a56044470fb5d2b1fd6aeabcf82f459bb52`，418 KB，digest `sha256:02ea6fef5481756b17f79fbbd82c023d9c9ba085accfc1e28f9a268d24645ad9`，工作流保留 14 天），随后把远端 history 同步到 0028，并通过结构/权限断言、remote database lint 与空 dry-run。
+- 不可变 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（9,364 ms、253/27/280 tokens）和候选 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回 React root；已登录只读检查确认既有课程/进度仍可读取，并显示默认 90% 的考试配置。未在生产提交真实用户考试答案，因此不能把该只读 UI 检查描述为生产考试流程 E2E。
 
 ## [0.8.2] - 2026-07-31
 

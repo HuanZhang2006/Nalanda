@@ -251,6 +251,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - apply 后远端 history 到 0024，0024 结果/函数定义/权限断言、remote database lint 和空 dry-run 均通过。0023 保留旧五参数答题签名及 HTTP 契约供应用回退；数据库仍只采用 forward-fix。
 - 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。未使用真实用户会话在生产提交答案，因此不能把本次记录描述为生产用户流程 E2E。
 
+### 8.9 2026-08-01 Courses 0025–0028 发布记录
+
+- 发布提交：`93354a56044470fb5d2b1fd6aeabcf82f459bb52`；PR #40 run `30705662543`、main run `30705946921` 和受保护 run `30706731292` 通过 quality、0007→0028、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。浏览器外部供应商仍为 fake。
+- [只读 plan run `30706279006`](https://github.com/1590703336/Nalanda/actions/runs/30706279006) 显示生产 0001–0024 与本地一致，唯一待办为 `20260801000025_learning_session_cancel.sql`、`20260801000026_verify_learning_session_cancel.sql`、`20260801000027_learning_exam_retry_quota.sql` 和 `20260801000028_verify_learning_exam_retry_quota.sql`；恢复、apply 与 deploy 步骤全部跳过。
+- [受保护 apply/deploy run `30706731292`](https://github.com/1590703336/Nalanda/actions/runs/30706731292) 在 apply 前创建并保留 `db-recovery-93354a56044470fb5d2b1fd6aeabcf82f459bb52`，artifact `8820657507`、约 418 KB、digest `sha256:02ea6fef5481756b17f79fbbd82c023d9c9ba085accfc1e28f9a268d24645ad9`，保留 14 天。
+- apply 后远端 history 到 0028，0026/0028 的结构、函数定义和 service-role-only 权限断言、remote database lint 与空 dry-run 均通过。0025–0028 向后兼容已发布应用；数据库仍只采用 forward-fix，不执行 down migration。
+- 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。认证 UI 检查只打开考试配置而未提交答案，不能据此声称真实生产考试 E2E。
+
 ## 9. 失败处置
 
 ### 9.1 本地重建、lint 或 RLS E2E 失败
