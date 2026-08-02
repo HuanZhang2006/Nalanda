@@ -231,6 +231,8 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 
 考试 `mode="exam"` 必须指定本人课程中的一个单元；`examPassPercent` 为 1–100 的整数，缺省 90。服务端忽略自报 `skills/scope`，固定为本单元全部词、`skills=["spelling"]`、`translationFirst=true`，并把初始队列打乱。完整第一轮的 spelling attempt 决定正确率；错题补练不会改变该分数。只有第一轮达线且全部候补轮完成，服务端才把该单元词汇标为 learned；未达线时完成补练也不会写熟练度。
 
+响应中的 `progress.learnedAt` 与列表 `learnedCount/progressPercent` 都是服务端派生事实，没有“手动标为已学习”的客户端 API。正常 review 只有在发音、翻译、拼写分别积累两个不同本地日期且会话完成后才逐词写入；通过并彻底完成的 exam 是第二条、单元级替代路径。initial 四阶段完成、recognition、创建日程、暂停/取消、离线 provisional 完成或失败考试都不写入。`PUT /api/learning-courses/:id` 修改 term/translations/IPA 时会按语义清除已经失效的能力日期和 `learnedAt`；完整规则及代码索引见 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节。
+
 0017 起，会话恢复键按服务端验证后的意图生成：首次学习使用 `course+unit+initial`，临时复习使用 `course+unit+scope+排序后的 skills`，日程复习使用 schedule ID。暂停的首次学习和另一单元复习可以同时保持 active；相同意图的并发请求仍由 advisory lock 与部分唯一索引收敛到同一 session。`activeSessionId` 是课程卡快捷入口，API 按 `lastActivityAt` 选择最近活动的一项，不代表课程只能存在一项未完成会话。
 
 active session 的 `unitId` 一定指向现存单元；若课程编辑删除了该单元，历史 session 会被终止并保留，其 `unitId` 可为 `null`，客户端应把它渲染为不可继续的历史记录。

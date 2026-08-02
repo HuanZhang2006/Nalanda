@@ -1,10 +1,10 @@
 # Courses：英语单词学习
 
 > **文档定位**
-> - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习熟练度、分享/市场及当前验收状态。
+> - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习/考试熟练度、`learned_at` 判定、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech/OpenRouter、分享市场或测试边界变化时。
-> - **状态基线**：2026-08-01。生产已发布 0011–0028；0025–0028 上线显式取消会话、拼写轮末复盘、考试模式和真实 provider 配额预留。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-08-02。生产已发布 0011–0028；0025–0028 上线显式取消会话、拼写轮末复盘、考试模式和真实 provider 配额预留。本文按当前生产代码完整记录“已学习”的两条服务端写入路径、撤销条件和代码索引；文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -55,9 +55,94 @@ Courses、学习/复习、公开分享与 Course Market 共用 Web 的 `nalanda-
 
 首次完成单元可选 3、7、15、30 天复习，默认都不选；记录进入 `learning_review_schedules`，不会创建 `study_tasks`，因此不会获得任务 +5。Schedule 的今天/本周/全部把普通任务与复习日程聚合展示，进入对应复习并完成后才标记日程完成；临时复习不影响日程。
 
-复习可组合发音、翻译、拼写并选择全部词或未熟练词。同一能力必须在至少两个不同的、尝试发生时按 Profile IANA 时区计算的本地日期中，于**已完成复习会话**最终答对才达标；同日重复不增加日期。三项均达标才写 `learned_at`。错误次数只累计真实错误，复习次数只累计包含该词且完成的复习会话。
+### 4.1 “已学习”的唯一事实和两条写入路径
 
-课程卡的百分比是 `learned_at` 词数/总词数，初始 0%；悬停、点击或聚焦进度区域切换为“已学习/总数”。首次四阶段完成度只在会话内显示，不冒充熟练度。
+`learning_word_progress.learned_at` 是词汇是否“已学习”的唯一数据库事实。课程卡、Profile 熟练词数、课程 100%、课程完成积分和课程徽章都读取该字段或读取由它派生的服务端聚合；`initial_*_passed`、会话内 passed、前端动画、考试实时正确率和 IndexedDB provisional 状态均不能替代它。排除人工高权限数据库维护后，产品运行时只有以下两条正常路径能把空值写成时间：
+
+| 路径 | 服务端必须同时满足的条件 | 写入粒度与附带事实 |
+|---|---|---|
+| 跨日期复习熟练 | 该词的发音、翻译、拼写分别在至少两个不同本地日期的**已完成** review session 中最终答对 | 逐词写 `learned_at=coalesce(learned_at,now())`；保留三组去重日期 |
+| 单元考试通过 | 完整第一轮正确率达到 1–100% 的配置阈值（默认 90%），并完成轮末复盘及全部错题候补轮，使 exam session 真正进入 `completed` | 对该 session 的全部单元词写 `initial_translation_passed=true`、`initial_spelling_passed=true` 和 `learned_at=coalesce(learned_at,now())`；不伪造发音/翻译/拼写复习日期 |
+
+两条路径都使用 `coalesce`，所以已经学习的词不会因再次达标而改写首次 `learned_at` 时间。客户端没有直接更新 progress 的端点或表权限。
+
+### 4.2 路径 A：跨日期复习熟练
+
+1. Web 从课程卡或 Schedule 以 `mode="review"` 启动会话。临时复习可选择发音、翻译、拼写中的 1–3 项以及全部词/尚未熟练词；日程复习由服务端采用日程保存的 skills/scope，忽略客户端重报值。
+2. 每次真实答题由 append-only attempt 保存当时的 `local_date`。日期在尝试发生时按 Profile 的合法 IANA timezone 计算；后来修改时区不会重写历史。
+3. 错题进入候补池。某词在当前所选能力最终答对、且整个 review session 完成后，`_learning_advance_session` 才从正确 attempts 取得该词/能力的日期，并仅在数组中尚不存在时追加到对应 `*_review_dates`。
+4. 同一天完成多场复习会增加 `review_count`，但不会产生第二个熟练日期。三种能力可以分散在不同会话、不同日期完成，不要求同一场同时选择三项；未选择的能力不会被顺带推进。
+5. 每次 review 完成后，数据库检查 `pronunciation_review_dates`、`translation_review_dates`、`spelling_review_dates` 是否都至少有两个元素；全部满足才写该词的 `learned_at`。若该会话来自 Schedule，同时原子完成对应日程。
+
+暂停、取消或遗弃的 review session 可以保留已经发生的 attempt/错误事实，但不会把本场日期加入熟练数组；供应商超时、麦克风失败也不构成正确 attempt。只创建 3/7/15/30 天日程、同日重复、只补齐一两项能力或只完成首次四阶段学习，都不会通过这条路径标为已学习。
+
+### 4.3 路径 B：通过并完成单元考试
+
+1. Web 以 `mode="exam"` 提交单元和 `examPassPercent`。NestJS 只接受 1–100 的整数（缺省 90），禁止关联 Schedule，并强制 `scope="all"`、`skills=["spelling"]`、`translationFirst=true`；用户不能把考试缩小为错词范围或关闭翻译前测。
+2. 数据库打乱本单元全部词。第一轮每个词只产生一次计分用 spelling 结果：翻译错误会直接形成错误 spelling attempt；翻译通过后，以随后的英文拼写结果计分。
+3. 服务端持续写 `examAnswered`、`examCorrect` 和仅供显示的 `examAccuracyPercent`。第一轮全部答完时，用精确整数条件 `examCorrect * 100 >= examRequiredPercent * examTotal` 固化 `examPassed`；之后的候补轮不能把失败考试改成通过，也不能改变第一轮分数。
+4. 第一轮有错词时，session 进入持久的轮末复盘状态。即使 `examPassed=true`，也必须由用户确认并把所有候补词最终答对；只有 session 从非 completed 进入 `completed` 时，`learning_session_passed_exam_progress` trigger 才调用 `_learning_apply_passed_exam_progress`，一次性标记该单元全部词。
+5. 第一轮未达阈值时，即使候补池后来全部答对、session 正常完成，trigger 也不会写 `learned_at`；用户只能开始一场新考试。
+
+考试是对正常“两天三能力”规则的显式替代路径：通过的考试不会补写 `initial_recognition_seen`、`initial_pronunciation_passed` 或任一 `*_review_dates`，但其单元词仍被课程进度视为已学习。考试本身不新增积分事件类型；如果它让一门至少含 20 个不同规范化词的课程首次达到 100%，后续仍由现有 `_refresh_learning_growth` 指纹规则幂等发放课程 +20 和相应徽章。
+
+### 4.4 不会标记、清除与保留规则
+
+| 操作或状态 | `learned_at` 结果 |
+|---|---|
+| 完成首次认词/发音/翻译/拼写四阶段 | 不写入；首次完成度只属于 initial session |
+| 点击“我认识”、一次正确答案或前端即时正确动画 | 不写入 |
+| 创建复习日程但尚未完成复习 | 不写入 |
+| 只有一个复习日期，或同一天重复多场 | 不写入第二日期，也不会提前熟练 |
+| 只达到一项或两项能力的两日期条件 | 保留已取得日期，等待剩余能力，不写入 |
+| 暂停、取消、离线待同步、revision 冲突或未完成会话 | 不以本地预测写入；只认服务器已确认并完成的事实 |
+| 考试第一轮未达阈值 | 后续补练完成也不写入 |
+| 克隆课程 | 副本 progress 从零开始，所有词 `learned_at=null` |
+| 删除课程/单词 | progress 随私有内容级联删除；已经发放的不可变 points/徽章历史按既有规则保留 |
+
+编辑现有词汇时，`learning_upsert_course` 按内容语义撤销可能已经失效的熟练事实：
+
+| 编辑内容 | 被重置的字段 |
+|---|---|
+| 英文 `term` 改变 | 四个 initial 标志、三组复习日期和 `learned_at` 全部重置 |
+| translations 改变 | `initial_translation_passed=false`、翻译复习日期清空、`learned_at=null` |
+| IPA 改变 | `initial_pronunciation_passed=false`、发音复习日期清空、`learned_at=null` |
+| 仅课程/单元改名、排序或跨单元移动 | 不重置 `learned_at` 或能力事实 |
+
+### 4.5 展示、成长投影和安全边界
+
+- `LearningService.listCourses/getCourse` 只把 `learned_at` 非空的词计入 `learnedCount`，`progressPercent=learnedCount/wordCount`；课程卡悬停、点击或键盘聚焦时在百分比与“已学习/全部”之间切换。
+- `learning_profile_summary` 按规范化英文去重统计 `learnedWords`；同一个英文存在于多门课只计一次。
+- `_refresh_learning_growth` 在复习或考试完成后重新计算课程 100%、九级徽章与课程 +20。课程至少要有 20 个不同规范化词，积分业务键仍为用户与排序后词集合的 SHA-256，同一词集合不能靠删除、重建、克隆或换完成路径重复领取。
+- `learning_word_progress` 对普通客户端只允许 owner SELECT；INSERT/UPDATE/DELETE 和内部 `SECURITY DEFINER` 函数/RPC 均未授予 public/anon/authenticated。Web 的正确率、候补池和完成画面是展示，服务端事务才是权威。
+
+### 4.6 实现代码索引
+
+全库 SQL 审计可用 `rg -n "learned_at\\s*=" supabase/migrations` 复核：正向 `coalesce(...,now())` 只位于正常复习完成和考试完成 trigger 两处，其余匹配是内容编辑清空/保留表达式。新增第三条正向写入路径时，必须同一 PR 更新本节、产品规则、ERD/API、权限断言和两类 E2E。
+
+| 层 | 文件与关键符号 | 对“已学习”负责的部分 |
+|---|---|---|
+| 共享契约 | `packages/types/src/index.ts`：`LearningSessionMode`、`VocabularyWord.progress.learnedAt`、`StartLearningSessionRequest.examPassPercent` | 固定 `initial/review/exam`、progress 与考试阈值的前后端类型 |
+| Web 课程入口/进度 | `apps/web/src/features/courses/CoursesApp.tsx`：`CourseCard`、`openReview`、`openExam`、`startPicked` | 展示 `learnedCount/progressPercent`；收集复习能力/范围和考试阈值，但不自行写熟练度 |
+| Web 会话状态机 | `apps/web/src/features/courses/LearningView.tsx`：`continueSpellingRetryRound`、completed/exam result、retry summary | 显示服务端考试分数、轮末复盘、通过/失败结果；等待服务端 patch 后推进 |
+| Web HTTP 客户端 | `apps/web/src/features/courses/api.ts`：`startSession`、`attempt`、`assessSpellingTranslation`、`continueSpellingRetryRound`、`profile` | 只调用 Nest API，不直接调用 Courses RPC 或写 progress |
+| Nest 路由 | `apps/api/src/learning/learning.controller.ts`：`start`、`attempt`、`continueSpellingRetryRound`、`profile` | bearer/feature-flag 边界、owner 身份传递和公开 HTTP 契约 |
+| Nest 服务 | `apps/api/src/learning/learning.service.ts`：`listCourses`、`getCourse`、`startSession`、`recordAttempt`、`continueSpellingRetryRound`、`profileSummary`、`saveCourse` | 校验 mode/scope/skills/考试阈值，映射 service-role RPC，依据 `learned_at` 汇总列表和详情 |
+| 基础表 | `supabase/migrations/20260722000011_learning_courses.sql`：`learning_word_progress` | 定义四个 initial 标志、三组日期、错误/复习次数和唯一权威 `learned_at` |
+| 正常复习/编辑/成长 | `supabase/migrations/20260722000012_learning_course_workflows.sql`：`learning_upsert_course`、`_learning_advance_session`、`_refresh_learning_growth`、`learning_profile_summary` | 内容编辑重置；只在完整 review 后追加去重日期并检查 2×3 条件；刷新课程积分、徽章与 Profile 聚合 |
+| 当前普通答题与考试 | `supabase/migrations/20260801000027_learning_exam_retry_quota.sql`：`learning_start_exam_session`、`learning_record_attempt`、`learning_continue_spelling_retry_round`、`_learning_apply_passed_exam_progress`、`learning_session_passed_exam_progress` | 固化第一轮分数、阻断未确认候补轮、完成通过考试后批量写单元 `learned_at` |
+| Schedule | `apps/api/src/learning/learning.controller.ts`：`schedule/schedules`；`apps/api/src/learning/learning.service.ts`：`createReviewSchedules/listReviewSchedules`；0012 的 `learning_schedule_reviews` | 只创建/读取日程，不直接写熟练度；完成关联 review 后由 `_learning_advance_session` 同时结算日期并完成日程 |
+| 权限/结构发布断言 | `supabase/migrations/20260722000013_verify_learning_courses_release.sql`、`supabase/migrations/20260801000028_verify_learning_exam_retry_quota.sql` | 验证 progress/RPC/trigger 结构及 service-role-only 执行边界 |
+| Profile 页面 | `apps/web/src/legacy/profile.ts` 与 `GET /api/profile/learning-summary` | 展示服务端去重后的熟练词数、课程数、复习日期和课程徽章 |
+
+对应回归证据：
+
+- `apps/web/src/features/courses/CoursesApp.test.tsx`：考试阈值和 start payload、课程卡熟练度显示。
+- `apps/web/src/features/courses/LearningView.test.tsx`：轮末复盘、通过/失败结果和完成后的用户文案。
+- `apps/api/src/learning/learning.service.test.ts`：review/exam 参数校验、RPC 路由和轮次继续映射。
+- `apps/web/tests/rls.e2e.test.ts`：真实本地 Supabase 下同日不重复、跨本地日期 2×3 熟练、失败考试不写、通过且完成考试批量写、客户端不能伪造 progress，以及编辑重置矩阵。
+- `apps/web/e2e/courses.spec.ts`：浏览器从考试配置、首轮分数、轮末确认、错题重考到单元已学习的完整流程；外部 Azure/OpenRouter 在该套件中仍为 fake。
+- `supabase/migrations/20260801000028_verify_learning_exam_retry_quota.sql`：空库/升级时检查考试字段、函数、trigger 和客户端 EXECUTE 撤销；它是结构/权限自验证，不代替浏览器流程。
 
 ## 5. 成长事实
 
