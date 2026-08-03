@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-08-01。
+最后核对：2026-08-04。
 
 ---
 
@@ -24,9 +24,9 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ## 2. 当前基线（不是最终完成状态）
 
-截至 2026-08-01，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses”：
+截至 2026-08-04，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses”：
 
-- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API 生产部署；生产 migration history 已到 0034。
+- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API 生产部署；生产 migration history 已到 0036。
 - 已上线：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech；生产 flags 已开启，fake 未进入生产。
 - 已上线增量：0015–0016 把普通答题改成客户端一帧内预测反馈、`attemptId + expectedRevision` 幂等串行 outbox、单 RPC session snapshot，并用 Supabase Storage 持久队列与浏览器 Cache Storage 预取/下载单元音频；服务端仍唯一决定进度与成长事实。
 - 已上线增量：0017–0018 让当前词和未来四词不论 ready/pending 都立即缓存或提升生成优先级，持续轮询 manifest 并在 ready 后替换浏览器朗读；active session 改为按首次学习、临时复习或日程复习的精确意图恢复，暂停学习不会再劫持另一单元复习。
@@ -38,7 +38,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
 - 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；BullMQ/Redis 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。
-- 安全基线进展：生产已应用 0008–0034，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；Courses 私有写入/RPC/传播、幂等 attempt、service-only 音频/翻译评判/拼写与考试事实、按意图恢复和取消边界均通过双用户 RLS 与发布断言。
+- 安全基线进展：生产已应用 0008–0036，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；Courses 私有写入/RPC/传播、幂等 attempt、service-only 音频/翻译评判/拼写与考试事实、按意图恢复和取消边界均通过双用户 RLS 与发布断言。
 - 仍需优先完成：帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 每日上限、审核撤销和协同行为检测；AI 数据契约统一与文件导入闭环。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
@@ -69,11 +69,11 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ### 3.3 Courses 学习课程
 
-首版英语单词学习已经上线：文本逐单元/整份多单元粘贴、精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习事实、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；生产已发布 0011–0034 并开启对应 flags。0025–0028 进一步上线显式取消、拼写轮末错词复盘/确认、默认 90% 可调阈值的单元考试，以及只对真实 OpenRouter 请求计数的滚动 500 次/24 小时配额。
+首版英语单词学习已经上线：文本逐单元/整份多单元粘贴、精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习事实、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；生产已发布 0011–0036 并开启对应 flags。0025–0028 进一步上线显式取消、拼写轮末错词复盘/确认、默认 90% 可调阈值的单元考试，以及只对真实 OpenRouter 请求计数的滚动 500 次/24 小时配额。
 
 0029–0034 已于 2026-08-03 受保护发布，在不改变积分/支付边界的前提下增加读音考试、单元内任意选词复习/考试、失败考试补练完成后自动结束、考试历史详情、编辑器逐词学习属性，以及“同一词必须同时通过拼写考试和发音考试才标为已学习”的唯一掌握规则；跨日期复习只保留练习日期/次数，不再形成掌握。
 
-仓库候选 0035–0036 不新增掌握方式，而是把上述规则变成 progress 表的强制精确投影：`learned_at` 只可能等于拼写/发音考试通过时间的较晚值，缺少任一事实即为空；首次学习、复习、单项考试或直接赋值都不能绕过。同期 Web 候选移除会误拒轻声的本地 VAD/静音裁剪，完整录音经必需格式转换后交由 Azure 评判。该候选尚未生产发布。
+0035–0036 已于 2026-08-04 受保护发布，不新增掌握方式，而是把上述规则变成 progress 表的强制精确投影：`learned_at` 只可能等于拼写/发音考试通过时间的较晚值，缺少任一事实即为空；首次学习、复习、单项考试或直接赋值都不能绕过。同期 Web 已移除会误拒轻声的本地 VAD/静音裁剪，完整录音只做 Azure 契约必需的 PCM 格式转换后交由 Azure 评判。
 
 已上线的性能/弱网增量：答题 UI 在本地确定正误，服务端仍唯一决定 retry pool、cursor/stage、错误次数、完成、points 与徽章；IndexedDB outbox 按 revision 串行、用相同 attempt UUID 重放，冲突时拉单一 snapshot 并重放仍兼容的答案。音频按规范化词、locale、voice、格式和合成版本做全局 SHA-256，private Storage 是服务端唯一事实源，浏览器只保存可重建 Cache Storage 副本并允许用户删除；这不等于完整离线 PWA。
 
@@ -230,7 +230,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - 已开启私有 Courses，并验证跨账号、会话恢复、复习跨日与 points 指纹；真实 Japan East Azure 合成/评分 smoke 成功。
 - 分享和免费 Course Market 已开放。后续继续观察错误率、举报阈值、语音配额/成本与数据库增长；回退只关 flags/恢复应用 release，数据库向前修复。
 
-验收结果：生产 migration history 到 0034；Courses 私有路径、幂等弱网答题、音频队列/Storage 去重、历史冷音频 ready 后缓存替换、按意图独立续学与显式取消、限时拼写、翻译前测、轮末错题复盘、拼写/读音考试、任意选词、考试历史、双考试掌握、Unicode 拼写归一化、仅标点差异容错、真实 Azure/OpenRouter smoke、分享/市场、评分候补池和公网 readiness 均有发布记录；文件导入仍保持禁用。
+验收结果：生产 migration history 到 0036；Courses 私有路径、幂等弱网答题、音频队列/Storage 去重、历史冷音频 ready 后缓存替换、按意图独立续学与显式取消、限时拼写、翻译前测、轮末错题复盘、拼写/读音考试、任意选词、考试历史、双考试精确掌握投影、Unicode 拼写归一化、仅标点差异容错、未裁剪 WAV 的真实 Azure/OpenRouter smoke、分享/市场、评分候补池和公网 readiness 均有发布记录；文件导入仍保持禁用。
 
 ### 阶段 B：AI 最小闭环
 
@@ -280,7 +280,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | QA-01 | jsdom、API、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API unit + CI 本地 Supabase + Courses Playwright；staging、旧模块 API HTTP/浏览器与 FastAPI 待补 |
 | OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
 | FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
-| LEARN-01 | 英语词表文本创建/编辑、四阶段学习、显式取消、轮末复盘、拼写/读音考试、任意选词与历史 | 已上线 | A+ | React、NestJS、0011–0034；CI/生产已验证 |
+| LEARN-01 | 英语词表文本创建/编辑、四阶段学习、显式取消、轮末复盘、拼写/读音考试、任意选词与历史 | 已上线 | A+ | React、NestJS、0011–0036；CI/生产已验证 |
 | LEARN-02 | 复习熟练度、Schedule/Profile、徽章/+20 points | 已上线 | A+ | 跨日本地日期、指纹幂等；生产已发布 |
 | LEARN-03 | 分享、免费课程市场、举报与审核 | 已上线 | A+ | 不可变快照、flags；免费市场已开放 |
 | LEARN-04 | Azure TTS/朗读评分适配层 | 已上线 | A+ | fake 自动化 + Japan East 真实供应商 gate |

@@ -267,6 +267,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - apply 后远端 history 到 0034，0030/0032/0034 的字段、约束、函数定义和 service-role-only 权限断言、remote database lint 与空 dry-run 均通过。0029–0034 保留必要旧签名供应用回退；数据库仍只采用 forward-fix，不执行 down migration。
 - 激活前真实 Japan East Azure、真实 OpenRouter 和 Courses API/Storage gate 均通过。不可变 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401`、React root 和 Course Market 200。未使用真实用户会话在生产提交完整拼写/读音考试，不能据此声称生产用户考试流程 E2E。
 
+### 8.11 2026-08-04 Courses 0035–0036 发布记录
+
+- 发布提交：`51252527645d9438df0414f056c8a3b088b360d8`；PR [#47](https://github.com/1590703336/Nalanda/pull/47) run `30831319634`、main run `30831964846` 和受保护 run `30833228406` 通过 quality、0007→0036、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。真实数据库用例验证手工赋值、复习和单项考试都不能绕过精确投影；Playwright 的外部供应商仍为 fake。
+- [只读 plan run `30832581552`](https://github.com/1590703336/Nalanda/actions/runs/30832581552) 显示生产 0001–0034 与本地一致，唯一待办为 `20260803000035_learning_mastery_projection_guard.sql` 和 `20260803000036_verify_learning_mastery_projection_guard.sql`；恢复、apply 与 deploy 步骤全部跳过。
+- [受保护 apply/deploy run `30833228406`](https://github.com/1590703336/Nalanda/actions/runs/30833228406) 在 apply 前创建并保留 `db-recovery-51252527645d9438df0414f056c8a3b088b360d8`，artifact `8864033351`、657,467 bytes、digest `sha256:36a9ec08516dff5cb198511d71b69bb63533727cad9826db050dff4a33025625`，保留至 2026-08-17。
+- apply 后远端 history 到 0036，0036 的当前数据、约束、trigger、考试/review 写入路径、客户端 progress 权限与 service-role helper 断言、remote database lint 和空 dry-run 均通过。数据库仍只采用 forward-fix，不执行 down migration。
+- 激活前真实 Japan East Azure、真实 OpenRouter 和 Courses API/Storage gate 均通过；后者验证未裁剪 WAV `assessmentBytes=88444`。不可变 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401`、新 React 资产和 Course Market 200。未使用真实用户会话在生产提交完整拼写/读音考试，不能据此声称生产用户考试流程 E2E。
+
 ## 9. 失败处置
 
 ### 9.1 本地重建、lint 或 RLS E2E 失败
