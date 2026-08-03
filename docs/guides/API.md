@@ -157,7 +157,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（生产 0011–0034；仓库候选 0035–0036）
+## 4. Courses API（生产 0011–0036）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -566,7 +566,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013–0034 持续以精确签名、RLS、双用户负向 E2E 和发布断言收口这些边界；0023–0024 收口标点 matcher/attempt，0025–0026 收口取消 RPC，0027–0028 拒绝客户端执行考试、轮次确认、配额预留及相关 helper，0029–0034 继续收口读音考试、任意选词、历史和双考试掌握 RPC/trigger。仓库候选 0035–0036 加入 progress 精确投影 trigger/constraint，检查 review 无正向写入、客户端无 progress 写权限和 helper 权限；生产尚未应用。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013–0036 持续以精确签名、RLS、双用户负向 E2E 和发布断言收口这些边界；0023–0024 收口标点 matcher/attempt，0025–0026 收口取消 RPC，0027–0028 拒绝客户端执行考试、轮次确认、配额预留及相关 helper，0029–0034 继续收口读音考试、任意选词、历史和双考试掌握 RPC/trigger。生产 0035–0036 加入 progress 精确投影 trigger/constraint，检查 review 无正向写入、客户端无 progress 写权限和 helper 权限。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 

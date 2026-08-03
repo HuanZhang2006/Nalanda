@@ -4,7 +4,7 @@
 > - **内容**：记录当前 Supabase/Postgres、RLS 范式、迁移清单和迁移工具局限。
 > - **作用**：作为数据层实现入门；完整关系看 ERD，正式发布/回滚看 operations 手册。
 > - **何时更新**：新增迁移、RLS 模式、迁移工具或数据库发布流程变化时。
-> - **状态基线**：2026-08-03。生产 migration history 为 0034；仓库候选 0035–0036 新增双考试 mastery 精确投影 trigger 与发布断言，尚未生产应用。
+> - **状态基线**：2026-08-04。生产 migration history 为 0036；0035–0036 已上线双考试 mastery 精确投影 trigger 与发布断言。
 
 > 目标：数据存哪、怎么保证「每个人只能动自己的数据」（RLS），以及改表结构的工作流（迁移 + 一条命令自动应用）。鉴权相关的 profiles 表见 [02 用户系统与认证](02-auth-and-user-system.md)。
 
@@ -118,5 +118,6 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 - 0023–0024 已于 2026-07-31 通过 PR run `30620350644`、main run `30620879282`、只读 plan `30623522232` 和受保护 apply/deploy `30624104943` 发布。apply 前保留恢复 artifact `8790816378`；远端 history、0024 自验证、database lint 与空 dry-run 均通过，生产已到 0024。
 - 0025–0028 已于 2026-08-01 通过 PR run `30705662543`、main run `30705946921`、只读 plan `30706279006` 和受保护 apply/deploy `30706731292` 发布。apply 前保留恢复 artifact `8820657507`；远端 history、0026/0028 自验证、database lint 与空 dry-run 均通过，生产已到 0028。
 - 0029–0034 已于 2026-08-03 通过 PR #45 run `30811283164`、main run `30811817461`、只读 plan `30812467085` 和受保护 apply/deploy `30813047562` 发布。apply 前保留恢复 artifact `8855819351`；远端 history、0030/0032/0034 自验证、database lint 与空 dry-run 均通过，生产已到 0034。
+- 0035–0036 已于 2026-08-04 通过 PR #47 run `30831319634`、main run `30831964846`、只读 plan `30832581552` 和受保护 apply/deploy `30833228406` 发布。apply 前保留恢复 artifact `8864033351`；远端 history、0036 自验证、database lint 与空 dry-run 均通过，生产已到 0036。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。

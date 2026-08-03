@@ -436,6 +436,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 
 2026-08-03 的读音考试、任意选词、历史和双考试掌握样本：PR #45 最终 run `30811283164`、main run `30811817461` 与受保护 run `30813047562` 通过 0007→0034、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖读音分数/retry、owner-validated 选词、失败补练自动结束、不可变历史快照、复习/单项考试不 learned、双考试共同 learned 和编辑撤销；只读 plan `30812467085` 仅列 0029–0034，受保护 run 保留 artifact `8855819351` 后应用并激活 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1`。Playwright 的 Azure/OpenRouter 仍为 fake；真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 是独立发布证据。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
 
+2026-08-04 的未裁剪录音与精确掌握投影样本：PR #47 run `30831319634`、main run `30831964846` 与受保护 run `30833228406` 通过 0007→0036、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖静音/轻声/首尾完整 WAV 不被客户端删除、Nest 原样转发字节、手工 `learned_at` 和单项考试不能绕过 trigger 投影；只读 plan `30832581552` 仅列 0035–0036，受保护 run 保留 artifact `8864033351` 后应用并激活 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1`。Playwright 的 Azure/OpenRouter 仍为 fake；独立真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 证明真实依赖，gate 报告未裁剪 `assessmentBytes=88444`。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
+
 ## 11. 新增测试约定
 
 1. 测试名描述用户行为/安全属性，不只写函数名。
