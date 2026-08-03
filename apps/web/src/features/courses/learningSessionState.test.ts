@@ -21,6 +21,8 @@ function word(id: string, term: string, translations: string[], position: number
       spellingReviewDates: [],
       wrongCount: 0,
       reviewCount: 0,
+      spellingExamPassedAt: null,
+      pronunciationExamPassedAt: null,
       learnedAt: null,
     },
   };
@@ -145,6 +147,7 @@ describe("optimistic learning-session reducer", () => {
     const second = predictAttempt(first.session, secondRequest);
 
     expect(readExamState(second.session)).toEqual({
+      kind: "spelling",
       total: 2,
       answered: 2,
       correct: 1,
@@ -165,6 +168,24 @@ describe("optimistic learning-session reducer", () => {
       },
     }, request(second.session, ids[1], { text: "take part in" }));
     expect(readExamState(retry.session).passed).toBe(false);
+  });
+
+  it("reads pronunciation exam kind and durable per-word retry scores", () => {
+    const value = session("pronunciation");
+    value.mode = "exam";
+    value.selectedSkills = ["pronunciation"];
+    value.state = {
+      queue: [ids[1]], cursor: 0, nextQueue: [], round: 2,
+      examKind: "pronunciation", examRequiredPercent: 90,
+      examTotal: 1, examAnswered: 1, examCorrect: 0,
+      examFirstRoundComplete: true, examPassed: false,
+      awaitingRetryConfirmation: true,
+      retrySummaryIds: [ids[1]], retrySummaryScores: { [ids[1]]: 66 },
+      retryFromRound: 1,
+    };
+
+    expect(readExamState(value).kind).toBe("pronunciation");
+    expect(readQueueState(value).retrySummaryScores).toEqual({ [ids[1]]: 66 });
   });
 
   it("does not let a rounded display percentage turn a below-threshold exam into a pass", () => {

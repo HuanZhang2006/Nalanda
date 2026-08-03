@@ -158,7 +158,7 @@ tail -n 200 /var/log/nginx/error.log
 | 课程可学但无发音/评分 | Azure flag/key/region/circuit/预算 | 按 error code 和 speech usage 判断；保持浏览器朗读降级 |
 | 翻译前测统一失败/很慢 | OpenRouter flag/key/model/timeout/额度或结构化输出 | 按稳定 error code 与脱敏 duration/token event 分层；供应商失败不记错，可先关闭翻译前测，不能把 key 下发浏览器或改为客户端自判 |
 | 刷新后会话丢失/重复 | active unique/session RPC/API | 查同 user/course active 行、state queue/cursor、API 5xx；禁止前端造 progress |
-| 课程进度或 +20 异常 | progress/growth/fingerprint | 分路径对账：review 检查 attempts/三组日期，exam 检查第一轮分数、`examPassed`、轮末确认和 completed session；再核对 `learned_at`、point business_key 与 source，必要时暂停 Courses 奖励写入 |
+| 课程进度或 +20 异常 | progress/growth/fingerprint | 先确认生产迁移版本；0033+ 对账两个 `*_exam_passed_at`、两类 exam 的第一轮分数/`examPassed`/轮末确认/completed，确认 review 只改变 attempts/三组日期而不写 learned；再核对 `learned_at` check constraint、point business_key 与 source，必要时暂停 Courses 奖励写入 |
 | Course Market 课程消失 | publication status/审核 | 查 moderation actions 和管理员配置；不要仅凭举报数恢复/下架 |
 
 ## 6. 事故 runbook

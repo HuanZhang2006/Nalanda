@@ -1,6 +1,7 @@
 import type {
   CreateCourseReportRequest, LearningAttemptRequest, LearningAttemptResult, LearningAudioManifest, LearningCourseDetail,
-  LearningCourseInput, LearningCourseSummary, LearningProfileSummary, LearningSession,
+  LearningCourseInput, LearningCourseSummary, LearningExamHistoryDetail, LearningExamHistorySummary,
+  LearningProfileSummary, LearningSession,
   LearningSessionCancelResult, LearningSessionMutationResult, LearningSpellingTranslationAssessmentRequest,
   LearningSpellingTranslationAssessmentResult, PublicCoursePreview, ReviewSchedule, StartLearningSessionRequest,
 } from "@nalanda/types";
@@ -13,6 +14,10 @@ const json = (body: unknown): RequestInit => ({
 export const coursesApi = {
   list: () => apiJson<LearningCourseSummary[]>("/api/learning-courses"),
   detail: (id: string) => apiJson<LearningCourseDetail>(`/api/learning-courses/${id}`),
+  examHistory: (courseId?: string) => apiJson<LearningExamHistorySummary[]>(
+    `/api/learning-exams${courseId ? `?courseId=${encodeURIComponent(courseId)}` : ""}`,
+  ),
+  examHistoryDetail: (id: string) => apiJson<LearningExamHistoryDetail>(`/api/learning-exams/${id}`),
   save: (course: LearningCourseInput, existing = false) => apiJson<LearningCourseDetail>(
     existing ? `/api/learning-courses/${course.id}` : "/api/learning-courses",
     { ...json(course), method: existing ? "PUT" : "POST" },
@@ -28,6 +33,9 @@ export const coursesApi = {
   ),
   continueSpellingRetryRound: (id: string) => apiJson<LearningSessionMutationResult>(
     `/api/learning-sessions/${id}/spelling-retry-rounds/continue`, json({}),
+  ),
+  continueExamRetryRound: (id: string) => apiJson<LearningSessionMutationResult>(
+    `/api/learning-sessions/${id}/exam-retry-rounds/continue`, json({}),
   ),
   recognition: (id: string, wordId: string) => apiJson<LearningSessionMutationResult>(`/api/learning-sessions/${id}/recognition`, json({ wordId })),
   attempt: (id: string, body: LearningAttemptRequest, signal?: AbortSignal) => apiJson<LearningAttemptResult>(

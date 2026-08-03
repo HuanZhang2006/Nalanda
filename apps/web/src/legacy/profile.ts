@@ -145,7 +145,7 @@ function render() {
           <div style="font-weight:650;font-size:13px">${esc(badge.name)} · ${TIER_NAME[badge.tier]}</div>
           <div class="faint" style="font-size:11px;margin-top:3px">${esc(badge.description)}</div>
           <div class="faint" style="font-size:10.5px;margin-top:5px">获得于 ${new Date(badge.awardedAt).toLocaleDateString()}</div>
-        </div>`).join("")}</div>` : `<div class="card card-pad muted">完成跨日期复习后，可获得词汇行者、课程毕业生与复习坚持者徽章。</div>`}
+        </div>`).join("")}</div>` : `<div class="card card-pad muted">通过拼写与发音考试形成词汇掌握，并保持跨日期复习，可获得课程系列徽章。</div>`}
       </div>
     </div>
   </div>`;

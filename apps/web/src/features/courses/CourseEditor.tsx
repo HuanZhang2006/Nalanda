@@ -5,7 +5,7 @@ import {
 } from "@dnd-kit/core";
 import { SortableContext, arrayMove, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import type { LearningCourseInput, VocabularyUnitInput, VocabularyWordInput } from "@nalanda/types";
+import type { LearningCourseInput, VocabularyUnitInput, VocabularyWord, VocabularyWordInput } from "@nalanda/types";
 import { parseVocabularyText, randomCourseId, type VocabularyParseError } from "./parser";
 import { useI18n } from "../../i18n";
 import { CourseLocaleButton } from "./CourseLocaleButton";
@@ -32,11 +32,12 @@ export function moveCourseWord(
 }
 
 function SortableWord({
-  word, unitId, units, onChange, onMove, onStep, onDelete,
+  word, unitId, units, progress, onChange, onMove, onStep, onDelete,
 }: {
   word: VocabularyWordInput;
   unitId: string;
   units: VocabularyUnitInput[];
+  progress?: VocabularyWord["progress"];
   onChange: (patch: Partial<VocabularyWordInput>) => void;
   onMove: (unitId: string) => void;
   onStep: (delta: number) => void;
@@ -65,6 +66,15 @@ function SortableWord({
       <button className="course-translation-add" type="button" disabled={word.translations.length >= 10}
         onClick={() => onChange({ translations: [...word.translations, ""] })}>＋ {l("Translation", "翻译")}</button>
     </div>
+    {progress ? <div className="course-word-progress" aria-label={l(`Progress for ${word.term}`, `${word.term} 的学习属性`)}>
+      <span className={progress.learnedAt ? "is-learned" : ""}>{progress.learnedAt ? l("Learned", "已学习") : l("Not learned", "未学习")}</span>
+      <small className={progress.spellingExamPassedAt ? "is-learned" : ""}>{progress.spellingExamPassedAt
+        ? l("Spelling exam passed", "已通过拼写考试") : l("Spelling exam pending", "待通过拼写考试")}</small>
+      <small className={progress.pronunciationExamPassedAt ? "is-learned" : ""}>{progress.pronunciationExamPassedAt
+        ? l("Pronunciation exam passed", "已通过发音考试") : l("Pronunciation exam pending", "待通过发音考试")}</small>
+      <small>{l(`${progress.wrongCount} errors`, `错误 ${progress.wrongCount} 次`)}</small>
+      <small>{l(`${progress.reviewCount} reviews`, `复习 ${progress.reviewCount} 次`)}</small>
+    </div> : <div className="course-word-progress faint">{l("New word", "新单词")}</div>}
     <div className="course-icon-actions">
       <button type="button" aria-label={l("Move word up", "上移单词")} onClick={() => onStep(-1)}>↑</button>
       <button type="button" aria-label={l("Move word down", "下移单词")} onClick={() => onStep(1)}>↓</button>
@@ -102,9 +112,10 @@ function validate(course: LearningCourseInput, l: (english: string, chinese: str
   return "";
 }
 
-export function CourseEditor({ initial, existing, onCancel, onSave }: {
+export function CourseEditor({ initial, existing, progressByWord = {}, onCancel, onSave }: {
   initial: LearningCourseInput;
   existing: boolean;
+  progressByWord?: Record<string, VocabularyWord["progress"]>;
   onCancel: () => void;
   onSave: (course: LearningCourseInput) => Promise<void>;
 }) {
@@ -168,7 +179,7 @@ export function CourseEditor({ initial, existing, onCancel, onSave }: {
   return <div className="wrap wrap-wide courses-root">
     <div className="page-head"><div><div className="eyebrow">{l("English vocabulary", "英语单词")}</div>
       <h1 className="page-title">{existing ? l("Edit course", "编辑课程") : l("Review course content", "确认课程内容")}</h1>
-      <p className="page-sub">{l("Changing a term resets all of its skills. Changing translations or IPA resets only the matching skill. Reordering, moving, and renaming do not reset progress.", "修改英文会重置该词全部能力；修改翻译或音标只重置对应能力。排序、移动和改名不会重置。")}</p></div>
+      <p className="page-sub">{l("A word is learned only after passing both its spelling and pronunciation exams. Changing a term resets both exam passes; changing translations resets spelling, and changing IPA resets pronunciation. Reordering, moving, and renaming do not reset progress.", "单词只有同时通过拼写考试和发音考试才标为已学习。修改英文会重置两项考试；修改翻译会重置拼写考试，修改音标会重置发音考试。排序、移动和改名不会重置进度。")}</p></div>
       <div className="row"><CourseLocaleButton /><button className="btn" onClick={onCancel}>{l("Cancel", "取消")}</button><button className="btn btn-primary" disabled={saving} onClick={save}>{saving ? l("Saving…", "保存中…") : l("Save course", "保存课程")}</button></div>
     </div>
     <label className="course-label" htmlFor="course-title">{l("Course name", "课程名称")}</label>
@@ -189,6 +200,7 @@ export function CourseEditor({ initial, existing, onCancel, onSave }: {
             </div>
           </div>
           {unit.words.map((word, wordIndex) => <SortableWord key={word.id} word={word} unitId={unit.id} units={course.units}
+            progress={progressByWord[word.id]}
             onChange={(patch) => updateUnit(unit.id, (current) => ({ ...current, words: current.words.map((entry) => entry.id === word.id ? { ...entry, ...patch } : entry) }))}
             onMove={(target) => moveWord(word.id, unit.id, target)}
             onStep={(delta) => updateUnit(unit.id, (current) => ({ ...current, words: arrayMove(current.words, wordIndex,

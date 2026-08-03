@@ -6,9 +6,9 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260801000028_verify_learning_exam_retry_quota.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-07-31 同步到 0024，并于 2026-08-01 通过只读 plan `30706279006` / 受保护 apply `30706731292` 同步到 0028；当前仓库与生产结构一致。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至候选 `20260803000034_verify_learning_exam_only_mastery.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-08-01 通过只读 plan `30706279006` / 受保护 apply `30706731292` 同步到 0028；仓库 0029–0034 尚未发布，因此候选结构不能冒充生产事实。
 
-- **仓库与生产结构**：32 张 `public` 业务/配置表、`auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
+- **仓库与生产结构**：仓库候选叠加后为 33 张 `public` 业务/配置表，生产 0028 仍为 32 张；另有 `auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
 
 ## 2. 当前 ERD
@@ -218,6 +218,7 @@ erDiagram
     LEARNING_UNITS ||--o{ LEARNING_SESSIONS : scopes
     LEARNING_SESSIONS ||--o{ LEARNING_SESSION_ITEMS : snapshots
     LEARNING_WORDS ||--o{ LEARNING_SESSION_ITEMS : includes
+    LEARNING_SESSIONS ||--o{ LEARNING_EXAM_WORD_SNAPSHOTS : preserves
     LEARNING_SESSIONS ||--o{ LEARNING_ATTEMPTS : records
     LEARNING_WORDS ||--o{ LEARNING_ATTEMPTS : answers
     AUTH_USERS ||--o{ LEARNING_SPELLING_TRANSLATION_ASSESSMENTS : requests
@@ -246,6 +247,14 @@ erDiagram
         text status
         boolean correct
         jsonb response_payload
+    }
+    LEARNING_EXAM_WORD_SNAPSHOTS {
+        uuid session_id PK_FK
+        uuid word_id PK
+        text term
+        text_array translations
+        integer wrong_count
+        boolean passed
     }
 ```
 
@@ -407,10 +416,11 @@ erDiagram
 | `learning_courses` | `id`, `user_id`, `title`, `category`, `has_units`, `locale`, `origin_publication_id`, `origin_share_id`, `origin_author_name`, `can_republish`, `points_claimed_at`, `created_at`, `updated_at` | owner → Auth CASCADE；标题 1–80；四类 category 但 v1 API 只接受英语词表；locale=`en-US`；`(id,user_id)` 唯一；克隆来源 → publication/share SET NULL，来源记录消失后仍保留作者署名 |
 | `learning_course_units` | `id`, `course_id`, `user_id`, `name`, `position`, `is_system`, `created_at`, `updated_at` | course/Auth CASCADE；复合 FK `(course_id,user_id)` 防跨 owner；名 1–80；position≥0；`(course_id,position)` 延迟唯一 |
 | `learning_course_words` | `id`, `course_id`, `unit_id`, `user_id`, `term`, `normalized_term`, `translations`, `ipa`, `position`, `content_version`, `created_at`, `updated_at` | `normalized_term` 为 `_points_normalize_text(term)` stored generated；term 1–120；1–10 translations；IPA≤120；复合 unit/course/owner FK；单元内 normalized term 与 position 延迟唯一 |
-| `learning_sessions` | `id`, `user_id`, `course_id`, `unit_id`, `mode`, `scope`, `selected_skills`, `stage`, `active`, `state`, `revision`, `resume_key`, `spelling_options`, `started_at`, `last_activity_at`, `completed_at` | course CASCADE、unit 删除 SET NULL；mode=`initial/review/exam`；scope=`all/unlearned`；skill 为 pronunciation/translation/spelling 的 1–3 项；stage 为 recognition/pronunciation/translation/spelling/completed；0015 的 `revision bigint≥0` 在每个 immutable attempt 后单调递增；0017 的 `resume_key` 按学习意图生成；0019 的 `spelling_options` 固化计时/翻译前测；0027 的 exam 固定单元全部词 + spelling/translationFirst，state 持久保存第一轮阈值/正确率/通过事实及拼写轮末确认字段 |
+| `learning_sessions` | `id`, `user_id`, `course_id`, `unit_id`, `mode`, `scope`, `selected_skills`, `stage`, `active`, `state`, `revision`, `resume_key`, `spelling_options`, `started_at`, `last_activity_at`, `completed_at` | course CASCADE、unit 删除 SET NULL；mode=`initial/review/exam`；scope=`all/unlearned`；skill 为 pronunciation/translation/spelling 的 1–3 项；stage 为 recognition/pronunciation/translation/spelling/completed；0015 的 `revision bigint≥0` 在每个 immutable attempt 后单调递增；0017 的 `resume_key` 按学习意图生成；0019 的 `spelling_options` 固化计时/翻译前测；0027 的 exam 保存第一轮阈值/正确率/通过事实及拼写轮末字段；候选 0029 增加 `examKind=pronunciation`、`roundAssessmentScores/retrySummaryScores`；候选 0031 的自定义范围仍落在 session items，并在 state 保存 `selectionMode/selectedWordIds/practiceCompleted`，不增加客户端可写列 |
 | `learning_session_items` | `session_id`, `word_id`, `position`, `recognition_seen`, `pronunciation_passed`, `translation_passed`, `spelling_passed`, `wrong_count` | `(session_id,word_id)` PK；会话/词删除 CASCADE；position 每会话延迟唯一；pass 字段是当前会话投影 |
-| `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `attempt_id`, `response_payload`, `created_at` | bigint identity；course/session/user CASCADE，word 删除 SET NULL；skill 另含 recognition 和 speech_assessment；允许 `is_correct=null` 表达非判分事实；普通测试 attempt 以 `(user_id,session_id,attempt_id)` 唯一并保存首次完整响应供超时重放；旧 RPC/recognition/评分允许 `attempt_id=NULL`；不保存录音；service_role 也无直接 UPDATE/DELETE |
-| `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `learned_at`, `updated_at` | `(user_id,word_id)` PK；三组 date[] 去重由工作流保证；正常复习路径在三项均有至少两个不同完成复习日期时逐词设置 `learned_at`；0027 的替代考试路径在第一轮达线且全部候补轮完成后对所选单元全部词设置 `learned_at`，但不伪造复习日期；内容编辑可按 term/translation/IPA 语义清空相关能力与 `learned_at` |
+| `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `attempt_id`, `response_payload`, `word_id_snapshot`, `term_snapshot`, `created_at` | bigint identity；course/session/user CASCADE，word 删除 SET NULL；0031 trigger 为 exam attempt 保存当时 word/term，删词后详情仍可关联；skill 另含 recognition 和 speech_assessment；允许 `is_correct=null` 表达非判分事实；普通测试 attempt 以 `(user_id,session_id,attempt_id)` 唯一并保存首次完整响应供超时重放；旧 RPC/recognition/评分允许 `attempt_id=NULL`；不保存录音；service_role 也无直接 UPDATE/DELETE |
+| `learning_exam_word_snapshots` | `session_id`, `word_id`, `position`, `term`, `ipa`, `translations`, `wrong_count`, `passed` | 0031 候选；session CASCADE，但不引用可编辑/可删除的 word；创建 exam item 时固化词面，完成时固化最终结果；RLS 开启且客户端无表权限，只能经 owner-scoped 历史 API 获取脱敏结果 |
+| `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `spelling_exam_passed_at`, `pronunciation_exam_passed_at`, `learned_at`, `updated_at` | `(user_id,word_id)` PK；三组 date[] 去重由工作流保证但只表达练习。0033 起，通过并完成拼写/发音考试分别写对应时间戳，只有两个时间戳都非空才逐词投影 `learned_at`；check constraint 禁止缺少任一考试事实的 learned。0031 起 session items 可为 owner-validated 单元子集；内容编辑按 term/translations/IPA 语义清空相应考试事实与 `learned_at` |
 | `learning_review_schedules` | `id`, `user_id`, `course_id`, `unit_id`, `source_session_id`, `due_date`, `skills`, `scope`, `status`, `completed_session_id`, `completed_at`, `created_at` | user/course/unit/source initial session CASCADE，completed review session SET NULL；只有本人该单元已完成 initial session 才能创建 3/7/15/30 偏移；status=`pending/completed/cancelled`；`(user_id,unit_id,due_date)` 唯一 |
 | `learning_speech_usage` | `id`, `user_id`, `kind`, `cost_microusd`, `character_count`, `local_date`, `created_at` | bigint identity；user 删除 SET NULL 以保留预算事实；kind=`tts/assessment`；成本必须 >0；TTS reservation 记录字符数并可使用 NULL user 表达全局共享生成；没有音频/参考文本 |
 | `learning_audio_assets` | `cache_key`, `normalized_term`, `synthesis_text`, `locale`, `voice`, `output_format`, `synthesis_version`, `storage_path`, `status`, `priority`, `attempt_count`, `next_attempt_at`, `lease_token`, `lease_until`, `last_error_code`, `last_error_message`, `ready_at`, `created_at`, `updated_at` | 64 位 hex SHA-256 PK；storage path 唯一；status=`pending/processing/ready/failed`；租约、指数退避和优先级驱动持久 worker；RLS 开启且表权限从 public/anon/authenticated 全撤销，只有 service_role；不含用户录音、翻译或 owner ID |
@@ -424,7 +434,7 @@ erDiagram
 
 内容保存约束由单个 `learning_upsert_course` 事务补充：课程 4–2,000 个不同规范化词/短语、最多 100 单元、每词翻译非空且去重。数据库可存四类 category 是为兼容未来，但当前 API/UI 明确拒绝非 `english_vocabulary`。
 
-`learned_at` 的两条写入路径、不会写入的事件、编辑撤销矩阵和代码/测试位置统一由 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节维护；ERD 只记录最终结构语义，不能把 `initial_*_passed` 或前端正确状态解释为已学习。
+`learned_at` 的唯一双考试投影条件、不会写入的事件、编辑撤销矩阵和代码/测试位置统一由 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节维护；ERD 只记录最终结构语义，不能把 `initial_*_passed`、复习日期、单项考试或前端正确状态解释为已学习。
 
 ## 4. 删除与生命周期规则
 
@@ -465,6 +475,7 @@ erDiagram
 | `point_event_states` | 无客户端权限/policy | 无 | 无 | 无 |
 | `learning_courses/units/words` | owner | 无 | 无 | 无 |
 | `learning_sessions/items/attempts/progress/review_schedules` | owner（items 经 session） | 无 | 无 | 无 |
+| `learning_exam_word_snapshots` | 无客户端读取 | 无 | 无 | 无 |
 | `learning_spelling_translation_assessments` | 无客户端读取 | 无 | 无 | 无 |
 | `learning_course_shares` | owner | 无 | 无 | 无 |
 | `learning_course_publications` | 仅 author 自己 | 无 | 无 | 无 |
@@ -516,12 +527,15 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载；0017 按请求意图恢复；0021 统一 Unicode 规范化，0023 的七参数权威拼写路径改为调用 `_learning_spelling_text_matches` |
 | `learning_get_session_snapshot`, `_learning_session_patch`, `_learning_increment_session_revision` | API/内部 RPC 与 trigger helper | 一次返回 session/items/words/progress；写事务返回小增量；`learning_attempts AFTER INSERT` 推进 revision，保证旧应用回滚写入也不会绕过版本时钟 |
 | `learning_cancel_session` | API RPC | owner 校验并锁定 session，幂等设为 inactive、推进 revision；保留 attempts/progress 与复习日程，只允许 service role 执行 |
-| `learning_start_exam_session`, `learning_continue_spelling_retry_round` | API RPC | 启动/恢复单元考试并持久打乱首轮；拼写轮末只在用户确认后推进 revision、重排错词并解除数据库写保护 |
+| `learning_start_exam_session`, `learning_continue_spelling_retry_round` | API RPC | 生产 0028 启动/恢复拼写单元考试并持久打乱首轮；拼写轮末只在用户确认后推进 revision、重排错词并解除数据库写保护 |
+| 六参数 `learning_start_exam_session(...,p_exam_kind)`、`learning_continue_exam_retry_round` | 候选 API RPC | 0029 向后兼容增加 `spelling/pronunciation` 考试类型；通用确认 RPC 保存错词集合、清除复盘状态并按轮次重排，均只授予 service role |
+| `learning_start_selected_review_session`、`learning_start_selected_exam_session` | 候选 API RPC | 0031 校验 1–2,000 个唯一 word ID 的 owner/course/unit/scope，固化 session items，并以排序后集合哈希隔离恢复意图；只授予 service role |
+| `learning_list_exam_history`、`learning_get_exam_history_detail` | 候选 API RPC | 0031 从私有不可变词/attempt 快照返回最近 100 场 owner 考试汇总和单场脱敏详情；不返回录音、密钥或完整 provider payload，只授予 service role |
 | `learning_claim_spelling_translation_assessment_v2`, `learning_reserve_spelling_translation_quota` | API RPC | 先创建不计配额的幂等评判租约；仅真实 OpenRouter 调用前按用户 advisory lock 检查分钟/滚动 24 小时限制并预留配额 |
-| `_learning_apply_passed_exam_progress` | exam session 完成 | 只有第一轮达到阈值且全部候补完成时，把所选单元词汇标为 learned，再由既有成长投影处理课程完成/奖励 |
+| `_learning_apply_passed_exam_progress` | exam session 完成 | 0031 对所有完成考试写 `practiceCompleted=true`；只有第一轮达到阈值时才把该 session 选中的词标为 learned，再由既有成长投影处理课程完成/奖励 |
 | `_learning_normalize_spelling_options`, `_learning_normalize_spelling_text`, `_learning_spelling_without_punctuation`, `_learning_spelling_text_matches`, `learning_claim/complete/release_spelling_translation_assessment`, `learning_record_spelling_attempt` | API/内部 RPC | 固化限时/翻译前测选项；拼写先做 NFKC/空白/ASCII case fold，再以保留标点、移除标点、标点视为空格三路比较，仅放宽标点差异；按 UUID/revision/answer hash 领取供应商租约与配额、保存判定并原子形成权威 attempt |
 | `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
-| `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；按受控整体分数阈值原子加入/移除当前认词候补项；持久化用户频率和全局预算预留 |
+| `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；生产认词阶段按受控分数线更新候补项；候选 0029 还原子推进读音考试首轮计数、分数清单/候补轮和熟练投影；持久化用户频率和全局预算预留 |
 | `_learning_audio_cache_key`, `learning_prepare_unit_audio`, `learning_prepare_word_audio`, `learning_get_unit_audio_manifest` | 服务端音频 RPC | 计算全局内容哈希、owner 校验后按单元/单词幂等入队、返回不暴露 Storage 的用户级 manifest |
 | `learning_claim_audio_asset`, `learning_finish_audio_asset`, `learning_requeue_audio_asset`, `learning_reserve_tts_quota` | 服务端 worker RPC | 数据库 advisory lock + 单活动租约保证全局单并发，最小 3.1 秒启动间隔、失败退避、Storage 丢失重建和每分钟/月字符/预算 reservation |
 | `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPC | token hash 生命周期和撤销竞态内的事务克隆 |

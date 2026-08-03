@@ -33,7 +33,8 @@ const ids = [
   "cccccccc-cccc-4ccc-8ccc-cccccccccccc", "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
 ];
 const progress = { recognitionSeen: false, initialPronunciationPassed: false, initialTranslationPassed: false, initialSpellingPassed: false,
-  pronunciationReviewDates: [], translationReviewDates: [], spellingReviewDates: [], wrongCount: 0, reviewCount: 0, learnedAt: null };
+  pronunciationReviewDates: [], translationReviewDates: [], spellingReviewDates: [], wrongCount: 0, reviewCount: 0,
+  spellingExamPassedAt: null, pronunciationExamPassedAt: null, learnedAt: null };
 
 function word(id: string, term: string, translations: string[], position: number): VocabularyWord {
   return { id, term, normalizedTerm: term.toLowerCase(), translations, ipa: null, position, progress };
@@ -76,6 +77,7 @@ function session(words: VocabularyWord[], stage: LearningSession["stage"], curso
 
 function installApi(words: VocabularyWord[], stage: LearningSession["stage"], options: {
   assessment?: "low" | "high";
+  assessmentSequence?: Array<"low" | "high">;
   holdAttempt?: boolean;
   serverCorrect?: boolean;
   audio?: "ready" | "pending-then-ready";
@@ -95,6 +97,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   const cancellations: string[] = [];
   const retryContinues: string[] = [];
   let pendingAttemptTimeouts = options.attemptTimeouts || 0;
+  let assessmentIndex = 0;
   let releaseAttempt: (() => void) | null = null;
   const currentSession = (
     nextStage: LearningSession["stage"],
@@ -105,7 +108,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
       ...session(words, nextStage, nextCursor, nextRetryQueue),
       mode: options.mode || "initial",
       selectedSkills: options.mode === "exam"
-        ? ["spelling"] as LearningSession["selectedSkills"]
+        ? [options.sessionState?.examKind === "pronunciation" ? "pronunciation" : "spelling"] as LearningSession["selectedSkills"]
         : session(words, nextStage, nextCursor, nextRetryQueue).selectedSkills,
       spellingOptions: {
       timeLimitEnabled: false,
@@ -126,7 +129,8 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
       cancellations.push(path);
       return json({ sessionId: ids[4], active: false, revision: revision + 1, cancelled: true });
     }
-    if (path.endsWith(`/api/learning-sessions/${ids[4]}/spelling-retry-rounds/continue`)) {
+    if (path.endsWith(`/api/learning-sessions/${ids[4]}/spelling-retry-rounds/continue`)
+        || path.endsWith(`/api/learning-sessions/${ids[4]}/exam-retry-rounds/continue`)) {
       retryContinues.push(path);
       revision += 1;
       const currentQueue = Array.isArray(options.sessionState?.queue)
@@ -139,6 +143,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
         nextQueue: [],
         awaitingRetryConfirmation: false,
         retrySummaryIds: undefined,
+        retrySummaryScores: undefined,
         retryFromRound: undefined,
       };
       const next = currentSession(stage, 0, []);
@@ -287,8 +292,52 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
       });
     }
     if (path.endsWith("/api/pronunciation/assess")) {
-      const low = options.assessment !== "high";
+      const assessmentKind = options.assessmentSequence?.[assessmentIndex++] || options.assessment;
+      const low = assessmentKind !== "high";
       retryQueue = low ? [words[0].id] : [];
+      if (options.mode === "exam" && options.sessionState?.examKind === "pronunciation") {
+        const round = Number(options.sessionState.round || 1);
+        const answered = Number(options.sessionState.examAnswered || 0) + (round === 1 ? 1 : 0);
+        const correctCount = Number(options.sessionState.examCorrect || 0) + (round === 1 && !low ? 1 : 0);
+        const total = Number(options.sessionState.examTotal || words.length);
+        const required = Number(options.sessionState.examRequiredPercent || 90);
+        revision += 1;
+        const atRoundEnd = words.length === 1;
+        options.sessionState = {
+          ...options.sessionState,
+          examAnswered: answered,
+          examCorrect: correctCount,
+          examAccuracyPercent: answered ? Math.round(correctCount / answered * 1_000) / 10 : 0,
+          examFirstRoundComplete: round === 1 && answered >= total,
+          examPassed: round === 1 && answered >= total
+            ? correctCount * 100 >= required * total
+            : options.sessionState.examPassed,
+          ...(low && atRoundEnd ? {
+            queue: [words[0].id], cursor: 0, nextQueue: [], round: round + 1,
+            awaitingRetryConfirmation: true,
+            retrySummaryIds: [words[0].id],
+            retrySummaryScores: { [words[0].id]: 66 },
+            retryFromRound: round,
+          } : {}),
+        };
+        const complete = !low && atRoundEnd && round > 1;
+        return json({ accuracyScore: low ? 64 : 88, fluencyScore: 80, completenessScore: 100,
+          pronunciationScore: low ? 66 : 90, passThreshold: 70, passed: !low, queuedForRetry: low,
+          revision,
+          sessionPatch: {
+            stage: complete ? "completed" : "pronunciation", active: !complete,
+            state: options.sessionState,
+            changedItem: {
+              wordId: words[0].id, recognitionSeen: true,
+              pronunciationPassed: !low, translationPassed: false,
+              spellingPassed: false, wrongCount: low ? 1 : 0,
+            },
+            nextWordId: complete ? null : words[0].id,
+          },
+          errorType: null,
+          phonemes: [{ phoneme: "æ", accuracyScore: low ? 62 : 91, needsPractice: low }],
+        }, 201);
+      }
       return json({ accuracyScore: low ? 64 : 88, fluencyScore: 80, completenessScore: 100,
         pronunciationScore: low ? 66 : 90, passThreshold: 70, passed: !low, queuedForRetry: low,
         revision: ++revision,
@@ -742,7 +791,7 @@ describe("LearningView immediate feedback", () => {
     expect(container.textContent).toContain("Spelling exam");
   });
 
-  it("reports whether a completed exam changed the unit's learned progress", async () => {
+  it("reports that a passed exam completes only one of the two mastery requirements", async () => {
     const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
     installApi(words, "completed", {
       mode: "exam",
@@ -758,8 +807,28 @@ describe("LearningView immediate feedback", () => {
 
     expect(container.textContent).toContain("Exam passed");
     expect(container.textContent).toContain("First-round accuracy: 100% · Required: 90%");
-    expect(container.textContent).toContain("All words in this unit are now counted as learned.");
+    expect(container.textContent).toContain("only after it has passed both the spelling and pronunciation exams");
     expect(container.textContent).not.toContain("In 3 days");
+  });
+
+  it("ends a failed exam after every retry word is corrected without marking it passed", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    installApi(words, "completed", {
+      mode: "exam",
+      spellingOptions: { translationFirst: true },
+      sessionState: {
+        queue: words.map((entry) => entry.id), cursor: 1, nextQueue: [], round: 2,
+        examRequiredPercent: 90, examTotal: 2, examAnswered: 2,
+        examCorrect: 1, examAccuracyPercent: 50, examPassed: false,
+        examFirstRoundComplete: true, practiceCompleted: true,
+      },
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={vi.fn()} onChanged={vi.fn()} />));
+
+    expect(container.textContent).toContain("Exam not passed");
+    expect(container.textContent).toContain("Every retry word was corrected");
+    expect(container.textContent).toContain("exam ended automatically");
+    expect(container.textContent).not.toContain("Spelling answer");
   });
 
   it("keeps a correct spelling and its translations visible for 1.5 seconds", async () => {
@@ -979,5 +1048,59 @@ describe("LearningView immediate feedback", () => {
     await settle(() => click(retry!));
     expect(vi.mocked(beginWavRecording)).toHaveBeenCalledTimes(2);
     expect(container.textContent).toContain("Stop and assess");
+  });
+
+  it("runs a pronunciation exam with live accuracy, standard audio, and confirmed shuffled retries", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0)];
+    const api = installApi(words, "pronunciation", {
+      mode: "exam",
+      assessmentSequence: ["low", "high"],
+      sessionState: {
+        examKind: "pronunciation",
+        queue: [ids[2]], cursor: 0, nextQueue: [], round: 1,
+        examRequiredPercent: 90, examTotal: 1, examAnswered: 0,
+        examCorrect: 0, examAccuracyPercent: 0, examPassed: null,
+        examFirstRoundComplete: false,
+      },
+    });
+    vi.mocked(beginWavRecording).mockResolvedValue(async () =>
+      new Blob(["wav"], { type: "audio/wav" }));
+
+    await settle(() => root.render(
+      <LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />,
+    ));
+    expect(container.textContent).toContain("Pronunciation exam");
+    expect(container.textContent).toContain("Live first-round accuracy 0% (0/0) · Required 90%");
+
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent?.includes("Start pronunciation exam"))!));
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent?.includes("Stop and score"))!));
+
+    expect(container.textContent).toContain("Needs retry · 66 points");
+    expect(container.textContent).toContain("Live first-round accuracy 0% (0/1) · Required 90%");
+    expect(container.textContent).toContain("Hear the correct pronunciation");
+    expect(container.textContent).not.toContain("Round 1 complete");
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent?.includes("Hear the correct pronunciation"))!));
+    expect(audioPlay).toHaveBeenCalledTimes(1);
+
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Next word")!));
+    expect(container.textContent).toContain("Round 1 complete");
+    expect(container.textContent).toContain("Pronunciation score 66");
+
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent?.includes("Shuffle and start next round"))!));
+    expect(api.retryContinues).toHaveLength(1);
+    expect(api.retryContinues[0]).toContain("exam-retry-rounds");
+    expect(container.textContent).not.toContain("Round 1 complete");
+
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent?.includes("Start pronunciation exam"))!));
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent?.includes("Stop and score"))!));
+    expect(container.textContent).toContain("Passed · 90 points");
+    expect(container.textContent).toContain("Hear the correct pronunciation");
   });
 });
