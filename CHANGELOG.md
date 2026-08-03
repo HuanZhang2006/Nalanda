@@ -3,11 +3,13 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-03。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-08-04。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
 ## [Unreleased]
+
+## [0.10.1] - 2026-08-04
 
 ### Added
 
@@ -25,6 +27,13 @@
 ### Testing
 
 - 增加静音、低幅度音频、首尾帧和完整时长均不被客户端删除的 WAV 回归；API 单元测试断言上传字节原样转发 Azure；真实 Supabase E2E 断言手工写 `learned_at` 或只有一个考试事实都仍为未学习。
+
+### Release
+
+- PR [#47](https://github.com/1590703336/Nalanda/pull/47) 合入 main SHA `51252527645d9438df0414f056c8a3b088b360d8`；最终 PR run `30831319634` 与 main run `30831964846` 通过 docs/lint/typecheck、Web/API tests、build、0007→0036、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake。
+- [只读 plan run `30832581552`](https://github.com/1590703336/Nalanda/actions/runs/30832581552) 确认生产远端完整到 0034，唯一待办为 0035–0036；恢复、apply 和应用部署步骤全部跳过。
+- [受保护 apply/deploy run `30833228406`](https://github.com/1590703336/Nalanda/actions/runs/30833228406) 在 apply 前保留加密 artifact `8864033351`（`db-recovery-51252527645d9438df0414f056c8a3b088b360d8`，657,467 bytes，digest `sha256:36a9ec08516dff5cb198511d71b69bb63533727cad9826db050dff4a33025625`，保留至 2026-08-17），随后把远端 history 同步到 0036，并通过 0036 结构/权限断言、remote database lint 与空 dry-run。
+- 不可变 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` 激活前通过真实 Japan East Azure 直连（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（253/27/280 tokens）和 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`、未裁剪 `assessmentBytes=88444`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回新 React 资产、Course Market 返回 200。未使用真实用户账号在生产提交完整拼写/读音考试，因此不能把发布 gate 描述为生产用户考试流程 E2E。
 
 ## [0.10.0] - 2026-08-03
 
