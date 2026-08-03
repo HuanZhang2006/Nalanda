@@ -69,12 +69,12 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 运营若调整数值/上限，只影响新事件，不重写历史；大规模补算必须创建带活动/规则版本的批次和可冲正记录。
 
-课程奖励的“100%”只看服务端 `learning_word_progress.learned_at`，不看首次四阶段完成度。该字段有且只有两条正常产品写入路径：
+课程奖励的“100%”只看服务端 `learning_word_progress.learned_at`，不看首次四阶段完成度。该字段只由双考试事实派生，相关事实分为：
 
 1. **复习事实不再形成掌握：**发音、翻译、拼写在不同本地日期的已完成 review session 中最终答对，仍记录三组去重日期和 `review_count`，但无论日期数量多少都不写考试事实或 `learned_at`。
 2. **双考试共同掌握：**完整拼写考试第一轮达到阈值并完成全部候补轮时，对选中词写 `spelling_exam_passed_at`；完整发音考试以同样条件写 `pronunciation_exam_passed_at`。只有两个字段都存在才投影 `learned_at`。0031 允许选择单元子集；任一考试未达阈值时，即使所有错题已修正并自动结束，也只写 `practiceCompleted`，不会反转失败或写该项考试事实。两类考试都不伪造复习日期。该规则已随 0029–0034 于 2026-08-03 生产启用。
 
-两个考试事实和 `learned_at` 投影都只能由 service-role 数据库事务/trigger 执行，详细条件、编辑重置矩阵和逐层代码索引见 [Courses 英语单词学习文档](../notes/11-learning-courses.md)。课程还须至少 20 个不同规范化英文词/短语且全部 `learned_at` 非空，服务端才在 `_refresh_learning_growth` 内用词集合 fingerprint 调现有 points 状态机并写 `points_claimed_at`；相同用户/词集合永久只奖励一次，客户端不能自报完成。
+两个考试事实和 `learned_at` 投影都只能由 service-role 数据库事务/trigger 执行。候选 0035–0036 进一步强制 `learned_at` 精确等于两个考试时间中的较晚值，缺少任一事实或直接写入任意值都会被投影回正确结果；生产仍为 0034。详细条件、编辑重置矩阵和逐层代码索引见 [Courses 英语单词学习文档](../notes/11-learning-courses.md)。课程还须至少 20 个不同规范化英文词/短语且全部 `learned_at` 非空，服务端才在 `_refresh_learning_growth` 内用词集合 fingerprint 调现有 points 状态机并写 `points_claimed_at`；相同用户/词集合永久只奖励一次，客户端不能自报完成。
 
 弱网流程中的前端正误、cursor 和“等待同步”都只是 provisional UI。每个答案用 `(user_id,session_id,attempt_id)` 幂等，revision 冲突由服务端拒绝；只有服务端事务确认 attempt、阶段完成、progress、徽章和课程 fingerprint 后才能显示或发放成长事实。离线预测完成、超时重试、重复 replay、Cache Storage 命中和音频生成都不能直接产生 points、徽章、credits 或 VIP。
 

@@ -1892,6 +1892,30 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(cloneProgress.data).toHaveLength(20); expect(cloneProgress.data!.every((row) => row.learned_at == null && row.wrong_count === 0 && row.review_count === 0)).toBe(true);
 
     const cloneMasteredAt = new Date().toISOString();
+    expect((await admin.from("learning_word_progress")
+      .update({ learned_at: cloneMasteredAt })
+      .eq("user_id", aId).eq("word_id", cloneTerms[0].id)).error).toBeNull();
+    let projectionProbe = await admin.from("learning_word_progress")
+      .select("spelling_exam_passed_at,pronunciation_exam_passed_at,learned_at")
+      .eq("user_id", aId).eq("word_id", cloneTerms[0].id).single();
+    expect(projectionProbe.data).toMatchObject({
+      spelling_exam_passed_at: null,
+      pronunciation_exam_passed_at: null,
+      learned_at: null,
+    });
+
+    expect((await admin.from("learning_word_progress")
+      .update({ spelling_exam_passed_at: cloneMasteredAt, learned_at: cloneMasteredAt })
+      .eq("user_id", aId).eq("word_id", cloneTerms[0].id)).error).toBeNull();
+    projectionProbe = await admin.from("learning_word_progress")
+      .select("spelling_exam_passed_at,pronunciation_exam_passed_at,learned_at")
+      .eq("user_id", aId).eq("word_id", cloneTerms[0].id).single();
+    expect(projectionProbe.data).toMatchObject({
+      spelling_exam_passed_at: cloneMasteredAt,
+      pronunciation_exam_passed_at: null,
+      learned_at: null,
+    });
+
     expect((await admin.from("learning_word_progress").update({ pronunciation_review_dates: ["2026-01-01", "2026-01-02"],
       translation_review_dates: ["2026-01-01", "2026-01-02"], spelling_review_dates: ["2026-01-01", "2026-01-02"],
       spelling_exam_passed_at: cloneMasteredAt, pronunciation_exam_passed_at: cloneMasteredAt,
