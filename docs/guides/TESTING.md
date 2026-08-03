@@ -190,7 +190,7 @@ git check-ignore .env.rls.local
 - study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
 - 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
 - Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage/翻译配额，也不能执行取消、考试、轮次确认、配额预留等特权 RPC；Profile timezone 只接受 IANA 名称；
-- 考试以服务端乱序队列覆盖整单元或候选 0031 的 owner-validated 自定义集合：轮末确认期间 attempt/读音评分被拒绝，确认后错词集合不变且重排；第一轮未达线但补练完成会自动结束并写 `practiceCompleted`、不写考试事实。候选 0033 起，达线的单项考试只写对应时间戳，跨日三能力复习仍不 learned，只有拼写/发音考试事实都存在时才 learned；候选 0029 断言读音错词分数，0031 断言选词 scope、历史脱敏和新增 RPC 客户端拒绝，0034 断言双考试约束和唯一投影；
+- 考试以服务端乱序队列覆盖整单元或 0031 起的 owner-validated 自定义集合：轮末确认期间 attempt/读音评分被拒绝，确认后错词集合不变且重排；第一轮未达线但补练完成会自动结束并写 `practiceCompleted`、不写考试事实。0033 起，达线的单项考试只写对应时间戳，跨日三能力复习仍不 learned，只有拼写/发音考试事实都存在时才 learned；0029 断言读音错词分数，0031 断言选词 scope、历史脱敏和新增 RPC 客户端拒绝，0034 断言双考试约束和唯一投影；
 - 翻译完全匹配 claim 不计 provider 配额，真实 provider reservation 只计一次，分钟/滚动 24 小时限制通过数据库锁并发收敛；
 - 0015–0016 的 snapshot/七参数 attempt/单元与单词 prepare/claim/finish/quota RPC 均不能由 anon/authenticated 执行，普通用户不能读写 `learning_audio_assets`；
 - 同 attempt UUID 的并发请求只追加一个事实/一次 wrong_count 并重放首次响应；相同 revision 的不同 answer 只有一项提交，另一项返回 revision conflict；旧五参数 RPC 仍会推进 revision，支持应用回滚；
@@ -415,6 +415,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Courses 限时拼写/翻译前测 | fake-clock jsdom + API structured response/timeout unit + 双用户 RLS/幂等/配额 + fake-provider Playwright + 发布前真实 OpenRouter structured/API gate；不得把模型输出直接当客户端事实 |
 | Courses 拼写规范化 | Web 单元/jsdom 覆盖 NFKC/Unicode 空白/全角大小写、标点遗漏/替换/增加及真实字母/空格错误 + 一次性真实 Supabase E2E 验证 raw answer、revision、`wrong_count`、retry pool 和客户端 helper 拒绝 |
 | Courses 拼写轮末复盘/考试 | state 单元 + jsdom 验证持久错词清单/确认门/实时正确率；API unit 验证固定 exam 规则；真实 Supabase E2E 验证 trigger、重排、通过/未通过熟练投影与权限；fake-provider Playwright 验证浏览器完整流程 |
+| Courses 读音考试/任意选词/考试历史 | jsdom 验证逐题评分反馈、轮末分数、选择器和历史详情；API unit 验证 Azure target/owner/映射；真实 Supabase E2E 验证选词 scope、不可变快照、客户端 RPC 拒绝、失败补练不伪造通过；fake-provider Playwright 验证浏览器流程，发布前另跑真实 Japan East Azure gate |
+| Courses 双考试掌握 | 真实 Supabase E2E 验证跨日复习与单项考试均不 learned、两项考试任意顺序共同 learned、失败考试不写事实、term/translations/IPA 编辑精确撤销；0034 空库/升级断言字段、check constraint、review 无正向写入和 service-role-only 权限 |
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
 | nginx/compose/CI | build image + staging deploy + 外部 health/login |
@@ -431,6 +433,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 同日的标点容错样本：PR #37 run `30620350644`、main run `30620879282` 和受保护 run `30624104943` 通过 0007→0024、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。Web 与真实数据库分别断言 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin` 通过，真实字母错误与无标点参与的词间空格错误失败，正确样本的 revision 递增、`wrong_count=0`、retry pool 为空，客户端不能执行内部 matcher；只读 plan `30623522232` 仅列 0023–0024，受保护 run 保留 artifact `8790816378` 后应用并激活 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1`。Playwright 供应商仍为 fake；真实 Azure/OpenRouter 仅证明生产依赖 gate，且没有真实用户生产答题 E2E。
 
 2026-08-01 的取消、轮末复盘、考试和滚动配额样本：PR #40 run `30705662543`、main run `30705946921` 与受保护 run `30706731292` 通过 0007→0028、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖 owner-only 取消、取消后恢复隔离、每轮错题确认与打乱重考、考试阈值/实时正确率/通过投影，以及只有真实 provider 请求才占用滚动 24 小时 500 次额度；只读 plan `30706279006` 仅列 0025–0028，受保护 run 保留 artifact `8820657507` 后应用并激活 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1`。Playwright 的 Azure/OpenRouter 仍为 fake；真实 Japan East Azure、真实 OpenRouter 与候选 Courses API/Storage gate 是独立发布证据。生产 UI 只读检查未提交真实用户答案，因此不能描述为生产考试 E2E。
+
+2026-08-03 的读音考试、任意选词、历史和双考试掌握样本：PR #45 最终 run `30811283164`、main run `30811817461` 与受保护 run `30813047562` 通过 0007→0034、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖读音分数/retry、owner-validated 选词、失败补练自动结束、不可变历史快照、复习/单项考试不 learned、双考试共同 learned 和编辑撤销；只读 plan `30812467085` 仅列 0029–0034，受保护 run 保留 artifact `8855819351` 后应用并激活 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1`。Playwright 的 Azure/OpenRouter 仍为 fake；真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 是独立发布证据。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
 
 ## 11. 新增测试约定
 
