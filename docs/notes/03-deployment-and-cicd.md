@@ -191,6 +191,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8 和 4 个音素；真实 OpenRouter 固定模型返回 9,364 ms、253/27/280 tokens；候选 Courses API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`，并验证 exact translation replay、revision 1。
 - 不可变 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` 健康激活。独立公网复核确认 Web 返回 React root 和新构建资源，`/api/health` 为 `status=ok` 且 `deps.supabase=ok`，匿名 `/api/me` 为 401；认证 Chromium 只读检查确认现有课程卡和 90% 默认考试配置可见，未开始考试、未提交真实用户答案，因此这不是生产用户答题 E2E。
 
+### 2026-08-03 · 0029–0034 读音考试、自选词、考试历史与双考试掌握
+
+- PR [#45](https://github.com/1590703336/Nalanda/pull/45) 合入 main SHA `1a58d2164f6d58feea4d3a2c8925211b8cc60dde`。最终 PR run `30811283164` 与 main run `30811817461` 通过 docs/lint/typecheck、Web/API tests、build、0007→0034、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright；Playwright 的 Azure/OpenRouter 仍为 fake。
+- [只读 plan run `30812467085`](https://github.com/1590703336/Nalanda/actions/runs/30812467085) 确认生产远端完整到 0028，唯一待办为 0029–0034；恢复、apply 和应用部署全部跳过。
+- [受保护 apply/deploy run `30813047562`](https://github.com/1590703336/Nalanda/actions/runs/30813047562) 在 apply 前保留 `db-recovery-1a58d2164f6d58feea4d3a2c8925211b8cc60dde`，artifact `8855819351`、593,399 bytes、digest `sha256:5f36f770aab133f24e12d461e66b0c4b744303ca1dbfd1600215163e4ad14796`，保留 14 天。apply 后远端 history 到 0034，0030/0032/0034 结构/权限断言、remote database lint 与空 dry-run 均通过；数据库继续只采用 forward-fix。
+- 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8 和 4 个音素；真实 OpenRouter 固定模型返回 1,604 ms、253/27/280 tokens；Courses API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`，并验证重复音频复用和 exact translation replay。
+- 不可变 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` 健康激活。独立公网复核确认 Web 200 且返回 React root、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Course Market 为 200。没有使用真实用户账号在生产提交完整考试，因此迁移/RLS/发布 gate 是服务端与供应商证据，不是生产用户考试流程 E2E。
+
 ## 8. 运维速查
 
 ```bash

@@ -157,7 +157,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（生产 0011–0028；仓库候选 0029–0034）
+## 4. Courses API（生产 0011–0034）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -215,16 +215,16 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 
 | 方法 | 路径 | 请求 | 成功响应 |
 |---|---|---|---|
-| POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review"|"exam", skills?, scope?, scheduleId?, spellingOptions?, examPassPercent?, examKind?: "spelling"|"pronunciation", wordIds?: uuid[] }` | 新建或恢复与请求意图完全匹配的 active `LearningSession`；候选 0031 的 `wordIds` 仅允许 review/exam、1–2,000 个不重复且属于 owner/unit/scope 的词 |
-| GET | `/api/learning-exams?courseId?` | — | 候选 0031：最近 100 场 owner 考试汇总；可按本人课程过滤，区分进行中/取消/完成、首轮是否通过及错题补练是否完成 |
-| GET | `/api/learning-exams/:sessionId` | — | 候选 0031：owner 考试详情，从考试创建/完成时的私有词快照返回最终状态及按时间排序的拼写原始答案/脱敏读音分数；之后编辑/删词不改写旧详情，不返回 WAV、密钥或完整 provider payload |
+| POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review"|"exam", skills?, scope?, scheduleId?, spellingOptions?, examPassPercent?, examKind?: "spelling"|"pronunciation", wordIds?: uuid[] }` | 新建或恢复与请求意图完全匹配的 active `LearningSession`；0031 起的 `wordIds` 仅允许 review/exam、1–2,000 个不重复且属于 owner/unit/scope 的词 |
+| GET | `/api/learning-exams?courseId?` | — | 0031：最近 100 场 owner 考试汇总；可按本人课程过滤，区分进行中/取消/完成、首轮是否通过及错题补练是否完成 |
+| GET | `/api/learning-exams/:sessionId` | — | 0031：owner 考试详情，从考试创建/完成时的私有词快照返回最终状态及按时间排序的拼写原始答案/脱敏读音分数；之后编辑/删词不改写旧详情，不返回 WAV、密钥或完整 provider payload |
 | GET | `/api/learning-sessions/:id` | — | 当前 owner 的完整 session/items/state/revision；API 内部由一个 `learning_get_session_snapshot` RPC 读取 |
 | POST | `/api/learning-sessions/:id/cancel` | `{}` | `LearningSessionCancelResult`：`{ sessionId,active:false,revision,cancelled }`；重复取消幂等返回 `cancelled:false` |
 | POST | `/api/learning-sessions/:id/recognition` | `{ wordId }` | `{ revision, sessionPatch }` |
 | POST | `/api/learning-sessions/:id/attempts` | `LearningAttemptRequest` | `LearningAttemptResult`；只返回本次事实与 session 增量 |
 | POST | `/api/learning-sessions/:id/spelling-translation-assessments` | `{ attemptId,expectedRevision,wordId,answer }` | `LearningSpellingTranslationAssessmentResult`；语义错误时已包含权威的 spelling `attemptResult` |
 | POST | `/api/learning-sessions/:id/spelling-retry-rounds/continue` | `{}` | `{ revision,sessionPatch }`；轮末确认时服务端打乱错题并开始下一轮；响应丢失后的同轮重放幂等返回当前 patch，不再次改序或推进 revision |
-| POST | `/api/learning-sessions/:id/exam-retry-rounds/continue` | `{}` | 候选 0029：拼写/读音考试通用轮末确认；锁定 owner session、打乱错词、推进 revision 并清除持久复盘状态 |
+| POST | `/api/learning-sessions/:id/exam-retry-rounds/continue` | `{}` | 0029：拼写/读音考试通用轮末确认；锁定 owner session、打乱错词、推进 revision 并清除持久复盘状态 |
 | GET | `/api/learning-review-schedules` | — | `ReviewSchedule[]`，含课程/单元名、source/completed session ID |
 | POST | `/api/learning-units/:id/review-schedules` | `{ sourceSessionId, offsets: number[] }`，source 必须是本人该单元已完成的 initial session；offset 仅 3/7/15/30 | 当前用户全部 schedule |
 | DELETE | `/api/learning-review-schedules/:id` | — | `{ "ok": true }`，状态改 cancelled |
@@ -232,11 +232,11 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 
 复习 `skills` 是 `pronunciation/translation/spelling` 的 1–3 项，`scope` 是 `all/unlearned`。带 `scheduleId` 启动时，服务端忽略客户端自报的 skills/scope，改用日程保存值；完成后原子写入 `completedSessionId/completedAt`。attempt 形状：
 
-考试 `mode="exam"` 必须指定本人课程中的一个单元；`examPassPercent` 为 1–100 的整数，缺省 90。`examKind` 缺省 `spelling`；候选 0029 另接受 `pronunciation`。服务端忽略自报 `skills/scope`：拼写考试使用 `skills=["spelling"]`、`translationFirst=true`，读音考试使用 `skills=["pronunciation"]`、`translationFirst=false`。候选 0031 允许 `wordIds` 子集，并在数据库再次校验每个 ID 的 owner/course/unit；未传时保持整单元。完整第一轮的权威 spelling attempt 或 Azure-backed speech assessment 决定正确率；错题补练不会改变该分数。所有候补修正后无论达线与否都会自动结束并写 `practiceCompleted`；首轮达线只为选中词写对应的 `spellingExamPassedAt` 或 `pronunciationExamPassedAt`。候选 0033 起，只有同一词的两个考试事实都存在时才返回非空 `learnedAt`。0029–0034 尚未生产发布，当前生产 0028 仍只接受整单元拼写考试及旧掌握规则。
+考试 `mode="exam"` 必须指定本人课程中的一个单元；`examPassPercent` 为 1–100 的整数，缺省 90。`examKind` 缺省 `spelling`，0029 起另接受 `pronunciation`。服务端忽略自报 `skills/scope`：拼写考试使用 `skills=["spelling"]`、`translationFirst=true`，读音考试使用 `skills=["pronunciation"]`、`translationFirst=false`。0031 起允许 `wordIds` 子集，并在数据库再次校验每个 ID 的 owner/course/unit；未传时保持整单元。完整第一轮的权威 spelling attempt 或 Azure-backed speech assessment 决定正确率；错题补练不会改变该分数。所有候补修正后无论达线与否都会自动结束并写 `practiceCompleted`；首轮达线只为选中词写对应的 `spellingExamPassedAt` 或 `pronunciationExamPassedAt`。0033 起，只有同一词的两个考试事实都存在时才返回非空 `learnedAt`。这些契约已随 0029–0034 于 2026-08-03 生产启用。
 
-review 的 `wordIds` 同样是候选 0031 能力。NestJS 前置验证 UUID/数量/去重，selected-review RPC 再验证 owner、课程、单元以及 `scope=unlearned` 时每个词确实尚未学习；Schedule 启动仍以日程保存的 skills/scope 为准，只允许在其范围内缩小词集合。选中集合写入 session items/state；临时复习与考试用规范化集合指纹参与恢复键，同一集合仅因客户端顺序不同不会产生另一语义集合。Schedule 则维持一个日程对应一个 active session，首次启动后续学沿用已经固化的选词，不允许中途替换范围。
+review 的 `wordIds` 同样是 0031 起的生产能力。NestJS 前置验证 UUID/数量/去重，selected-review RPC 再验证 owner、课程、单元以及 `scope=unlearned` 时每个词确实尚未学习；Schedule 启动仍以日程保存的 skills/scope 为准，只允许在其范围内缩小词集合。选中集合写入 session items/state；临时复习与考试用规范化集合指纹参与恢复键，同一集合仅因客户端顺序不同不会产生另一语义集合。Schedule 则维持一个日程对应一个 active session，首次启动后续学沿用已经固化的选词，不允许中途替换范围。
 
-响应中的 `progress.spellingExamPassedAt`、`progress.pronunciationExamPassedAt` 和 `progress.learnedAt`，以及列表 `learnedCount/progressPercent`，都是服务端派生事实，没有“手动标为已学习”的客户端 API。候选 0033 起，review 无论积累多少跨日发音/翻译/拼写事实都只记录练习；只有同一词分别通过并完成拼写考试和发音考试，两个考试时间戳都存在时才写 `learnedAt`。initial 四阶段完成、recognition、创建/完成复习日程、暂停/取消、离线 provisional 完成、单项考试或失败考试都不写入。`PUT /api/learning-courses/:id` 修改 term 会清除两项考试事实，修改 translations 只清除拼写考试事实，修改 IPA 只清除发音考试事实；任一事实失效都会清除 `learnedAt`。完整规则及代码索引见 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节。
+响应中的 `progress.spellingExamPassedAt`、`progress.pronunciationExamPassedAt` 和 `progress.learnedAt`，以及列表 `learnedCount/progressPercent`，都是服务端派生事实，没有“手动标为已学习”的客户端 API。0033 起，review 无论积累多少跨日发音/翻译/拼写事实都只记录练习；只有同一词分别通过并完成拼写考试和发音考试，两个考试时间戳都存在时才写 `learnedAt`。initial 四阶段完成、recognition、创建/完成复习日程、暂停/取消、离线 provisional 完成、单项考试或失败考试都不写入。`PUT /api/learning-courses/:id` 修改 term 会清除两项考试事实，修改 translations 只清除拼写考试事实，修改 IPA 只清除发音考试事实；任一事实失效都会清除 `learnedAt`。完整规则及代码索引见 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节。
 
 0017 起，会话恢复键按服务端验证后的意图生成：首次学习使用 `course+unit+initial`，临时复习使用 `course+unit+scope+排序后的 skills`，日程复习使用 schedule ID。暂停的首次学习和另一单元复习可以同时保持 active；相同意图的并发请求仍由 advisory lock 与部分唯一索引收敛到同一 session。`activeSessionId` 是课程卡快捷入口，API 按 `lastActivityAt` 选择最近活动的一项，不代表课程只能存在一项未完成会话。
 
@@ -566,7 +566,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013–0028 持续以精确签名、RLS、双用户负向 E2E 和发布断言收口这些边界；0023–0024 收口标点 matcher/attempt，0025–0026 收口取消 RPC，0027–0028 继续拒绝客户端执行考试、轮次确认、配额预留及相关 helper。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013–0034 持续以精确签名、RLS、双用户负向 E2E 和发布断言收口这些边界；0023–0024 收口标点 matcher/attempt，0025–0026 收口取消 RPC，0027–0028 拒绝客户端执行考试、轮次确认、配额预留及相关 helper，0029–0034 继续收口读音考试、任意选词、历史和双考试掌握 RPC/trigger。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 
