@@ -1,6 +1,6 @@
 import { localize } from "../../i18n";
 
-function resample(input: Float32Array, sourceRate: number, targetRate = 16_000) {
+function resampleForPcmWav(input: Float32Array, sourceRate: number, targetRate = 16_000) {
   if (sourceRate === targetRate) return input;
   const ratio = sourceRate / targetRate;
   const output = new Float32Array(Math.round(input.length / ratio));
@@ -12,29 +12,6 @@ function resample(input: Float32Array, sourceRate: number, targetRate = 16_000) 
     output[i] = sum / Math.max(1, end - start);
   }
   return output;
-}
-
-export function trimSpeechSamples(samples: Float32Array, sampleRate = 16_000) {
-  const frameSize = Math.max(1, Math.round(sampleRate * 0.02));
-  const rms = (start: number, end: number) => {
-    let sum = 0;
-    for (let index = start; index < end; index += 1) sum += samples[index] ** 2;
-    return Math.sqrt(sum / Math.max(1, end - start));
-  };
-  const noiseEnd = Math.min(samples.length, Math.round(sampleRate * 0.2));
-  const threshold = Math.max(0.015, rms(0, noiseEnd) * 3);
-  const active: number[] = [];
-  for (let start = 0; start < samples.length; start += frameSize) {
-    if (rms(start, Math.min(samples.length, start + frameSize)) >= threshold) active.push(start);
-  }
-  if (active.length * frameSize < sampleRate * 0.25) {
-    throw new Error(localize("No clear speech was detected. Please record again.", "没有检测到清晰语音，请重新录制"));
-  }
-  const padding = Math.round(sampleRate * 0.15);
-  const start = Math.max(0, active[0] - padding);
-  const voicedEnd = Math.min(samples.length, active[active.length - 1] + frameSize + padding);
-  const end = Math.min(voicedEnd, start + sampleRate * 6);
-  return samples.slice(start, end);
 }
 
 export function encodePcmWav(samples: Float32Array, sampleRate = 16_000) {
@@ -51,13 +28,25 @@ export function encodePcmWav(samples: Float32Array, sampleRate = 16_000) {
   return new Blob([buffer], { type: "audio/wav" });
 }
 
+// Azure's REST endpoint requires 16 kHz, 16-bit, mono PCM WAV. This function
+// performs only the required sample-rate/format conversion: it deliberately
+// preserves quiet frames, silence, leading/trailing audio, and full duration.
+export function encodeAssessmentWav(samples: Float32Array, sourceRate: number) {
+  return encodePcmWav(resampleForPcmWav(samples, sourceRate));
+}
+
 export async function beginWavRecording(
   onAutoStop: (blob: Blob) => void,
   onError?: (error: Error) => void,
 ) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error(localize("This browser does not support microphone recording.", "此浏览器不支持麦克风录音"));
-  const stream = await navigator.mediaDevices.getUserMedia({ audio: { channelCount: 1, echoCancellation: false, noiseSuppression: false } });
-  const context = new AudioContext();
+  const stream = await navigator.mediaDevices.getUserMedia({ audio: {
+    channelCount: 1,
+    echoCancellation: false,
+    noiseSuppression: false,
+    autoGainControl: false,
+  } });
+  const context = new AudioContext({ sampleRate: 16_000 });
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
   const chunks: Float32Array[] = [];
@@ -67,11 +56,12 @@ export async function beginWavRecording(
   const stop = async () => {
     if (done) return null;
     done = true; processor.disconnect(); source.disconnect(); stream.getTracks().forEach((track) => track.stop());
+    const sourceRate = context.sampleRate;
     await context.close();
     const length = chunks.reduce((sum, chunk) => sum + chunk.length, 0);
     const merged = new Float32Array(length); let offset = 0;
     chunks.forEach((chunk) => { merged.set(chunk, offset); offset += chunk.length; });
-    return encodePcmWav(trimSpeechSamples(resample(merged, context.sampleRate)));
+    return encodeAssessmentWav(merged, sourceRate);
   };
   const timeout = window.setTimeout(async () => {
     try {

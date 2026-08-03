@@ -14,9 +14,9 @@
 | Web jsdom 集成 | Vitest + jsdom + 内存 Supabase mock，覆盖 legacy 壳与主要模块交互 | 否 | `pnpm test` |
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
-| 发布工具单元 | 11 个 Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、6 秒 VAD、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
+| 发布工具单元 | Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
 | NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、考试启动/阈值、轮次确认、Azure adapter、持久队列/配额/Storage，以及翻译 exact/replay 零供应商配额、真实 provider reservation、OpenRouter structured 判定、幂等/租约释放/非法响应 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
-| Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和裁剪评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
+| Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | OpenRouter 供应商 smoke | 固定合成英文/中文样本验证指定模型的 structured JSON：语义近义回答为 true、无关回答为 false；拒绝 fake，不打印正文/key/完整响应 | 是，产生两次小型 provider 请求 | `node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；生产还通过真实 Courses API 验证幂等与权威 attempt |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
 | 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure/OpenRouter fake 运行 Courses、弱网 outbox、Cache Storage、限时拼写和翻译前测流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
@@ -86,7 +86,7 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/features/courses/learningSessionState.test.ts` | 客户端/数据库一致的正误规则、retry pool、stage transition、完成预测和权威 patch 替换 |
 | `apps/web/src/features/courses/attemptOutbox.test.ts` | IndexedDB 缺失时内存降级、按 user/session/revision 排序、重试退避和账号级清理 |
 | `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage 命中跳过网络、202 pending 不缓存、ready 响应缓存、逐资源状态回调与最多两个并发 |
-| `apps/web/src/features/courses/recording.test.ts` | 20 ms VAD、噪声阈值、250 ms 有效语音拒绝和 6 秒裁剪 |
+| `apps/web/src/features/courses/recording.test.ts` | WAV 头/PCM 边界、16 kHz 必需格式转换，以及静音、低幅度、首尾帧和完整时长均不被 VAD/裁剪删除 |
 
 ### 4.2 mock 的边界
 
@@ -380,7 +380,7 @@ node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 ```
 
-`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite 仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布先运行基础真实 Azure 和真实 OpenRouter structured smoke；新 API readiness/auth 通过后，再由 `scripts/smoke-learning-audio-production.mjs` 创建临时用户，验证首次队列生成、private Storage、第二用户重复词零新增 claim、6 秒内裁剪 WAV 评分，以及真实 Courses API 的规范化完全匹配、同 UUID 重放和权威拼写提交，清理成功后才切 Web symlink。非字面语义由前一个真实 OpenRouter smoke 单独验证；CI fake 不能代替该结果，真实 provider gate 也不能代替 RLS/Playwright。
+`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite 仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布先运行基础真实 Azure 和真实 OpenRouter structured smoke；新 API readiness/auth 通过后，再由 `scripts/smoke-learning-audio-production.mjs` 创建临时用户，验证首次队列生成、private Storage、第二用户重复词零新增 claim、未经 VAD/静音裁剪的固定 WAV 原字节评分，以及真实 Courses API 的规范化完全匹配、同 UUID 重放和权威拼写提交，清理成功后才切 Web symlink。非字面语义由前一个真实 OpenRouter smoke 单独验证；CI fake 不能代替该结果，真实 provider gate 也不能代替 RLS/Playwright。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
@@ -411,7 +411,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Migration/RLS/trigger/function | 空项目全迁移 + 相关旧版本→新版本升级夹具 + lint + RLS E2E + 发布前备份 |
 | NestJS auth/Courses API | typecheck/build + API unit + RLS E2E + Playwright；attempt 变更另测 UUID 重放/revision conflict/outbox；multipart/真实 Azure 与真实 OpenRouter 另做受控 smoke |
 | Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
-| Courses 音频/离线 | cache key/VAD unit + API queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
+| Courses 音频/离线 | cache key/不裁剪录音 unit + API 原字节转发/queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
 | Courses 限时拼写/翻译前测 | fake-clock jsdom + API structured response/timeout unit + 双用户 RLS/幂等/配额 + fake-provider Playwright + 发布前真实 OpenRouter structured/API gate；不得把模型输出直接当客户端事实 |
 | Courses 拼写规范化 | Web 单元/jsdom 覆盖 NFKC/Unicode 空白/全角大小写、标点遗漏/替换/增加及真实字母/空格错误 + 一次性真实 Supabase E2E 验证 raw answer、revision、`wrong_count`、retry pool 和客户端 helper 拒绝 |
 | Courses 拼写轮末复盘/考试 | state 单元 + jsdom 验证持久错词清单/确认门/实时正确率；API unit 验证固定 exam 规则；真实 Supabase E2E 验证 trigger、重排、通过/未通过熟练投影与权限；fake-provider Playwright 验证浏览器完整流程 |

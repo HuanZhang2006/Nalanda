@@ -16,7 +16,7 @@
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
 7. 若远端 history 为空，临时只保留 0001–0007 迁移，通过 public schema 零差异和 Storage policy/bucket 核验后才将这 7 个已存在版本标记为 applied；已建立的远端 history 必须是至少包含 0001–0007 的连续本地前缀；
 8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在候选 API 上验证持久队列、private Storage、跨用户重复词复用、裁剪评分以及翻译评判幂等/权威拼写提交，成功后才激活 Web release。
+9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在候选 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分，以及翻译评判幂等/权威拼写提交，成功后才激活 Web release。
 
 已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。迁移文件或数据库发布控制 workflow/脚本发生变化，都会把普通 main push 保持在“只验证、不部署”状态，避免发布工具修复绕过尚未完成的数据库 release。普通 push 永不直接修改生产数据库；`plan_database_migrations` 只读且不部署应用，只有单独选中 `apply_database_migrations` 才创建恢复点并执行数据库发布，两者同时选中会失败。
 
@@ -175,7 +175,7 @@ supabase stop --no-backup
 
 Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分享/市场只能经 API、publication 快照更新被拒、四阶段会话恢复、两次不同本地日期熟练、Schedule 不生成 `study_tasks`、同词集合只出现一条 +20 分录、课程删除保留分录/徽章历史，以及 `learning_speech_usage` 不含音频或参考文本。
 
-0015–0016 还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到旧 release 仍能运行。应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、VAD 裁剪评分与最终 `deps.supabase=ok`。
+0015–0016 还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到旧 release 仍能运行。当前应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、未经 VAD/静音裁剪的固定 WAV 评分与最终 `deps.supabase=ok`。
 
 ### 8.1 2026-07-21 安全与积分发布记录
 

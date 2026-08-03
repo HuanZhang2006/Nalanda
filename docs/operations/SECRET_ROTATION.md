@@ -177,7 +177,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 1. 记录 Azure resource/region、key ID（不记值）、月预算和当前错误率；确认 Azure 当前是否提供两把可交替 key。
 2. 若无安全重叠，先关闭 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` 停止新队列，再按需关闭 `FEATURE_PRONUNCIATION_ENABLED` 或打开 `AZURE_SPEECH_CIRCUIT_OPEN`；文本课程、进度、已缓存 private Storage 音频和浏览器朗读继续。
 3. 生成/重置非当前 key，安全更新 `/opt/nalanda/.env` 的 key/region，`chmod 600`，force-recreate API 容器。
-4. 以专用账号和无个人数据 fixture 验证一个未缓存词从 pending→ready、private Storage bytes/ETag 可读；第二账号创建相同词时必须立即 ready 且 `attempt_count` 不增加。再提交经客户端规则裁剪、≤6 秒（服务端上限仍 8 秒）的 16 kHz 单声道固定 WAV，确认 phoneme、revision/session patch、speech usage reservation 和用户录音未进入 DB/Storage/log。
+4. 以专用账号和无个人数据 fixture 验证一个未缓存词从 pending→ready、private Storage bytes/ETag 可读；第二账号创建相同词时必须立即 ready 且 `attempt_count` 不增加。再提交未经 VAD、静音裁剪或内容截断、≤6 秒（服务端上限仍 8 秒）的 16 kHz 单声道固定 WAV，确认 API 原字节转发、phoneme、revision/session patch、speech usage reservation 和用户录音未进入 DB/Storage/log。
 5. 观察 `learning_audio_generation_failed`、queue wait、Storage hit/miss、Azure usage 与 API `SPEECH_PROVIDER_*`/429；关闭 circuit 或恢复 flags。
 6. 重置/撤销旧 key，并再次验证。若供应商只支持 Key1/Key2 reset，记录哪一个现为 active，避免下次误重置正在使用的 key。
 

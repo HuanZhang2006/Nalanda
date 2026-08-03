@@ -301,7 +301,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移（当前仓库与生产均为 0034），而不是停在旧 migration history；是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新候选迁移 0036，而不是停在旧 migration history；生产仍为 0034，是否已经应用以 `migration list` 和发布记录为准，不能只看文件存在。
 
 ### 翻译前测返回禁用、超时或配额错误
 
@@ -312,7 +312,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 ### 发音按钮降级或评分不可用
 
-这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。音频 GET 首次可能快速返回 `202 AUDIO_PENDING`，worker 生成后 manifest 才变 ready；不要把 202 当 500。评分要求 feature flag、key/region、当前 active session/当前认词卡片和 16 kHz/16-bit/单声道 PCM WAV；浏览器先做 20 ms VAD 并裁剪到 6 秒，供应商/麦克风失败不应记为学习错误。私有 TTS 对象缺失可能表现为 Storage HTTP 400 + JSON 404，应正常重建；Storage 网络/权限错误必须保持可见，不能误判为 cache miss 后重复消耗 Azure。
+这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。音频 GET 首次可能快速返回 `202 AUDIO_PENDING`，worker 生成后 manifest 才变 ready；不要把 202 当 500。评分要求 feature flag、key/region、当前 active session/当前认词卡片和 16 kHz/16-bit/单声道 PCM WAV。浏览器最多录制 6 秒，关闭 echo cancellation/noise suppression/auto gain control，不做 VAD、音量阈值、静音裁剪或本地“清晰语音”拒绝；仅做 Azure 格式必需的采样率/PCM 封装。供应商/麦克风失败不应记为学习错误。私有 TTS 对象缺失可能表现为 Storage HTTP 400 + JSON 404，应正常重建；Storage 网络/权限错误必须保持可见，不能误判为 cache miss 后重复消耗 Azure。
 
 ### Courses 创建/编辑页看不到底部操作
 

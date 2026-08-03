@@ -6,9 +6,9 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260803000034_verify_learning_exam_only_mastery.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-08-03 通过只读 plan `30812467085` / 受保护 apply `30813047562` 同步到 0034。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至候选 `20260803000036_verify_learning_mastery_projection_guard.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构的最终权威来源；本文用于阅读和评审。生产 migration history 已于 2026-08-03 通过只读 plan `30812467085` / 受保护 apply `30813047562` 同步到 0034；0035–0036 尚未生产发布。
 
-- **仓库与生产结构**：仓库与生产 0034 均为 33 张 `public` 业务/配置表；另有 `auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
+- **仓库候选与生产结构**：仓库候选 0036 与生产 0034 均为 33 张 `public` 业务/配置表；候选只新增 progress 投影函数/trigger 并加固既有 constraint。另有 `auth.users` 外部身份表、3 个 Storage bucket，以及相关 RLS/函数/触发器。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益、社区审核与通用审计等实体。Courses 已有专用举报/审核事实，不能把它描述成全站治理已完成。
 
 ## 2. 当前 ERD
@@ -420,7 +420,7 @@ erDiagram
 | `learning_session_items` | `session_id`, `word_id`, `position`, `recognition_seen`, `pronunciation_passed`, `translation_passed`, `spelling_passed`, `wrong_count` | `(session_id,word_id)` PK；会话/词删除 CASCADE；position 每会话延迟唯一；pass 字段是当前会话投影 |
 | `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `attempt_id`, `response_payload`, `word_id_snapshot`, `term_snapshot`, `created_at` | bigint identity；course/session/user CASCADE，word 删除 SET NULL；0031 trigger 为 exam attempt 保存当时 word/term，删词后详情仍可关联；skill 另含 recognition 和 speech_assessment；允许 `is_correct=null` 表达非判分事实；普通测试 attempt 以 `(user_id,session_id,attempt_id)` 唯一并保存首次完整响应供超时重放；旧 RPC/recognition/评分允许 `attempt_id=NULL`；不保存录音；service_role 也无直接 UPDATE/DELETE |
 | `learning_exam_word_snapshots` | `session_id`, `word_id`, `position`, `term`, `ipa`, `translations`, `wrong_count`, `passed` | 0031 候选；session CASCADE，但不引用可编辑/可删除的 word；创建 exam item 时固化词面，完成时固化最终结果；RLS 开启且客户端无表权限，只能经 owner-scoped 历史 API 获取脱敏结果 |
-| `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `spelling_exam_passed_at`, `pronunciation_exam_passed_at`, `learned_at`, `updated_at` | `(user_id,word_id)` PK；三组 date[] 去重由工作流保证但只表达练习。0033 起，通过并完成拼写/发音考试分别写对应时间戳，只有两个时间戳都非空才逐词投影 `learned_at`；check constraint 禁止缺少任一考试事实的 learned。0031 起 session items 可为 owner-validated 单元子集；内容编辑按 term/translations/IPA 语义清空相应考试事实与 `learned_at` |
+| `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `spelling_exam_passed_at`, `pronunciation_exam_passed_at`, `learned_at`, `updated_at` | `(user_id,word_id)` PK；三组 date[] 去重由工作流保证但只表达练习。0033 起，通过并完成拼写/发音考试分别写对应时间戳，只有两个时间戳都非空才逐词投影 `learned_at`。候选 0035 的 before trigger 与双向 check 强制 `learned_at` 精确等于两个考试时间戳的较晚值，否则为空，直接赋值也不能绕过。0031 起 session items 可为 owner-validated 单元子集；内容编辑按 term/translations/IPA 语义清空相应考试事实与 `learned_at` |
 | `learning_review_schedules` | `id`, `user_id`, `course_id`, `unit_id`, `source_session_id`, `due_date`, `skills`, `scope`, `status`, `completed_session_id`, `completed_at`, `created_at` | user/course/unit/source initial session CASCADE，completed review session SET NULL；只有本人该单元已完成 initial session 才能创建 3/7/15/30 偏移；status=`pending/completed/cancelled`；`(user_id,unit_id,due_date)` 唯一 |
 | `learning_speech_usage` | `id`, `user_id`, `kind`, `cost_microusd`, `character_count`, `local_date`, `created_at` | bigint identity；user 删除 SET NULL 以保留预算事实；kind=`tts/assessment`；成本必须 >0；TTS reservation 记录字符数并可使用 NULL user 表达全局共享生成；没有音频/参考文本 |
 | `learning_audio_assets` | `cache_key`, `normalized_term`, `synthesis_text`, `locale`, `voice`, `output_format`, `synthesis_version`, `storage_path`, `status`, `priority`, `attempt_count`, `next_attempt_at`, `lease_token`, `lease_until`, `last_error_code`, `last_error_message`, `ready_at`, `created_at`, `updated_at` | 64 位 hex SHA-256 PK；storage path 唯一；status=`pending/processing/ready/failed`；租约、指数退避和优先级驱动持久 worker；RLS 开启且表权限从 public/anon/authenticated 全撤销，只有 service_role；不含用户录音、翻译或 owner ID |
@@ -543,7 +543,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 迁移 0008 已显式撤销 `_add_points`、`_notify`、`_set_point_event` 及新旧 trigger/helper 对 PUBLIC/anon/authenticated 的 EXECUTE；`_notify`、`_set_point_event` 仅保留 service_role 的受信调用能力。points 已具备当前行为事件账本和净额幂等，但这不替代每日上限、重复内容识别、协同作弊检测和管理员调整审批。
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013–0034 持续检查 append-only、RLS、精确函数签名与 service-role grant；0023–0024 验证标点 matcher，0025–0026 验证取消，0027–0028 验证考试/轮次确认/配额预留 RPC，0029–0034 验证读音考试、自选词、历史、双考试约束、trigger 与客户端拒绝。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
+0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013–0034 持续检查 append-only、RLS、精确函数签名与 service-role grant；0023–0024 验证标点 matcher，0025–0026 验证取消，0027–0028 验证考试/轮次确认/配额预留 RPC，0029–0034 验证读音考试、自选词、历史、双考试约束、trigger 与客户端拒绝；候选 0035–0036 验证精确 mastery 投影、review 无写入与客户端无 progress 变更权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
 
 ## 8. 索引清单
 
