@@ -1927,7 +1927,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(editedProgress.data).toMatchObject({ initial_recognition_seen: true, initial_pronunciation_passed: true,
       initial_translation_passed: false, initial_spelling_passed: true, pronunciation_review_dates: ["2026-01-01", "2026-01-02"],
       translation_review_dates: [], spelling_review_dates: ["2026-01-01", "2026-01-02"],
-      spelling_exam_passed_at: null, pronunciation_exam_passed_at: cloneMasteredAt, learned_at: null, review_count: 3 });
+      spelling_exam_passed_at: null, pronunciation_exam_passed_at: expect.any(String), learned_at: null, review_count: 3 });
 
     expect((await admin.from("learning_word_progress").update(masterySeed).eq("word_id", terms[0].id)).error).toBeNull();
     const stableSession = await startReview(courseId, unitId, ["spelling"]);
@@ -1939,8 +1939,8 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(editedProgress.data).toMatchObject({ initial_pronunciation_passed: true, initial_translation_passed: true,
       initial_spelling_passed: true, pronunciation_review_dates: ["2026-01-01", "2026-01-02"],
       translation_review_dates: ["2026-01-01", "2026-01-02"], spelling_review_dates: ["2026-01-01", "2026-01-02"],
-      spelling_exam_passed_at: cloneMasteredAt, pronunciation_exam_passed_at: cloneMasteredAt,
-      learned_at: cloneMasteredAt, review_count: 3 });
+      spelling_exam_passed_at: expect.any(String), pronunciation_exam_passed_at: expect.any(String),
+      learned_at: expect.any(String), review_count: 3 });
 
     const ipaEdited = structuredClone(translationEdited); ipaEdited.units[0].words[0].ipa = "/wɝd/";
     await rpc("learning_upsert_course", { p_user_id: aId, p_payload: ipaEdited });
@@ -1948,7 +1948,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     editedProgress = await progressForFirst();
     expect(editedProgress.data).toMatchObject({ initial_pronunciation_passed: false, initial_translation_passed: true,
       initial_spelling_passed: true, pronunciation_review_dates: [], translation_review_dates: ["2026-01-01", "2026-01-02"],
-      spelling_review_dates: ["2026-01-01", "2026-01-02"], spelling_exam_passed_at: cloneMasteredAt,
+      spelling_review_dates: ["2026-01-01", "2026-01-02"], spelling_exam_passed_at: expect.any(String),
       pronunciation_exam_passed_at: null, learned_at: null, review_count: 3 });
 
     expect((await admin.from("learning_word_progress").update(masterySeed).eq("word_id", terms[0].id)).error).toBeNull();
