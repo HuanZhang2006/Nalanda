@@ -3,7 +3,6 @@ import { randomBytes, randomUUID } from "node:crypto";
 import {
   AUDIO_OUTPUT_FORMAT,
   learningAudioCacheKey,
-  trimAssessmentFixture,
 } from "./learning-audio-smoke-lib.mjs";
 
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -231,7 +230,11 @@ async function synthesizeAssessmentWav() {
       body,
     },
   );
-  return trimAssessmentFixture(Buffer.from(await response.arrayBuffer()));
+  const wav = Buffer.from(await response.arrayBuffer());
+  assert.ok(wav.length > 44, "real Azure assessment fixture is unexpectedly small");
+  assert.equal(wav.toString("ascii", 0, 4), "RIFF");
+  assert.equal(wav.toString("ascii", 8, 12), "WAVE");
+  return wav;
 }
 
 async function assess(user, session, firstWordId) {
@@ -239,7 +242,7 @@ async function assess(user, session, firstWordId) {
   const form = new FormData();
   form.append("sessionId", session.id);
   form.append("wordId", firstWordId);
-  form.append("audio", new Blob([wav], { type: "audio/wav" }), "trimmed-release-smoke.wav");
+  form.append("audio", new Blob([wav], { type: "audio/wav" }), "unmodified-release-smoke.wav");
   const result = await request("real API pronunciation assessment", `${apiOrigin}/pronunciation/assess`, {
     method: "POST",
     headers: { Authorization: `Bearer ${user.token}` },
@@ -379,7 +382,7 @@ try {
     generatedAssets: firstManifest.ready,
     duplicateAssetsReused: secondManifest.ready,
     assessmentScore: assessment.score,
-    trimmedAssessmentBytes: assessment.bytes,
+    assessmentBytes: assessment.bytes,
     translationAssessment,
     durationMs: Date.now() - startedAt,
   }));

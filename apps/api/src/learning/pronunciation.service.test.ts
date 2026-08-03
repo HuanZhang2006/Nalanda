@@ -43,10 +43,17 @@ describe("pronunciation adapter", () => {
     }, Words: [{ PronunciationAssessment: { ErrorType: "Mispronunciation" }, Phonemes: [
       { Phoneme: "æ", PronunciationAssessment: { AccuracyScore: 62 } }, { Phoneme: "p", PronunciationAssessment: { AccuracyScore: 91 } },
     ] }] }] }), { status: 200, headers: { "Content-Type": "application/json" } })));
-    const result = await service.assess("user", "session", "word", { buffer: wav(), size: wav().length } as any);
+    const unmodifiedAudio = wav();
+    unmodifiedAudio.writeInt16LE(11, 44);
+    unmodifiedAudio.writeInt16LE(-17, unmodifiedAudio.length - 2);
+    const result = await service.assess("user", "session", "word", {
+      buffer: unmodifiedAudio, size: unmodifiedAudio.length,
+    } as any);
     expect(result.phonemes[0]).toEqual({ phoneme: "æ", accuracyScore: 62, needsPractice: true });
     expect(learning.reserveSpeechQuota).toHaveBeenCalledOnce();
     expect(fetch).toHaveBeenCalledWith(expect.any(URL), expect.objectContaining({ signal: expect.any(AbortSignal) }));
+    expect(Buffer.from((vi.mocked(fetch).mock.calls[0][1] as any).body)
+      .equals(unmodifiedAudio)).toBe(true);
     expect(result).toMatchObject({ passThreshold: 70, passed: true, queuedForRetry: false });
     expect(learning.recordSpeechAssessment).toHaveBeenCalledWith("user", "session", "word", expect.objectContaining({
       pronunciationScore: 84, passThreshold: 70, passed: true,

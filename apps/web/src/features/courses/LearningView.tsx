@@ -753,7 +753,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
         if (blob) await assessBlob(blob);
       } catch (caught) {
         setRecording(false); stopRef.current = null;
-        setNotice(l(`${caught instanceof Error ? caught.message : "No clear speech was detected."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "没有检测到清晰语音"}，不计入错误次数`));
+        setNotice(l(`${caught instanceof Error ? caught.message : "The recording could not be prepared."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "无法准备录音"}，不计入错误次数`));
       }
       return;
     }

@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-03。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter、持久 TTS 队列、跨课程缓存、弱网答题、客户端裁剪、历史冷音频缓存替换、按意图独立续学和 OpenRouter 翻译语义前测已通过 0015–0020 受保护发布启用；0021–0028 已生产启用拼写规范化、轮末复盘、拼写考试和真实 provider 滚动配额；0029–0034 已生产启用读音考试、自定义词集合、考试历史和双考试掌握。考试历史只读取既有脱敏分数，不触发新 provider 请求。翻译前测与读音评分都是窄评判能力，不能冒充生成式 AI/文件解析闭环。
+> **状态基线：**2026-08-03。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter、持久 TTS 队列、跨课程缓存、弱网答题、历史冷音频缓存替换、按意图独立续学和 OpenRouter 翻译语义前测已通过 0015–0020 受保护发布启用；0021–0028 已生产启用拼写规范化、轮末复盘、拼写考试和真实 provider 滚动配额；0029–0034 已生产启用读音考试、自定义词集合、考试历史和双考试掌握。仓库候选已移除客户端 VAD/静音裁剪，尚未生产发布。考试历史只读取既有脱敏分数，不触发新 provider 请求。翻译前测与读音评分都是窄评判能力，不能冒充生成式 AI/文件解析闭环。
 
 ## 1. 范围和非目标
 
@@ -22,7 +22,7 @@
 - TypeScript 与 Python 的请求字段命名存在 camelCase/snake_case 差异，Web 也没有真实消费该契约；
 - 当前生产 compose 不包含 AI 服务，NestJS 没有 AI 模块、job 或服务间调用。
 - Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
-- Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列、private Storage 事实源和客户端 VAD 裁剪已经在生产启用；fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
+- Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列和 private Storage 事实源已经在生产启用；仓库候选移除了客户端 VAD/静音裁剪，fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
 - 0019 增加 NestJS 翻译评判 adapter：规范化后完全等于服务端参考 translation 的答案由服务端确定性判对；非字面同义/改写才使用 OpenRouter structured JSON。输入正文不落库，服务端仍唯一写 spelling 错误事实。生产已取得真实 provider、候选 API 与不可变 release 证据。
 
 因此当前不得：收费扣 credits；把 placeholder 或文件入口标为已生成/已解析；把 Azure TTS 当成课程 AI 导入；把 health/key/fake 当真实供应商可用；用真实私有课件/录音做非受控测试；公开承诺准确率/成本/延迟。
@@ -59,7 +59,7 @@
 
 ### 2.3 Azure Speech 当前边界
 
-Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的 PCM WAV；客户端按 20ms 帧检测语音，阈值为 `max(0.015, 首 200ms 噪声 RMS × 3)`，保留首尾 150ms，少于 250ms 有效语音要求重录并裁剪至最多 6 秒，服务端继续限制 8 秒/2 MB。不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
+Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的 PCM WAV；客户端最多录制 6 秒，关闭 echo cancellation、noise suppression、auto gain control，不做 VAD、音量阈值、最短语音判断、首尾裁剪或内容截断，只执行 Azure 契约所需的 16 kHz/16-bit/单声道 PCM 格式转换。服务端继续限制 8 秒/2 MB，并把验证后的同一 WAV 字节转发 Azure。不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
 
 评分的持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；读音考试不会获得独立免费额度，每个实际提交的考试词都会占用同一 assessment 额度和预算，因此开放前必须用“活跃考生 × 单元词数 × 候补率”重新核算容量。`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。TTS 队列按 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)` 跨用户复用 private Storage 对象，默认单 worker、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月；租约、重试、字符预留和成本预算都由服务端数据库控制。浏览器只缓存可重建副本并预取当前加未来四词。
 

@@ -51,7 +51,6 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   AUDIO_ASSET_MISSING: ["The audio task could not be found.", "音频任务不存在"],
   SESSION_REVISION_CONFLICT: ["Progress changed on another device. Restoring the latest version.", "学习进度已在其它设备更新，正在恢复最新版本"],
   INVALID_REVISION: ["The learning-session version is invalid.", "学习会话版本无效"],
-  RECORDING_TOO_QUIET: ["No clear speech was detected. Please record again.", "没有检测到清晰语音，请重新录制"],
   INVALID_SPELLING_OPTIONS: ["Use a spelling time limit between 3 and 300 seconds.", "拼写限时需设置为 3–300 秒"],
   INVALID_TRANSLATION_ANSWER: ["Enter a translation between 1 and 500 characters.", "请输入 1–500 个字符的翻译"],
   TRANSLATION_ASSESSMENT_UNAVAILABLE: ["Semantic translation checking is temporarily unavailable.", "翻译语义判分暂不可用"],
