@@ -1911,10 +1911,12 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       .select("spelling_exam_passed_at,pronunciation_exam_passed_at,learned_at")
       .eq("user_id", aId).eq("word_id", cloneTerms[0].id).single();
     expect(projectionProbe.data).toMatchObject({
-      spelling_exam_passed_at: cloneMasteredAt,
+      spelling_exam_passed_at: expect.any(String),
       pronunciation_exam_passed_at: null,
       learned_at: null,
     });
+    expect(new Date(projectionProbe.data!.spelling_exam_passed_at).toISOString())
+      .toBe(cloneMasteredAt);
 
     expect((await admin.from("learning_word_progress").update({ pronunciation_review_dates: ["2026-01-01", "2026-01-02"],
       translation_review_dates: ["2026-01-01", "2026-01-02"], spelling_review_dates: ["2026-01-01", "2026-01-02"],
