@@ -1591,6 +1591,8 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const pronunciationTerms = [
       { id: randomUUID(), term: "pronunciation-alpha", translations: ["发音甲"], ipa: null },
       { id: randomUUID(), term: "pronunciation-beta", translations: ["发音乙"], ipa: null },
+      { id: randomUUID(), term: "pronunciation-gamma", translations: ["发音丙"], ipa: null },
+      { id: randomUUID(), term: "pronunciation-delta", translations: ["发音丁"], ipa: null },
     ];
     await rpc("learning_upsert_course", {
       p_user_id: aId,
@@ -1640,6 +1642,8 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     };
     expect(await assessExamWord(60)).toMatchObject({ correct: false, retry_queued: true });
     expect(await assessExamWord(90)).toMatchObject({ correct: true, retry_queued: false });
+    expect(await assessExamWord(90)).toMatchObject({ correct: true, retry_queued: false });
+    expect(await assessExamWord(90)).toMatchObject({ correct: true, retry_queued: false });
     const pronunciationSummary = await rpc<any>("learning_get_session_snapshot", {
       p_user_id: aId,
       p_session_id: pronunciationExam,
@@ -1647,9 +1651,9 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(pronunciationSummary).toMatchObject({ mode: "exam", stage: "pronunciation", active: true, state: {
       examKind: "pronunciation",
       examRequiredPercent: 50,
-      examAnswered: 2,
-      examCorrect: 1,
-      examAccuracyPercent: 50,
+      examAnswered: 4,
+      examCorrect: 3,
+      examAccuracyPercent: 75,
       examPassed: true,
       awaitingRetryConfirmation: true,
       retryFromRound: 1,
@@ -1686,14 +1690,14 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     })).toMatchObject({ stage: "completed", active: false, state: {
       examKind: "pronunciation",
       examPassed: true,
-      examAccuracyPercent: 50,
+      examAccuracyPercent: 75,
     } });
     const pronunciationProgress = await admin.from("learning_word_progress")
       .select("initial_pronunciation_passed,initial_translation_passed,initial_spelling_passed,spelling_exam_passed_at,pronunciation_exam_passed_at,learned_at")
       .eq("user_id", aId)
       .in("word_id", pronunciationTerms.map((entry) => entry.id));
     expect(pronunciationProgress.error).toBeNull();
-    expect(pronunciationProgress.data).toHaveLength(2);
+    expect(pronunciationProgress.data).toHaveLength(4);
     expect(pronunciationProgress.data!.every((entry) =>
       entry.initial_pronunciation_passed
       && !entry.initial_translation_passed
