@@ -9,16 +9,20 @@
 
 ## [Unreleased]
 
+暂无。
+
+## [0.10.0] - 2026-08-03
+
 ### Added
 
 - Courses 考试入口新增“读音考试”：默认要求完整第一轮 90% 正确率（可设 1–100%），单词逐题打乱展示并通过现有 Azure 发音评分判定；每次评分后无论正确或错误都停留显示分数、音素反馈、翻译和“听正确读音”，用户再进入下一词。
 - 发音考试每轮结束会持久展示全部错词、该轮分数、IPA、翻译和标准音频；用户确认后，服务端才打乱错词并开始下一轮。第一轮达线且全部候补轮完成后，只记录本次选中词的发音考试通过事实。
-- 新增候选迁移 0029–0030：考试类型契约、发音考试工作流、通用候补轮确认 RPC、发音评分前当前题校验，以及结构/权限自验证。它们仍在 `Unreleased`，不能据此声称生产已从 0028 升级。
+- 新增 0029–0030：考试类型契约、发音考试工作流、通用候补轮确认 RPC、发音评分前当前题校验，以及结构/权限自验证。
 - 复习和两类考试现在都可在所选单元内任意勾选 1–2,000 个词；服务端验证去重、owner、课程/单元归属和 `unlearned` 范围，并把选中集合固化到独立 session。
 - Courses 新增考试历史和详情：最多列出最近 100 场，区分进行中、取消、通过及“首轮未通过但错题已全部修正”，并展示选词、错误次数、逐次拼写/读音结果和时间。考试词面、翻译、音标和最终结果使用 owner 私有快照，之后编辑或删除单词不会改写既有考试；删除整门课程仍按原规则级联删除历史。
 - 课程编辑器在每个既有词旁显示累计错误次数、复习次数及是否已学习；这些只读属性不会随课程内容 payload 回写。
-- 新增候选迁移 0031–0032：自定义复习/考试范围、`practiceCompleted` 补练完成事实、私有不可变考试词快照、owner-scoped 历史 RPC，以及精确权限/结构自验证。生产仍停在 0028。
-- 新增候选迁移 0033–0034：`spelling_exam_passed_at`、`pronunciation_exam_passed_at`、双考试 check constraint、唯一 `learned_at` 投影、内容编辑撤销 trigger、单 RPC snapshot 字段，以及结构/权限自验证。迁移会从可证明的已通过考试回填两个事实，并清除仅由旧复习或单项考试形成的 `learned_at`。
+- 新增 0031–0032：自定义复习/考试范围、`practiceCompleted` 补练完成事实、私有不可变考试词快照、owner-scoped 历史 RPC，以及精确权限/结构自验证。
+- 新增 0033–0034：`spelling_exam_passed_at`、`pronunciation_exam_passed_at`、双考试 check constraint、唯一 `learned_at` 投影、内容编辑撤销 trigger、单 RPC snapshot 字段，以及结构/权限自验证。迁移会从可证明的已通过考试回填两个事实，并清除仅由旧复习或单项考试形成的 `learned_at`。
 
 ### Changed
 
@@ -34,12 +38,19 @@
 ### Testing
 
 - 增加 API 参数/RPC 映射、考试类型 UI、评分后标准音频、实时正确率、轮末错词分数、手动确认/打乱重考、通过后发音熟练投影、双用户 RPC 拒绝和固定录音 Chromium 流程；自动化 Azure 仍为 fake，不能作为真实供应商或生产发布证据。
-- 增加复习/考试任意选词、失败考试自动完成、考试历史列表/详情、编辑器只读学习属性的 API/jsdom，以及 selected RPC owner/scope、历史脱敏、客户端拒绝、课程编辑后历史快照不变和失败考试不写熟练度的 RLS/Playwright 候选覆盖。
-- 增加跨日三能力复习仍不 learned、单项考试仍不 learned、两项考试任意顺序共同 learned、失败考试不写考试事实、内容编辑精确撤销和 snapshot 映射的候选回归；0034 在空库/升级时验证唯一投影与权限边界。
+- 增加复习/考试任意选词、失败考试自动完成、考试历史列表/详情、编辑器只读学习属性的 API/jsdom，以及 selected RPC owner/scope、历史脱敏、客户端拒绝、课程编辑后历史快照不变和失败考试不写熟练度的 RLS/Playwright 覆盖。
+- 增加跨日三能力复习仍不 learned、单项考试仍不 learned、两项考试任意顺序共同 learned、失败考试不写考试事实、内容编辑精确撤销和 snapshot 映射的回归；0034 在空库/升级时验证唯一投影与权限边界。
 
 ### Documentation
 
-- 将 Courses `learned_at` 文档统一为“拼写考试事实 + 发音考试事实”唯一服务端投影；补充复习只记录练习、单项考试不掌握、编辑撤销、课程进度/成长投影、安全边界，以及 Web/共享类型/NestJS/迁移/测试的逐层代码索引。同步更新积分产品规则、ERD、API、测试、隐私、监控和项目状态；生产仍停在 0028，候选迁移尚未生效。
+- 将 Courses `learned_at` 文档统一为“拼写考试事实 + 发音考试事实”唯一服务端投影；补充复习只记录练习、单项考试不掌握、编辑撤销、课程进度/成长投影、安全边界，以及 Web/共享类型/NestJS/迁移/测试的逐层代码索引。同步更新积分产品规则、ERD、API、测试、隐私、监控和项目状态。
+
+### Release
+
+- PR [#45](https://github.com/1590703336/Nalanda/pull/45) 合入 main SHA `1a58d2164f6d58feea4d3a2c8925211b8cc60dde`；最终 PR run `30811283164`、main run `30811817461` 与受保护 run `30813047562` 通过 docs/lint/typecheck、Web/API tests、build、0007→0034、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake。
+- [只读 plan run `30812467085`](https://github.com/1590703336/Nalanda/actions/runs/30812467085) 确认生产远端完整到 0028，唯一待办为 0029–0034；恢复、apply 和应用部署步骤均跳过。
+- [受保护 apply/deploy run `30813047562`](https://github.com/1590703336/Nalanda/actions/runs/30813047562) 在 apply 前保留加密 artifact `8855819351`（`db-recovery-1a58d2164f6d58feea4d3a2c8925211b8cc60dde`，593,399 bytes，digest `sha256:5f36f770aab133f24e12d461e66b0c4b744303ca1dbfd1600215163e4ad14796`，工作流保留 14 天），随后把远端 history 同步到 0034，并通过 0030/0032/0034 结构/权限断言、remote database lint 与空 dry-run。
+- 不可变 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（1,604 ms、253/27/280 tokens）和 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回 React root、Course Market 返回 200。未使用真实用户账号在生产提交完整拼写/读音考试，因此不能把发布 gate 描述为生产用户考试流程 E2E。
 
 ## [0.9.0] - 2026-08-01
 

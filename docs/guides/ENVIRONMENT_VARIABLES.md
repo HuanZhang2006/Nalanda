@@ -56,7 +56,7 @@
 | `AZURE_SPEECH_REGION` | 语音启用时必需 | 受限配置 | Azure region，同时组成 TTS/STT endpoint。 |
 | `AZURE_SPEECH_VOICE` | 可选，`en-US-JennyNeural` | 公开配置 | en-US TTS voice 名称。 |
 | `AZURE_SPEECH_TIMEOUT_MS` | 可选，10,000 | 公开配置 | 单次 Azure TTS/评分硬超时；实现限制在 1,000–60,000 ms，超时降级且不记学习错误。 |
-| `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` | 可选，70 | 公开产品配置 | 整体 `PronScore` 达标线，允许 1–100；生产认词阶段用它更新持久候补池；候选 0029 的读音考试也用它判定每道题正误，但单元考试总通过率仍由用户选择的 `examPassPercent`（默认 90）独立决定。API 必须把实际值返回给 UI。 |
+| `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` | 可选，70 | 公开产品配置 | 整体 `PronScore` 达标线，允许 1–100；生产认词阶段和 0029 起的读音考试都用它判定每道题正误，但单元考试总通过率仍由用户选择的 `examPassPercent`（默认 90）独立决定。API 必须把实际值返回给 UI。 |
 | `AZURE_SPEECH_ASSESSMENTS_PER_MINUTE` | 可选，30 | 公开配置 | 单用户评分每分钟持久限额。 |
 | `AZURE_SPEECH_ASSESSMENTS_PER_DAY` | 可选，300 | 公开配置 | 按用户 IANA 时区本地日期的每日评分限额。 |
 | `AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD` | 可选，5,000,000 | 受限配置 | 所有 API 实例共享的月度估算预算，单位 micro-USD。 |
@@ -81,7 +81,7 @@
 
 所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*`、timeout 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
 
-`OPENROUTER_ASSESSMENTS_PER_DAY=500` 是仓库 `Unreleased` 的默认值和生产环境安装脚本目标值；修改本文或 `.env.example` 不会改写正在运行的服务器。生产在应用/0027–0028 受保护发布并原子更新 `/opt/nalanda/.env` 前仍按上一 release 的显式值运行，发布报告必须单独核对容器内生效值且不得打印 key。
+`OPENROUTER_ASSESSMENTS_PER_DAY=500` 是仓库默认值和生产环境安装脚本目标值；修改本文或 `.env.example` 不会改写正在运行的服务器。生产已随应用/0027–0028 受保护发布原子更新 `/opt/nalanda/.env`，后续发布报告仍必须单独核对容器内生效值且不得打印 key。
 
 ## 4. FastAPI AI 运行时变量
 

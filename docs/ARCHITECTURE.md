@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-03。生产数据库已有受保护发布证据到 0028；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学与显式取消、可选限时拼写、OpenRouter 语义翻译前测、轮末错题复盘、拼写考试、Web/数据库一致的 Unicode 拼写归一化、仅标点差异容错和 Japan East Azure Speech 已在线。仓库候选 0029–0034 复用 Azure adapter 增加读音考试，并增加 owner 校验的自定义复习/考试词集合、失败考试补练完成事实、考试历史详情，以及仅在同一词同时通过拼写和发音考试时投影 `learned_at` 的掌握规则；均尚未生产发布。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-03。生产数据库已有受保护发布证据到 0034；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学与显式取消、可选限时拼写、OpenRouter 语义翻译前测、轮末错题复盘、拼写/读音考试、owner 校验的任意选词、失败补练完成事实、考试历史、双考试掌握、Web/数据库一致的 Unicode 拼写归一化、仅标点差异容错和 Japan East Azure Speech 已在线。`learned_at` 只在同一词同时通过拼写和发音考试时由服务端投影；首次学习、复习和单项考试均不形成掌握。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
@@ -40,7 +40,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018，2026-07-28 同步至 0020，2026-07-31 同步至 0024，并于 2026-08-01 同步至 0028。远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言；0019–0020 增加 `spelling_options`、hash-only 语义评判事实与 service-only RPC；0021–0022 统一 NFKC/Unicode 空白/ASCII case 拼写归一化；0023–0024 加入仅标点差异 matcher 与验证；0025–0026 增加显式取消 RPC；0027–0028 增加考试事实、轮末确认、真实 provider 配额预留和精确权限断言。生产事实源现为 0028。
+生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018，2026-07-28 同步至 0020，2026-07-31 同步至 0024，2026-08-01 同步至 0028，并于 2026-08-03 同步至 0034。远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言；0019–0020 增加 `spelling_options`、hash-only 语义评判事实与 service-only RPC；0021–0022 统一 NFKC/Unicode 空白/ASCII case 拼写归一化；0023–0024 加入仅标点差异 matcher 与验证；0025–0026 增加显式取消 RPC；0027–0028 增加考试事实、轮末确认、真实 provider 配额预留和精确权限断言；0029–0030 增加读音考试，0031–0032 增加自定义选词、失败补练完成事实与考试历史，0033–0034 收敛双考试唯一掌握投影并验证其权限/结构。生产事实源现为 0034。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -97,7 +97,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0028，含显式取消、拼写轮末复盘、考试模式及真实 provider 配额预留 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0034，含显式取消、拼写/读音考试、任意选词、历史、双考试掌握及真实 provider 配额预留 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |
