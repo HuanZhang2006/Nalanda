@@ -73,6 +73,11 @@ function fallbackSpeak(text: string) {
   window.speechSynthesis.speak(utterance); return true;
 }
 
+function isPronunciationExam(session: LearningSession | null | undefined) {
+  return Boolean(session && session.mode === "exam"
+    && readExamState(session).kind === "pronunciation");
+}
+
 function stableShuffle(words: VocabularyWord[], salt: string) {
   const score = (value: string) => [...`${salt}:${value}`].reduce((sum, char) => ((sum * 33) ^ char.charCodeAt(0)) >>> 0, 5381);
   return [...words].sort((left, right) => score(left.id) - score(right.id) || left.id.localeCompare(right.id));
@@ -150,6 +155,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const [selectedMatchId, setSelectedMatchId] = useState("");
   const [recording, setRecording] = useState(false);
   const [assessment, setAssessment] = useState<PronunciationAssessment | null>(null);
+  const [assessmentWordId, setAssessmentWordId] = useState("");
   const [assessmentBusy, setAssessmentBusy] = useState(false);
   const [audioManifest, setAudioManifest] = useState<LearningAudioManifest | null>(null);
   const [audioPrefetchRetry, setAudioPrefetchRetry] = useState(0);
@@ -458,7 +464,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
 
   const q = session ? readQueueState(session) : {
     queue: [], nextQueue: [], cursor: 0, round: 1,
-    awaitingRetryConfirmation: false, retrySummaryIds: [], retryFromRound: null,
+    awaitingRetryConfirmation: false, retrySummaryIds: [], retrySummaryScores: {}, retryFromRound: null,
   };
   const currentId = q.queue[q.cursor];
   const current = session?.items.find((item) => item.word.id === currentId)?.word || null;
@@ -470,6 +476,9 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const retrySummaryWords = session ? q.retrySummaryIds
     .map((id) => session.items.find((item) => item.word.id === id)?.word)
     .filter((word): word is VocabularyWord => Boolean(word)) : [];
+  const assessmentWord = assessmentWordId && session
+    ? session.items.find((item) => item.word.id === assessmentWordId)?.word || null
+    : null;
   const spellingOptions = session?.spellingOptions || {
     timeLimitEnabled: false,
     timeLimitSeconds: 20,
@@ -512,11 +521,14 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     setSpellingAttemptId(crypto.randomUUID());
     setSpellingTimeRemainingMs(null);
     spellingSubmittedRef.current = false;
-    setAssessment(null);
+    if (!isPronunciationExam(session) || !assessmentWordId) {
+      setAssessment(null);
+      setAssessmentWordId("");
+    }
     setActiveAudioId("");
     setSelectedMatchId("");
     setAudioNotice(null);
-  }, [currentId, q.cursor, q.round, session?.stage]);
+  }, [currentId, q.cursor, q.round, session?.stage, session?.mode, assessmentWordId]);
 
   const translationOptions = useMemo(() => {
     if (!current || !course) return [];
@@ -676,13 +688,15 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   };
   const continueAfterFeedback = () => { if (!busy) advanceFeedback(); };
 
-  const continueSpellingRetryRound = async () => {
+  const continueRetryRound = async () => {
     const currentSession = sessionRef.current;
     if (!currentSession || !q.awaitingRetryConfirmation || busy || pendingCount > 0) return;
     setBusy(true);
     setError("");
     try {
-      const result = await coursesApi.continueSpellingRetryRound(currentSession.id);
+      const result = isPronunciationExam(currentSession)
+        ? await coursesApi.continueExamRetryRound(currentSession.id)
+        : await coursesApi.continueSpellingRetryRound(currentSession.id);
       setConfirmedRevision(result.revision);
       setCurrentSession(applySessionPatch(
         currentSession,
@@ -700,16 +714,21 @@ export function LearningView({ sessionId, onExit, onChanged }: {
 
   const assessBlob = async (blob: Blob) => {
     if (!session || !current) return;
+    const assessedWordId = current.id;
     setAssessmentBusy(true); setNotice("");
     try {
       const form = new FormData(); form.append("sessionId", session.id); form.append("wordId", current.id); form.append("audio", blob, "reading.wav");
       const response = await authedFetch("/api/pronunciation/assess", { method: "POST", body: form });
       if (!response.ok) throw new Error(await apiErrorMessage(response));
       const body = await response.json() as PronunciationAssessment;
-      setAssessment(body);
-      setConfirmedRevision(body.revision);
       const currentSession = sessionRef.current;
-      if (currentSession) setCurrentSession(applySessionPatch(currentSession, body.revision, body.sessionPatch));
+      const pronunciationExam = isPronunciationExam(currentSession);
+      setAssessment(body);
+      setAssessmentWordId(pronunciationExam ? assessedWordId : "");
+      setConfirmedRevision(body.revision);
+      if (currentSession && !pronunciationExam) {
+        setCurrentSession(applySessionPatch(currentSession, body.revision, body.sessionPatch));
+      }
     } catch (caught) { setNotice(l(`${caught instanceof Error ? caught.message : "Pronunciation assessment is temporarily unavailable."} You can continue learning.`, `${caught instanceof Error ? caught.message : "朗读评分暂不可用"}，不影响继续学习`)); }
     setAssessmentBusy(false); setRecording(false); stopRef.current = null;
   };
@@ -741,6 +760,20 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     await startRecording();
   };
   const retryAssessment = async () => { setAssessment(null); setNotice(""); await startRecording(); };
+  const continueAfterPronunciationAssessment = () => {
+    const currentSession = sessionRef.current;
+    if (!currentSession || !assessment || assessmentBusy) return;
+    const next = applySessionPatch(
+      currentSession,
+      assessment.revision,
+      assessment.sessionPatch,
+    );
+    setCurrentSession(next);
+    setAssessment(null);
+    setAssessmentWordId("");
+    setNotice("");
+    if (!next.active) onChanged();
+  };
 
   const chooseTranslation = (option: string) => {
     if (!current || busy || feedback || selected.includes(option)) return;
@@ -961,22 +994,24 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     if (session.mode === "exam") {
       const exam = readExamState(session);
       return <div className="wrap course-session courses-root"><div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}><CourseLocaleButton /></div><div className="card course-study-card" role="status">
-        <div className="course-empty-icon">{exam.passed ? "✓" : "!"}</div><div className="eyebrow">{l("Exam complete", "考试完成")}</div>
+        <div className="course-empty-icon">{exam.passed ? "✓" : "!"}</div><div className="eyebrow">{exam.kind === "pronunciation"
+          ? l("Pronunciation exam complete", "读音考试完成")
+          : l("Spelling exam complete", "拼写考试完成")}</div>
         <h1 className="page-title">{exam.passed ? l("Exam passed", "考试通过") : l("Exam not passed", "考试未通过")}</h1>
         <p className="page-sub" style={{ textAlign: "center" }}>{l(
           `First-round accuracy: ${exam.accuracyPercent}% · Required: ${exam.requiredPercent}%.`,
           `第一轮正确率：${exam.accuracyPercent}% · 要求：${exam.requiredPercent}%。`,
         )}</p>
         <div className={`course-feedback mt-16 ${exam.passed ? "is-correct" : "wrong"}`}>{exam.passed
-          ? l("All words in this unit are now counted as learned.", "本单元全部词汇现已计入已学习。")
-          : l("Retry practice is complete, but this attempt did not meet the required first-round accuracy. The unit was not marked learned; start a new exam to try again.", "错题补练已完成，但本次第一轮正确率未达要求；本单元不会标为已学习，可重新开始一次考试。")}</div>
+          ? l("This exam requirement is complete. A word is marked learned only after it has passed both the spelling and pronunciation exams.", "本项考试要求已完成。单词只有同时通过拼写考试和发音考试后才会标为已学习。")
+          : l("Every retry word was corrected and this exam ended automatically. The first-round score still did not meet the requirement, so this exam requirement was not passed; start a new exam to try again.", "所有错词均已修正，本次考试已自动结束；但首轮正确率仍未达要求，因此本项考试要求尚未通过，可重新开始一次考试。")}</div>
         <button className="btn btn-primary mt-24" onClick={onExit}>{l("Back to courses", "返回课程")}</button>
       </div></div>;
     }
     return <div className="wrap course-session courses-root"><div className="row" style={{ justifyContent: "flex-end", marginBottom: 12 }}><CourseLocaleButton /></div><div className="card course-study-card">
       <div className="course-empty-icon">✓</div><div className="eyebrow">{l("Session complete", "会话完成")}</div>
       <h1 className="page-title">{session.mode === "initial" ? l(`${unit?.name || "This unit"}: first learning complete`, `${unit?.name || "本单元"} 首次学习完成`) : l("Review complete", "本次复习完成")}</h1>
-      <p className="page-sub" style={{ textAlign: "center" }}>{session.mode === "initial" ? l("Mastery still depends on reviews across different dates. You may add separate review schedules; none are selected by default.", "熟练度仍以跨日期复习为准。可选择加入独立复习日程，均默认不勾选。") : l("Words completed in this session gained one review. Each skill counts distinct dates only.", "本次最终完成的词已累计一次复习；各能力只按不同日期计数。")}</p>
+      <p className="page-sub" style={{ textAlign: "center" }}>{session.mode === "initial" ? l("Initial learning is complete. A word becomes learned only after it passes both a spelling exam and a pronunciation exam. You may still add review schedules; none are selected by default.", "首次学习已完成。单词只有同时通过拼写考试和发音考试后才标为已学习。仍可选择加入复习日程，均默认不勾选。") : l("Words completed in this session gained one review. Reviews record practice but do not mark words learned; both exams are required.", "本次最终完成的词已累计一次复习。复习只记录练习事实，不会将词标为已学习；必须通过两项考试。")}</p>
       {session.mode === "initial" && <div className="row wrap-flex mt-24">{[3, 7, 15, 30].map((offset) => <label className="chip chip-outline" key={offset}>
         <input type="checkbox" checked={reviewOffsets.includes(offset)} onChange={(event) => setReviewOffsets((values) => event.target.checked ? [...values, offset] : values.filter((value) => value !== offset))} /> {l(`In ${offset} days`, `${offset} 天后`)}
       </label>)}</div>}
@@ -993,14 +1028,20 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const feedbackWord = feedback
     ? session.items.find((item) => item.word.id === feedback.wordId)?.word || null
     : null;
-  const examDisplaySession = feedback?.serverResult
-    ? applySessionPatch(session, feedback.serverResult.revision, feedback.serverResult.sessionPatch)
-    : feedback?.predictedSession || session;
+  const examDisplaySession = isPronunciationExam(session) && assessment
+    ? applySessionPatch(session, assessment.revision, assessment.sessionPatch)
+    : feedback?.serverResult
+      ? applySessionPatch(session, feedback.serverResult.revision, feedback.serverResult.sessionPatch)
+      : feedback?.predictedSession || session;
   const examState = session.mode === "exam" ? readExamState(examDisplaySession) : null;
-  const visibleStages = session.mode === "exam" ? (["spelling"] as const) : STAGES;
+  const visibleStages = session.mode === "exam"
+    ? ([examState?.kind || "spelling"] as const)
+    : STAGES;
   return <div className="wrap course-session courses-root">
     <div className="row between wrap-flex" style={{ marginBottom: 14 }}><div><div className="eyebrow">{course.title} · {session.mode === "exam" ? l(`Exam · Round ${q.round}`, `考试 · 第 ${q.round} 轮`) : l(`Round ${q.round}`, `第 ${q.round} 轮`)}</div>
-      <h1 className="page-title">{session.mode === "exam" ? l("Spelling exam", "拼写考试") : label(session.stage)}</h1></div><div className="row wrap-flex"><button className="btn btn-sm" onClick={() => void downloadOfflineAudio()}>
+      <h1 className="page-title">{session.mode === "exam"
+        ? examState?.kind === "pronunciation" ? l("Pronunciation exam", "读音考试") : l("Spelling exam", "拼写考试")
+        : label(session.stage)}</h1></div><div className="row wrap-flex"><button className="btn btn-sm" onClick={() => void downloadOfflineAudio()}>
         {offlineAudio.running ? l("Stop audio download", "停止音频下载") : l("Download unit audio", "下载单元音频")}
       </button>{offlineAudio.cached > 0 && <button className="btn btn-sm" onClick={() => void removeOfflineAudio()}>{l("Remove offline audio", "删除离线音频")}</button>}<CourseLocaleButton /><button className="btn" disabled={cancelling} onClick={onExit}>{l("Pause and return", "暂停并返回")}</button><button className="btn btn-danger" disabled={cancelling} onClick={() => void cancelLearning()}>{cancelling ? l("Cancelling…", "取消中…") : l("Cancel learning", "取消学习")}</button></div></div>
     {(offlineAudio.running || offlineAudio.total > 0) && <div className="faint" style={{ marginBottom: 10 }}>{l(
@@ -1011,7 +1052,9 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       `${pendingCount} answer${pendingCount === 1 ? "" : "s"} waiting for server confirmation.`,
       `${pendingCount} 个答案等待服务器确认。`,
     )}</div>}
-    <div className="course-stage-track" style={{ gridTemplateColumns: `repeat(${visibleStages.length}, minmax(0, 1fr))` }}>{visibleStages.map((stage) => <div key={stage} className={`course-stage-step ${session.stage === stage ? "active" : ""}`}>{session.mode === "exam" ? l("Translation + spelling", "翻译 + 拼写") : label(stage)}</div>)}</div>
+    <div className="course-stage-track" style={{ gridTemplateColumns: `repeat(${visibleStages.length}, minmax(0, 1fr))` }}>{visibleStages.map((stage) => <div key={stage} className={`course-stage-step ${session.stage === stage ? "active" : ""}`}>{session.mode === "exam"
+      ? examState?.kind === "pronunciation" ? l("Read aloud + score", "朗读 + 评分") : l("Translation + spelling", "翻译 + 拼写")
+      : label(stage)}</div>)}</div>
     <div className="row between" style={{ marginBottom: 8 }}><span className="faint">{session.mode === "initial" ? l(`First-learning progress ${initialPercent}%`, `首次学习完成度 ${initialPercent}%`) : session.mode === "exam" && examState ? l(
       `Live first-round accuracy ${examState.accuracyPercent}% (${examState.correct}/${examState.answered}) · Required ${examState.requiredPercent}%`,
       `第一轮实时正确率 ${examState.accuracyPercent}%（${examState.correct}/${examState.answered}）· 要求 ${examState.requiredPercent}%`,
@@ -1042,7 +1085,11 @@ export function LearningView({ sessionId, onExit, onChanged }: {
         )}</p>
         <div className="course-retry-word-list mt-16">{retrySummaryWords.map((word) => <article className="course-retry-word" key={word.id}>
           <button className="btn btn-sm" aria-label={l(`Play ${word.term}`, `播放 ${word.term}`)} onClick={() => void playWord(word, audioManifest, setAudioNotice, l)}>🔊</button>
-          <div><b className="mono">{word.term}</b><div className="course-ipa">{word.ipa || l("IPA not available", "音标待补充")}</div></div>
+          <div><b className="mono">{word.term}</b><div className="course-ipa">{word.ipa || l("IPA not available", "音标待补充")}</div>
+            {examState?.kind === "pronunciation" && q.retrySummaryScores[word.id] != null && <div className="faint mt-4">{l(
+              `Pronunciation score ${Math.round(q.retrySummaryScores[word.id])}`,
+              `发音评分 ${Math.round(q.retrySummaryScores[word.id])} 分`,
+            )}</div>}</div>
           <div className="course-result-translations">{word.translations.map((translation) => <em key={translation}>{translation}</em>)}</div>
         </article>)}</div>
         {pendingCount > 0 && <div className="course-feedback mt-16" role="status">{l(
@@ -1050,7 +1097,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           "最后几题仍在等待服务器确认；同步完成后才能开始下一轮。",
         )}</div>}
         <button className="btn btn-primary btn-lg mt-24" disabled={busy || pendingCount > 0}
-          onClick={() => void continueSpellingRetryRound()}>{busy
+          onClick={() => void continueRetryRound()}>{busy
             ? l("Preparing next round…", "正在准备下一轮…")
             : l("Shuffle and start next round", "打乱顺序并开始下一轮")}</button>
       </div> : <>
@@ -1088,6 +1135,41 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           <div className="course-phonemes">{assessment.phonemes.map((entry, index) => <span key={`${entry.phoneme}-${index}`} className={`course-phoneme ${entry.needsPractice ? "bad" : ""}`}>{entry.phoneme} {Math.round(entry.accuracyScore)}</span>)}</div>
           <button className="btn btn-sm mt-12" disabled={assessmentBusy} onClick={retryAssessment}>🎙 {l("Try pronunciation again", "重新朗读并评分")}</button></div>}
         <button className="btn btn-primary btn-lg mt-24" disabled={busy || assessmentBusy} onClick={recognize}>{busy ? l("Saving…", "保存中…") : l("I recognize it — continue", "认识了，继续")}</button>
+      </> : session.stage === "pronunciation" && isPronunciationExam(session) ? <>
+        <div className="course-term">{(assessmentWord || current).term}</div>
+        <div className="course-ipa">{(assessmentWord || current).ipa || l("IPA not available", "音标待补充")}</div>
+        {!assessment ? <>
+          <p className="muted mt-16">{l(
+            "Read the word aloud. The configured pronunciation pass score decides whether it enters the next-round retry pool.",
+            "请朗读这个单词。系统配置的单词发音通过分数决定它是否进入下一轮候补池。",
+          )}</p>
+          <button className={`btn btn-primary btn-lg mt-24 ${recording ? "active" : ""}`}
+            disabled={assessmentBusy} onClick={() => void toggleRecording()}>{assessmentBusy
+              ? l("Assessing pronunciation…", "正在进行发音评分…")
+              : recording ? l("■ Stop and score", "■ 停止并评分") : l("🎙 Start pronunciation exam", "🎙 开始朗读评分")}</button>
+        </> : <div role="status" className={`course-feedback mt-24 ${assessmentPassed ? "is-correct" : "wrong"}`}>
+          <div><b>{assessmentPassed
+            ? l(`Passed · ${Math.round(assessment.pronunciationScore)} points`, `通过 · ${Math.round(assessment.pronunciationScore)} 分`)
+            : l(`Needs retry · ${Math.round(assessment.pronunciationScore)} points`, `需要重考 · ${Math.round(assessment.pronunciationScore)} 分`)}</b></div>
+          <div className="muted mt-4">{l(
+            `Word pass score: ${assessmentThreshold} or higher.`,
+            `单词通过分数：${assessmentThreshold} 分及以上。`,
+          )}</div>
+          <div className="course-phonemes">{assessment.phonemes.map((entry, index) => <span
+            key={`${entry.phoneme}-${index}`}
+            className={`course-phoneme ${entry.needsPractice ? "bad" : ""}`}>{entry.phoneme} {Math.round(entry.accuracyScore)}</span>)}</div>
+          <div className="course-result-grid mt-12">
+            <div><span>{l("Word", "单词")}</span> <b className="mono">{assessmentWord?.term || current.term}</b></div>
+            <div><span>{l("Translation", "翻译")}</span><div className="course-result-translations">{(assessmentWord || current).translations.map((translation) =>
+              <em key={translation}>{translation}</em>)}</div></div>
+          </div>
+          <div className="row wrap-flex mt-16" style={{ justifyContent: "center" }}>
+            <button className="btn" onClick={() => void playWord(assessmentWord || current, audioManifest, setAudioNotice, l)}>🔊 {l("Hear the correct pronunciation", "听正确读音")}</button>
+            <button className="btn btn-primary" disabled={assessmentBusy}
+              onClick={continueAfterPronunciationAssessment}>{assessment.sessionPatch.active
+                ? l("Next word", "下一词") : l("Finish exam", "完成考试")}</button>
+          </div>
+        </div>}
       </> : session.stage === "pronunciation" ? <>
         <p className="muted">{l("Play a pronunciation on the left, then choose its word on the right. Each batch contains up to 5 words.", "先点击左侧任一发音，再从右侧选择对应单词。每批最多 5 个。")}</p>
         <div className="course-match"><div>{audioBatch.map((word, index) => <button key={word.id} aria-label={l(`Play ${word.term}`, `播放 ${word.term}`)} disabled={busy || Boolean(feedback)}

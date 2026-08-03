@@ -24,7 +24,8 @@ function setValue(element: HTMLInputElement | HTMLTextAreaElement, value: string
   Object.getOwnPropertyDescriptor(proto, "value")!.set!.call(element, value); element.dispatchEvent(new Event("input", { bubbles: true }));
 }
 const progress = { recognitionSeen: false, initialPronunciationPassed: false, initialTranslationPassed: false, initialSpellingPassed: false,
-  pronunciationReviewDates: [], translationReviewDates: [], spellingReviewDates: [], wrongCount: 0, reviewCount: 0, learnedAt: null };
+  pronunciationReviewDates: [], translationReviewDates: [], spellingReviewDates: [], wrongCount: 0, reviewCount: 0,
+  spellingExamPassedAt: null, pronunciationExamPassedAt: null, learnedAt: null };
 
 describe("Courses React UI", () => {
   let root: Root; let container: HTMLDivElement;
@@ -121,6 +122,32 @@ describe("Courses React UI", () => {
     expect((container.querySelectorAll('[aria-label="英文"]')[0] as HTMLInputElement).value).toBe("pear");
     await settle(() => clickText(container, "保存课程"));
     expect(container.querySelector('[role="alert"]')?.textContent).toContain("数据库保存失败");
+  });
+
+  it("shows both durable exam requirements, mastery, review, and error facts beside editable words", async () => {
+    setLocale("en", { persist: false });
+    const initial: LearningCourseInput = { id: ids[0], title: "Course", category: "english_vocabulary", hasUnits: false, locale: "en-US",
+      units: [{ id: ids[1], name: "Vocabulary", isSystem: true, words: [
+        { id: ids[2], term: "apple", translations: ["apple fruit"], ipa: null },
+        { id: ids[3], term: "pear", translations: ["pear fruit"], ipa: null },
+        { id: ids[4], term: "orange", translations: ["orange fruit"], ipa: null },
+        { id: ids[5], term: "banana", translations: ["banana fruit"], ipa: null },
+      ] }] };
+    await settle(() => root.render(<CourseEditor initial={initial} existing progressByWord={{
+      [ids[2]]: { ...progress, wrongCount: 7, reviewCount: 3,
+        spellingExamPassedAt: new Date(0).toISOString(), pronunciationExamPassedAt: new Date(0).toISOString(),
+        learnedAt: new Date(0).toISOString() },
+    }} onCancel={() => {}} onSave={vi.fn()} />));
+
+    const apple = [...container.querySelectorAll(".course-word-row")].find((row) =>
+      row.querySelector<HTMLInputElement>('[aria-label="English"]')?.value === "apple")!;
+    expect(apple.textContent).toContain("Learned");
+    expect(apple.textContent).toContain("Spelling exam passed");
+    expect(apple.textContent).toContain("Pronunciation exam passed");
+    expect(apple.textContent).toContain("7 errors");
+    expect(apple.textContent).toContain("3 reviews");
+    expect(container.textContent).toContain("New word");
+    expect(container.textContent).toContain("both its spelling and pronunciation exams");
   });
 
   it("applies same-unit and cross-unit drag ordering without mutating the editor source", () => {
@@ -264,7 +291,7 @@ describe("Courses React UI", () => {
     }));
 
     await settle(() => root.render(<CoursesApp />));
-    await settle(() => clickText(container, "Exam"));
+    await settle(() => [...container.querySelectorAll("button")].find((button) => button.textContent === "Exam")!.click());
     const modal = container.querySelector(".modal")!;
     const required = modal.querySelector<HTMLInputElement>('[aria-label="Exam required accuracy"]')!;
     const translationGate = [...modal.querySelectorAll("label")].find((label) =>
@@ -272,15 +299,72 @@ describe("Courses React UI", () => {
     expect(required.value).toBe("90");
     expect(translationGate.checked).toBe(true);
     expect(translationGate.disabled).toBe(true);
+    const pronunciationExam = [...modal.querySelectorAll("label")].find((label) =>
+      label.textContent?.includes("Pronunciation exam"))!.querySelector("input") as HTMLInputElement;
+    await settle(() => pronunciationExam.click());
+    expect(pronunciationExam.checked).toBe(true);
+    expect(modal.textContent).toContain("Read each shown word aloud");
+    expect([...modal.querySelectorAll("label")].some((label) =>
+      label.textContent?.includes("Test a typed translation"))).toBe(false);
+    const spellingExam = [...modal.querySelectorAll("label")].find((label) =>
+      label.textContent?.includes("Spelling exam"))!.querySelector("input") as HTMLInputElement;
+    await settle(() => spellingExam.click());
     await settle(() => setValue(required, "95"));
+    const pearSelection = [...modal.querySelectorAll(".course-word-selection-item")].find((label) =>
+      label.textContent?.includes("pear"))!.querySelector("input") as HTMLInputElement;
+    await settle(() => pearSelection.click());
+    expect(modal.textContent).toContain("3 of 4 selected");
     await settle(() => clickText(modal, "Start exam"));
 
     expect(startBody).toMatchObject({
       mode: "exam",
+      examKind: "spelling",
       skills: ["spelling"],
       scope: "all",
       examPassPercent: 95,
       spellingOptions: { translationFirst: true },
+      wordIds: [ids[2], ids[4], ids[5]],
+    });
+  });
+
+  it("supports an arbitrary owner-scoped word subset for review", async () => {
+    setLocale("en", { persist: false });
+    const summary = { id: ids[0], title: "Review course", category: "english_vocabulary", hasUnits: true, locale: "en-US", unitCount: 1,
+      wordCount: 4, learnedCount: 1, progressPercent: 25, activeSessionId: null, canRepublish: true,
+      originPublicationId: null, originShareId: null, originAuthorName: null, updatedAt: new Date().toISOString() };
+    const words = ["apple", "pear", "orange", "banana"].map((term, index) => ({ id: ids[index + 2], term, normalizedTerm: term,
+      translations: [`translation-${index}`], ipa: null, position: index,
+      progress: { ...progress, learnedAt: index === 0 ? new Date(0).toISOString() : null } }));
+    const detail = { ...summary, units: [{ id: ids[1], name: "Unit 1", position: 0, isSystem: false, words }] };
+    const started = { id: ids[7], courseId: ids[0], unitId: ids[1], mode: "review", scope: "unlearned",
+      selectedSkills: ["pronunciation", "translation", "spelling"], stage: "pronunciation", active: true, revision: 0,
+      spellingOptions: { timeLimitEnabled: false, timeLimitSeconds: 20, translationFirst: false },
+      spellingTranslationAssessment: null,
+      state: { queue: [ids[3], ids[5]], cursor: 0, nextQueue: [], round: 1 },
+      items: [words[1], words[3]].map((word, position) => ({ word, position, recognitionSeen: false,
+        pronunciationPassed: false, translationPassed: false, spellingPassed: false, wrongCount: 0 })) };
+    let startBody: Record<string, any> | null = null;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init: RequestInit = {}) => {
+      const path = String(input);
+      if (path.endsWith(`/learning-courses/${ids[0]}/sessions`)) {
+        startBody = JSON.parse(String(init.body));
+        return response(started, 201);
+      }
+      if (path.endsWith(`/learning-sessions/${ids[7]}`)) return response(started);
+      if (path.endsWith(`/learning-courses/${ids[0]}`)) return response(detail);
+      return response([summary]);
+    }));
+
+    await settle(() => root.render(<CoursesApp />));
+    await settle(() => clickText(container, "Review"));
+    const modal = container.querySelector(".modal")!;
+    expect(modal.textContent).toContain("3 of 3 selected");
+    const orange = [...modal.querySelectorAll(".course-word-selection-item")].find((label) =>
+      label.textContent?.includes("orange"))!.querySelector("input") as HTMLInputElement;
+    await settle(() => orange.click());
+    await settle(() => clickText(modal, "Start review"));
+    expect(startBody).toMatchObject({
+      mode: "review", scope: "unlearned", wordIds: [ids[3], ids[5]],
     });
   });
 

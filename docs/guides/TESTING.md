@@ -80,8 +80,9 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 | `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
-| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、文本导入/编辑/排序/错误、进度与恢复，以及考试入口、默认 90%/自定义阈值、强制翻译前测和 API 请求契约 |
-| `apps/web/src/features/courses/LearningView.test.tsx` | 即时反馈/服务端纠正/outbox、拼写轮末错词清单（英文/翻译/IPA/音频）与手动确认、下一轮重排、考试实时第一轮正确率/完成结果，以及音频预取/缓存/朗读降级 |
+| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、文本导入/编辑/排序/错误、逐词错误/复习/已学习属性、复习/考试任意选词，以及两类考试阈值和 API 契约 |
+| `apps/web/src/features/courses/ExamHistory.test.tsx` | 失败但补练完成的历史标签、列表→详情、选词、错误次数和脱敏发音评分 |
+| `apps/web/src/features/courses/LearningView.test.tsx` | 即时反馈/服务端纠正/outbox、拼写/读音轮末错词清单与手动确认、读音评分后标准音、分数清单、下一轮重排、考试实时第一轮正确率/完成结果，以及音频预取/缓存/朗读降级 |
 | `apps/web/src/features/courses/learningSessionState.test.ts` | 客户端/数据库一致的正误规则、retry pool、stage transition、完成预测和权威 patch 替换 |
 | `apps/web/src/features/courses/attemptOutbox.test.ts` | IndexedDB 缺失时内存降级、按 user/session/revision 排序、重试退避和账号级清理 |
 | `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage 命中跳过网络、202 pending 不缓存、ready 响应缓存、逐资源状态回调与最多两个并发 |
@@ -189,7 +190,7 @@ git check-ignore .env.rls.local
 - study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
 - 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
 - Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage/翻译配额，也不能执行取消、考试、轮次确认、配额预留等特权 RPC；Profile timezone 只接受 IANA 名称；
-- 考试以服务端乱序队列覆盖完整单元：轮末确认期间 attempt 被拒绝，确认后错词集合不变且重排；第一轮未达线不写 learned，达线并完成补练后才把整单元标为 learned；
+- 考试以服务端乱序队列覆盖整单元或候选 0031 的 owner-validated 自定义集合：轮末确认期间 attempt/读音评分被拒绝，确认后错词集合不变且重排；第一轮未达线但补练完成会自动结束并写 `practiceCompleted`、不写考试事实。候选 0033 起，达线的单项考试只写对应时间戳，跨日三能力复习仍不 learned，只有拼写/发音考试事实都存在时才 learned；候选 0029 断言读音错词分数，0031 断言选词 scope、历史脱敏和新增 RPC 客户端拒绝，0034 断言双考试约束和唯一投影；
 - 翻译完全匹配 claim 不计 provider 配额，真实 provider reservation 只计一次，分钟/滚动 24 小时限制通过数据库锁并发收敛；
 - 0015–0016 的 snapshot/七参数 attempt/单元与单词 prepare/claim/finish/quota RPC 均不能由 anon/authenticated 执行，普通用户不能读写 `learning_audio_assets`；
 - 同 attempt UUID 的并发请求只追加一个事实/一次 wrong_count 并重放首次响应；相同 revision 的不同 answer 只有一项提交，另一项返回 revision conflict；旧五参数 RPC 仍会推进 revision，支持应用回滚；

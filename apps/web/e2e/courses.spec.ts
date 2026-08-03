@@ -17,6 +17,52 @@ async function openCourses(page: Page) {
   await expect(page.getByRole("heading", { name: "学习课程", exact: true })).toBeVisible();
 }
 
+async function installFixedMicrophone(page: Page) {
+  await page.addInitScript(() => {
+    const track = { stop: () => undefined };
+    Object.defineProperty(Navigator.prototype, "mediaDevices", {
+      configurable: true,
+      get: () => ({
+        getUserMedia: async () => ({ getTracks: () => [track] }),
+      }),
+    });
+    class FixedAudioContext {
+      sampleRate = 16_000;
+      destination = {};
+      createMediaStreamSource() {
+        return { connect: () => undefined, disconnect: () => undefined };
+      }
+      createScriptProcessor() {
+        const processor: {
+          onaudioprocess: null | ((event: { inputBuffer: { getChannelData: () => Float32Array } }) => void);
+          connect: () => void;
+          disconnect: () => void;
+        } = {
+          onaudioprocess: null,
+          connect: () => {
+            const chunks = [
+              new Float32Array(4_096),
+              new Float32Array(4_096).fill(0.2),
+              new Float32Array(4_096).fill(0.2),
+            ];
+            chunks.forEach((chunk) => processor.onaudioprocess?.({
+              inputBuffer: { getChannelData: () => chunk },
+            }));
+          },
+          disconnect: () => undefined,
+        };
+        return processor;
+      }
+      close() { return Promise.resolve(); }
+    }
+    Object.defineProperty(window, "AudioContext", {
+      configurable: true,
+      writable: true,
+      value: FixedAudioContext,
+    });
+  });
+}
+
 async function vocabularyAudioCacheCount(page: Page) {
   return page.evaluate(async () => {
     const names = (await caches.keys()).filter((name) =>
@@ -95,6 +141,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   const coldTerms = Array.from({ length: 6 }, (_, index) =>
     `legacyword${index}${nonce.replace(/[^A-Za-z0-9]/g, "")}`);
   const coldLines = coldTerms.map((term, index) => `${term} 冷词${index + 1}`).join("\n");
+  await installFixedMicrophone(page);
   await signUp(page, `courses-a-${nonce}@example.com`, password);
   await openCourses(page);
 
@@ -329,6 +376,56 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.getByLabel("拼写答案").press("Enter");
   await expect(page.getByRole("heading", { name: "考试通过" })).toBeVisible({ timeout: 10_000 });
   await expect(page.getByText(/第一轮正确率：50% · 要求：50%/)).toBeVisible();
+  await page.getByRole("button", { name: "返回课程" }).click();
+
+  // Pronunciation exam reuses the same server-authoritative first-round
+  // threshold. Browser recording is deterministic, while the API's Azure
+  // adapter remains the explicitly configured fake provider in this suite.
+  await page.getByRole("article").getByRole("button", { name: "考试" }).click();
+  const pronunciationExamModal = page.locator(".modal");
+  await pronunciationExamModal.locator("select").selectOption({ index: 0 });
+  await pronunciationExamModal.getByLabel("读音考试").check();
+  await expect(pronunciationExamModal.getByText(/看到单词后朗读/)).toBeVisible();
+  await pronunciationExamModal.getByRole("button", { name: "开始考试" }).click();
+  await expect(page.getByRole("heading", { name: "读音考试" })).toBeVisible();
+  await expect(page.getByText(/第一轮实时正确率 0%/)).toBeVisible();
+  for (let index = 0; index < 2; index += 1) {
+    await page.getByRole("button", { name: "开始朗读评分" }).click();
+    await page.getByRole("button", { name: "停止并评分" }).click();
+    await expect(page.getByText(/通过 · 93 分/)).toBeVisible();
+    await expect(page.getByRole("button", { name: "听正确读音" })).toBeVisible();
+    await page.getByRole("button", { name: index === 0 ? "下一词" : "完成考试" }).click();
+  }
+  await expect(page.getByRole("heading", { name: "考试通过" })).toBeVisible();
+  await expect(page.getByText(/第一轮正确率：100% · 要求：90%/)).toBeVisible();
+  await page.getByRole("button", { name: "返回课程" }).click();
+
+  // Review/exam pickers can narrow the selected unit to any owner-scoped word
+  // subset. A one-word review proves that the server session contains only the
+  // selected item, not the whole unit.
+  await page.getByRole("article").getByRole("button", { name: "复习" }).click();
+  const selectedReviewModal = page.locator(".modal");
+  await selectedReviewModal.locator("select").selectOption({ index: 0 });
+  await selectedReviewModal.getByLabel("全部单词").check();
+  await selectedReviewModal.getByRole("button", { name: "清空" }).click();
+  await selectedReviewModal.locator(".course-word-selection-item").filter({ hasText: "apple" })
+    .getByRole("checkbox").check();
+  await expect(selectedReviewModal.getByText("已选择 1/2 个")).toBeVisible();
+  await selectedReviewModal.getByRole("button", { name: "开始复习" }).click();
+  await expect(page.getByRole("heading", { name: "发音记忆", exact: true })).toBeVisible();
+  await expect(page.getByText("本轮 1/1 · 候补 0")).toBeVisible();
+  page.once("dialog", (dialog) => dialog.accept());
+  await page.getByRole("button", { name: "取消学习" }).click();
+  await expect(page.getByRole("heading", { name: courseTitle, exact: true })).toBeVisible();
+
+  await page.getByRole("button", { name: "考试历史" }).click();
+  await expect(page.getByRole("heading", { name: "考试历史" })).toBeVisible();
+  await expect(page.getByText("拼写考试", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("读音考试", { exact: true }).first()).toBeVisible();
+  await page.getByRole("button", { name: "查看详情" }).first().click();
+  await expect(page.getByRole("heading", { name: "本次考试单词" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "答题明细" })).toBeVisible();
+  await page.getByRole("button", { name: "返回历史" }).click();
   await page.getByRole("button", { name: "返回课程" }).click();
 
   const dialogs = async (dialog: import("@playwright/test").Dialog) => {

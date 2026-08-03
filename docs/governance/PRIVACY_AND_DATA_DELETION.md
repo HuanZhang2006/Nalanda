@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-08-01。本文不是法律意见或已发布隐私政策；Courses/0011–0028、弱网答题、离线合成音频、按意图独立续学、Unicode 拼写归一化与仅标点差异容错、Azure Speech、OpenRouter 翻译前测、显式取消、轮末错题复盘和考试模式已生产启用；文件 AI 导入仍未实现。0025–0028 不增加新的外部处理者或正文留存：取消只改变私有会话状态，复盘/考试沿用既有词、翻译、attempt 和 hash-only 语义评判事实。
+> **状态基线：**2026-08-03。本文不是法律意见或已发布隐私政策；Courses/0011–0028、Azure Speech、OpenRouter 翻译前测、轮末错题复盘和拼写考试已生产启用；文件 AI 导入仍未实现。仓库候选 0029–0034 将现有 Azure 处理边界复用于读音考试，增加 owner 私有考试词/attempt 快照、自定义选词事实，以及两个考试通过时间戳；尚未生产发布，也不增加新的处理者或音频留存：用户 WAV 仍仅在请求内存中转发并立即丢弃。
 
 ## 1. 原则与责任
 
@@ -24,7 +24,7 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 社区附件 | public `community-media` bucket | 图片/音频展示 | URL 可被外部持有；删帖不保证对象同步删除 |
 | 学习计划 | `study_goals`、`study_tasks` | 私有目标、任务、完成时间 | owner-only；账户删除级联 |
 | 学习课程内容 | `learning_courses/units/words` | 私有课程名、单元、英文/翻译/IPA；克隆来源署名 | owner 只读、API 写；删课程级联私有内容，但已发 points/徽章历史不因删课回退 |
-| 学习行为 | `learning_sessions/items/attempts/word_progress` | 阶段/队列、答案、正确性、错误次数、不同本地日期熟练度、单调 revision、客户端 attempt UUID、首次响应快照、取消时间/原因、考试模式/阈值/首轮统计和轮末复盘确认 | owner 只读、API 写；Auth 删除级联；attempt 是事实，不应在普通编辑时改写；响应快照只含该次学习状态增量；考试通过只投影既有学习进度 |
+| 学习行为 | `learning_sessions/items/attempts/word_progress`、候选 `learning_exam_word_snapshots` | 阶段/队列、选中词集合、答案、正确性、错误次数、不同本地日期熟练度、单调 revision、客户端 attempt UUID、首次响应快照、取消时间/原因、考试类型/阈值/首轮统计、补练完成、读音分数和轮末确认；考试快照另保存当时词面/翻译/IPA及最终结果，避免内容编辑篡改历史 | owner 只能经脱敏 API 读取考试历史，快照表无客户端权限；Auth/课程/session 删除级联；不返回 WAV、密钥、音素完整 provider payload；考试通过只投影既有学习进度 |
 | 复习 | `learning_review_schedules`、Profile `timezone` | 到期日期、技能/范围、完成时间与本地日期解释 | owner 私有；日程可取消，时区变化不重写历史 attempt local_date |
 | 分享/课程市场 | `learning_course_shares/publications` | bearer-link 当前课程、不可变公开版本、作者显示名/来源、clone count | token 明文只返回一次且 DB 只存 hash；撤销分享；出版物公开读取经 API；Auth 删除按 FK 删除作者版本 |
 | 举报/审核 | `learning_course_reports/moderation_actions` | 类别/说明、举报人、状态、管理员理由 | 举报人只能读自己的报告；动作客户端不可见；管理员/举报人删除后按 FK 删除或去标识 |

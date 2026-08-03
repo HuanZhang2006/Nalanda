@@ -58,6 +58,12 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0026_verify_learning_session_cancel.sql` | 断言取消 RPC 的 owner/并发边界与 service-role-only 精确权限 |
 | `0027_learning_exam_retry_quota.sql` | 增加 exam mode/第一轮正确率事实、拼写轮末确认与重排、考试通过后的单元熟练投影，并把语义评判 claim 与真实 provider 配额预留拆开 |
 | `0028_verify_learning_exam_retry_quota.sql` | 断言 exam constraints、`quota_counted`、三组 trigger 及考试/轮次/配额 RPC 的 service-role-only 权限 |
+| `0029_learning_pronunciation_exam.sql` | 候选：增加 `spelling/pronunciation` 考试类型、当前评分题预校验、读音首轮统计/分数清单/轮末确认和按类型写熟练度；保留 0028 五参数拼写启动与旧轮次 RPC 供应用回退 |
+| `0030_verify_learning_pronunciation_exam.sql` | 候选：断言读音考试类型持久化、精确整数通过条件、错词分数、发音熟练投影及新增 RPC 的 service-role-only 权限；生产仍停在 0028 |
+| `0031_learning_exam_history_selection.sql` | 候选：增加复习/考试自定义词集合、失败考试补练完成事实、私有 `learning_exam_word_snapshots` 与 attempt 词面快照、最近 100 场考试汇总和脱敏答题详情 RPC；选词按 owner/课程/单元/scope 校验 |
+| `0032_verify_learning_exam_history_selection.sql` | 候选：断言 selected/history RPC 与快照结构完整存在且仅 service role 可用，并保证 `practiceCompleted` 不绕过 `examPassed` 写熟练度；生产仍停在 0028 |
+| `0033_learning_exam_only_mastery.sql` | 候选：增加拼写/发音考试通过时间戳和双事实 check constraint；回填可证明的考试事实、清除旧 review/单项考试掌握，重定义 exam trigger 与 review 推进，并按 term/translations/IPA 精确撤销考试事实 |
+| `0034_verify_learning_exam_only_mastery.sql` | 候选：断言双考试字段/约束、唯一正向投影、review 无 `learned_at` 写入、编辑撤销、snapshot 字段和 service-role-only 权限；生产仍停在 0028 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
