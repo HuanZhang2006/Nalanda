@@ -157,7 +157,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（生产与仓库均为 0011–0028）
+## 4. Courses API（生产 0011–0028；仓库候选 0029–0034）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -215,13 +215,16 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 
 | 方法 | 路径 | 请求 | 成功响应 |
 |---|---|---|---|
-| POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review"|"exam", skills?, scope?, scheduleId?, spellingOptions?, examPassPercent? }` | 新建或恢复与请求意图完全匹配的 active `LearningSession` |
+| POST | `/api/learning-courses/:id/sessions` | `{ unitId, mode: "initial"|"review"|"exam", skills?, scope?, scheduleId?, spellingOptions?, examPassPercent?, examKind?: "spelling"|"pronunciation", wordIds?: uuid[] }` | 新建或恢复与请求意图完全匹配的 active `LearningSession`；候选 0031 的 `wordIds` 仅允许 review/exam、1–2,000 个不重复且属于 owner/unit/scope 的词 |
+| GET | `/api/learning-exams?courseId?` | — | 候选 0031：最近 100 场 owner 考试汇总；可按本人课程过滤，区分进行中/取消/完成、首轮是否通过及错题补练是否完成 |
+| GET | `/api/learning-exams/:sessionId` | — | 候选 0031：owner 考试详情，从考试创建/完成时的私有词快照返回最终状态及按时间排序的拼写原始答案/脱敏读音分数；之后编辑/删词不改写旧详情，不返回 WAV、密钥或完整 provider payload |
 | GET | `/api/learning-sessions/:id` | — | 当前 owner 的完整 session/items/state/revision；API 内部由一个 `learning_get_session_snapshot` RPC 读取 |
 | POST | `/api/learning-sessions/:id/cancel` | `{}` | `LearningSessionCancelResult`：`{ sessionId,active:false,revision,cancelled }`；重复取消幂等返回 `cancelled:false` |
 | POST | `/api/learning-sessions/:id/recognition` | `{ wordId }` | `{ revision, sessionPatch }` |
 | POST | `/api/learning-sessions/:id/attempts` | `LearningAttemptRequest` | `LearningAttemptResult`；只返回本次事实与 session 增量 |
 | POST | `/api/learning-sessions/:id/spelling-translation-assessments` | `{ attemptId,expectedRevision,wordId,answer }` | `LearningSpellingTranslationAssessmentResult`；语义错误时已包含权威的 spelling `attemptResult` |
 | POST | `/api/learning-sessions/:id/spelling-retry-rounds/continue` | `{}` | `{ revision,sessionPatch }`；轮末确认时服务端打乱错题并开始下一轮；响应丢失后的同轮重放幂等返回当前 patch，不再次改序或推进 revision |
+| POST | `/api/learning-sessions/:id/exam-retry-rounds/continue` | `{}` | 候选 0029：拼写/读音考试通用轮末确认；锁定 owner session、打乱错词、推进 revision 并清除持久复盘状态 |
 | GET | `/api/learning-review-schedules` | — | `ReviewSchedule[]`，含课程/单元名、source/completed session ID |
 | POST | `/api/learning-units/:id/review-schedules` | `{ sourceSessionId, offsets: number[] }`，source 必须是本人该单元已完成的 initial session；offset 仅 3/7/15/30 | 当前用户全部 schedule |
 | DELETE | `/api/learning-review-schedules/:id` | — | `{ "ok": true }`，状态改 cancelled |
@@ -229,7 +232,11 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 
 复习 `skills` 是 `pronunciation/translation/spelling` 的 1–3 项，`scope` 是 `all/unlearned`。带 `scheduleId` 启动时，服务端忽略客户端自报的 skills/scope，改用日程保存值；完成后原子写入 `completedSessionId/completedAt`。attempt 形状：
 
-考试 `mode="exam"` 必须指定本人课程中的一个单元；`examPassPercent` 为 1–100 的整数，缺省 90。服务端忽略自报 `skills/scope`，固定为本单元全部词、`skills=["spelling"]`、`translationFirst=true`，并把初始队列打乱。完整第一轮的 spelling attempt 决定正确率；错题补练不会改变该分数。只有第一轮达线且全部候补轮完成，服务端才把该单元词汇标为 learned；未达线时完成补练也不会写熟练度。
+考试 `mode="exam"` 必须指定本人课程中的一个单元；`examPassPercent` 为 1–100 的整数，缺省 90。`examKind` 缺省 `spelling`；候选 0029 另接受 `pronunciation`。服务端忽略自报 `skills/scope`：拼写考试使用 `skills=["spelling"]`、`translationFirst=true`，读音考试使用 `skills=["pronunciation"]`、`translationFirst=false`。候选 0031 允许 `wordIds` 子集，并在数据库再次校验每个 ID 的 owner/course/unit；未传时保持整单元。完整第一轮的权威 spelling attempt 或 Azure-backed speech assessment 决定正确率；错题补练不会改变该分数。所有候补修正后无论达线与否都会自动结束并写 `practiceCompleted`；首轮达线只为选中词写对应的 `spellingExamPassedAt` 或 `pronunciationExamPassedAt`。候选 0033 起，只有同一词的两个考试事实都存在时才返回非空 `learnedAt`。0029–0034 尚未生产发布，当前生产 0028 仍只接受整单元拼写考试及旧掌握规则。
+
+review 的 `wordIds` 同样是候选 0031 能力。NestJS 前置验证 UUID/数量/去重，selected-review RPC 再验证 owner、课程、单元以及 `scope=unlearned` 时每个词确实尚未学习；Schedule 启动仍以日程保存的 skills/scope 为准，只允许在其范围内缩小词集合。选中集合写入 session items/state；临时复习与考试用规范化集合指纹参与恢复键，同一集合仅因客户端顺序不同不会产生另一语义集合。Schedule 则维持一个日程对应一个 active session，首次启动后续学沿用已经固化的选词，不允许中途替换范围。
+
+响应中的 `progress.spellingExamPassedAt`、`progress.pronunciationExamPassedAt` 和 `progress.learnedAt`，以及列表 `learnedCount/progressPercent`，都是服务端派生事实，没有“手动标为已学习”的客户端 API。候选 0033 起，review 无论积累多少跨日发音/翻译/拼写事实都只记录练习；只有同一词分别通过并完成拼写考试和发音考试，两个考试时间戳都存在时才写 `learnedAt`。initial 四阶段完成、recognition、创建/完成复习日程、暂停/取消、离线 provisional 完成、单项考试或失败考试都不写入。`PUT /api/learning-courses/:id` 修改 term 会清除两项考试事实，修改 translations 只清除拼写考试事实，修改 IPA 只清除发音考试事实；任一事实失效都会清除 `learnedAt`。完整规则及代码索引见 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节。
 
 0017 起，会话恢复键按服务端验证后的意图生成：首次学习使用 `course+unit+initial`，临时复习使用 `course+unit+scope+排序后的 skills`，日程复习使用 schedule ID。暂停的首次学习和另一单元复习可以同时保持 active；相同意图的并发请求仍由 advisory lock 与部分唯一索引收敛到同一 session。`activeSessionId` 是课程卡快捷入口，API 按 `lastActivityAt` 选择最近活动的一项，不代表课程只能存在一项未完成会话。
 
@@ -334,7 +341,7 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 
 客户端从已加载 session 在同一渲染帧计算 provisional 正误：答对约 520 ms 自动进入下一题，答错一直保留并等用户点“下一题”。这个预测不授予完成、points 或徽章；IndexedDB outbox 按 revision 串行提交，服务器增量替换预测。只在冷启动/退出、服务端确认完成或 revision 冲突时重拉完整 snapshot，普通每题不刷新 Courses 列表。
 
-拼写阶段一轮结束且存在错词时，attempt 返回的 `sessionPatch.state` 带 `awaitingRetryConfirmation=true`、`retrySummaryIds` 和 `retryFromRound`。在调用轮次继续端点前，数据库拒绝新的 attempt 和翻译评判 processing claim；继续端点锁定 owner session、推进 revision、清除确认标记并按 session/轮次重排错词。因而轮末清单是可刷新恢复的服务端状态，不是纯前端弹窗。
+拼写阶段一轮结束且存在错词时，attempt 返回的 `sessionPatch.state` 带 `awaitingRetryConfirmation=true`、`retrySummaryIds` 和 `retryFromRound`。候选读音考试使用相同字段并增加 `retrySummaryScores: Record<wordId, PronScore>`。在调用轮次继续端点前，数据库拒绝新的 attempt/评分和翻译评判 processing claim；继续端点锁定 owner session、推进 revision、清除确认标记并按 session/轮次重排错词。因而轮末清单是可刷新恢复的服务端状态，不是纯前端弹窗。
 
 ### 4.3 发音合成与朗读评分
 
@@ -345,7 +352,7 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 | GET | `/api/pronunciation/audio/:wordId` | owner 课程中的 word ID | ready 时 `audio/mpeg`（fake 为 WAV）、ETag 与 `private,max-age=31536000,immutable`；未 ready 时快速 `202 AUDIO_PENDING` + `Retry-After: 3` |
 | POST | `/api/pronunciation/assess` | `multipart/form-data`：`audio`, `sessionId`, `wordId` | `PronunciationAssessment` |
 
-评分只接受当前用户 active session 中的词；认单词阶段还要求 `wordId` 是当前卡片，避免迟到/伪造请求改变其它词的候补池。浏览器以 20 ms 帧做 VAD，阈值是 `max(0.015, 前 200 ms 噪声 RMS×3)`，前后保留 150 ms，有效语音少于 250 ms 要求重录，客户端裁剪到最多 6 秒；服务端继续兼容并强制 ≤2 MB、≤8 秒、16 kHz/16-bit/单声道 PCM WAV。参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,revision,sessionPatch,errorType,phonemes[]`，无需再拉完整 session。整体 `pronunciationScore` 默认达到 70 才通过：低分原子加入 recognition `nextQueue`，对同一当前词重新评分达标会移除；阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
+评分只接受当前用户 active session 中的词；认单词阶段和候选读音考试都要求 `wordId` 是当前卡片，且轮末等待确认时会在调用 Azure 前拒绝，避免迟到/伪造请求改变其它词或消耗配额。浏览器以 20 ms 帧做 VAD，阈值是 `max(0.015, 前 200 ms 噪声 RMS×3)`，前后保留 150 ms，有效语音少于 250 ms 要求重录，客户端裁剪到最多 6 秒；服务端继续兼容并强制 ≤2 MB、≤8 秒、16 kHz/16-bit/单声道 PCM WAV。参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,revision,sessionPatch,errorType,phonemes[]`，无需再拉完整 session。整体 `pronunciationScore` 默认达到 70 才通过：认词阶段低分更新 recognition `nextQueue`；读音考试低分更新考试候补池和首轮统计。阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
 
 用户录音不落库；只有评分 JSON 写 append-only attempt。TTS GET 不再同步调用 Azure：owner 校验后只提升单词任务优先级，worker 全局单并发并以至少 3.1 秒间隔、默认 20 次/分钟和 500,000 字符/月处理。private Supabase Storage 是服务端唯一音频事实源；HTTP 400 + JSON 404 只表示正常对象缺失并触发重建，网络/权限/其它 Storage 失败保持可见，不会冒充 miss 浪费 Azure。浏览器 Cache Storage 是可删除、可回收的副本，不产生匿名 Storage URL。常见错误：`AUDIO_PENDING`、`AUDIO_REQUIRED`、`INVALID_AUDIO(_FORMAT)`、`AUDIO_TOO_LONG/LARGE`、`WORD_NOT_IN_SESSION`、`SPEECH_TTS_RATE_LIMIT`、`SPEECH_TTS_MONTHLY_LIMIT`、`SPEECH_QUOTA_EXCEEDED`、`SPEECH_PROVIDER_*`。
 

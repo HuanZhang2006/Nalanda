@@ -5,6 +5,7 @@ import type {
   CreateReviewSchedulesRequest,
   LearningAttemptRequest,
   LearningCourseInput,
+  LearningExamKind,
   LearningScope,
   LearningSessionMode,
   LearningSkill,
@@ -41,6 +42,8 @@ export class StartLearningSessionDto implements StartLearningSessionRequest {
   scheduleId?: string;
   spellingOptions?: LearningSpellingOptions;
   examPassPercent?: number;
+  examKind?: LearningExamKind;
+  wordIds?: string[];
 }
 
 export class LearningAttemptDto implements LearningAttemptRequest {

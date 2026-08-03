@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   LearningAudioManifest, LearningCourseDetail, LearningCourseInput, LearningCourseSummary, LearningScope,
-  LearningSkill, LearningSpellingOptions, VocabularyUnitInput,
+  LearningExamKind, LearningSkill, LearningSpellingOptions, VocabularyUnitInput, VocabularyWord,
 } from "@nalanda/types";
 import { coursesApi } from "./api";
 import { CourseEditor } from "./CourseEditor";
 import { LearningView } from "./LearningView";
+import { ExamHistory } from "./ExamHistory";
 import { CourseLocaleButton } from "./CourseLocaleButton";
 import { VocabularyErrorList } from "./VocabularyErrorList";
 import { parseMultiUnitVocabularyText, parseVocabularyText, randomCourseId, type VocabularyParseError } from "./parser";
@@ -40,12 +41,26 @@ type SessionPicker = {
   scheduleId?: string;
   spellingOptions: LearningSpellingOptions;
   examPassPercent: number;
+  examKind: LearningExamKind;
+  selectedWordIds: string[];
 };
 const defaultSpellingOptions = (): LearningSpellingOptions => ({
   timeLimitEnabled: false,
   timeLimitSeconds: 20,
   translationFirst: false,
 });
+
+function selectableWordIds(
+  course: LearningCourseDetail,
+  unitId: string,
+  mode: SessionPicker["mode"],
+  scope: LearningScope,
+) {
+  const words = course.units.find((unit) => unit.id === unitId)?.words || [];
+  return words
+    .filter((word) => mode !== "review" || scope !== "unlearned" || !word.progress.learnedAt)
+    .map((word) => word.id);
+}
 
 const CATEGORIES = [
   { id: "english_vocabulary", icon: "Aa", name: ["English vocabulary", "英语单词学习"], description: ["Flashcards, pronunciation, translation, spelling, and review across days", "词卡、发音、翻译、拼写与跨日复习"], enabled: true },
@@ -193,10 +208,15 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [wizard, setWizard] = useState(false);
-  const [editing, setEditing] = useState<{ course: LearningCourseInput; existing: boolean } | null>(null);
+  const [editing, setEditing] = useState<{
+    course: LearningCourseInput;
+    existing: boolean;
+    progressByWord?: Record<string, VocabularyWord["progress"]>;
+  } | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [countModes, setCountModes] = useState<Record<string, boolean>>({});
   const [picker, setPicker] = useState<SessionPicker | null>(null);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [pickerAudio, setPickerAudio] = useState<{
     manifest: LearningAudioManifest | null;
     running: boolean;
@@ -211,7 +231,8 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
     if (!initialCourseId || !initialUnitId) return;
     coursesApi.detail(initialCourseId).then((course) => setPicker({ course, mode: "review", unitId: initialUnitId,
       skills: ["pronunciation", "translation", "spelling"], scope: "unlearned", scheduleId: initialScheduleId,
-      spellingOptions: defaultSpellingOptions(), examPassPercent: 90 })).catch((caught) => setError(apiMessage(caught, l("Could not open the scheduled review.", "无法打开日程复习"))));
+      spellingOptions: defaultSpellingOptions(), examPassPercent: 90, examKind: "spelling",
+      selectedWordIds: selectableWordIds(course, initialUnitId, "review", "unlearned") })).catch((caught) => setError(apiMessage(caught, l("Could not open the scheduled review.", "无法打开日程复习"))));
   }, [initialCourseId, initialUnitId, initialScheduleId, l]);
 
   const openStart = async (summary: LearningCourseSummary) => {
@@ -220,13 +241,15 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
       const course = await coursesApi.detail(summary.id);
       setPicker({ course, mode: "initial", unitId: course.units[0].id,
         skills: ["pronunciation", "translation", "spelling"], scope: "all",
-        spellingOptions: defaultSpellingOptions(), examPassPercent: 90 });
+        spellingOptions: defaultSpellingOptions(), examPassPercent: 90, examKind: "spelling",
+        selectedWordIds: [] });
     } catch (caught) { setError(apiMessage(caught, l("Could not start learning.", "无法开始学习"))); }
   };
   const openReview = async (summary: LearningCourseSummary) => {
     try { const course = await coursesApi.detail(summary.id); setPicker({ course, mode: "review", unitId: course.units[0].id,
       skills: ["pronunciation", "translation", "spelling"], scope: "unlearned",
-      spellingOptions: defaultSpellingOptions(), examPassPercent: 90 }); }
+      spellingOptions: defaultSpellingOptions(), examPassPercent: 90, examKind: "spelling",
+      selectedWordIds: selectableWordIds(course, course.units[0].id, "review", "unlearned") }); }
     catch (caught) { setError(apiMessage(caught, l("Could not start review.", "无法开始复习"))); }
   };
   const openExam = async (summary: LearningCourseSummary) => {
@@ -240,6 +263,8 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
         scope: "all",
         spellingOptions: { ...defaultSpellingOptions(), translationFirst: true },
         examPassPercent: 90,
+        examKind: "spelling",
+        selectedWordIds: selectableWordIds(course, course.units[0].id, "exam", "all"),
       });
     } catch (caught) {
       setError(apiMessage(caught, l("Could not start the exam.", "无法开始考试")));
@@ -250,7 +275,9 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
     try { const session = await coursesApi.startSession(picker.course.id, { unitId: picker.unitId, mode: picker.mode,
       skills: picker.skills, scope: picker.mode === "initial" ? "all" : picker.scope,
       scheduleId: picker.scheduleId, spellingOptions: picker.spellingOptions,
-      examPassPercent: picker.mode === "exam" ? picker.examPassPercent : undefined }); setPicker(null); setSessionId(session.id); }
+      examPassPercent: picker.mode === "exam" ? picker.examPassPercent : undefined,
+      examKind: picker.mode === "exam" ? picker.examKind : undefined,
+      wordIds: picker.mode === "initial" ? undefined : picker.selectedWordIds }); setPicker(null); setSessionId(session.id); }
     catch (caught) { setError(apiMessage(caught, l("Could not start this session.", "无法开始本次会话"))); }
   };
 
@@ -308,20 +335,21 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
     setPickerAudio((value) => ({ ...value, running: false, cached: 0 }));
   };
   const edit = async (id: string) => {
-    try { const detail = await coursesApi.detail(id); setEditing({ existing: true, course: { id: detail.id, title: detail.title,
+    try { const detail = await coursesApi.detail(id); setEditing({ existing: true, progressByWord: Object.fromEntries(detail.units.flatMap((unit) => unit.words.map((word) => [word.id, word.progress]))), course: { id: detail.id, title: detail.title,
       category: "english_vocabulary", hasUnits: detail.hasUnits, locale: "en-US", units: detail.units.map((unit) => ({ id: unit.id, name: unit.name,
         isSystem: unit.isSystem, words: unit.words.map((word) => ({ id: word.id, term: word.term, translations: [...word.translations], ipa: word.ipa })) })) } }); }
     catch (caught) { setError(apiMessage(caught, l("Could not open the course editor.", "无法打开课程编辑器"))); }
   };
 
   if (sessionId) return <LearningView sessionId={sessionId} onExit={() => { setSessionId(null); void load(); }} onChanged={() => void load()} />;
-  if (editing) return <CourseEditor initial={editing.course} existing={editing.existing} onCancel={() => setEditing(null)} onSave={async (course) => {
+  if (historyOpen) return <ExamHistory onBack={() => setHistoryOpen(false)} />;
+  if (editing) return <CourseEditor initial={editing.course} existing={editing.existing} progressByWord={editing.progressByWord} onCancel={() => setEditing(null)} onSave={async (course) => {
     await coursesApi.save(course, editing.existing); setEditing(null); setWizard(false); toast(l("Course saved", "课程已保存"), "check"); await load();
   }} />;
   if (wizard) return <Wizard onCancel={() => setWizard(false)} onReady={(course) => setEditing({ course, existing: false })} />;
 
   return <div className="wrap wrap-wide courses-root"><div className="page-head"><div><div className="eyebrow">{l("Courses", "课程")}</div><h1 className="page-title">{l("Learning courses", "学习课程")}</h1>
-    <p className="page-sub">{l("Create independent learning courses with progress saved after every step. Subject courses in Materials are unchanged.", "创建独立的学习课程，进度会逐次保存；Materials 中的学科课程不会受影响。")}</p></div><div className="row"><CourseLocaleButton /><button className="btn btn-primary" onClick={() => setWizard(true)}>＋ {l("Create course", "创建课程")}</button></div></div>
+    <p className="page-sub">{l("Create independent learning courses with progress saved after every step. Subject courses in Materials are unchanged.", "创建独立的学习课程，进度会逐次保存；Materials 中的学科课程不会受影响。")}</p></div><div className="row"><CourseLocaleButton /><button className="btn" onClick={() => setHistoryOpen(true)}>{l("Exam history", "考试历史")}</button><button className="btn btn-primary" onClick={() => setWizard(true)}>＋ {l("Create course", "创建课程")}</button></div></div>
     {error && <div role="alert" className="course-feedback wrong" style={{ marginBottom: 16 }}>{error}<button className="btn btn-sm" style={{ marginLeft: 12 }} onClick={() => void load()}>{l("Retry", "重试")}</button></div>}
     {loading ? <div className="card card-pad muted">{l("Loading courses…", "加载课程中…")}</div> : courses.length === 0 ? <div className="course-empty"><div className="course-empty-icon">Aa</div>
       <h2 className="serif" style={{ fontSize: 24 }}>{l("No learning courses yet", "还没有学习课程")}</h2><p className="muted mt-8">{l("Start with an English vocabulary list. Learning, review, and mastery stay recorded here.", "从一份英语词表开始，学习、复习和熟练度会在这里持续记录。")}</p>
@@ -335,7 +363,10 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
         onDelete={async () => { if (!window.confirm(l(`Delete “${course.title}”? Its learning history and review schedules will be deleted. Awarded points and badge history are retained.`, `删除“${course.title}”？学习记录和复习计划会一并删除，已发放积分与徽章历史保留。`))) return; try { await coursesApi.remove(course.id); toast(l("Course deleted", "课程已删除"), "check"); await load(); } catch (caught) { setError(apiMessage(caught, l("Could not delete the course.", "无法删除课程"))); } }} />)}</div>}
     {picker && <div className="scrim" onMouseDown={(event) => event.target === event.currentTarget && setPicker(null)}><div className="modal"><div className="modal-pad">
       <div className="row between"><h2>{picker.mode === "initial" ? l("Choose a unit", "选择学习单元") : picker.mode === "exam" ? l("Start an exam", "开始考试") : l("Start review", "开始复习")}</h2><button className="icon-btn" aria-label={l("Close", "关闭")} onClick={() => setPicker(null)}>×</button></div>
-      <label className="course-label">{l("Unit", "单元")}</label><select className="course-form-field" value={picker.unitId} onChange={(event) => setPicker({ ...picker, unitId: event.target.value })}>{picker.course.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.isSystem ? l("All vocabulary", "全部词表") : unit.name} · {l(`${unit.words.length} words`, `${unit.words.length} 词`)}</option>)}</select>
+      <label className="course-label">{l("Unit", "单元")}</label><select className="course-form-field" value={picker.unitId} onChange={(event) => {
+        const unitId = event.target.value;
+        setPicker({ ...picker, unitId, selectedWordIds: selectableWordIds(picker.course, unitId, picker.mode, picker.scope) });
+      }}>{picker.course.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.isSystem ? l("All vocabulary", "全部词表") : unit.name} · {l(`${unit.words.length} words`, `${unit.words.length} 词`)}</option>)}</select>
       <div className="row wrap-flex mt-12"><button className="btn btn-sm" onClick={() => void downloadPickedUnit()}>{pickerAudio.running
         ? l("Stop audio download", "停止音频下载")
         : l("Download this unit's audio", "下载本单元音频")}</button>
@@ -347,14 +378,60 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
       {picker.mode === "review" && picker.scheduleId && <div className="course-feedback">{l("This review came from Schedule. It will use the saved skills and scope, then mark the schedule complete when the session finishes.", "此复习来自 Schedule，将按日程保存的测试项目与范围开始；完成会话后日程自动标记完成。")}</div>}
       {picker.mode === "review" && !picker.scheduleId && <><div className="course-label">{l("Skills", "测试项目")}</div><div className="row wrap-flex">{(["pronunciation", "translation", "spelling"] as LearningSkill[]).map((skill) => <label className="chip chip-outline" key={skill}><input type="checkbox" checked={picker.skills.includes(skill)}
         onChange={(event) => setPicker({ ...picker, skills: event.target.checked ? [...picker.skills, skill] : picker.skills.filter((value) => value !== skill) })} /> {skill === "pronunciation" ? l("Pronunciation match", "发音匹配") : skill === "translation" ? l("Translation", "翻译") : l("Spelling", "拼写")}</label>)}</div>
-        <div className="course-label">{l("Scope", "范围")}</div><div className="row"><label className="chip chip-outline"><input type="radio" checked={picker.scope === "all"} onChange={() => setPicker({ ...picker, scope: "all" })} /> {l("All words", "全部单词")}</label>
-          <label className="chip chip-outline"><input type="radio" checked={picker.scope === "unlearned"} onChange={() => setPicker({ ...picker, scope: "unlearned" })} /> {l("Not yet mastered", "尚未熟练")}</label></div></>}
-      {picker.mode === "exam" && <div className="course-feedback mt-16">{l(
-        "All words in this unit are shuffled. The exam asks for a typed translation and then the English spelling. First-round accuracy decides whether the exam passes; retry rounds are still required for missed words.",
-        "本单元全部词汇会打乱顺序，先键入翻译，再拼写英文。是否通过只取决于第一轮正确率；错词仍需完成后续候补轮。",
-      )}<label className="course-setting-detail mt-12"><span>{l("Required accuracy (%)", "要求正确率（%）")}</span><input className="course-form-field" type="number" min={1} max={100} step={1}
-        aria-label={l("Exam required accuracy", "考试要求正确率")} value={picker.examPassPercent}
-        onChange={(event) => setPicker({ ...picker, examPassPercent: Number(event.target.value) })} /></label></div>}
+        <div className="course-label">{l("Scope", "范围")}</div><div className="row"><label className="chip chip-outline"><input type="radio" checked={picker.scope === "all"} onChange={() => setPicker({ ...picker, scope: "all", selectedWordIds: selectableWordIds(picker.course, picker.unitId, picker.mode, "all") })} /> {l("All words", "全部单词")}</label>
+          <label className="chip chip-outline"><input type="radio" checked={picker.scope === "unlearned"} onChange={() => setPicker({ ...picker, scope: "unlearned", selectedWordIds: selectableWordIds(picker.course, picker.unitId, picker.mode, "unlearned") })} /> {l("Not yet mastered", "尚未熟练")}</label></div></>}
+      {picker.mode === "exam" && <div className="course-feedback mt-16">
+        <div className="course-label">{l("Exam type", "考试类型")}</div>
+        <div className="row wrap-flex">
+          {(["spelling", "pronunciation"] as LearningExamKind[]).map((kind) => <label className="chip chip-outline" key={kind}>
+            <input type="radio" name="course-exam-kind" checked={picker.examKind === kind}
+              onChange={() => setPicker({
+                ...picker,
+                examKind: kind,
+                skills: [kind],
+                spellingOptions: {
+                  ...picker.spellingOptions,
+                  translationFirst: kind === "spelling",
+                },
+              })} /> {kind === "spelling" ? l("Spelling exam", "拼写考试") : l("Pronunciation exam", "读音考试")}
+          </label>)}
+        </div>
+        <p className="muted mt-12">{picker.examKind === "pronunciation" ? l(
+          "The selected words are shuffled. Read each shown word aloud and receive an Azure pronunciation score. First-round accuracy decides whether the exam passes; every missed word must still be completed in shuffled retry rounds.",
+          "选中的词汇会打乱顺序。看到单词后朗读，并由 Azure 给出发音评分。是否通过只取决于第一轮正确率；所有错词仍需完成后续打乱的候补轮。",
+        ) : l(
+          "The selected words are shuffled. The exam asks for a typed translation and then the English spelling. First-round accuracy decides whether the exam passes; retry rounds are still required for missed words.",
+          "选中的词汇会打乱顺序，先键入翻译，再拼写英文。是否通过只取决于第一轮正确率；错词仍需完成后续候补轮。",
+        )}</p>
+        <label className="course-setting-detail mt-12"><span>{l("Required accuracy (%)", "要求正确率（%）")}</span><input className="course-form-field" type="number" min={1} max={100} step={1}
+          aria-label={l("Exam required accuracy", "考试要求正确率")} value={picker.examPassPercent}
+          onChange={(event) => setPicker({ ...picker, examPassPercent: Number(event.target.value) })} /></label>
+      </div>}
+      {picker.mode !== "initial" && (() => {
+        const eligibleIds = selectableWordIds(picker.course, picker.unitId, picker.mode, picker.scope);
+        const eligible = new Set(eligibleIds);
+        const words = (picker.course.units.find((unit) => unit.id === picker.unitId)?.words || [])
+          .filter((word) => eligible.has(word.id));
+        return <fieldset className="course-word-selection mt-16">
+          <legend>{l("Choose words", "选择单词")}</legend>
+          <div className="row between wrap-flex"><span className="muted">{l(
+            `${picker.selectedWordIds.length} of ${words.length} selected`,
+            `已选择 ${picker.selectedWordIds.length}/${words.length} 个`,
+          )}</span><div className="row"><button type="button" className="btn btn-sm" onClick={() => setPicker({ ...picker, selectedWordIds: eligibleIds })}>{l("Select all", "全选")}</button>
+            <button type="button" className="btn btn-sm" onClick={() => setPicker({ ...picker, selectedWordIds: [] })}>{l("Clear", "清空")}</button></div></div>
+          {words.length ? <div className="course-word-selection-list mt-12">{words.map((word) => <label key={word.id} className="course-word-selection-item">
+            <input type="checkbox" checked={picker.selectedWordIds.includes(word.id)} onChange={(event) => setPicker({
+              ...picker,
+              selectedWordIds: event.target.checked
+                ? [...picker.selectedWordIds, word.id]
+                : picker.selectedWordIds.filter((id) => id !== word.id),
+            })} /><span><b>{word.term}</b><small>{word.translations.join(" / ")}</small></span>
+          </label>)}</div> : <div className="course-feedback mt-12">{l(
+            "No words match this scope. Choose All words or another unit.",
+            "此范围没有可选单词，请选择全部单词或其他单元。",
+          )}</div>}
+        </fieldset>;
+      })()}
       {picker.skills.includes("spelling") && <fieldset className="course-spelling-settings mt-16">
         <legend>{l("Spelling options", "拼写测试设置")}</legend>
         <label className="course-setting-row"><input type="checkbox" checked={picker.spellingOptions.timeLimitEnabled}
@@ -379,6 +456,7 @@ export function CoursesApp({ toast = () => {}, initialCourseId, initialUnitId, i
         )}</p>
       </fieldset>}
       <div className="row mt-24" style={{ justifyContent: "flex-end" }}><button className="btn" onClick={() => setPicker(null)}>{l("Cancel", "取消")}</button><button className="btn btn-primary" disabled={!picker.skills.length
+        || (picker.mode !== "initial" && picker.selectedWordIds.length === 0)
         || (picker.mode === "exam" && (!Number.isSafeInteger(picker.examPassPercent) || picker.examPassPercent < 1 || picker.examPassPercent > 100))
         || (picker.spellingOptions.timeLimitEnabled && (
           !Number.isSafeInteger(picker.spellingOptions.timeLimitSeconds)

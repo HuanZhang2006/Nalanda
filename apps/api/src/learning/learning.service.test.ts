@@ -245,6 +245,7 @@ describe("LearningService ownership and public boundaries", () => {
         translationFirst: true,
       },
       p_pass_percent: 92,
+      p_exam_kind: "spelling",
     });
 
     db.rpc.mockClear();
@@ -253,7 +254,134 @@ describe("LearningService ownership and public boundaries", () => {
       mode: "exam",
       examPassPercent: 0,
     })).rejects.toBeInstanceOf(BadRequestException);
+    await expect(value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "exam",
+      examKind: "listening",
+    })).rejects.toBeInstanceOf(BadRequestException);
     expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("starts a pronunciation exam without enabling the spelling translation gate", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue(publicationId);
+    vi.spyOn(value, "getSession").mockResolvedValue({ id: publicationId, mode: "exam" } as any);
+
+    await value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "exam",
+      examKind: "pronunciation",
+      examPassPercent: 90,
+      spellingOptions: {
+        timeLimitEnabled: false,
+        timeLimitSeconds: 20,
+        translationFirst: true,
+      },
+    });
+
+    expect(db.rpc).toHaveBeenCalledWith("learning_start_exam_session", {
+      p_user_id: "user-a",
+      p_course_id: courseId,
+      p_unit_id: publicationId,
+      p_spelling_options: {
+        timeLimitEnabled: false,
+        timeLimitSeconds: 20,
+        translationFirst: false,
+      },
+      p_pass_percent: 90,
+      p_exam_kind: "pronunciation",
+    });
+  });
+
+  it("starts owner-validated custom review and exam word subsets", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValue(publicationId);
+    vi.spyOn(value, "getSession").mockResolvedValue({ id: publicationId } as any);
+
+    await value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "review",
+      scope: "all",
+      skills: ["translation"],
+      wordIds: [courseId, attemptId],
+    });
+    expect(db.rpc).toHaveBeenCalledWith("learning_start_selected_review_session", {
+      p_user_id: "user-a",
+      p_course_id: courseId,
+      p_unit_id: publicationId,
+      p_skills: ["translation"],
+      p_scope: "all",
+      p_schedule_id: null,
+      p_spelling_options: {
+        timeLimitEnabled: false, timeLimitSeconds: 20, translationFirst: false,
+      },
+      p_word_ids: [courseId, attemptId],
+    });
+
+    db.rpc.mockClear();
+    await value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "exam",
+      examKind: "pronunciation",
+      wordIds: [attemptId],
+    });
+    expect(db.rpc).toHaveBeenCalledWith("learning_start_selected_exam_session", expect.objectContaining({
+      p_exam_kind: "pronunciation",
+      p_word_ids: [attemptId],
+    }));
+
+    db.rpc.mockClear();
+    await expect(value.startSession("user-a", courseId, {
+      unitId: publicationId,
+      mode: "exam",
+      wordIds: [attemptId, attemptId],
+    })).rejects.toBeInstanceOf(BadRequestException);
+    expect(db.rpc).not.toHaveBeenCalled();
+  });
+
+  it("maps owner-scoped exam history summaries and details without provider payloads", async () => {
+    const { value, db } = service();
+    const startedAt = new Date(1).toISOString();
+    const completedAt = new Date(2).toISOString();
+    const summary = {
+      id: attemptId, course_id: courseId, course_title: "Course", unit_id: publicationId,
+      unit_name: "Unit 1", exam_kind: "pronunciation", required_percent: 90,
+      first_round_accuracy_percent: 50, first_round_correct: 1, word_count: 2,
+      passed: false, practice_completed: true, status: "completed", attempt_count: 3,
+      wrong_count: 1, started_at: startedAt, completed_at: completedAt,
+    };
+    db.rpc.mockResolvedValueOnce([summary]).mockResolvedValueOnce({
+      ...summary,
+      words: [{ word_id: courseId, term: "apple", ipa: "ˈæpəl", translations: ["苹果"], wrong_count: 1, passed: true }],
+      attempts: [{ id: "1", word_id: courseId, term: "apple", skill: "speech_assessment",
+        correct: false, answer: null, pronunciation_score: 61, accuracy_score: 60, created_at: startedAt }],
+    });
+
+    await expect(value.listExamHistory("user-a")).resolves.toEqual([expect.objectContaining({
+      id: attemptId, examKind: "pronunciation", passed: false, practiceCompleted: true,
+    })]);
+    await expect(value.getExamHistory("user-a", attemptId)).resolves.toMatchObject({
+      words: [{ term: "apple", wrongCount: 1, passed: true }],
+      attempts: [{ skill: "speech_assessment", pronunciationScore: 61, accuracyScore: 60 }],
+    });
+    expect(db.rpc).toHaveBeenNthCalledWith(1, "learning_list_exam_history", {
+      p_user_id: "user-a", p_course_id: null,
+    });
+    expect(db.rpc).toHaveBeenNthCalledWith(2, "learning_get_exam_history_detail", {
+      p_user_id: "user-a", p_session_id: attemptId,
+    });
+  });
+
+  it("returns 404 for an unavailable owner-scoped exam history record", async () => {
+    const { value, db } = service();
+    db.rpc.mockRejectedValue(new SupabaseRequestError(
+      "exam history not found",
+      400,
+      { code: "P0002" },
+    ));
+
+    await expect(value.getExamHistory("user-a", attemptId))
+      .rejects.toBeInstanceOf(NotFoundException);
   });
 
   it("continues a confirmed spelling retry round through one service-only RPC", async () => {
@@ -267,9 +395,9 @@ describe("LearningService ownership and public boundaries", () => {
         next_word_id: publicationId,
       },
     });
-    await expect(value.continueSpellingRetryRound("user-a", courseId))
+    await expect(value.continueExamRetryRound("user-a", courseId))
       .resolves.toMatchObject({ revision: 8, sessionPatch: { stage: "spelling" } });
-    expect(db.rpc).toHaveBeenCalledWith("learning_continue_spelling_retry_round", {
+    expect(db.rpc).toHaveBeenCalledWith("learning_continue_exam_retry_round", {
       p_user_id: "user-a", p_session_id: courseId,
     });
   });
@@ -356,6 +484,8 @@ describe("LearningService ownership and public boundaries", () => {
             spelling_review_dates: [],
             wrong_count: 1,
             review_count: 0,
+            spelling_exam_passed_at: "2026-08-01T00:00:00.000Z",
+            pronunciation_exam_passed_at: "2026-08-02T00:00:00.000Z",
             learned_at: null,
           },
         },
@@ -382,6 +512,8 @@ describe("LearningService ownership and public boundaries", () => {
             recognitionSeen: true,
             initialPronunciationPassed: true,
             wrongCount: 1,
+            spellingExamPassedAt: "2026-08-01T00:00:00.000Z",
+            pronunciationExamPassedAt: "2026-08-02T00:00:00.000Z",
           },
         },
         wrongCount: 1,

@@ -15,6 +15,8 @@ import type {
   LearningCourseDetail,
   LearningCourseInput,
   LearningCourseSummary,
+  LearningExamHistoryDetail,
+  LearningExamHistorySummary,
   LearningProfileSummary,
   LearningScope,
   LearningSession,
@@ -95,6 +97,10 @@ export class LearningService {
           message: "翻译判分请求过于频繁，请稍后再试",
         }, 429);
       }
+      // Let owner-scoped callers translate PostgreSQL no_data_found into their
+      // route-specific 404 instead of treating PostgREST's HTTP 400 as a
+      // generic malformed request.
+      if (code === "P0002") throw error;
       if (code === "23505") throw new ConflictException({ code: "CONFLICT", message: error.message });
       if (code === "42501" || error.status === 403) throw new ForbiddenException({ code: "FORBIDDEN", message: error.message });
       if (code === "22023" || code === "23514" || error.status === 400) throw new BadRequestException({ code: "INVALID_REQUEST", message: error.message });
@@ -209,6 +215,59 @@ export class LearningService {
     };
   }
 
+  async listExamHistory(userId: string, courseId?: string): Promise<LearningExamHistorySummary[]> {
+    const selectedCourseId = courseId ? assertUuid(courseId, "courseId") : null;
+    const rows = await this.call(() => this.db.rpc<Row[]>("learning_list_exam_history", {
+      p_user_id: userId,
+      p_course_id: selectedCourseId,
+    }));
+    return (rows || []).map((row) => this.examHistorySummary(row));
+  }
+
+  async getExamHistory(userId: string, sessionId: string): Promise<LearningExamHistoryDetail> {
+    assertUuid(sessionId, "sessionId");
+    let row: Row;
+    try {
+      row = await this.call(() => this.db.rpc<Row>("learning_get_exam_history_detail", {
+        p_user_id: userId,
+        p_session_id: sessionId,
+      }));
+    } catch (error) {
+      if (error instanceof SupabaseRequestError && (
+        String(error.body && typeof error.body === "object" && "code" in error.body
+          ? (error.body as { code: unknown }).code : "") === "P0002"
+        || /exam history not found/i.test(error.message)
+      )) {
+        throw new NotFoundException({ code: "EXAM_HISTORY_NOT_FOUND", message: "考试记录不存在" });
+      }
+      throw error;
+    }
+    return {
+      ...this.examHistorySummary(row),
+      words: (row.words || []).map((word: Row) => ({
+        wordId: String(word.word_id),
+        term: String(word.term),
+        ipa: word.ipa == null ? null : String(word.ipa),
+        translations: Array.isArray(word.translations) ? word.translations.map(String) : [],
+        wrongCount: Number(word.wrong_count || 0),
+        passed: Boolean(word.passed),
+      })),
+      attempts: (row.attempts || []).map((attempt: Row) => ({
+        id: String(attempt.id),
+        wordId: attempt.word_id == null ? null : String(attempt.word_id),
+        term: attempt.term == null ? null : String(attempt.term),
+        skill: attempt.skill,
+        correct: typeof attempt.correct === "boolean" ? attempt.correct : null,
+        answer: attempt.answer == null ? null : String(attempt.answer),
+        pronunciationScore: attempt.pronunciation_score == null
+          ? null : Number(attempt.pronunciation_score),
+        accuracyScore: attempt.accuracy_score == null
+          ? null : Number(attempt.accuracy_score),
+        createdAt: String(attempt.created_at),
+      })),
+    };
+  }
+
   async startSession(userId: string, courseId: string, body: any): Promise<LearningSession> {
     assertUuid(courseId, "courseId");
     const unitId = assertUuid(String(body?.unitId || ""), "unitId");
@@ -233,12 +292,28 @@ export class LearningService {
     if (mode === "exam" && scheduleId) {
       throw new BadRequestException({ code: "INVALID_EXAM", message: "考试模式不能关联复习日程" });
     }
+    let wordIds: string[] | null = null;
+    if (body?.wordIds != null) {
+      if (mode === "initial" || !Array.isArray(body.wordIds)
+          || body.wordIds.length < 1 || body.wordIds.length > 2_000) {
+        throw new BadRequestException({ code: "INVALID_WORD_SELECTION", message: "自定义范围需选择 1–2,000 个单词" });
+      }
+      const parsedWordIds = body.wordIds.map((wordId: unknown) => assertUuid(String(wordId), "wordId"));
+      if (new Set(parsedWordIds).size !== parsedWordIds.length) {
+        throw new BadRequestException({ code: "INVALID_WORD_SELECTION", message: "自定义范围不能包含重复单词" });
+      }
+      wordIds = parsedWordIds;
+    }
+    const examKind = body?.examKind == null ? "spelling" : String(body.examKind);
+    if (mode === "exam" && examKind !== "spelling" && examKind !== "pronunciation") {
+      throw new BadRequestException({ code: "INVALID_EXAM_KIND", message: "考试类型无效" });
+    }
     const skills: LearningSkill[] = mode === "initial"
       ? ["pronunciation", "translation", "spelling"]
-      : mode === "exam" ? ["spelling"] : requestedSkills as LearningSkill[];
+      : mode === "exam" ? [examKind as LearningSkill] : requestedSkills as LearningSkill[];
     const rawSpellingOptions = this.spellingOptions(body?.spellingOptions);
     const spellingOptions = mode === "exam"
-      ? { ...rawSpellingOptions, translationFirst: true }
+      ? { ...rawSpellingOptions, translationFirst: examKind === "spelling" }
       : rawSpellingOptions;
     const examPassPercent = body?.examPassPercent == null ? 90 : Number(body.examPassPercent);
     if (mode === "exam" && (
@@ -249,17 +324,23 @@ export class LearningService {
       throw new BadRequestException({ code: "INVALID_EXAM_PASS_PERCENT", message: "考试正确率要求需为 1–100 的整数" });
     }
     const id = mode === "exam"
-      ? await this.call(() => this.db.rpc<string>("learning_start_exam_session", {
+      ? await this.call(() => this.db.rpc<string>(wordIds
+        ? "learning_start_selected_exam_session" : "learning_start_exam_session", {
         p_user_id: userId,
         p_course_id: courseId,
         p_unit_id: unitId,
         p_spelling_options: spellingOptions,
         p_pass_percent: examPassPercent,
+        p_exam_kind: examKind,
+        ...(wordIds ? { p_word_ids: wordIds } : {}),
       }))
-      : await this.call(() => this.db.rpc<string>("learning_start_session", {
+      : await this.call(() => this.db.rpc<string>(wordIds
+        ? "learning_start_selected_review_session" : "learning_start_session", {
         p_user_id: userId, p_course_id: courseId, p_unit_id: unitId,
-        p_mode: mode, p_skills: skills, p_scope: scope as LearningScope, p_schedule_id: scheduleId,
+        ...(wordIds ? {} : { p_mode: mode }),
+        p_skills: skills, p_scope: scope as LearningScope, p_schedule_id: scheduleId,
         p_spelling_options: spellingOptions,
+        ...(wordIds ? { p_word_ids: wordIds } : {}),
       }));
     return this.getSession(userId, id);
   }
@@ -338,19 +419,23 @@ export class LearningService {
     };
   }
 
-  async continueSpellingRetryRound(
+  async continueExamRetryRound(
     userId: string,
     sessionId: string,
   ): Promise<LearningSessionMutationResult> {
     assertUuid(sessionId, "sessionId");
     const row = await this.call(() => this.db.rpc<Row>(
-      "learning_continue_spelling_retry_round",
+      "learning_continue_exam_retry_round",
       { p_user_id: userId, p_session_id: sessionId },
     ));
     return {
       revision: Number(row.revision),
       sessionPatch: this.sessionPatch(row.session_patch),
     };
+  }
+
+  continueSpellingRetryRound(userId: string, sessionId: string) {
+    return this.continueExamRetryRound(userId, sessionId);
   }
 
   async markRecognition(userId: string, sessionId: string, wordId: string): Promise<LearningSessionMutationResult> {
@@ -795,6 +880,29 @@ export class LearningService {
       originAuthorName: course.origin_author_name || null, updatedAt: course.updated_at };
   }
 
+  private examHistorySummary(row: Row): LearningExamHistorySummary {
+    return {
+      id: String(row.id),
+      courseId: String(row.course_id),
+      courseTitle: String(row.course_title),
+      unitId: row.unit_id == null ? null : String(row.unit_id),
+      unitName: row.unit_name == null ? null : String(row.unit_name),
+      examKind: row.exam_kind === "pronunciation" ? "pronunciation" : "spelling",
+      requiredPercent: Number(row.required_percent || 90),
+      firstRoundAccuracyPercent: Number(row.first_round_accuracy_percent || 0),
+      firstRoundCorrect: Number(row.first_round_correct || 0),
+      wordCount: Number(row.word_count || 0),
+      passed: typeof row.passed === "boolean" ? row.passed : null,
+      practiceCompleted: Boolean(row.practice_completed),
+      status: row.status === "in_progress" ? "in_progress"
+        : row.status === "completed" ? "completed" : "cancelled",
+      attemptCount: Number(row.attempt_count || 0),
+      wrongCount: Number(row.wrong_count || 0),
+      startedAt: String(row.started_at),
+      completedAt: row.completed_at == null ? null : String(row.completed_at),
+    };
+  }
+
   private word(word: Row | undefined, progress?: Row) {
     if (!word) throw new NotFoundException({ code: "WORD_NOT_FOUND", message: "单词不存在" });
     return { id: word.id, term: word.term, normalizedTerm: word.normalized_term,
@@ -806,7 +914,10 @@ export class LearningService {
         pronunciationReviewDates: progress?.pronunciation_review_dates || [],
         translationReviewDates: progress?.translation_review_dates || [],
         spellingReviewDates: progress?.spelling_review_dates || [], wrongCount: Number(progress?.wrong_count || 0),
-        reviewCount: Number(progress?.review_count || 0), learnedAt: progress?.learned_at || null } };
+        reviewCount: Number(progress?.review_count || 0),
+        spellingExamPassedAt: progress?.spelling_exam_passed_at || null,
+        pronunciationExamPassedAt: progress?.pronunciation_exam_passed_at || null,
+        learnedAt: progress?.learned_at || null } };
   }
 
   private async requireCourse(userId: string, courseId: string): Promise<Row> {

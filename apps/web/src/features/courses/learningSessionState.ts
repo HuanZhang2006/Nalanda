@@ -14,6 +14,7 @@ type QueueState = {
   round: number;
   awaitingRetryConfirmation: boolean;
   retrySummaryIds: string[];
+  retrySummaryScores: Record<string, number>;
   retryFromRound: number | null;
 };
 
@@ -25,6 +26,7 @@ export function readQueueState(session: LearningSession): QueueState {
     round?: unknown;
     awaitingRetryConfirmation?: unknown;
     retrySummaryIds?: unknown;
+    retrySummaryScores?: unknown;
     retryFromRound?: unknown;
   };
   return {
@@ -35,6 +37,11 @@ export function readQueueState(session: LearningSession): QueueState {
     awaitingRetryConfirmation: raw.awaitingRetryConfirmation === true,
     retrySummaryIds: Array.isArray(raw.retrySummaryIds)
       ? raw.retrySummaryIds.map(String) : [],
+    retrySummaryScores: raw.retrySummaryScores && typeof raw.retrySummaryScores === "object"
+      ? Object.fromEntries(Object.entries(raw.retrySummaryScores as Record<string, unknown>)
+        .filter(([, value]) => Number.isFinite(Number(value)))
+        .map(([key, value]) => [key, Number(value)]))
+      : {},
     retryFromRound: Number.isSafeInteger(Number(raw.retryFromRound))
       && Number(raw.retryFromRound) > 0 ? Number(raw.retryFromRound) : null,
   };
@@ -49,6 +56,7 @@ export function readExamState(session: LearningSession) {
     ? Math.round(correct / answered * 1_000) / 10
     : 0;
   return {
+    kind: raw.examKind === "pronunciation" ? "pronunciation" as const : "spelling" as const,
     total,
     answered,
     correct,

@@ -60,6 +60,7 @@ export type LearningCourseCategory =
   | "question_bank";
 export type LearningSkill = "pronunciation" | "translation" | "spelling";
 export type LearningSessionMode = "initial" | "review" | "exam";
+export type LearningExamKind = "spelling" | "pronunciation";
 export type LearningStage = "recognition" | LearningSkill | "completed";
 export type LearningScope = "all" | "unlearned";
 
@@ -105,6 +106,11 @@ export interface VocabularyWord extends VocabularyWordInput {
     spellingReviewDates: string[];
     wrongCount: number;
     reviewCount: number;
+    /** Passed first-round threshold in a completed spelling exam containing this word. */
+    spellingExamPassedAt: string | null;
+    /** Passed first-round threshold in a completed pronunciation exam containing this word. */
+    pronunciationExamPassedAt: string | null;
+    /** Projected only when both exam pass timestamps are present. */
     learnedAt: string | null;
   };
 }
@@ -177,8 +183,58 @@ export interface StartLearningSessionRequest {
   scope?: LearningScope;
   scheduleId?: string;
   spellingOptions?: LearningSpellingOptions;
-  /** First-round accuracy required for an exam to mark its unit learned. */
+  /** First-round accuracy required to record this exam requirement as passed. */
   examPassPercent?: number;
+  /** Exam stage. Existing callers default to the translation-plus-spelling exam. */
+  examKind?: LearningExamKind;
+  /** Optional owner-scoped subset of words from unitId for review/exam sessions. */
+  wordIds?: string[];
+}
+
+export type LearningExamHistoryStatus = "in_progress" | "completed" | "cancelled";
+
+export interface LearningExamHistorySummary {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  unitId: string | null;
+  unitName: string | null;
+  examKind: LearningExamKind;
+  requiredPercent: number;
+  firstRoundAccuracyPercent: number;
+  firstRoundCorrect: number;
+  wordCount: number;
+  passed: boolean | null;
+  practiceCompleted: boolean;
+  status: LearningExamHistoryStatus;
+  attemptCount: number;
+  wrongCount: number;
+  startedAt: string;
+  completedAt: string | null;
+}
+
+export interface LearningExamHistoryAttempt {
+  id: string;
+  wordId: string | null;
+  term: string | null;
+  skill: LearningSkill | "speech_assessment";
+  correct: boolean | null;
+  answer: string | null;
+  pronunciationScore: number | null;
+  accuracyScore: number | null;
+  createdAt: string;
+}
+
+export interface LearningExamHistoryDetail extends LearningExamHistorySummary {
+  words: Array<{
+    wordId: string;
+    term: string;
+    ipa: string | null;
+    translations: string[];
+    wrongCount: number;
+    passed: boolean;
+  }>;
+  attempts: LearningExamHistoryAttempt[];
 }
 
 export interface LearningAttemptRequest {
