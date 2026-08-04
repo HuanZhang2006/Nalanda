@@ -17,7 +17,7 @@
 | 发布工具单元 | Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
 | NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter/队列/配额，以及翻译判分与 Fish Audio STT endpoint/body、中文提示、WAV/revision 校验、quota、timeout/非法响应和无正文持久化 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
-| OpenRouter 供应商 smoke | 文本脚本验证 structured 语义判分；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；候选生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应 | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
+| OpenRouter 供应商 smoke | 文本脚本验证 structured 语义判分；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应 | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
 | 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure/OpenRouter fake 运行 Courses、弱网 outbox、Cache Storage、限时拼写、翻译前测、语音回填和实时波形流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
@@ -415,7 +415,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
 | Courses 音频/离线 | cache key/不裁剪录音 unit + API 原字节转发/queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
 | Courses 限时拼写/翻译前测 | fake-clock jsdom + API structured response/timeout unit + 双用户 RLS/幂等/配额 + fake-provider Playwright + 发布前真实 OpenRouter structured/API gate；不得把模型输出直接当客户端事实 |
-| Courses 翻译语音输入/波形 | recording/WAV/waveform unit + jsdom 回填不提交/可编辑/迟到响应保护 + API multipart/中文 STT/错误映射 + 真实 Supabase RPC 权限/配额 + fake-provider Playwright 三处波形 + 发布前 Azure 中文 WAV→真实 Fish Audio 候选 API gate |
+| Courses 翻译语音输入/波形 | recording/WAV/waveform unit + jsdom 回填不提交/可编辑/迟到响应保护 + API multipart/中文 STT/错误映射 + 真实 Supabase RPC 权限/配额 + fake-provider Playwright 三处波形 + 发布前 Azure 中文 WAV→真实 Fish Audio 候选 API gate；合成样本不等于真实口音评测 |
 | Courses 拼写规范化 | Web 单元/jsdom 覆盖 NFKC/Unicode 空白/全角大小写、标点遗漏/替换/增加及真实字母/空格错误 + 一次性真实 Supabase E2E 验证 raw answer、revision、`wrong_count`、retry pool 和客户端 helper 拒绝 |
 | Courses 拼写轮末复盘/考试 | state 单元 + jsdom 验证持久错词清单/确认门/实时正确率；API unit 验证固定 exam 规则；真实 Supabase E2E 验证 trigger、重排、通过/未通过熟练投影与权限；fake-provider Playwright 验证浏览器完整流程 |
 | Courses 读音考试/任意选词/考试历史 | jsdom 验证逐题评分反馈、轮末分数、选择器和历史详情；API unit 验证 Azure target/owner/映射；真实 Supabase E2E 验证选词 scope、不可变快照、客户端 RPC 拒绝、失败补练不伪造通过；fake-provider Playwright 验证浏览器流程，发布前另跑真实 Japan East Azure gate |
@@ -440,6 +440,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 2026-08-03 的读音考试、任意选词、历史和双考试掌握样本：PR #45 最终 run `30811283164`、main run `30811817461` 与受保护 run `30813047562` 通过 0007→0034、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖读音分数/retry、owner-validated 选词、失败补练自动结束、不可变历史快照、复习/单项考试不 learned、双考试共同 learned 和编辑撤销；只读 plan `30812467085` 仅列 0029–0034，受保护 run 保留 artifact `8855819351` 后应用并激活 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1`。Playwright 的 Azure/OpenRouter 仍为 fake；真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 是独立发布证据。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
 
 2026-08-04 的未裁剪录音与精确掌握投影样本：PR #47 run `30831319634`、main run `30831964846` 与受保护 run `30833228406` 通过 0007→0036、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖静音/轻声/首尾完整 WAV 不被客户端删除、Nest 原样转发字节、手工 `learned_at` 和单项考试不能绕过 trigger 投影；只读 plan `30832581552` 仅列 0035–0036，受保护 run 保留 artifact `8864033351` 后应用并激活 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1`。Playwright 的 Azure/OpenRouter 仍为 fake；独立真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 证明真实依赖，gate 报告未裁剪 `assessmentBytes=88444`。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
+
+同日的翻译语音输入与共享波形样本：PR #49 run `30904901828` 通过 0007→0038、空库重建/lint、真实本地 Supabase RLS/Storage、72 个 API 测试、85 个 Web/jsdom 测试与 Chromium Playwright；main run `30905971129` 按迁移保护规则只验证不部署。只读 plan `30906629924` 首次因一次性 Supabase 上游瞬时响应失败，同 SHA 重跑失败 job 后通过且唯一列出 0037–0038。受保护 run `30907716733` 保留 artifact `8892006761`、应用到 0038 并激活 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1`。Playwright STT 仍为 fake；独立真实直连和生产待激活 API gate 使用合成中文 WAV，后者返回 `transcriptionMatched=true`。这证明当时 endpoint/key/额度与固定样本，不证明物理麦克风或多口音质量。
 
 ## 11. 新增测试约定
 

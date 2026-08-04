@@ -157,7 +157,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-## 4. Courses API（生产 0011–0036）
+## 4. Courses API（生产 0011–0038）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -342,7 +342,7 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 
 客户端从已加载 session 在同一渲染帧计算 provisional 正误：答对约 520 ms 自动进入下一题，答错一直保留并等用户点“下一题”。这个预测不授予完成、points 或徽章；IndexedDB outbox 按 revision 串行提交，服务器增量替换预测。只在冷启动/退出、服务端确认完成或 revision 冲突时重拉完整 snapshot，普通每题不刷新 Courses 列表。
 
-拼写阶段一轮结束且存在错词时，attempt 返回的 `sessionPatch.state` 带 `awaitingRetryConfirmation=true`、`retrySummaryIds` 和 `retryFromRound`。候选读音考试使用相同字段并增加 `retrySummaryScores: Record<wordId, PronScore>`。在调用轮次继续端点前，数据库拒绝新的 attempt/评分和翻译评判 processing claim；继续端点锁定 owner session、推进 revision、清除确认标记并按 session/轮次重排错词。因而轮末清单是可刷新恢复的服务端状态，不是纯前端弹窗。
+拼写阶段一轮结束且存在错词时，attempt 返回的 `sessionPatch.state` 带 `awaitingRetryConfirmation=true`、`retrySummaryIds` 和 `retryFromRound`。读音考试使用相同字段并增加 `retrySummaryScores: Record<wordId, PronScore>`。在调用轮次继续端点前，数据库拒绝新的 attempt/评分和翻译评判 processing claim；继续端点锁定 owner session、推进 revision、清除确认标记并按 session/轮次重排错词。因而轮末清单是可刷新恢复的服务端状态，不是纯前端弹窗。
 
 ### 4.3 发音合成与朗读评分
 
@@ -353,9 +353,9 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 | GET | `/api/pronunciation/audio/:wordId` | owner 课程中的 word ID | ready 时 `audio/mpeg`（fake 为 WAV）、ETag 与 `private,max-age=31536000,immutable`；未 ready 时快速 `202 AUDIO_PENDING` + `Retry-After: 3` |
 | POST | `/api/pronunciation/assess` | `multipart/form-data`：`audio`, `sessionId`, `wordId` | `PronunciationAssessment` |
 
-评分只接受当前用户 active session 中的词；认单词阶段和候选读音考试都要求 `wordId` 是当前卡片，且轮末等待确认时会在调用 Azure 前拒绝，避免迟到/伪造请求改变其它词或消耗配额。浏览器不再执行 VAD、噪声阈值、“清晰语音”最短时长判断、静音裁剪或内容截断；录音最多持续 6 秒，并关闭 echo cancellation、noise suppression 与 auto gain control。Web 只把设备帧转换成 Azure REST 必需的 16 kHz/16-bit/单声道 PCM WAV，服务端验证 ≤2 MB、≤8 秒和格式后把同一字节序列转发 Azure。参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,revision,sessionPatch,errorType,phonemes[]`，无需再拉完整 session。整体 `pronunciationScore` 默认达到 70 才通过：认词阶段低分更新 recognition `nextQueue`；读音考试低分更新考试候补池和首轮统计。阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
+评分只接受当前用户 active session 中的词；认单词阶段和读音考试都要求 `wordId` 是当前卡片，且轮末等待确认时会在调用 Azure 前拒绝，避免迟到/伪造请求改变其它词或消耗配额。浏览器不再执行 VAD、噪声阈值、“清晰语音”最短时长判断、静音裁剪或内容截断；录音最多持续 6 秒，并关闭 echo cancellation、noise suppression 与 auto gain control。Web 只把设备帧转换成 Azure REST 必需的 16 kHz/16-bit/单声道 PCM WAV，服务端验证 ≤2 MB、≤8 秒和格式后把同一字节序列转发 Azure。参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,revision,sessionPatch,errorType,phonemes[]`，无需再拉完整 session。整体 `pronunciationScore` 默认达到 70 才通过：认词阶段低分更新 recognition `nextQueue`；读音考试低分更新考试候补池和首轮统计。阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
 
-0037 候选复用同一 WAV 采集器为拼写前翻译提供中文语音输入。NestJS 固定调用 OpenRouter `/audio/transcriptions` 与 `fish-audio/transcribe-1`，请求中的 `language` 缺省为 `zh`；浏览器不能提交 model/language/key。数据库 RPC 在产生供应商成本前原子验证 owner、active spelling stage、`translationFirst=true`、当前 `wordId` 和 `expectedRevision`。响应只回填输入框，不生成 attempt、不判分、不推进 cursor；慢响应若已不匹配当前 revision/word，Web 会丢弃而不误填下一题。用户音频与 transcript 不进数据库、Storage、备份或日志，只有 `learning_speech_usage.kind=translation_stt` 的成本/配额事实持久保存。
+0037 复用同一 WAV 采集器为拼写前翻译提供中文语音输入，已于 2026-08-04 随 0038 受保护发布。NestJS 固定调用 OpenRouter `/audio/transcriptions` 与 `fish-audio/transcribe-1`，请求中的 `language` 缺省为 `zh`；浏览器不能提交 model/language/key。数据库 RPC 在产生供应商成本前原子验证 owner、active spelling stage、`translationFirst=true`、当前 `wordId` 和 `expectedRevision`。响应只回填输入框，不生成 attempt、不判分、不推进 cursor；慢响应若已不匹配当前 revision/word，Web 会丢弃而不误填下一题。用户音频与 transcript 不进数据库、Storage、备份或日志，只有 `learning_speech_usage.kind=translation_stt` 的成本/配额事实持久保存。
 
 供应商 402 映射为 `503 TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED`，429 映射为 `TRANSLATION_STT_PROVIDER_RATE_LIMIT`；两者都只关闭本次语音回填并保留键盘输入，不形成错误 attempt。该模型不是 `:free` 文本模型，复用同一 key 不等于复用免费额度。
 
@@ -571,7 +571,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013–0036 持续以精确签名、RLS、双用户负向 E2E 和发布断言收口这些边界；0023–0024 收口标点 matcher/attempt，0025–0026 收口取消 RPC，0027–0028 拒绝客户端执行考试、轮次确认、配额预留及相关 helper，0029–0034 继续收口读音考试、任意选词、历史和双考试掌握 RPC/trigger。生产 0035–0036 加入 progress 精确投影 trigger/constraint，检查 review 无正向写入、客户端无 progress 写权限和 helper 权限。
+前端没有直接调用 Courses `rpc()`。迁移 0008 已收口 points helper；0012 的保存、会话、答题、日程、成长、语音配额、分享、发布、克隆、举报和审核 RPC 也全部撤销 PUBLIC/anon/authenticated EXECUTE，只授予 API service-role。0013–0038 持续以精确签名、RLS、双用户负向 E2E 和发布断言收口这些边界；0023–0024 收口标点 matcher/attempt，0025–0026 收口取消 RPC，0027–0028 拒绝客户端执行考试、轮次确认、配额预留及相关 helper，0029–0034 继续收口读音考试、任意选词、历史和双考试掌握 RPC/trigger。生产 0035–0036 加入 progress 精确投影 trigger/constraint，检查 review 无正向写入、客户端无 progress 写权限和 helper 权限；0037–0038 收口 translation STT 当前题/配额 RPC 与 `learning_speech_usage` 客户端权限。
 
 未来确需客户端调用的 RPC 必须另建窄参数入口，绑定 `auth.uid()`、校验资源归属、使用稳定幂等键并补负向测试；不得重新授权内部 helper。
 

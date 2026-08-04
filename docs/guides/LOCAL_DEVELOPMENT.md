@@ -151,7 +151,7 @@ FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=false
 
 非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音和翻译前测始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
 
-要测试真实语义翻译前测或 0037 候选中文语音输入，在已被 Git 忽略的 `apps/api/.env` 中填写同一个开发用 `OPENROUTER_API_KEY`，设置 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true`，并保留默认 model/base URL/timeout/配额及 `OPENROUTER_STT_MODEL=fish-audio/transcribe-1`、`OPENROUTER_STT_LANGUAGE=zh`。不要在命令行参数、浏览器 `VITE_*`、截图、issue 或测试 fixture 中放 key；文件权限建议设为 600。普通 UI/API 自动化使用 `OPENROUTER_FAKE=true`，它会为 STT 返回固定中文文本且 production 会拒绝，不能作为供应商证据。真实文本判分单请求验证使用：
+要测试真实语义翻译前测或 0037 中文语音输入，在已被 Git 忽略的 `apps/api/.env` 中填写同一个开发用 `OPENROUTER_API_KEY`，设置 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true`，并保留默认 model/base URL/timeout/配额及 `OPENROUTER_STT_MODEL=fish-audio/transcribe-1`、`OPENROUTER_STT_LANGUAGE=zh`。不要在命令行参数、浏览器 `VITE_*`、截图、issue 或测试 fixture 中放 key；文件权限建议设为 600。普通 UI/API 自动化使用 `OPENROUTER_FAKE=true`，它会为 STT 返回固定中文文本且 production 会拒绝，不能作为供应商证据。真实文本判分单请求验证使用：
 
 ```bash
 chmod 600 apps/api/.env
@@ -305,7 +305,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移 0036，而不是停在旧 migration history；生产也已到 0036，但任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新迁移 0038，而不是停在旧 migration history；生产也已到 0038，但任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
 
 ### 翻译前测返回禁用、超时或配额错误
 

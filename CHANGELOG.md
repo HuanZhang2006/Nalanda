@@ -9,6 +9,8 @@
 
 ## [Unreleased]
 
+## [0.10.2] - 2026-08-04
+
 ### Added
 
 - 新增仅用于拼写前翻译输入的 OpenRouter `fish-audio/transcribe-1` 中文语音识别：输入框右端录音、识别后只填入文本且不自动提交，用户可继续编辑。
@@ -18,6 +20,17 @@
 ### Security
 
 - STT model、语言和参考学习状态均由服务端固定；客户端不能选择 provider、读取 OpenRouter key、绕过当前题校验或通过识别结果直接推进进度/奖励。
+
+### Testing
+
+- PR [#49](https://github.com/1590703336/Nalanda/pull/49) run `30904901828` 通过 docs/lint/typecheck、72 个 API 测试、85 个 Web/jsdom 测试、build、0007→0038、空库重建/database lint、一次性真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright；Playwright 的 Azure/OpenRouter 仍为 fake。
+- 充值后独立真实 OpenRouter smoke 使用 0.526 秒、16 kHz 单声道合成中文 WAV 成功调用 `fish-audio/transcribe-1`，识别结果包含预期关键词并记录约 `$0.0001` provider cost；真实 `google/gemma-4-26b-a4b-it:free` structured smoke 同时成功。该证据证明当时的 endpoint/key/额度与固定中文样本可用，不代表真实用户口音、物理麦克风或持续准确率。
+
+### Release
+
+- PR #49 合入 main SHA `66c919833693971ba1bda4ea33a3fdf6717ef1ca`；main run `30905971129` 完成验证并按迁移保护规则跳过生产写入。只读 [plan run `30906629924`](https://github.com/1590703336/Nalanda/actions/runs/30906629924) 首次遇到一次性 Supabase 上游瞬时错误；同 SHA 仅重跑失败 job 后真实 RLS/Storage 与 Playwright 通过，最终 dry-run 唯一列出 0037–0038，未创建恢复点、写库或部署。
+- [受保护 apply/deploy run `30907716733`](https://github.com/1590703336/Nalanda/actions/runs/30907716733) 在 apply 前保留加密 artifact `8892006761`（`db-recovery-66c919833693971ba1bda4ea33a3fdf6717ef1ca`，730,159 bytes），随后应用 0037–0038，并通过结构/权限断言、remote database lint 与空 dry-run。
+- 不可变 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter structured 判分和生产候选 API 的 Azure 中文 WAV→Fish Audio STT gate；后者返回 `transcriptionMatched=true`，同时 Courses API/Storage gate 验证 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回新 React 资产；生产主机只读复核确认 Web 软链和 API image 都指向同一 main SHA。
 
 ## [0.10.1] - 2026-08-04
 
