@@ -12,6 +12,7 @@ test("production OpenRouter installer preserves unrelated values and replaces ma
     "SUPABASE_URL=https://example.supabase.co",
     "OPENROUTER_API_KEY=stale",
     "OPENROUTER_MODEL=stale",
+    "OPENROUTER_STT_MODEL=stale",
     "FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=false",
     "",
   ].join("\n"), { mode: 0o600 });
@@ -28,6 +29,10 @@ test("production OpenRouter installer preserves unrelated values and replaces ma
   assert.match(content, /FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true/);
   assert.match(content, /OPENROUTER_MODEL=google\/gemma-4-26b-a4b-it:free/);
   assert.match(content, /OPENROUTER_ASSESSMENTS_PER_DAY=500/);
+  assert.match(content, /OPENROUTER_STT_MODEL=fish-audio\/transcribe-1/);
+  assert.match(content, /OPENROUTER_STT_LANGUAGE=zh/);
+  assert.match(content, /OPENROUTER_STT_REQUESTS_PER_DAY=300/);
+  assert.match(content, /OPENROUTER_STT_MONTHLY_BUDGET_MICRO_USD=5000000/);
   assert.equal(content.match(/^OPENROUTER_API_KEY=/gm)?.length, 1);
   assert.ok(content.includes(`OPENROUTER_API_KEY=${testKey}`));
   assert.equal((await stat(envFile)).mode & 0o777, 0o600);

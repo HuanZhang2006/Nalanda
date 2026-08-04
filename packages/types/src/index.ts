@@ -288,6 +288,18 @@ export interface LearningSpellingTranslationAssessmentResult {
   attemptResult: LearningAttemptResult | null;
 }
 
+export interface LearningTranslationTranscriptionRequest {
+  expectedRevision: number;
+  wordId: string;
+}
+
+export interface LearningTranslationTranscriptionResult {
+  text: string;
+  wordId: string;
+  revision: number;
+  language: string;
+}
+
 export interface LearningSessionMutationResult {
   revision: number;
   sessionPatch: LearningSessionPatch;

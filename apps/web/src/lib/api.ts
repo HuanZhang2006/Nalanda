@@ -62,6 +62,14 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   TRANSLATION_PROVIDER_TIMEOUT: ["The translation checker timed out. Your answer was not counted as wrong.", "翻译判分超时，本次不会记为错误"],
   TRANSLATION_PROVIDER_ERROR: ["The translation checker is temporarily unavailable. Your answer was not counted as wrong.", "翻译判分服务暂不可用，本次不会记为错误"],
   TRANSLATION_PROVIDER_INVALID: ["The translation checker returned an invalid result. Please try again.", "翻译判分结果无效，请重试"],
+  TRANSLATION_STT_MINUTE_LIMIT: ["Too many voice transcriptions in one minute. Please retry shortly.", "一分钟内语音识别次数过多，请稍后重试"],
+  TRANSLATION_STT_DAILY_LIMIT: ["Today's voice-input allowance has been used. Please retry after it refreshes.", "今日语音识别额度已用完，请在额度恢复后重试"],
+  TRANSLATION_STT_MONTHLY_LIMIT: ["This month's voice-input budget has been used.", "本月语音识别额度已用完"],
+  TRANSLATION_STT_PROVIDER_RATE_LIMIT: ["The voice-input service is busy. Please try again shortly.", "语音识别服务繁忙，请稍后重试"],
+  TRANSLATION_STT_PROVIDER_TIMEOUT: ["Voice recognition timed out. Nothing was submitted.", "语音识别超时，未提交任何答案"],
+  TRANSLATION_STT_PROVIDER_ERROR: ["Voice recognition is temporarily unavailable. Nothing was submitted.", "语音识别服务暂不可用，未提交任何答案"],
+  TRANSLATION_STT_PROVIDER_INVALID: ["Voice recognition returned an invalid result. Please try again.", "语音识别结果无效，请重试"],
+  TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED: ["Voice input is temporarily unavailable. You can continue by typing.", "语音输入暂不可用，可继续使用键盘输入"],
 };
 
 function localizedApiError(code: string, source?: unknown) {

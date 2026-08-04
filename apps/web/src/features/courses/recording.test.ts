@@ -1,5 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { beginWavRecording, encodeAssessmentWav, encodePcmWav } from "./recording";
+import {
+  beginWavRecording, encodeAssessmentWav, encodePcmWav, waveformLevels,
+} from "./recording";
 
 function readBlob(blob: Blob) {
   return new Promise<ArrayBuffer>((resolve, reject) => {
@@ -66,6 +68,13 @@ describe("pronunciation WAV encoder", () => {
     expect(view.getUint32(40, true)).toBe(16_000 * 2);
   });
 
+  it("derives bounded waveform bars without changing captured PCM", () => {
+    expect(waveformLevels(new Float32Array(80), 4)).toEqual([0, 0, 0, 0]);
+    const bars = waveformLevels(new Float32Array(80).fill(0.25), 4);
+    expect(bars).toHaveLength(4);
+    expect(bars.every((value) => value > 0 && value <= 1)).toBe(true);
+  });
+
   it("disables browser audio processing and submits quiet captured frames without local rejection", async () => {
     const getUserMedia = vi.fn().mockResolvedValue({
       getTracks: () => [{ stop: vi.fn() }],
@@ -95,7 +104,8 @@ describe("pronunciation WAV encoder", () => {
     vi.stubGlobal("navigator", { mediaDevices: { getUserMedia } });
     vi.stubGlobal("AudioContext", QuietAudioContext);
 
-    const stop = await beginWavRecording(vi.fn());
+    const onWaveform = vi.fn();
+    const stop = await beginWavRecording(vi.fn(), undefined, { onWaveform });
     const wav = await stop();
 
     expect(contextOptions).toEqual({ sampleRate: 16_000 });
@@ -106,5 +116,6 @@ describe("pronunciation WAV encoder", () => {
       autoGainControl: false,
     } });
     expect(wav?.size).toBe(44 + 4_096 * 2);
+    expect(onWaveform).toHaveBeenCalledWith(expect.arrayContaining([expect.any(Number)]));
   });
 });

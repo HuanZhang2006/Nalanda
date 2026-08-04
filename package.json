@@ -9,6 +9,7 @@
     "lint": "turbo run lint",
     "docs:check": "node scripts/check-docs.mjs",
     "smoke:azure-speech": "node scripts/smoke-azure-speech.mjs",
+    "smoke:openrouter-stt": "node scripts/smoke-openrouter-transcription.mjs",
     "test:release": "node --test scripts/*.test.mjs",
     "typecheck": "turbo run typecheck",
     "test": "turbo run test",

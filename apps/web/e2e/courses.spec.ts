@@ -212,6 +212,10 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   expect(detail.status(), `course detail: ${await detail.text()}`).toBe(200);
   await expect(page.locator(".course-term")).toHaveText("apple");
   await assessWithFixedWav(page, courseTitle);
+  await page.getByRole("button", { name: /朗读评分/ }).click();
+  await expect(page.getByRole("img", { name: "实时麦克风波形" })).toBeVisible();
+  await page.getByRole("button", { name: "停止并评分" }).click();
+  await expect(page.getByText(/发音 93 分/)).toBeVisible();
   await page.getByRole("button", { name: "认识了，继续" }).click();
 
   // A cold legacy-style unit has no prior audio download. Starting its review
@@ -318,6 +322,14 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByText("回答正确，正在进入下一题…")).toBeVisible();
   await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   for (const [term, translation] of [["apple", "苹果"], ["banana", "香蕉"]] as const) {
+    if (term === "apple") {
+      await page.getByRole("button", { name: "使用语音输入翻译" }).click();
+      await expect(page.getByRole("img", { name: "翻译语音实时波形" })).toBeVisible();
+      await page.getByRole("button", { name: "停止翻译语音输入" }).click();
+      await expect(page.getByLabel("键入翻译答案")).toHaveValue("语音输入");
+      await expect(page.getByText("语音识别结果已填入，提交前仍可编辑。")).toBeVisible();
+      await expect(page.getByText("翻译已通过，现在请拼写英文。")).toBeHidden();
+    }
     await page.getByLabel("键入翻译答案").fill(translation);
     await page.getByRole("button", { name: "提交翻译" }).click();
     await expect(page.getByText("翻译已通过，现在请拼写英文。")).toBeVisible();
@@ -391,6 +403,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByText(/第一轮实时正确率 0%/)).toBeVisible();
   for (let index = 0; index < 2; index += 1) {
     await page.getByRole("button", { name: "开始朗读评分" }).click();
+    await expect(page.getByRole("img", { name: "实时麦克风波形" })).toBeVisible();
     await page.getByRole("button", { name: "停止并评分" }).click();
     await expect(page.getByText(/通过 · 93 分/)).toBeVisible();
     await expect(page.getByRole("button", { name: "听正确读音" })).toBeVisible();
