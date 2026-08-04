@@ -16,7 +16,9 @@
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
 7. 若远端 history 为空，临时只保留 0001–0007 迁移，通过 public schema 零差异和 Storage policy/bucket 核验后才将这 7 个已存在版本标记为 applied；已建立的远端 history 必须是至少包含 0001–0007 的连续本地前缀；
 8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在候选 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分，以及翻译评判幂等/权威拼写提交，成功后才激活 Web release。
+9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在候选 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分和翻译评判幂等。0037–0038 候选还必须以 Azure 合成“苹果”中文 WAV 调用真实 Fish Audio STT，验证 owner/revision/word 绑定和中文 transcript 后才激活 Web release。
+
+0037–0038 的发布 plan 应只出现 `20260804000037_learning_translation_voice_input.sql` 与 `20260804000038_verify_learning_translation_voice_input.sql`。恢复点之后 apply 会扩展 `learning_speech_usage.kind` 并增加 service-role-only reservation RPC；应用回滚仍可忽略新增 kind/RPC，数据库只 forward-fix。发布后必须确认普通 `authenticated` 不能执行 RPC/读取 usage、候选 API 的 STT 真实 gate 通过且公网 health `deps.supabase=ok`；在这些证据完成前只能描述为候选，不能把本地 fake Playwright 当生产上线。
 
 已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。迁移文件或数据库发布控制 workflow/脚本发生变化，都会把普通 main push 保持在“只验证、不部署”状态，避免发布工具修复绕过尚未完成的数据库 release。普通 push 永不直接修改生产数据库；`plan_database_migrations` 只读且不部署应用，只有单独选中 `apply_database_migrations` 才创建恢复点并执行数据库发布，两者同时选中会失败。
 

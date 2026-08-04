@@ -84,6 +84,8 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   mode?: "initial" | "review" | "exam";
   spellingOptions?: Partial<LearningSession["spellingOptions"]>;
   translationAssessment?: "correct" | "wrong" | "error";
+  translationTranscription?: "success" | "error";
+  transcriptionText?: string;
   attemptTimeouts?: number;
   sessionState?: Record<string, unknown>;
 } = {}) {
@@ -93,6 +95,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   let audioReady = options.audio !== "pending-then-ready";
   const attempts: Array<Record<string, unknown>> = [];
   const translationAssessments: Array<Record<string, unknown>> = [];
+  const translationTranscriptions: Array<Record<string, unknown>> = [];
   const audioRequests: string[] = [];
   const cancellations: string[] = [];
   const retryContinues: string[] = [];
@@ -154,6 +157,23 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
           changedItem: null, nextWordId: currentQueue[0] || null,
         },
       });
+    }
+    if (path.endsWith(`/api/learning-sessions/${ids[4]}/spelling-translation-transcriptions`)) {
+      const form = init.body as FormData;
+      translationTranscriptions.push({
+        wordId: String(form.get("wordId")),
+        expectedRevision: Number(form.get("expectedRevision")),
+        audio: form.get("audio"),
+      });
+      if (options.translationTranscription === "error") {
+        return json({ code: "TRANSLATION_STT_PROVIDER_TIMEOUT", message: "timeout" }, 504);
+      }
+      return json({
+        text: options.transcriptionText || "苹果",
+        wordId: String(form.get("wordId")),
+        revision,
+        language: "zh",
+      }, 201);
     }
     if (path.endsWith(`/api/learning-sessions/${ids[4]}/spelling-translation-assessments`)) {
       const request = JSON.parse(String(init.body)) as {
@@ -365,6 +385,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   return {
     attempts,
     translationAssessments,
+    translationTranscriptions,
     audioRequests,
     cancellations,
     retryContinues,
@@ -931,6 +952,52 @@ describe("LearningView immediate feedback", () => {
     expect(container.textContent).toContain("苹果");
   });
 
+  it("records a live waveform, inserts Chinese speech without submitting, and permits editing", async () => {
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "spelling", {
+      spellingOptions: { translationFirst: true },
+      translationAssessment: "correct",
+      transcriptionText: "苹果",
+    });
+    vi.mocked(beginWavRecording).mockImplementation(async (_onAutoStop, _onError, options) => {
+      options?.onWaveform?.([0.1, 0.35, 0.8, 0.2]);
+      return async () => new Blob(["wav"], { type: "audio/wav" });
+    });
+    await settle(() => root.render(
+      <LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />,
+    ));
+
+    const mic = container.querySelector<HTMLButtonElement>(
+      '[aria-label="Enter translation by voice"]',
+    )!;
+    expect(mic).not.toBeNull();
+    await settle(() => click(mic));
+    expect(container.querySelector('[aria-label="Live translation voice waveform"]')).not.toBeNull();
+    expect(container.querySelector('[aria-label="Typed translation answer"]')).toHaveProperty("disabled", true);
+
+    await settle(() => click(container.querySelector(
+      '[aria-label="Stop translation voice input"]',
+    )!));
+    expect(api.translationTranscriptions).toHaveLength(1);
+    expect(api.translationTranscriptions[0]).toMatchObject({
+      wordId: words[0].id,
+      expectedRevision: 0,
+      audio: expect.any(Blob),
+    });
+    expect(api.translationAssessments).toHaveLength(0);
+    const input = container.querySelector<HTMLInputElement>(
+      '[aria-label="Typed translation answer"]',
+    )!;
+    expect(input.value).toBe("苹果");
+    expect(container.textContent).toContain("You can edit it before submitting");
+
+    await settle(() => inputValue(input, "一种苹果"));
+    await settle(() => click([...container.querySelectorAll("button")]
+      .find((entry) => entry.textContent === "Check translation")!));
+    expect(api.translationAssessments).toHaveLength(1);
+    expect(api.translationAssessments[0].answer).toBe("一种苹果");
+  });
+
   it("makes an untimed spelling session explicit instead of silently omitting the timer", async () => {
     const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
     installApi(words, "spelling");
@@ -1035,10 +1102,14 @@ describe("LearningView immediate feedback", () => {
   it("shows the pronunciation pass score, persisted retry status, and an explicit read-again action", async () => {
     const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
     installApi(words, "recognition", { assessment: "low" });
-    vi.mocked(beginWavRecording).mockResolvedValue(async () => new Blob(["wav"], { type: "audio/wav" }));
+    vi.mocked(beginWavRecording).mockImplementation(async (_onAutoStop, _onError, options) => {
+      options?.onWaveform?.([0.15, 0.6, 0.3]);
+      return async () => new Blob(["wav"], { type: "audio/wav" });
+    });
     await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
 
     await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes("Pronunciation feedback"))!));
+    expect(container.querySelector('[aria-label="Live microphone waveform"]')).not.toBeNull();
     await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes("Stop and assess"))!));
     expect(container.textContent).toContain("Pass score: 70 or higher");
     expect(container.textContent).toContain("added to the recognition retry pool");
@@ -1063,8 +1134,10 @@ describe("LearningView immediate feedback", () => {
         examFirstRoundComplete: false,
       },
     });
-    vi.mocked(beginWavRecording).mockResolvedValue(async () =>
-      new Blob(["wav"], { type: "audio/wav" }));
+    vi.mocked(beginWavRecording).mockImplementation(async (_onAutoStop, _onError, options) => {
+      options?.onWaveform?.([0.2, 0.7, 0.4]);
+      return async () => new Blob(["wav"], { type: "audio/wav" });
+    });
 
     await settle(() => root.render(
       <LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />,
@@ -1074,6 +1147,7 @@ describe("LearningView immediate feedback", () => {
 
     await settle(() => click([...container.querySelectorAll("button")]
       .find((entry) => entry.textContent?.includes("Start pronunciation exam"))!));
+    expect(container.querySelector('[aria-label="Live microphone waveform"]')).not.toBeNull();
     await settle(() => click([...container.querySelectorAll("button")]
       .find((entry) => entry.textContent?.includes("Stop and score"))!));
 

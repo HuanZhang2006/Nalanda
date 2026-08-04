@@ -67,12 +67,19 @@
 | `LEARNING_AUDIO_PREWARM_INTERVAL_MS` | 可选，3,100 | 受限配置 | worker 启动两次 Azure TTS 的最小间隔；实现拒绝小于 3,100 ms，默认配合全局单租约。 |
 | `LEARNING_AUDIO_SYNTHESIS_VERSION` | 可选，`1` | 受限配置 | 进入全局 SHA-256 缓存键；更换 voice/SSML/后处理语义时递增以安全重建，不原地覆盖旧键。 |
 | `AZURE_SPEECH_FAKE` | **仅测试**，默认 false | 测试配置 | 生成固定 WAV/评分；任何共享、staging 供应商 smoke 或生产必须未设置/false，API 在 `NODE_ENV=production` 时显式拒绝 true。 |
-| `OPENROUTER_API_KEY` | 翻译前测启用时必需 | **最高机密** | 只存在于 NestJS/受保护发布环境；以 Bearer token 调用 OpenRouter，绝不能进入 Web bundle、数据库、日志或提交。 |
+| `OPENROUTER_API_KEY` | 翻译前测或翻译语音输入启用时必需 | **最高机密** | 两项能力复用同一服务端 Bearer token；只存在于 NestJS/受保护发布环境，绝不能进入 Web bundle、数据库、日志或提交。 |
 | `OPENROUTER_MODEL` | 可选，`google/gemma-4-26b-a4b-it:free` | 受限配置 | 语义评判模型；生产 gate 固定验证该模型，变更必须经过 ADR、评测与成本复核。 |
 | `OPENROUTER_BASE_URL` | 可选，`https://openrouter.ai/api/v1` | 公开配置 | OpenRouter API 基址；只允许 API 读取。 |
 | `OPENROUTER_TIMEOUT_MS` | 可选，12,000 | 公开配置 | 单次评判硬超时，实现限制 1,000–30,000 ms；超时释放数据库租约且不记学习错误。 |
 | `OPENROUTER_ASSESSMENTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户一分钟真实 provider 评判上限；确定性完全匹配、UUID 幂等重放和仅领取租约都不计数。 |
 | `OPENROUTER_ASSESSMENTS_PER_DAY` | 可选，500 | 受限配置 | 每用户滚动 24 小时真实 provider 评判上限；达到上限时响应包含预计恢复秒数。 |
+| `OPENROUTER_STT_MODEL` | 可选，`fish-audio/transcribe-1` | 受限配置 | 只用于拼写前翻译语音输入的 STT 模型；客户端不可覆盖。 |
+| `OPENROUTER_STT_LANGUAGE` | 可选，`zh` | 公开产品配置 | STT ISO 语言提示，默认识别中文；当前 UI 不提供语言选择。 |
+| `OPENROUTER_STT_TIMEOUT_MS` | 可选，15,000 | 公开配置 | 单次 STT 硬超时，实现限制 1,000–30,000 ms；失败不会提交翻译答案。 |
+| `OPENROUTER_STT_REQUESTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户持久 STT 分钟上限。 |
+| `OPENROUTER_STT_REQUESTS_PER_DAY` | 可选，300 | 受限配置 | 按 Profile IANA 时区本地日期计算的用户 STT 日上限。 |
+| `OPENROUTER_STT_MONTHLY_BUDGET_MICRO_USD` | 可选，5,000,000 | 受限配置 | 仅 `translation_stt` 的全局月估算预算；不与 Azure 预算混用。 |
+| `OPENROUTER_STT_MICRO_USD_PER_SECOND` | 可选，100 | 受限配置 | 按当前 `$0.0001/秒` 折算的预算预留单价；只是保护性估算，供应商价格变化时必须同步复核。 |
 | `OPENROUTER_FAKE` | **仅测试**，默认 false | 测试配置 | 自动化用确定性 exact-match adapter；production 进程显式拒绝 true，不能作为真实供应商证据。 |
 | `COURSE_MARKET_DAILY_PUBLISH_LIMIT` | 可选，5 | 公开配置 | 每用户本地日期上架次数限制。 |
 | `COURSE_REPORT_DAILY_LIMIT` | 可选，20 | 公开配置 | 每用户本地日期举报次数限制。 |
@@ -81,7 +88,7 @@
 
 所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*`、timeout 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
 
-`OPENROUTER_ASSESSMENTS_PER_DAY=500` 是仓库默认值和生产环境安装脚本目标值；修改本文或 `.env.example` 不会改写正在运行的服务器。生产已随应用/0027–0028 受保护发布原子更新 `/opt/nalanda/.env`，后续发布报告仍必须单独核对容器内生效值且不得打印 key。
+`OPENROUTER_ASSESSMENTS_PER_DAY=500` 是语义判分默认值；STT 独立使用 20/分钟、300/本地日和 5,000,000 micro-USD/月。修改本文或 `.env.example` 不会改写正在运行的服务器；0037–0038 候选必须通过受保护安装脚本原子写入 STT 非密钥配置，同时复用既有 secret，发布报告仍需单独核对容器内生效值且不得打印 key。
 
 ## 4. FastAPI AI 运行时变量
 

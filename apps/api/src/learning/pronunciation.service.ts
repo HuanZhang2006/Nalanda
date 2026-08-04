@@ -43,6 +43,7 @@ export function validateAssessmentWav(bytes: Buffer) {
   if (dataSize / 32_000 > 8.05) {
     throw new BadRequestException({ code: "AUDIO_TOO_LONG", message: "录音不能超过 8 秒" });
   }
+  return { durationSeconds: dataSize / 32_000 };
 }
 
 @Injectable()

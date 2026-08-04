@@ -132,7 +132,7 @@ Nalanda/
 
 JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验证配置的签名与声明边界。Courses 控制器另提供课程 CRUD、会话恢复/答题、复习日程、Profile 聚合、语音、分享、市场、克隆、举报、受配置管理员约束的审核接口和服务端 OpenRouter 语义翻译前测。完整表见 [API 文档](guides/API.md)。
 
-新接口共用 `@nalanda/types` camelCase 契约，API 显式转换数据库 snake_case，并由全局异常过滤器统一返回 `{ code, message, fieldErrors? }`。语音有 per-user/全局预算限流；市场有发布/举报限流；翻译前测有数据库租约、UUID/answer-hash 幂等与用户配额。OpenRouter key/model 只存在于 API 环境，浏览器不能提交参考答案或 provider 参数；用户答案正文只在请求内存中转发，持久层只保留 hash、判定、计量和首次响应。当前仍没有通用队列、支付模块或自动 OpenAPI 生成。
+新接口共用 `@nalanda/types` camelCase 契约，API 显式转换数据库 snake_case，并由全局异常过滤器统一返回 `{ code, message, fieldErrors? }`。语音有 per-user/全局预算限流；市场有发布/举报限流；翻译前测有数据库租约、UUID/answer-hash 幂等与用户配额。0037 候选在同一 OpenRouter server adapter 边界增加 Fish Audio 中文 STT：浏览器只上传当前题的短 WAV，数据库先验证 owner/session/revision/word 并预留独立配额，供应商结果只回填可编辑输入，不推进学习。OpenRouter key/model 只存在于 API 环境，浏览器不能提交参考答案或 provider 参数；用户答案、录音和 STT transcript 只在请求内存中处理，持久层只保留必要的 hash/判定/计量事实。当前仍没有通用队列、支付模块或自动 OpenAPI 生成。
 
 ## 6. FastAPI AI 服务
 
@@ -215,10 +215,10 @@ GitHub Actions 在 runner 上：
 
 1. 运行 docs check、workspace typecheck、Vitest/jsdom/API 测试和 build。
 2. 自动暂存所有 0008 及之后迁移，先验证 0007 历史数据升级、opening reversal 与最新发布断言，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points/Courses E2E。
-3. 启动 Web/API 与 Azure/OpenRouter fake，以固定 WAV 执行 Playwright 登录→多单元创建→纠错/排序→四阶段（含限时拼写/翻译前测）→刷新续学→复习安排→发布/另一用户克隆。
+3. 启动 Web/API 与 Azure/OpenRouter fake，以固定 WAV 执行 Playwright 登录→多单元创建→纠错/排序→四阶段（含限时拼写、翻译前测、语音回填和三处实时波形）→刷新续学→复习安排→发布/另一用户克隆。
 4. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
 5. 构建 Web 与 Git SHA API image，经预先核验 host key 的 SSH/SCP 上传。
-6. 生产主机以仅存服务器 mode-600 `.env` 的 Azure/OpenRouter keys，在新 image 中执行真实 MP3/PCM TTS、pronunciation assessment 和 OpenRouter structured semantic/API idempotency gates；失败不激活 release。
+6. 生产主机以仅存服务器 mode-600 `.env` 的 Azure/OpenRouter keys，在新 image 中执行真实 MP3/PCM TTS、pronunciation assessment、OpenRouter structured semantic/API idempotency，以及“Azure 中文 WAV → Nalanda STT API → Fish Audio 中文 transcript” gate；失败不激活 release。
 7. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
 8. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
 
@@ -232,7 +232,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 ### 8.3 发布局限
 
 - API health 已验证 Supabase JWKS/PostgREST 基本 readiness，但不覆盖 Storage、注册写入、完整 RLS 或浏览器登录路径；Redis/AI 仍只看变量。
-- Azure Speech 与 OpenRouter 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。2026-07-28 的最终 gate 已确认 Japan East TTS/scripted assessment、OpenRouter structured 判定和真实 Courses API 幂等/零 token 快速路径。单次 gate 不代表持续可用率、准确率或费用对账。
+- Azure Speech 与 OpenRouter 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。0037–0038 候选只有在新增 Fish Audio 中文 STT gate 通过后才可标为发布；现有 2026-07-28/08-04 证据只覆盖 Japan East TTS/scripted assessment、OpenRouter structured 判定和既有 Courses API，不是新 STT 的生产证据。单次 gate 也不代表持续可用率、准确率或费用对账。
 - 数据库 release archive 仍不含 Storage 文件字节，且 CI 不自动逆向生产数据。
 - 不可变 image/release 目前仍主要保留在单台服务器，缺少异地 registry 和自动容量策略。
 - SSH 部署用户在当前文档中为 root。

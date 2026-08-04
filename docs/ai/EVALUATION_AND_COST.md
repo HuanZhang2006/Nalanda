@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-04。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech adapter、持久 TTS 队列、跨课程缓存、弱网答题、历史冷音频缓存替换、按意图独立续学和 OpenRouter 翻译语义前测已通过 0015–0020 受保护发布启用；0021–0028 已生产启用拼写规范化、轮末复盘、拼写考试和真实 provider 滚动配额；0029–0036 已生产启用读音考试、自定义词集合、考试历史和双考试精确掌握投影。生产 Web/API 已移除客户端 VAD/静音裁剪并保持 WAV 字节原样转发 Azure。考试历史只读取既有脱敏分数，不触发新 provider 请求。翻译前测与读音评分都是窄评判能力，不能冒充生成式 AI/文件解析闭环。
+> **状态基线：**2026-08-04。FastAPI 生成仍是固定桩；Courses 文件 AI 导入也未实现。Azure Speech 和 OpenRouter 语义翻译前测已生产启用至 0036；Fish Audio 中文 STT 属 0037–0038 未发布候选。生产 Web/API 已移除客户端 VAD/静音裁剪并保持 WAV 字节原样转发 Azure；候选 STT 复用同一未裁剪 16 kHz PCM WAV 采集器。翻译前测、读音评分和 STT 都是窄能力，不能冒充生成式 AI/文件解析闭环。
 
 ## 1. 范围和非目标
 
@@ -81,6 +81,14 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 语义质量门仍须用授权合成/专家标注集计算 precision、recall、false-accept/false-reject，并按单义/多义、词/短语和中英文分层。高风险错误是把无关翻译判对；当前真实 gate 的两条样本（同义为 true、无关为 false）只证明 endpoint/schema/key 当前可用，不代表质量 baseline，因此功能必须保留独立紧急 flag，不能对外承诺准确率。
 
 运行时记录脱敏 provider/model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。0027 把幂等 claim 与 provider-backed assessment reservation 分开：确定性完全匹配、已完成重放和未发出外部请求的租约都保持 `quota_counted=false/quota_counted_at=null`，仅在真实 OpenRouter 请求发出前按用户原子写入 true/当前时间；滚动窗口不再误用较早的 assessment 创建时间。同一 UUID 的网络/供应商重试不重复占产品额度。默认 20 次/用户/分钟、滚动 24 小时 500 次；429 携带精确恢复秒数。整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。真实请求超时/供应商错误仍保留该次额度事实，但不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
+
+### 2.5 Fish Audio 中文 STT 候选边界
+
+0037 候选只在 translation-first spelling 的翻译输入框中启用 OpenRouter `fish-audio/transcribe-1`。请求固定走 `/api/v1/audio/transcriptions`，使用 `language=zh`，模型、语言和 Bearer key 只由 NestJS 配置；识别文本只填入输入框，不自动发送，也不能直接形成 attempt、retry pool、进度、积分或徽章。用户编辑并明确提交后，才进入上节既有语义判分链。
+
+当前公开标价按 `$0.0001/秒` 估算，数据库以 100 micro-USD/秒保守预留，默认每用户 20 次/分钟、300 次/本地日和全局 5,000,000 micro-USD/月。`learning_speech_usage` 只保存 kind/cost/date，不保存音频或 transcript；日志只保存 provider/model/language、音频秒数、耗时和供应商 usage/cost 数字。上线前评测集至少覆盖普通话男女声、轻声、口音、短词/短句、背景噪声、静音、断句、同音词、数字、英文夹杂和 1–6 秒时长，并按 CER、关键含义保留率、空结果率、p50/p95 延迟及每成功 transcript 成本分层。自动化 fake 只证明契约；真实发布 gate 使用 Azure 合成“苹果”的固定中文 WAV 通过候选 API，并要求 Fish Audio transcript 含“苹果”，仍不能代替真实用户口音评测或持续质量监控。[OpenRouter 模型页](https://openrouter.ai/fish-audio/transcribe-1)列出的价格与能力可能变化，发布时必须重新核对。
+
+2026-08-04 的首次直连真实 smoke 已到达 OpenRouter，但既有只用于 Gemma free 判分的 key 对该计费 STT 返回 HTTP 402；因此这只是“provider wire 可达但额度阻塞”的候选证据，不是成功可用证据。代码显式映射 `TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED` 并保留键盘输入，受保护生产 gate 必须在账户具有可用额度后重新通过，不能因同一个 key 能调用 `:free` 文本模型就跳过 STT 资金检查。
 
 2026-07-28 的最终真实 gate 使用固定 `google/gemma-4-26b-a4b-it:free` 返回 1,365 ms、253 prompt tokens、27 completion tokens、280 total tokens；同一发布中的真实 Courses API 完全匹配路径持久记录 `nalanda-normalized-exact/normalized-exact-v1`、0 token 与 `replayed=true`。此前同一发布链有一次 12 秒 provider timeout 并按设计阻止候选激活，重试成功不能替代持续延迟/可用率或语义质量统计。
 

@@ -18,6 +18,7 @@
 - Courses 举报达到配置阈值时 API 输出单行 JSON `event=course_report_threshold`；speech 配额/估算成本持久在 `learning_speech_usage`，429 使用稳定 `SPEECH_QUOTA_EXCEEDED`；这些当前仍需日志/SQL 人工查看，不是完整告警链。
 - 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
 - 翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。0027 后应分别监控 `quota_counted=true` 的实际 provider 请求、分钟/滚动 24 小时 429 和 `retryAfterSeconds`，不能把 exact/replay/仅领取租约计入用量。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。这些事件都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
+- 0037 候选 STT 输出 `learning_translation_voice_transcribed`，只含 provider/model/language、音频秒数、provider/API duration 与 usage/cost 数字；不得写 base64/WAV、transcript、word、课程翻译、用户 ID 或 key。数据库以 `learning_speech_usage.kind=translation_stt` 提供分钟/本地日/月预算事实；Web 另应统计录音启动/权限拒绝、空结果、迟到 transcript 丢弃和回填后实际提交率，但不能采集识别文本。
 
 当前缺失：
 
@@ -43,7 +44,7 @@
 | FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
 | Courses API | 生产已启用至 0036 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
-| OpenRouter 翻译前测 | 生产已启用 | structured provider error、assessment duration/decision/token JSON event、数据库租约/配额、发布真实 gate | 无持续准确率/延迟/额度/价格对账；用户输入不得进日志 |
+| OpenRouter 翻译前测 / Fish Audio STT | 文本判分生产已启用；STT 为 0037 候选 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
 | Redis/BullMQ | 未接入当前业务 | hybrid compose 有目标配置 | 无队列/worker 指标 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
@@ -96,6 +97,7 @@
 - Courses progress/badge/points 可由客户端写、匿名 PostgREST 读到分享/市场私有表、已撤销 token 仍可克隆或 publication 内容可改：P1；
 - Azure 估算月预算 ≥80%：P3，≥95%：P2 并评估熔断，超预算/持续 429：P2；provider 5xx/timeout >10% 持续 10 分钟：P2 并打开语音 circuit，文本学习保持；
 - OpenRouter provider 5xx/timeout/invalid-structure 合计 >10% 持续 10 分钟或 token/请求量异常超过 2 倍基线：P2，关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`，普通/限时拼写保持；语义错误率突然偏离固定 eval baseline：P2/P3，先停 feature 而不是放宽模型判定。429 若来自产品用户配额按信息/滥用调查，若来自供应商账户额度按 P2；
+- Fish Audio STT timeout/5xx/invalid/空 transcript >10% 持续 10 分钟、p95 >8 秒或月预算 ≥80%：P2/P3；先关闭依赖该能力的翻译语音入口并保留键盘输入，不得绕过 owner/revision 校验、改为浏览器直连或把识别文本自动提交。真实用户 CER/关键含义保留率低于评测基线时暂停入口并复核模型/语言提示。
 - `learning_audio_assets` 最旧 pending 超过 15 分钟、processing lease 过期持续 5 分钟、generation failure >10% 或 ready metadata 对象 miss >1%：P2；minute/month quota 暂停按预算阈值分级，不通过提高并发绕过；
 - `learning_attempt_revision_conflict` 突增、同 session outbox 最旧项 >5 分钟或 replay 比例异常升高：P2/P3；先查网络/API/多设备，不手工推进 cursor；
 - 同一课程完成指纹出现多条正向 +20、复习 schedule 产生 task +5、badge 重复 PK/事实不一致：P1/P2 按经济影响；

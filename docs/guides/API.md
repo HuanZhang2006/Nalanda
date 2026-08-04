@@ -223,6 +223,7 @@ API JSON body 上限为 10 MB，以覆盖 2,000 词与多翻译的合法最坏�
 | POST | `/api/learning-sessions/:id/recognition` | `{ wordId }` | `{ revision, sessionPatch }` |
 | POST | `/api/learning-sessions/:id/attempts` | `LearningAttemptRequest` | `LearningAttemptResult`；只返回本次事实与 session 增量 |
 | POST | `/api/learning-sessions/:id/spelling-translation-assessments` | `{ attemptId,expectedRevision,wordId,answer }` | `LearningSpellingTranslationAssessmentResult`；语义错误时已包含权威的 spelling `attemptResult` |
+| POST | `/api/learning-sessions/:id/spelling-translation-transcriptions` | `multipart/form-data`：`audio`, `wordId`, `expectedRevision` | `{ text,wordId,revision,language }`；只为当前 translation-first spelling 题识别中文并返回可编辑文本，不提交答案或推进 session |
 | POST | `/api/learning-sessions/:id/spelling-retry-rounds/continue` | `{}` | `{ revision,sessionPatch }`；轮末确认时服务端打乱错题并开始下一轮；响应丢失后的同轮重放幂等返回当前 patch，不再次改序或推进 revision |
 | POST | `/api/learning-sessions/:id/exam-retry-rounds/continue` | `{}` | 0029：拼写/读音考试通用轮末确认；锁定 owner session、打乱错词、推进 revision 并清除持久复盘状态 |
 | GET | `/api/learning-review-schedules` | — | `ReviewSchedule[]`，含课程/单元名、source/completed session ID |
@@ -353,6 +354,10 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 | POST | `/api/pronunciation/assess` | `multipart/form-data`：`audio`, `sessionId`, `wordId` | `PronunciationAssessment` |
 
 评分只接受当前用户 active session 中的词；认单词阶段和候选读音考试都要求 `wordId` 是当前卡片，且轮末等待确认时会在调用 Azure 前拒绝，避免迟到/伪造请求改变其它词或消耗配额。浏览器不再执行 VAD、噪声阈值、“清晰语音”最短时长判断、静音裁剪或内容截断；录音最多持续 6 秒，并关闭 echo cancellation、noise suppression 与 auto gain control。Web 只把设备帧转换成 Azure REST 必需的 16 kHz/16-bit/单声道 PCM WAV，服务端验证 ≤2 MB、≤8 秒和格式后把同一字节序列转发 Azure。参考文本始终由 wordId 在服务端获取。响应字段为 `accuracyScore,fluencyScore,completenessScore,pronunciationScore,passThreshold,passed,queuedForRetry,revision,sessionPatch,errorType,phonemes[]`，无需再拉完整 session。整体 `pronunciationScore` 默认达到 70 才通过：认词阶段低分更新 recognition `nextQueue`；读音考试低分更新考试候补池和首轮统计。阈值由 API 受控配置并由数据库再次校验为 1–100。每个 phoneme 含 `accuracyScore` 和 `<70` 派生的 `needsPractice`。
+
+0037 候选复用同一 WAV 采集器为拼写前翻译提供中文语音输入。NestJS 固定调用 OpenRouter `/audio/transcriptions` 与 `fish-audio/transcribe-1`，请求中的 `language` 缺省为 `zh`；浏览器不能提交 model/language/key。数据库 RPC 在产生供应商成本前原子验证 owner、active spelling stage、`translationFirst=true`、当前 `wordId` 和 `expectedRevision`。响应只回填输入框，不生成 attempt、不判分、不推进 cursor；慢响应若已不匹配当前 revision/word，Web 会丢弃而不误填下一题。用户音频与 transcript 不进数据库、Storage、备份或日志，只有 `learning_speech_usage.kind=translation_stt` 的成本/配额事实持久保存。
+
+供应商 402 映射为 `503 TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED`，429 映射为 `TRANSLATION_STT_PROVIDER_RATE_LIMIT`；两者都只关闭本次语音回填并保留键盘输入，不形成错误 attempt。该模型不是 `:free` 文本模型，复用同一 key 不等于复用免费额度。
 
 用户录音不落库；只有评分 JSON 写 append-only attempt。本地不再产生 `RECORDING_TOO_QUIET`，没有字节、格式非法、供应商未识别或超时分别按既有 upload/provider 错误处理，均不会凭客户端判断形成学习错误。TTS GET 不再同步调用 Azure：owner 校验后只提升单词任务优先级，worker 全局单并发并以至少 3.1 秒间隔、默认 20 次/分钟和 500,000 字符/月处理。private Supabase Storage 是服务端唯一音频事实源；HTTP 400 + JSON 404 只表示正常对象缺失并触发重建，网络/权限/其它 Storage 失败保持可见，不会冒充 miss 浪费 Azure。浏览器 Cache Storage 是可删除、可回收的副本，不产生匿名 Storage URL。常见错误：`AUDIO_PENDING`、`AUDIO_REQUIRED`、`INVALID_AUDIO(_FORMAT)`、`AUDIO_TOO_LONG/LARGE`、`WORD_NOT_IN_SESSION`、`SPEECH_TTS_RATE_LIMIT`、`SPEECH_TTS_MONTHLY_LIMIT`、`SPEECH_QUOTA_EXCEEDED`、`SPEECH_PROVIDER_*`。
 
