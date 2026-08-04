@@ -450,6 +450,98 @@
 .course-attempt-wrong { color: var(--pink); font-weight: 700; }
 .course-spelling-gate { display: flex; width: 100%; flex-direction: column; align-items: center; }
 
+.course-voice-input {
+  position: relative;
+  width: min(100%, 520px);
+}
+
+.course-voice-input .course-form-field {
+  width: 100%;
+  padding-right: 52px;
+}
+
+.course-voice-input-button {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  width: 38px;
+  height: 38px;
+  display: grid;
+  place-items: center;
+  transform: translateY(-50%);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card-2);
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s, transform .15s;
+}
+
+.course-voice-input-button:hover:not(:disabled) {
+  border-color: var(--accent-line);
+  background: var(--accent-tint);
+}
+
+.course-voice-input-button.recording {
+  border-color: var(--pink);
+  background: color-mix(in srgb, var(--pink) 12%, var(--card));
+  color: var(--pink);
+}
+
+.course-voice-input-button:active:not(:disabled) {
+  transform: translateY(-50%) scale(.96);
+}
+
+.course-audio-waveform {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: min(100%, 520px);
+  min-height: 48px;
+  margin-top: 12px;
+  padding: 8px 13px;
+  border: 1px solid var(--accent-line);
+  border-radius: 999px;
+  background: var(--accent-tint);
+  color: var(--accent);
+}
+
+.course-audio-waveform-dot {
+  width: 8px;
+  height: 8px;
+  flex: 0 0 auto;
+  border-radius: 999px;
+  background: var(--pink);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--pink) 13%, transparent);
+}
+
+.course-audio-waveform-bars {
+  height: 28px;
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+}
+
+.course-audio-waveform-bars i {
+  width: 3px;
+  height: 100%;
+  flex: 1 1 3px;
+  max-width: 4px;
+  border-radius: 999px;
+  background: currentColor;
+  transform-origin: center;
+  transition: transform 80ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .course-audio-waveform-bars i { transition: none; }
+}
+
 .course-spelling-timer {
   display: grid;
   width: min(100%, 420px);

@@ -420,6 +420,36 @@ describe("LearningService ownership and public boundaries", () => {
     });
   });
 
+  it("reserves translation STT against the active revision and maps its quota independently", async () => {
+    const { value, db } = service();
+    db.rpc.mockResolvedValueOnce({ reserved: true, revision: 7 });
+    await expect(value.reserveTranslationStt(
+      "user-a", courseId, publicationId, 7, 20, 10, 100, 50_000,
+    )).resolves.toEqual({ reserved: true, revision: 7 });
+    expect(db.rpc).toHaveBeenCalledWith("learning_reserve_translation_stt", {
+      p_user_id: "user-a",
+      p_session_id: courseId,
+      p_word_id: publicationId,
+      p_expected_revision: 7,
+      p_cost_microusd: 20,
+      p_minute_limit: 10,
+      p_day_limit: 100,
+      p_month_budget_microusd: 50_000,
+    });
+
+    db.rpc.mockRejectedValueOnce(new SupabaseRequestError(
+      "translation stt minute quota exceeded",
+      400,
+      { code: "P0001", hint: "retry_after_seconds=12" },
+    ));
+    await expect(value.reserveTranslationStt(
+      "user-a", courseId, publicationId, 7, 20, 10, 100, 50_000,
+    )).rejects.toMatchObject({
+      status: 429,
+      response: { code: "TRANSLATION_STT_MINUTE_LIMIT", retryAfterSeconds: 12 },
+    });
+  });
+
   it("rejects pronunciation assessment lookup outside an active owned session before provider work", async () => {
     const { value, db } = service();
     db.rpc.mockRejectedValue(new SupabaseRequestError(

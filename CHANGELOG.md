@@ -9,6 +9,16 @@
 
 ## [Unreleased]
 
+### Added
+
+- 新增仅用于拼写前翻译输入的 OpenRouter `fish-audio/transcribe-1` 中文语音识别：输入框右端录音、识别后只填入文本且不自动提交，用户可继续编辑。
+- 翻译语音输入、认词朗读反馈和读音考试共用实时波形组件；录音仍只在请求内存中处理，不持久化用户音频。
+- 新增 0037–0038：service-role-only STT active session/revision/word 校验、每用户分钟/本地日配额、独立月预算预留及结构/权限发布断言。
+
+### Security
+
+- STT model、语言和参考学习状态均由服务端固定；客户端不能选择 provider、读取 OpenRouter key、绕过当前题校验或通过识别结果直接推进进度/奖励。
+
 ## [0.10.1] - 2026-08-04
 
 ### Added

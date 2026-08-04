@@ -1,13 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   LearningAttemptRequest, LearningAttemptResult, LearningAudioManifest, LearningCourseDetail,
-  LearningSession, LearningSpellingTranslationAssessmentResult, PronunciationAssessment,
-  VocabularyWord,
+  LearningSession, LearningSpellingTranslationAssessmentResult,
+  LearningTranslationTranscriptionResult, PronunciationAssessment, VocabularyWord,
 } from "@nalanda/types";
 import { ApiClientError, apiErrorMessage, authedFetch } from "../../lib/api";
 import { supabase } from "../../lib/supabase";
 import { coursesApi } from "./api";
 import { beginWavRecording } from "./recording";
+import { AudioWaveform } from "./AudioWaveform";
 import { useI18n } from "../../i18n";
 import { CourseLocaleButton } from "./CourseLocaleButton";
 import {
@@ -64,6 +65,14 @@ type AttemptFeedback = {
 type AudioFallbackNotice = {
   wordId: string;
   message: string;
+};
+
+type RecordingPurpose = "pronunciation" | "translation";
+type RecordingTarget = {
+  purpose: RecordingPurpose;
+  sessionId: string;
+  wordId: string;
+  revision: number;
 };
 
 function fallbackSpeak(text: string) {
@@ -148,12 +157,14 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const [spellingTranslationResult, setSpellingTranslationResult] =
     useState<LearningSpellingTranslationAssessmentResult | null>(null);
   const [spellingTranslationBusy, setSpellingTranslationBusy] = useState(false);
+  const [spellingTranscriptionBusy, setSpellingTranscriptionBusy] = useState(false);
   const [spellingAttemptId, setSpellingAttemptId] = useState(() => crypto.randomUUID());
   const [spellingTimeRemainingMs, setSpellingTimeRemainingMs] = useState<number | null>(null);
   const [feedback, setFeedback] = useState<AttemptFeedback | null>(null);
   const [activeAudioId, setActiveAudioId] = useState("");
   const [selectedMatchId, setSelectedMatchId] = useState("");
-  const [recording, setRecording] = useState(false);
+  const [recordingPurpose, setRecordingPurpose] = useState<RecordingPurpose | null>(null);
+  const [waveform, setWaveform] = useState<number[]>([]);
   const [assessment, setAssessment] = useState<PronunciationAssessment | null>(null);
   const [assessmentWordId, setAssessmentWordId] = useState("");
   const [assessmentBusy, setAssessmentBusy] = useState(false);
@@ -166,6 +177,8 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     quotaPaused: 0, persistent: false,
   });
   const stopRef = useRef<null | (() => Promise<Blob | null>)>(null);
+  const recordingPurposeRef = useRef<RecordingPurpose | null>(null);
+  const recordingTargetRef = useRef<RecordingTarget | null>(null);
   const aliveRef = useRef(true);
   const sessionRef = useRef<LearningSession | null>(null);
   const audioManifestRef = useRef<LearningAudioManifest | null>(null);
@@ -181,6 +194,8 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   const spellingSubmittedRef = useRef(false);
   const submitSpellingRef = useRef<(timedOut?: boolean) => void>(() => undefined);
   const [reviewOffsets, setReviewOffsets] = useState<number[]>([]);
+  const recording = recordingPurpose === "pronunciation";
+  const translationRecording = recordingPurpose === "translation";
 
   const setCurrentSession = (next: LearningSession | null) => {
     sessionRef.current = next;
@@ -418,7 +433,11 @@ export function LearningView({ sessionId, onExit, onChanged }: {
         window.clearTimeout(audioPrefetchRetryTimerRef.current);
       }
       downloadRef.current?.abort();
-      void stopRef.current?.().catch(() => null);
+      const stop = stopRef.current;
+      stopRef.current = null;
+      recordingPurposeRef.current = null;
+      recordingTargetRef.current = null;
+      void stop?.().catch(() => null);
     };
   }, [sessionId, l]);
   useEffect(() => {
@@ -518,6 +537,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     setSpellingTranslation("");
     setSpellingTranslationResult(null);
     setSpellingTranslationBusy(false);
+    setSpellingTranscriptionBusy(false);
     setSpellingAttemptId(crypto.randomUUID());
     setSpellingTimeRemainingMs(null);
     spellingSubmittedRef.current = false;
@@ -528,7 +548,20 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     setActiveAudioId("");
     setSelectedMatchId("");
     setAudioNotice(null);
-  }, [currentId, q.cursor, q.round, session?.stage, session?.mode, assessmentWordId]);
+    const recordingTarget = recordingTargetRef.current;
+    if (recordingTarget && (
+      recordingTarget.sessionId !== session?.id
+      || recordingTarget.wordId !== currentId
+    )) {
+      const stop = stopRef.current;
+      stopRef.current = null;
+      recordingPurposeRef.current = null;
+      recordingTargetRef.current = null;
+      setRecordingPurpose(null);
+      setWaveform([]);
+      void stop?.().catch(() => null);
+    }
+  }, [currentId, q.cursor, q.round, session?.id, session?.stage, session?.mode, assessmentWordId]);
 
   const translationOptions = useMemo(() => {
     if (!current || !course) return [];
@@ -712,54 +745,180 @@ export function LearningView({ sessionId, onExit, onChanged }: {
     }
   };
 
-  const assessBlob = async (blob: Blob) => {
-    if (!session || !current) return;
-    const assessedWordId = current.id;
+  const assessBlob = async (blob: Blob, target: RecordingTarget) => {
+    const assessedWordId = target.wordId;
     setAssessmentBusy(true); setNotice("");
     try {
-      const form = new FormData(); form.append("sessionId", session.id); form.append("wordId", current.id); form.append("audio", blob, "reading.wav");
+      const form = new FormData(); form.append("sessionId", target.sessionId); form.append("wordId", target.wordId); form.append("audio", blob, "reading.wav");
       const response = await authedFetch("/api/pronunciation/assess", { method: "POST", body: form });
       if (!response.ok) throw new Error(await apiErrorMessage(response));
       const body = await response.json() as PronunciationAssessment;
       const currentSession = sessionRef.current;
-      const pronunciationExam = isPronunciationExam(currentSession);
-      setAssessment(body);
-      setAssessmentWordId(pronunciationExam ? assessedWordId : "");
-      setConfirmedRevision(body.revision);
-      if (currentSession && !pronunciationExam) {
-        setCurrentSession(applySessionPatch(currentSession, body.revision, body.sessionPatch));
+      if (!currentSession || currentSession.id !== target.sessionId) {
+        setNotice(l(
+          "The learning session changed before pronunciation scoring finished.",
+          "发音评分完成前学习会话已发生变化。",
+        ));
+      } else {
+        const pronunciationExam = isPronunciationExam(currentSession);
+        setAssessment(body);
+        setAssessmentWordId(pronunciationExam ? assessedWordId : "");
+        setConfirmedRevision(body.revision);
+        if (!pronunciationExam) {
+          setCurrentSession(applySessionPatch(currentSession, body.revision, body.sessionPatch));
+        }
       }
     } catch (caught) { setNotice(l(`${caught instanceof Error ? caught.message : "Pronunciation assessment is temporarily unavailable."} You can continue learning.`, `${caught instanceof Error ? caught.message : "朗读评分暂不可用"}，不影响继续学习`)); }
-    setAssessmentBusy(false); setRecording(false); stopRef.current = null;
+    setAssessmentBusy(false);
+    stopRef.current = null;
   };
-  const startRecording = async () => {
+
+  const transcribeTranslationBlob = async (blob: Blob, target: RecordingTarget) => {
+    setSpellingTranscriptionBusy(true);
+    setError("");
+    setNotice(l("Transcribing Chinese speech…", "正在识别中文语音…"));
     try {
-      stopRef.current = await beginWavRecording(
-        (blob) => { void assessBlob(blob); },
-        (caught) => {
-          setRecording(false);
+      const form = new FormData();
+      form.append("wordId", target.wordId);
+      form.append("expectedRevision", String(target.revision));
+      form.append("audio", blob, "translation.wav");
+      const response = await authedFetch(
+        `/api/learning-sessions/${encodeURIComponent(target.sessionId)}/spelling-translation-transcriptions`,
+        { method: "POST", body: form },
+      );
+      if (!response.ok) throw new Error(await apiErrorMessage(response));
+      const result = await response.json() as LearningTranslationTranscriptionResult;
+      const latest = sessionRef.current;
+      const latestQueue = latest ? readQueueState(latest) : null;
+      const latestWordId = latestQueue?.queue[latestQueue.cursor] || null;
+      if (!latest
+          || latest.id !== target.sessionId
+          || latest.revision !== result.revision
+          || latestWordId !== result.wordId) {
+        setNotice(l(
+          "The question changed before transcription finished, so the transcript was not inserted.",
+          "识别完成前题目已发生变化，因此未填入这段识别结果。",
+        ));
+        return;
+      }
+      setSpellingTranslation(result.text);
+      setNotice(l(
+        "Voice input was inserted. You can edit it before submitting.",
+        "语音识别结果已填入，提交前仍可编辑。",
+      ));
+    } catch (caught) {
+      setNotice("");
+      setError(caught instanceof Error
+        ? caught.message
+        : l("Voice input is temporarily unavailable.", "语音输入暂不可用。"));
+    } finally {
+      setSpellingTranscriptionBusy(false);
+      setWaveform([]);
+    }
+  };
+
+  const finishRecording = (blob: Blob, target: RecordingTarget) => {
+    if (target.purpose === "translation") {
+      void transcribeTranslationBlob(blob, target);
+    } else {
+      void assessBlob(blob, target);
+    }
+  };
+
+  const startRecording = async (purpose: RecordingPurpose) => {
+    const currentSession = sessionRef.current;
+    const queue = currentSession ? readQueueState(currentSession) : null;
+    const wordId = queue?.queue[queue.cursor] || "";
+    if (!currentSession || !wordId || recordingPurposeRef.current) return;
+    const target: RecordingTarget = {
+      purpose,
+      sessionId: currentSession.id,
+      wordId,
+      revision: currentSession.revision,
+    };
+    recordingPurposeRef.current = purpose;
+    recordingTargetRef.current = target;
+    setRecordingPurpose(purpose);
+    setWaveform([]);
+    try {
+      const stop = await beginWavRecording(
+        (blob) => {
+          if (recordingTargetRef.current !== target) return;
           stopRef.current = null;
-          setNotice(l(`${caught.message} This is not counted as an error.`, `${caught.message}，不计入错误次数`));
+          recordingPurposeRef.current = null;
+          recordingTargetRef.current = null;
+          setRecordingPurpose(null);
+          finishRecording(blob, target);
+        },
+        (caught) => {
+          if (recordingTargetRef.current !== target) return;
+          stopRef.current = null;
+          recordingPurposeRef.current = null;
+          recordingTargetRef.current = null;
+          setRecordingPurpose(null);
+          setWaveform([]);
+          setNotice(purpose === "translation"
+            ? l(`${caught.message} Nothing was submitted.`, `${caught.message}，未提交任何答案`)
+            : l(`${caught.message} This is not counted as an error.`, `${caught.message}，不计入错误次数`));
+        },
+        {
+          onWaveform: (levels) => {
+            if (recordingTargetRef.current === target) {
+              setWaveform((currentLevels) => [...currentLevels, ...levels].slice(-40));
+            }
+          },
         },
       );
-      setRecording(true);
-      setNotice(l("Recording… Read the word, then stop (6 seconds maximum).", "正在录音，朗读后点击停止（最多 6 秒）"));
-    } catch (caught) { setNotice(l(`${caught instanceof Error ? caught.message : "The microphone is unavailable."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "麦克风不可用"}，不计入错误次数`)); }
+      if (!aliveRef.current || recordingTargetRef.current !== target) {
+        await stop().catch(() => null);
+        return;
+      }
+      stopRef.current = stop;
+      setNotice(purpose === "translation"
+        ? l("Recording Chinese translation… Tap stop when finished (6 seconds maximum).", "正在录制中文翻译，完成后点击停止（最多 6 秒）")
+        : l("Recording… Read the word, then stop (6 seconds maximum).", "正在录音，朗读后点击停止（最多 6 秒）"));
+    } catch (caught) {
+      if (recordingTargetRef.current !== target) return;
+      stopRef.current = null;
+      recordingPurposeRef.current = null;
+      recordingTargetRef.current = null;
+      setRecordingPurpose(null);
+      setWaveform([]);
+      setNotice(purpose === "translation"
+        ? l(`${caught instanceof Error ? caught.message : "The microphone is unavailable."} Nothing was submitted.`, `${caught instanceof Error ? caught.message : "麦克风不可用"}，未提交任何答案`)
+        : l(`${caught instanceof Error ? caught.message : "The microphone is unavailable."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "麦克风不可用"}，不计入错误次数`));
+    }
   };
-  const toggleRecording = async () => {
-    if (recording && stopRef.current) {
+  const toggleRecording = async (purpose: RecordingPurpose = "pronunciation") => {
+    if (recordingPurposeRef.current === purpose && stopRef.current) {
+      const stop = stopRef.current;
+      const target = recordingTargetRef.current;
+      stopRef.current = null;
       try {
-        const blob = await stopRef.current();
-        if (blob) await assessBlob(blob);
+        const blob = await stop();
+        if (recordingTargetRef.current === target) {
+          recordingPurposeRef.current = null;
+          recordingTargetRef.current = null;
+          setRecordingPurpose(null);
+          setWaveform([]);
+          if (blob && target) finishRecording(blob, target);
+        }
       } catch (caught) {
-        setRecording(false); stopRef.current = null;
-        setNotice(l(`${caught instanceof Error ? caught.message : "The recording could not be prepared."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "无法准备录音"}，不计入错误次数`));
+        if (recordingTargetRef.current === target) {
+          recordingPurposeRef.current = null;
+          recordingTargetRef.current = null;
+          setRecordingPurpose(null);
+          setWaveform([]);
+          setNotice(purpose === "translation"
+            ? l(`${caught instanceof Error ? caught.message : "The recording could not be prepared."} Nothing was submitted.`, `${caught instanceof Error ? caught.message : "无法准备录音"}，未提交任何答案`)
+            : l(`${caught instanceof Error ? caught.message : "The recording could not be prepared."} This is not counted as an error.`, `${caught instanceof Error ? caught.message : "无法准备录音"}，不计入错误次数`));
+        }
       }
       return;
     }
-    await startRecording();
+    if (!recordingPurposeRef.current) await startRecording(purpose);
   };
-  const retryAssessment = async () => { setAssessment(null); setNotice(""); await startRecording(); };
+  const retryAssessment = async () => { setAssessment(null); setNotice(""); await startRecording("pronunciation"); };
   const continueAfterPronunciationAssessment = () => {
     const currentSession = sessionRef.current;
     if (!currentSession || !assessment || assessmentBusy) return;
@@ -1123,7 +1282,8 @@ export function LearningView({ sessionId, onExit, onChanged }: {
       {!current ? <div>{l("Syncing the next stage…", "正在同步下一阶段…")}</div> : session.stage === "recognition" ? <>
         <div className="course-term">{current.term}</div><div className="course-ipa">{current.ipa || l("IPA not available", "音标待补充")}</div>
         <div className="row mt-16"><button className="btn" onClick={() => playWord(current, audioManifest, setAudioNotice, l)}>🔊 {l("US pronunciation", "美式发音")}</button>
-          <button className={`btn ${recording ? "btn-primary" : ""}`} disabled={assessmentBusy} onClick={() => assessment && !recording ? retryAssessment() : toggleRecording()}>{assessmentBusy ? l("Assessing…", "评分中…") : recording ? l("■ Stop and assess", "■ 停止并评分") : assessment ? l("🎙 Read again", "🎙 重新朗读") : l("🎙 Pronunciation feedback (optional)", "🎙 朗读评分（可选）")}</button></div>
+          <button className={`btn ${recording ? "btn-primary" : ""}`} disabled={assessmentBusy || Boolean(recordingPurpose && !recording)} onClick={() => assessment && !recording ? retryAssessment() : toggleRecording("pronunciation")}>{assessmentBusy ? l("Assessing…", "评分中…") : recording ? l("■ Stop and assess", "■ 停止并评分") : assessment ? l("🎙 Read again", "🎙 重新朗读") : l("🎙 Pronunciation feedback (optional)", "🎙 朗读评分（可选）")}</button></div>
+        {recording && <AudioWaveform levels={waveform} label={l("Live microphone waveform", "实时麦克风波形")} />}
         <div style={{ fontSize: 18, marginTop: 24 }}>{current.translations.join(" / ")}</div>
         {assessment && <div role="status" className={`course-feedback ${assessmentPassed ? "is-correct" : "wrong"}`}><b>{l(`Pronunciation ${Math.round(assessment.pronunciationScore)}`, `发音 ${Math.round(assessment.pronunciationScore)} 分`)}</b>
           <div className="muted mt-4">{l(`Pass score: ${assessmentThreshold} or higher.`, `通过分数：${assessmentThreshold} 分及以上。`)}</div>
@@ -1134,7 +1294,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
               : l("Below the pass score. Read again before continuing.", "低于通过分数，请在继续前重新朗读。")}</div>
           <div className="course-phonemes">{assessment.phonemes.map((entry, index) => <span key={`${entry.phoneme}-${index}`} className={`course-phoneme ${entry.needsPractice ? "bad" : ""}`}>{entry.phoneme} {Math.round(entry.accuracyScore)}</span>)}</div>
           <button className="btn btn-sm mt-12" disabled={assessmentBusy} onClick={retryAssessment}>🎙 {l("Try pronunciation again", "重新朗读并评分")}</button></div>}
-        <button className="btn btn-primary btn-lg mt-24" disabled={busy || assessmentBusy} onClick={recognize}>{busy ? l("Saving…", "保存中…") : l("I recognize it — continue", "认识了，继续")}</button>
+        <button className="btn btn-primary btn-lg mt-24" disabled={busy || assessmentBusy || recording} onClick={recognize}>{busy ? l("Saving…", "保存中…") : l("I recognize it — continue", "认识了，继续")}</button>
       </> : session.stage === "pronunciation" && isPronunciationExam(session) ? <>
         <div className="course-term">{(assessmentWord || current).term}</div>
         <div className="course-ipa">{(assessmentWord || current).ipa || l("IPA not available", "音标待补充")}</div>
@@ -1144,9 +1304,10 @@ export function LearningView({ sessionId, onExit, onChanged }: {
             "请朗读这个单词。系统配置的单词发音通过分数决定它是否进入下一轮候补池。",
           )}</p>
           <button className={`btn btn-primary btn-lg mt-24 ${recording ? "active" : ""}`}
-            disabled={assessmentBusy} onClick={() => void toggleRecording()}>{assessmentBusy
+            disabled={assessmentBusy || Boolean(recordingPurpose && !recording)} onClick={() => void toggleRecording("pronunciation")}>{assessmentBusy
               ? l("Assessing pronunciation…", "正在进行发音评分…")
               : recording ? l("■ Stop and score", "■ 停止并评分") : l("🎙 Start pronunciation exam", "🎙 开始朗读评分")}</button>
+          {recording && <AudioWaveform levels={waveform} label={l("Live microphone waveform", "实时麦克风波形")} />}
         </> : <div role="status" className={`course-feedback mt-24 ${assessmentPassed ? "is-correct" : "wrong"}`}>
           <div><b>{assessmentPassed
             ? l(`Passed · ${Math.round(assessment.pronunciationScore)} points`, `通过 · ${Math.round(assessment.pronunciationScore)} 分`)
@@ -1195,19 +1356,36 @@ export function LearningView({ sessionId, onExit, onChanged }: {
             "Translate this word before spelling it",
             "拼写前先输入这个词的翻译",
           )}</label>
-          <input id="spelling-translation-answer" className="course-form-field course-spelling-answer"
-            style={{ maxWidth: 520, textAlign: "center", fontSize: 20 }} autoFocus
-            aria-label={l("Typed translation answer", "键入翻译答案")}
-            value={spellingTranslation}
-            onChange={(event) => setSpellingTranslation(event.target.value)}
-            disabled={busy || spellingTranslationBusy || Boolean(feedback)}
-            onKeyDown={(event) => {
-              if (event.key === "Enter" && spellingTranslation.trim()) {
-                void assessSpellingTranslation();
-              }
-            }} />
+          <div className="course-voice-input">
+            <input id="spelling-translation-answer" className="course-form-field course-spelling-answer"
+              style={{ textAlign: "center", fontSize: 20 }} autoFocus
+              aria-label={l("Typed translation answer", "键入翻译答案")}
+              value={spellingTranslation}
+              onChange={(event) => setSpellingTranslation(event.target.value)}
+              disabled={busy || spellingTranslationBusy || spellingTranscriptionBusy || Boolean(feedback) || translationRecording}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" && spellingTranslation.trim()) {
+                  void assessSpellingTranslation();
+                }
+              }} />
+            <button
+              type="button"
+              className={`course-voice-input-button ${translationRecording ? "recording" : ""}`}
+              aria-label={translationRecording
+                ? l("Stop translation voice input", "停止翻译语音输入")
+                : l("Enter translation by voice", "使用语音输入翻译")}
+              title={l("Recognize Chinese speech", "识别中文语音")}
+              disabled={busy || spellingTranslationBusy || spellingTranscriptionBusy || Boolean(feedback) || Boolean(recordingPurpose && !translationRecording)}
+              onClick={() => void toggleRecording("translation")}
+            >{translationRecording ? "■" : spellingTranscriptionBusy ? "…" : "🎙"}</button>
+          </div>
+          {translationRecording && <AudioWaveform levels={waveform} label={l("Live translation voice waveform", "翻译语音实时波形")} />}
+          {spellingTranscriptionBusy && <div className="faint mt-8" role="status">{l(
+            "Recognizing Chinese speech…",
+            "正在识别中文语音…",
+          )}</div>}
           <button className="btn btn-primary mt-16"
-            disabled={busy || spellingTranslationBusy || Boolean(feedback) || !spellingTranslation.trim()}
+            disabled={busy || spellingTranslationBusy || spellingTranscriptionBusy || translationRecording || Boolean(feedback) || !spellingTranslation.trim()}
             onClick={() => void assessSpellingTranslation()}>{spellingTranslationBusy
               ? l("Checking meaning…", "正在判断语义…")
               : l("Check translation", "提交翻译")}</button>
