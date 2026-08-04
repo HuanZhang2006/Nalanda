@@ -151,7 +151,7 @@ FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=false
 
 非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音和翻译前测始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
 
-要测试真实语义翻译前测，在已被 Git 忽略的 `apps/api/.env` 中填写开发用 `OPENROUTER_API_KEY`，设置 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true`，并保留默认 model/base URL/timeout/配额。不要在命令行参数、浏览器 `VITE_*`、截图、issue 或测试 fixture 中放 key；文件权限建议设为 600。普通 UI/API 自动化使用 `OPENROUTER_FAKE=true`，它只做确定性路径测试且 production 会拒绝。真实单请求验证使用：
+要测试真实语义翻译前测或 0037 候选中文语音输入，在已被 Git 忽略的 `apps/api/.env` 中填写同一个开发用 `OPENROUTER_API_KEY`，设置 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true`，并保留默认 model/base URL/timeout/配额及 `OPENROUTER_STT_MODEL=fish-audio/transcribe-1`、`OPENROUTER_STT_LANGUAGE=zh`。不要在命令行参数、浏览器 `VITE_*`、截图、issue 或测试 fixture 中放 key；文件权限建议设为 600。普通 UI/API 自动化使用 `OPENROUTER_FAKE=true`，它会为 STT 返回固定中文文本且 production 会拒绝，不能作为供应商证据。真实文本判分单请求验证使用：
 
 ```bash
 chmod 600 apps/api/.env
@@ -159,6 +159,10 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 ```
 
 脚本只输出 model、耗时和 token 计量，不打印 key、用户答案或完整供应商响应。
+
+STT 必须通过 active translation-first spelling session 调用，不能直接把 WAV 发给浏览器侧 OpenRouter。受保护发布的 `smoke-learning-audio-production.mjs` 会用 Azure 生成不含个人数据的“苹果”中文 WAV，通过候选 Nalanda API 调用真实 Fish Audio，并只断言语言、revision/word 绑定和必要关键词；本地手工验证应复用同一路径。WAV/transcript 不得保存到 fixture、日志或数据库。
+
+只验证当前 Azure/OpenRouter key 与供应商 wire contract 时可运行 `node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；它默认用 Azure 在内存中合成固定“苹果”WAV。没有本地 Azure key 时，可把已授权、16 kHz mono PCM 的临时中文 WAV 绝对路径放进 `OPENROUTER_STT_FIXTURE_WAV`；文件不得提交。脚本只输出 model、计量、字节数、耗时和关键词布尔值，不输出 key 或 transcript。该直连 smoke 不经过 Nalanda Auth/RPC，不能替代受保护候选 API gate。
 
 `/api/health` 会探测 JWKS 与 PostgREST profiles 空查询，失败返回 503；`REDIS_URL`/`AI_SERVICE_URL` 仍只影响状态展示。API 的 service-role key 还会调用 Courses 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
 
@@ -309,6 +313,13 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 确认 `OPENROUTER_API_KEY` 只在 API `.env`，model 为仓库锁定值，且没有在 production 设置 `OPENROUTER_FAKE=true`。
 - 供应商超时、5xx 或结构化响应非法不会记错，用户可用同一 attempt UUID 重试；425 表示同 UUID 的租约仍在处理，409 表示另一设备已推进 revision，429 表示持久用户配额已达到。
 - 不要把 provider 失败改成客户端“猜测判分”；服务端必须继续是错误事实、候补池和进度的权威。
+
+### 翻译语音输入没有出现、识别慢或填入旧题
+
+- 入口只存在于已开启 `translationFirst` 的 spelling 翻译输入框右端；普通翻译选择题、拼写输入和其它文本框故意没有麦克风。
+- 确认最新迁移含 0037–0038，API 读取同一个 `OPENROUTER_API_KEY`，STT model 为 `fish-audio/transcribe-1`、language 为 `zh`，且生产未启用 `OPENROUTER_FAKE`。
+- 录音应显示实时波形；停止或 6 秒自动停止后进入独立“识别中”状态。成功只回填文本，不会自动提交；空/非法结果、timeout、provider 5xx/429 不会形成答题错误。
+- 如果另一个设备已经推进 revision/word，数据库会在调用前返回 409；若题目在供应商响应期间变化，Web 会丢弃迟到 transcript。不要移除这两层保护来“提高成功率”。
 
 ### 发音按钮降级或评分不可用
 

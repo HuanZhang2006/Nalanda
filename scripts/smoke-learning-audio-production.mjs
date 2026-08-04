@@ -237,6 +237,29 @@ async function synthesizeAssessmentWav() {
   return wav;
 }
 
+async function synthesizeChineseTranslationWav() {
+  const body = '<speak version="1.0" xml:lang="zh-CN"><voice name="zh-CN-XiaoxiaoNeural">苹果</voice></speak>';
+  const response = await requestRaw(
+    "real Azure Chinese STT fixture",
+    `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`,
+    {
+      method: "POST",
+      headers: {
+        "Ocp-Apim-Subscription-Key": azureKey,
+        "Content-Type": "application/ssml+xml",
+        "X-Microsoft-OutputFormat": "riff-16khz-16bit-mono-pcm",
+        "User-Agent": "Nalanda-Release-Smoke",
+      },
+      body,
+    },
+  );
+  const wav = Buffer.from(await response.arrayBuffer());
+  assert.ok(wav.length > 44, "Chinese STT fixture is unexpectedly small");
+  assert.equal(wav.toString("ascii", 0, 4), "RIFF");
+  assert.equal(wav.toString("ascii", 8, 12), "WAVE");
+  return wav;
+}
+
 async function assess(user, session, firstWordId) {
   const wav = await synthesizeAssessmentWav();
   const form = new FormData();
@@ -279,6 +302,28 @@ async function assessSpellingTranslation(user, course, unitId) {
     translationFirst: true,
   });
   const firstWord = started.body.items[0].word;
+  const translationWav = await synthesizeChineseTranslationWav();
+  const transcriptionForm = new FormData();
+  transcriptionForm.append("wordId", firstWord.id);
+  transcriptionForm.append("expectedRevision", String(started.body.revision));
+  transcriptionForm.append(
+    "audio",
+    new Blob([translationWav], { type: "audio/wav" }),
+    "chinese-translation-release-smoke.wav",
+  );
+  const transcription = await request(
+    "real API OpenRouter Fish Audio transcription",
+    `${apiOrigin}/learning-sessions/${started.body.id}/spelling-translation-transcriptions`,
+    {
+      method: "POST",
+      headers: { Authorization: `Bearer ${user.token}` },
+      body: transcriptionForm,
+    },
+  );
+  assert.equal(transcription.body.wordId, firstWord.id);
+  assert.equal(transcription.body.revision, started.body.revision);
+  assert.equal(transcription.body.language, "zh");
+  assert.match(String(transcription.body.text || ""), /苹果/);
   const attemptId = randomUUID();
   const body = {
     attemptId,
@@ -338,6 +383,8 @@ async function assessSpellingTranslation(user, course, unitId) {
     totalTokens: assessmentFacts.body[0].total_tokens,
     replayed: replay.body.replayed,
     revision: spelling.body.revision,
+    transcriptionLanguage: transcription.body.language,
+    transcriptionMatched: /苹果/.test(String(transcription.body.text || "")),
   };
 }
 

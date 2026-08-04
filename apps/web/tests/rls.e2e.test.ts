@@ -666,6 +666,12 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_user_id: aId, p_assessment_id: randomUUID(), p_lease_token: randomUUID(),
       p_minute_limit: 20, p_day_limit: 500,
     })).error).not.toBeNull();
+    expect((await a.rpc("learning_reserve_translation_stt", {
+      p_user_id: aId, p_session_id: randomUUID(), p_word_id: terms[0].id,
+      p_expected_revision: 0, p_cost_microusd: 10,
+      p_minute_limit: 20, p_day_limit: 300,
+      p_month_budget_microusd: 5_000_000,
+    })).error).not.toBeNull();
     expect((await a.rpc("learning_start_exam_session", {
       p_user_id: aId, p_course_id: courseId, p_unit_id: unitId,
       p_spelling_options: { timeLimitEnabled: false, timeLimitSeconds: 20, translationFirst: true },
@@ -1011,6 +1017,48 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       },
       spelling_translation_assessment: null,
     });
+
+    const sttReservation = await rpc<any>("learning_reserve_translation_stt", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[0].id,
+      p_expected_revision: 0,
+      p_cost_microusd: 10,
+      p_minute_limit: 20,
+      p_day_limit: 300,
+      p_month_budget_microusd: 5_000_000,
+    });
+    expect(sttReservation).toMatchObject({ reserved: true, revision: 0 });
+    expect((await admin.from("learning_speech_usage")
+      .select("kind,cost_microusd,user_id")
+      .eq("user_id", aId)
+      .eq("kind", "translation_stt")
+      .order("created_at", { ascending: false })
+      .limit(1)).data).toEqual([{
+      kind: "translation_stt", cost_microusd: 10, user_id: aId,
+    }]);
+    const staleStt = await admin.rpc("learning_reserve_translation_stt", {
+      p_user_id: aId,
+      p_session_id: semanticSession,
+      p_word_id: terms[0].id,
+      p_expected_revision: 1,
+      p_cost_microusd: 10,
+      p_minute_limit: 20,
+      p_day_limit: 300,
+      p_month_budget_microusd: 5_000_000,
+    });
+    expect(staleStt.error).toBeNull();
+    expect(staleStt.data).toMatchObject({ conflict: true, current_revision: 0 });
+    expect((await admin.rpc("learning_reserve_translation_stt", {
+      p_user_id: bId,
+      p_session_id: semanticSession,
+      p_word_id: terms[0].id,
+      p_expected_revision: 0,
+      p_cost_microusd: 10,
+      p_minute_limit: 20,
+      p_day_limit: 300,
+      p_month_budget_microusd: 5_000_000,
+    })).error).not.toBeNull();
 
     const semanticAttemptId = randomUUID();
     const semanticLease = randomUUID();

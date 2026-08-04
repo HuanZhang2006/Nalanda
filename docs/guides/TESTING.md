@@ -15,11 +15,11 @@
 | Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
 | 发布工具单元 | Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
-| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、考试启动/阈值、轮次确认、Azure adapter、持久队列/配额/Storage，以及翻译 exact/replay 零供应商配额、真实 provider reservation、OpenRouter structured 判定、幂等/租约释放/非法响应 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
+| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter/队列/配额，以及翻译判分与 Fish Audio STT endpoint/body、中文提示、WAV/revision 校验、quota、timeout/非法响应和无正文持久化 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
-| OpenRouter 供应商 smoke | 固定合成英文/中文样本验证指定模型的 structured JSON：语义近义回答为 true、无关回答为 false；拒绝 fake，不打印正文/key/完整响应 | 是，产生两次小型 provider 请求 | `node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；生产还通过真实 Courses API 验证幂等与权威 attempt |
+| OpenRouter 供应商 smoke | 文本脚本验证 structured 语义判分；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；候选生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应 | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
-| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure/OpenRouter fake 运行 Courses、弱网 outbox、Cache Storage、限时拼写和翻译前测流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
+| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure/OpenRouter fake 运行 Courses、弱网 outbox、Cache Storage、限时拼写、翻译前测、语音回填和实时波形流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
 重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest 和本地 Supabase，但 Azure/OpenRouter 都是 fake。真实 provider smoke 证明当前 key/model/endpoint/structured response，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
 
@@ -290,16 +290,18 @@ FEATURE_COURSE_SHARING_ENABLED=true \
 FEATURE_COURSE_MARKET_ENABLED=true \
 FEATURE_PRONUNCIATION_ENABLED=true \
 FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
+FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
 AZURE_SPEECH_FAKE=true \
+OPENROUTER_FAKE=true \
 PUBLIC_ORIGIN=http://127.0.0.1:5173 \
 pnpm --filter @nalanda/web test:playwright
 ```
 
-确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元导入/纠错/滚动/排序→保存→四阶段→刷新恢复→复习日程→发布/克隆；并验证音频 Cache Storage、断网 outbox、限时 + 翻译前测。0027 场景再从课程卡启动 50% 阈值考试，以服务端实际乱序队列答出一对一错，断言实时正确率、轮末错词复盘与手动确认，完成重考后显示考试通过。这里的音频和翻译语义由 API fake provider 产生，仅证明浏览器/API/本地 Supabase 协作，不证明 Azure 或 OpenRouter。它是真 Chromium 布局与 offline/cache 行为，不是截图视觉回归。
+确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元导入/纠错/滚动/排序→保存→四阶段→刷新续学→复习/考试→发布/克隆；并验证 Cache Storage、弱网 outbox、限时/翻译前测、翻译麦克风回填不自动提交，以及翻译/认词/读音考试录音时的波形。这里的音频、语义和 STT 均由 API fake provider 产生，只证明浏览器/API/本地 Supabase 协作，不证明 Azure 或 OpenRouter。它是真 Chromium 布局与交互 E2E，不是供应商或截图视觉回归。
 
 同一修复的 jsdom 层分别断言：整份导入生成预期单元、多个翻译渲染为独立输入、编辑器批量追加成功，以及与已有词重复时出现 `DUPLICATE_EXISTING_TERM` 且不追加。jsdom 不计算真实尺寸，所以“底部操作是否可达”必须保留在 Playwright 层。
 
-当前不覆盖真实麦克风/Azure/OpenRouter、两个真实日期的复习、分享撤销 UI 或全部治理操作；这些由 API/RLS/供应商 smoke 分层验证。jsdom 另覆盖 timer 只自动提交一次、翻译通过前不计时、同 UUID 串联两步、语义错误手动推进、provider 失败不记错，以及正确/错误都渲染英文和翻译。
+浏览器套件的麦克风由固定 AudioContext fixture 提供，不是物理麦克风质量测试。jsdom 另覆盖 waveform frame、录音中 UI、STT 完成只填入且允许编辑、无自动判分，以及认词/读音录音共用波形；API unit 覆盖真实 wire contract 的 fake fetch，RLS E2E 覆盖普通客户端不能执行 STT reservation、owner/revision/current-word 和持久 quota。只有受保护真实 gate 才能证明当时 Fish Audio endpoint/key 可用，仍不代表真实口音准确率。
 
 失败时保留 Playwright trace/screenshot/video artifact，先区分 UI selector、API envelope、migration/RLS 和 webServer 启动问题。CI 会自动安装带系统依赖的 Chromium；本地只需当前平台浏览器包。
 
@@ -413,6 +415,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
 | Courses 音频/离线 | cache key/不裁剪录音 unit + API 原字节转发/queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
 | Courses 限时拼写/翻译前测 | fake-clock jsdom + API structured response/timeout unit + 双用户 RLS/幂等/配额 + fake-provider Playwright + 发布前真实 OpenRouter structured/API gate；不得把模型输出直接当客户端事实 |
+| Courses 翻译语音输入/波形 | recording/WAV/waveform unit + jsdom 回填不提交/可编辑/迟到响应保护 + API multipart/中文 STT/错误映射 + 真实 Supabase RPC 权限/配额 + fake-provider Playwright 三处波形 + 发布前 Azure 中文 WAV→真实 Fish Audio 候选 API gate |
 | Courses 拼写规范化 | Web 单元/jsdom 覆盖 NFKC/Unicode 空白/全角大小写、标点遗漏/替换/增加及真实字母/空格错误 + 一次性真实 Supabase E2E 验证 raw answer、revision、`wrong_count`、retry pool 和客户端 helper 拒绝 |
 | Courses 拼写轮末复盘/考试 | state 单元 + jsdom 验证持久错词清单/确认门/实时正确率；API unit 验证固定 exam 规则；真实 Supabase E2E 验证 trigger、重排、通过/未通过熟练投影与权限；fake-provider Playwright 验证浏览器完整流程 |
 | Courses 读音考试/任意选词/考试历史 | jsdom 验证逐题评分反馈、轮末分数、选择器和历史详情；API unit 验证 Azure target/owner/映射；真实 Supabase E2E 验证选词 scope、不可变快照、客户端 RPC 拒绝、失败补练不伪造通过；fake-provider Playwright 验证浏览器流程，发布前另跑真实 Japan East Azure gate |

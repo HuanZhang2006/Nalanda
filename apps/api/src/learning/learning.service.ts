@@ -97,6 +97,26 @@ export class LearningService {
           message: "翻译判分请求过于频繁，请稍后再试",
         }, 429);
       }
+      if (/translation stt minute quota exceeded/i.test(error.message)) {
+        throw new HttpException({
+          code: "TRANSLATION_STT_MINUTE_LIMIT",
+          message: "一分钟内语音识别次数过多，请稍后重试",
+          ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+        }, 429);
+      }
+      if (/translation stt daily quota exceeded/i.test(error.message)) {
+        throw new HttpException({
+          code: "TRANSLATION_STT_DAILY_LIMIT",
+          message: "今日语音识别额度已用完，请在额度恢复后重试",
+          ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
+        }, 429);
+      }
+      if (/translation stt monthly budget exceeded/i.test(error.message)) {
+        throw new HttpException({
+          code: "TRANSLATION_STT_MONTHLY_LIMIT",
+          message: "本月语音识别额度已用完",
+        }, 429);
+      }
       // Let owner-scoped callers translate PostgreSQL no_data_found into their
       // route-specific 404 instead of treating PostgREST's HTTP 400 as a
       // generic malformed request.
@@ -835,6 +855,31 @@ export class LearningService {
       p_day_limit: positiveEnvironmentNumber("AZURE_SPEECH_ASSESSMENTS_PER_DAY", 300, true),
       p_month_budget_microusd: positiveEnvironmentNumber("AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD", 5_000_000, true),
     }));
+  }
+
+  async reserveTranslationStt(
+    userId: string,
+    sessionId: string,
+    wordId: string,
+    expectedRevision: number,
+    costMicrousd: number,
+    minuteLimit: number,
+    dayLimit: number,
+    monthBudgetMicrousd: number,
+  ) {
+    return this.call<Record<string, unknown>>(() => this.db.rpc(
+      "learning_reserve_translation_stt",
+      {
+        p_user_id: userId,
+        p_session_id: sessionId,
+        p_word_id: wordId,
+        p_expected_revision: expectedRevision,
+        p_cost_microusd: Math.max(1, Math.round(costMicrousd)),
+        p_minute_limit: minuteLimit,
+        p_day_limit: dayLimit,
+        p_month_budget_microusd: Math.max(1, Math.round(monthBudgetMicrousd)),
+      },
+    ));
   }
 
   async reserveTtsQuota(characterCount: number, costMicrousd: number) {

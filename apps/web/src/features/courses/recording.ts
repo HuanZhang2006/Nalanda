@@ -35,9 +35,30 @@ export function encodeAssessmentWav(samples: Float32Array, sourceRate: number) {
   return encodePcmWav(resampleForPcmWav(samples, sourceRate));
 }
 
+export function waveformLevels(samples: Float32Array, barCount = 8) {
+  if (!Number.isSafeInteger(barCount) || barCount < 1) return [];
+  const width = Math.max(1, Math.ceil(samples.length / barCount));
+  return Array.from({ length: barCount }, (_, index) => {
+    const start = index * width;
+    const end = Math.min(samples.length, start + width);
+    let energy = 0;
+    for (let cursor = start; cursor < end; cursor += 1) {
+      energy += samples[cursor] * samples[cursor];
+    }
+    const rms = Math.sqrt(energy / Math.max(1, end - start));
+    return Math.min(1, rms * 3.2);
+  });
+}
+
+export interface WavRecordingOptions {
+  onWaveform?: (levels: number[]) => void;
+  maxDurationMs?: number;
+}
+
 export async function beginWavRecording(
   onAutoStop: (blob: Blob) => void,
   onError?: (error: Error) => void,
+  options: WavRecordingOptions = {},
 ) {
   if (!navigator.mediaDevices?.getUserMedia) throw new Error(localize("This browser does not support microphone recording.", "此浏览器不支持麦克风录音"));
   const stream = await navigator.mediaDevices.getUserMedia({ audio: {
@@ -50,7 +71,14 @@ export async function beginWavRecording(
   const source = context.createMediaStreamSource(stream);
   const processor = context.createScriptProcessor(4096, 1, 1);
   const chunks: Float32Array[] = [];
-  processor.onaudioprocess = (event) => chunks.push(new Float32Array(event.inputBuffer.getChannelData(0)));
+  processor.onaudioprocess = (event) => {
+    const frame = new Float32Array(event.inputBuffer.getChannelData(0));
+    chunks.push(frame);
+    if (options.onWaveform) {
+      try { options.onWaveform(waveformLevels(frame)); }
+      catch { /* A visual callback must never interrupt recording. */ }
+    }
+  };
   source.connect(processor); processor.connect(context.destination);
   let done = false;
   const stop = async () => {
@@ -70,6 +98,6 @@ export async function beginWavRecording(
     } catch (error) {
       onError?.(error instanceof Error ? error : new Error("Recording failed"));
     }
-  }, 6_000);
+  }, Math.max(1_000, Math.min(8_000, options.maxDurationMs ?? 6_000)));
   return async () => { window.clearTimeout(timeout); return stop(); };
 }
