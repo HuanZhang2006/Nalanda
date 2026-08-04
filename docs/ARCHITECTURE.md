@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-04。生产数据库已有受保护发布证据到 0036；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学与显式取消、可选限时拼写、OpenRouter 语义翻译前测、轮末错题复盘、拼写/读音考试、owner 校验的任意选词、失败补练完成事实、考试历史、双考试掌握、Web/数据库一致的 Unicode 拼写归一化、仅标点差异容错和 Japan East Azure Speech 已在线。`learned_at` 只在同一词同时通过拼写和发音考试时由数据库 trigger 精确派生为两个通过时间的较晚值；首次学习、复习、单项考试和直接赋值均不形成掌握。发音录音不再经过客户端 VAD 或静音裁剪。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-04。生产数据库已有受保护发布证据到 0038；Courses、分享、免费课程市场、幂等弱网答题、持久音频队列、浏览器离线音频、按意图独立续学与显式取消、可选限时拼写、OpenRouter 语义翻译前测、Fish Audio 中文翻译语音输入、统一实时录音波形、轮末错题复盘、拼写/读音考试、owner 校验的任意选词、失败补练完成事实、考试历史、双考试掌握、Web/数据库一致的 Unicode 拼写归一化、仅标点差异容错和 Japan East Azure Speech 已在线。`learned_at` 只在同一词同时通过拼写和发音考试时由数据库 trigger 精确派生为两个通过时间的较晚值；首次学习、复习、单项考试和直接赋值均不形成掌握。发音录音不再经过客户端 VAD 或静音裁剪。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
@@ -40,7 +40,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018，2026-07-28 同步至 0020，2026-07-31 同步至 0024，2026-08-01 同步至 0028，并于 2026-08-04 同步至 0036。远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter gate、候选 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言；0019–0020 增加 `spelling_options`、hash-only 语义评判事实与 service-only RPC；0021–0022 统一 NFKC/Unicode 空白/ASCII case 拼写归一化；0023–0024 加入仅标点差异 matcher 与验证；0025–0026 增加显式取消 RPC；0027–0028 增加考试事实、轮末确认、真实 provider 配额预留和精确权限断言；0029–0030 增加读音考试，0031–0032 增加自定义选词、失败补练完成事实与考试历史，0033–0034 收敛双考试唯一掌握投影并验证其权限/结构。0035–0036 进一步用 progress 表 trigger 强制 `learned_at` 精确等于两个考试时间的较晚值，并验证当前数据、考试/review 写入路径、客户端权限和 service-role helper；该投影已是生产事实源。
+生产 migration history 已于 2026-07-21 建立 0001–0007 基线并同步至 0010，于 2026-07-22 同步至 0013、2026-07-23 同步至 0014，2026-07-27 经两轮独立 plan/apply 依次同步至 0016 和 0018，2026-07-28 同步至 0020，2026-07-31 同步至 0024，2026-08-01 同步至 0028，并于 2026-08-04 依次同步至 0036 和 0038。远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter/Fish Audio gate、待激活 API readiness 和公网 smoke 均通过。0015–0016 增加会话 revision、attempt UUID/响应快照、单 RPC session snapshot、全局音频任务表及权限验证；0017–0018 增加按请求意图区分的 active session 恢复键、唯一索引和权限/结构断言；0019–0020 增加 `spelling_options`、hash-only 语义评判事实与 service-only RPC；0021–0022 统一 NFKC/Unicode 空白/ASCII case 拼写归一化；0023–0024 加入仅标点差异 matcher 与验证；0025–0026 增加显式取消 RPC；0027–0028 增加考试事实、轮末确认、真实 provider 配额预留和精确权限断言；0029–0030 增加读音考试，0031–0032 增加自定义选词、失败补练完成事实与考试历史，0033–0034 收敛双考试唯一掌握投影并验证其权限/结构。0035–0036 进一步用 progress 表 trigger 强制 `learned_at` 精确等于两个考试时间的较晚值，并验证当前数据、考试/review 写入路径、客户端权限和 service-role helper；0037–0038 增加 `translation_stt` 用量类型、owner/current-word/revision 校验、service-role-only 配额预留 RPC 与发布断言。
 
 当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
 
@@ -97,7 +97,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0036，含显式取消、拼写/读音考试、任意选词、历史、双考试精确掌握投影及真实 provider 配额预留 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0038，含显式取消、拼写/读音考试、任意选词、历史、双考试精确掌握投影、翻译中文 STT 及真实 provider 配额预留 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 真实，状态权限待修 |
@@ -132,7 +132,7 @@ Nalanda/
 
 JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验证配置的签名与声明边界。Courses 控制器另提供课程 CRUD、会话恢复/答题、复习日程、Profile 聚合、语音、分享、市场、克隆、举报、受配置管理员约束的审核接口和服务端 OpenRouter 语义翻译前测。完整表见 [API 文档](guides/API.md)。
 
-新接口共用 `@nalanda/types` camelCase 契约，API 显式转换数据库 snake_case，并由全局异常过滤器统一返回 `{ code, message, fieldErrors? }`。语音有 per-user/全局预算限流；市场有发布/举报限流；翻译前测有数据库租约、UUID/answer-hash 幂等与用户配额。0037 候选在同一 OpenRouter server adapter 边界增加 Fish Audio 中文 STT：浏览器只上传当前题的短 WAV，数据库先验证 owner/session/revision/word 并预留独立配额，供应商结果只回填可编辑输入，不推进学习。OpenRouter key/model 只存在于 API 环境，浏览器不能提交参考答案或 provider 参数；用户答案、录音和 STT transcript 只在请求内存中处理，持久层只保留必要的 hash/判定/计量事实。当前仍没有通用队列、支付模块或自动 OpenAPI 生成。
+新接口共用 `@nalanda/types` camelCase 契约，API 显式转换数据库 snake_case，并由全局异常过滤器统一返回 `{ code, message, fieldErrors? }`。语音有 per-user/全局预算限流；市场有发布/举报限流；翻译前测有数据库租约、UUID/answer-hash 幂等与用户配额。0037 在同一 OpenRouter server adapter 边界增加 Fish Audio 中文 STT：浏览器只上传当前题的短 WAV，数据库先验证 owner/session/revision/word 并预留独立配额，供应商结果只回填可编辑输入，不推进学习。OpenRouter key/model 只存在于 API 环境，浏览器不能提交参考答案或 provider 参数；用户答案、录音和 STT transcript 只在请求内存中处理，持久层只保留必要的 hash/判定/计量事实。当前仍没有通用队列、支付模块或自动 OpenAPI 生成。
 
 ## 6. FastAPI AI 服务
 
@@ -232,7 +232,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 ### 8.3 发布局限
 
 - API health 已验证 Supabase JWKS/PostgREST 基本 readiness，但不覆盖 Storage、注册写入、完整 RLS 或浏览器登录路径；Redis/AI 仍只看变量。
-- Azure Speech 与 OpenRouter 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。0037–0038 候选只有在新增 Fish Audio 中文 STT gate 通过后才可标为发布；现有 2026-07-28/08-04 证据只覆盖 Japan East TTS/scripted assessment、OpenRouter structured 判定和既有 Courses API，不是新 STT 的生产证据。单次 gate 也不代表持续可用率、准确率或费用对账。
+- Azure Speech 与 OpenRouter 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。0037–0038 已于 2026-08-04 通过 Azure 合成中文 WAV→待激活 Nalanda API→真实 Fish Audio 的 gate 后发布；`transcriptionMatched=true` 证明固定样本与当时 endpoint/key/额度可用。该单次合成样本仍不代表真实口音、物理麦克风、持续可用率、准确率或费用对账。
 - 数据库 release archive 仍不含 Storage 文件字节，且 CI 不自动逆向生产数据。
 - 不可变 image/release 目前仍主要保留在单台服务器，缺少异地 registry 和自动容量策略。
 - SSH 部署用户在当前文档中为 root。

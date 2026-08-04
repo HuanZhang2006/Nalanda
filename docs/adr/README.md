@@ -18,7 +18,7 @@
 | [0007](0007-third-party-ai-reference-licensing.md) | 未获商业许可前不复制 NC 许可 AI 代码 | Accepted | 持续约束 |
 | [0008](0008-independent-learning-courses-and-azure-speech.md) | 独立学习课程模型 + 服务端 Azure Speech 适配层 | Accepted | 0011–0018 与应用已于 2026-07-27 完成受保护发布 |
 | [0009](0009-server-side-semantic-spelling-translation-assessment.md) | 服务端语义翻译前测 + 会话级拼写设置 | Accepted | 0019–0020 与应用已于 2026-07-28 完成受保护发布 |
-| [0010](0010-ephemeral-translation-stt-and-shared-waveform.md) | 临时 Fish Audio 翻译 STT + 共享录音波形 | Accepted | 0037–0038 与应用为未发布候选；尚无生产 gate/激活证据 |
+| [0010](0010-ephemeral-translation-stt-and-shared-waveform.md) | 临时 Fish Audio 翻译 STT + 共享录音波形 | Accepted | 0037–0038 与应用已于 2026-08-04 完成受保护发布；真实口音评测仍待扩充 |
 
 ## 状态定义
 

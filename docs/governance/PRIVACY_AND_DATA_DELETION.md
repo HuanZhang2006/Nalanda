@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-08-04。本文不是法律意见或已发布隐私政策；Courses/0011–0036、Azure Speech、OpenRouter 翻译前测、轮末错题复盘、拼写/读音考试、owner 私有考试词/attempt 快照、自定义选词事实和两个考试通过时间戳已生产启用；0037–0038 的 Fish Audio 中文 STT 仍是未发布候选。文件 AI 导入仍未实现。候选 STT 与既有 Speech 均不持久化用户 WAV；录音只在请求内存中转发并立即丢弃。
+> **状态基线：**2026-08-04。本文不是法律意见或已发布隐私政策；Courses/0011–0038、Azure Speech、OpenRouter 翻译前测、Fish Audio 中文 STT、轮末错题复盘、拼写/读音考试、owner 私有考试词/attempt 快照、自定义选词事实和两个考试通过时间戳已生产启用。文件 AI 导入仍未实现。STT 与既有 Speech 均不持久化用户 WAV；录音只在请求内存中转发并立即丢弃。
 
 ## 1. 原则与责任
 
@@ -24,14 +24,14 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 社区附件 | public `community-media` bucket | 图片/音频展示 | URL 可被外部持有；删帖不保证对象同步删除 |
 | 学习计划 | `study_goals`、`study_tasks` | 私有目标、任务、完成时间 | owner-only；账户删除级联 |
 | 学习课程内容 | `learning_courses/units/words` | 私有课程名、单元、英文/翻译/IPA；克隆来源署名 | owner 只读、API 写；删课程级联私有内容，但已发 points/徽章历史不因删课回退 |
-| 学习行为 | `learning_sessions/items/attempts/word_progress`、候选 `learning_exam_word_snapshots` | 阶段/队列、选中词集合、答案、正确性、错误次数、不同本地日期熟练度、单调 revision、客户端 attempt UUID、首次响应快照、取消时间/原因、考试类型/阈值/首轮统计、补练完成、读音分数和轮末确认；考试快照另保存当时词面/翻译/IPA及最终结果，避免内容编辑篡改历史 | owner 只能经脱敏 API 读取考试历史，快照表无客户端权限；Auth/课程/session 删除级联；不返回 WAV、密钥、音素完整 provider payload；考试通过只投影既有学习进度 |
+| 学习行为 | `learning_sessions/items/attempts/word_progress`、`learning_exam_word_snapshots` | 阶段/队列、选中词集合、答案、正确性、错误次数、不同本地日期熟练度、单调 revision、客户端 attempt UUID、首次响应快照、取消时间/原因、考试类型/阈值/首轮统计、补练完成、读音分数和轮末确认；考试快照另保存当时词面/翻译/IPA及最终结果，避免内容编辑篡改历史 | owner 只能经脱敏 API 读取考试历史，快照表无客户端权限；Auth/课程/session 删除级联；不返回 WAV、密钥、音素完整 provider payload；考试通过只投影既有学习进度 |
 | 复习 | `learning_review_schedules`、Profile `timezone` | 到期日期、技能/范围、完成时间与本地日期解释 | owner 私有；日程可取消，时区变化不重写历史 attempt local_date |
 | 分享/课程市场 | `learning_course_shares/publications` | bearer-link 当前课程、不可变公开版本、作者显示名/来源、clone count | token 明文只返回一次且 DB 只存 hash；撤销分享；出版物公开读取经 API；Auth 删除按 FK 删除作者版本 |
 | 举报/审核 | `learning_course_reports/moderation_actions` | 类别/说明、举报人、状态、管理员理由 | 举报人只能读自己的报告；动作客户端不可见；管理员/举报人删除后按 FK 删除或去标识 |
 | 课程徽章/成长 | `badge_definitions/user_badge_awards` + points | 熟练词/课程/复习日期成就和 +20 事实 | award 持久防重；删课程不回退，删 Auth 用户级联；不是商业权益 |
 | Speech | 请求内 WAV、`learning_attempts.provider_details`、`learning_speech_usage`、`learning_audio_assets`、private `vocabulary-audio` | Azure 朗读评分、分数/音素教学反馈、配额/估算成本、跨用户共享的合成 TTS 对象与生成队列 | 用户 WAV 仅内存转发后丢弃，不进 DB/Storage/log/backup；合成对象/队列不含 owner、翻译或录音；评分/用量随规则删除/去标识 |
 | 拼写翻译前测 | 请求内用户译文、`learning_spelling_translation_assessments` | 规范化完全匹配由 Nalanda 零 token 判定；OpenRouter 只判断非字面答案是否语义覆盖服务端参考翻译；服务端保存幂等/配额/教学反馈 | 用户译文正文仅在 API 请求内存中转发，不进 DB/log/backup；DB 只存 SHA-256、boolean、短反馈、provider/model/token 计量和首次响应，session/word/user 删除级联 |
-| 翻译语音输入（0037 候选） | 浏览器短 WAV、请求内 transcript、`learning_speech_usage` | 用户在拼写前翻译输入框主动录音；OpenRouter Fish Audio 默认按中文识别并把文本回填供用户编辑，不自动提交或判分 | WAV 和 transcript 只在浏览器/单次 NestJS/OpenRouter 请求内存中存在，不进 DB/Storage/Cache/log/backup；数据库只保留 `translation_stt` 配额/估算成本，Auth 删除后 user link SET NULL；上线前必须完成 Fish Audio/OpenRouter 数据留存、训练使用、地区与 DPA 评审及用户告知 |
+| 翻译语音输入（0037 已启用） | 浏览器短 WAV、请求内 transcript、`learning_speech_usage` | 用户在拼写前翻译输入框主动录音；OpenRouter Fish Audio 默认按中文识别并把文本回填供用户编辑，不自动提交或判分 | WAV 和 transcript 只在浏览器/单次 NestJS/OpenRouter 请求内存中存在，不进 DB/Storage/Cache/log/backup；数据库只保留 `translation_stt` 配额/估算成本，Auth 删除后 user link SET NULL；正式隐私政策、Fish Audio/OpenRouter 数据留存、训练使用、地区、DPA 与用户告知仍需产品/法律 owner 持续完成和复核 |
 | 浏览器弱网副本 | IndexedDB attempt outbox、Cache Storage 音频 | 断网重试、未来五词预取和用户选择的单元音频离线副本 | 登出清除该账号待同步 outbox；音频按全局内容键存可重建副本，用户可删除，浏览器也可能在存储压力下回收 |
 | 通知/反馈 | `notifications`、`feedback` | 互动通知、用户工单 | owner-only；无运维端正式工单留存/删除流程 |
 | 原型/假数据 | 前端 bundle/内存 | 演示 Home、Notes、Market、AI | 不是用户事实源，不应进入用户导出 |
@@ -126,7 +126,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机、Supabase、Azure Speech 和 OpenRouter；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。OpenRouter 当前是窄范围翻译语义处理者；0037 候选会让它额外处理用户主动提交的中文翻译录音，但仍不发送课程名、邮箱、学校、user ID、进度、token 或 service-role。现有真实 OpenRouter 发布证据只覆盖结构化文本判分，不能证明 Fish Audio STT 已经生产可用。技术数据最小化与单次连接也不等于数据留存/训练使用/子处理者/跨境/删除/事件 SLA 与用户告知评审已经完成；上线前必须明确完成该评审，模型价格或 free 标签不降低义务。Azure 也仍需持续维护对应 DPA/处理记录。Anthropic/Stripe/邮件/监控仍是未来处理者。
+当前运行依赖 GitHub、部署主机、Supabase、Azure Speech 和 OpenRouter；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。OpenRouter 是窄范围翻译语义与中文翻译录音处理者，但不接收课程名、邮箱、学校、user ID、进度、token 或 service-role。2026-08-04 的真实发布 gate 已证明固定合成中文 WAV 经生产候选 API 可由 Fish Audio 识别，不代表真实用户口音质量。技术数据最小化与单次连接也不等于数据留存/训练使用/子处理者/跨境/删除/事件 SLA 与用户告知评审已经完成；这些正式治理事项仍是上线后的明确缺口，模型价格或 free 标签不降低义务。Azure 也仍需持续维护对应 DPA/处理记录。Anthropic/Stripe/邮件/监控仍是未来处理者。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
 

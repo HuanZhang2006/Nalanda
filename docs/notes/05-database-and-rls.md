@@ -4,7 +4,7 @@
 > - **内容**：记录当前 Supabase/Postgres、RLS 范式、迁移清单和迁移工具局限。
 > - **作用**：作为数据层实现入门；完整关系看 ERD，正式发布/回滚看 operations 手册。
 > - **何时更新**：新增迁移、RLS 模式、迁移工具或数据库发布流程变化时。
-> - **状态基线**：2026-08-04。生产 migration history 为 0036；0035–0036 已上线双考试 mastery 精确投影 trigger 与发布断言。
+> - **状态基线**：2026-08-04。生产 migration history 为 0038；0035–0036 已上线双考试 mastery 精确投影 trigger，0037–0038 已上线翻译 STT 配额/当前题 RPC 与发布断言。
 
 > 目标：数据存哪、怎么保证「每个人只能动自己的数据」（RLS），以及改表结构的工作流（迁移 + 一条命令自动应用）。鉴权相关的 profiles 表见 [02 用户系统与认证](02-auth-and-user-system.md)。
 
@@ -65,6 +65,10 @@ RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。�
 | `0032_verify_learning_exam_history_selection.sql` | 断言 selected/history RPC 与快照结构完整存在且仅 service role 可用，并保证 `practiceCompleted` 不绕过 `examPassed` 写熟练度 |
 | `0033_learning_exam_only_mastery.sql` | 增加拼写/发音考试通过时间戳和双事实 check constraint；回填可证明的考试事实、清除旧 review/单项考试掌握，重定义 exam trigger 与 review 推进，并按 term/translations/IPA 精确撤销考试事实 |
 | `0034_verify_learning_exam_only_mastery.sql` | 断言双考试字段/约束、唯一正向投影、review 无 `learned_at` 写入、编辑撤销、snapshot 字段和 service-role-only 权限 |
+| `0035_learning_mastery_projection_guard.sql` | 用 progress trigger 强制 `learned_at` 精确等于两个考试时间中的较晚值，缺少任一事实即为空 |
+| `0036_verify_learning_mastery_projection_guard.sql` | 验证现有数据、考试/review 写入路径、精确投影和客户端/helper 权限 |
+| `0037_learning_translation_voice_input.sql` | 扩展 `learning_speech_usage.kind=translation_stt`，增加 owner/session/revision/current-word 校验与独立配额预留 RPC |
+| `0038_verify_learning_translation_voice_input.sql` | 验证 STT 用量结构、函数定义及 public/anon/authenticated 无执行/表权限 |
 
 ## 4. 迁移怎么写（力求可重放）
 当前 SQL 使用以下模式降低重复执行失败的概率：
@@ -119,5 +123,6 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 - 0025–0028 已于 2026-08-01 通过 PR run `30705662543`、main run `30705946921`、只读 plan `30706279006` 和受保护 apply/deploy `30706731292` 发布。apply 前保留恢复 artifact `8820657507`；远端 history、0026/0028 自验证、database lint 与空 dry-run 均通过，生产已到 0028。
 - 0029–0034 已于 2026-08-03 通过 PR #45 run `30811283164`、main run `30811817461`、只读 plan `30812467085` 和受保护 apply/deploy `30813047562` 发布。apply 前保留恢复 artifact `8855819351`；远端 history、0030/0032/0034 自验证、database lint 与空 dry-run 均通过，生产已到 0034。
 - 0035–0036 已于 2026-08-04 通过 PR #47 run `30831319634`、main run `30831964846`、只读 plan `30832581552` 和受保护 apply/deploy `30833228406` 发布。apply 前保留恢复 artifact `8864033351`；远端 history、0036 自验证、database lint 与空 dry-run 均通过，生产已到 0036。
+- 0037–0038 已于 2026-08-04 通过 PR #49 run `30904901828`、只读 plan `30906629924` 和受保护 apply/deploy `30907716733` 发布。apply 前保留恢复 artifact `8892006761`；远端 history、0038 自验证、database lint 与空 dry-run 均通过，生产已到 0038。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE；`feedback.status`、通知服务端字段和帖子冗余计数等其它表仍需逐表做列级边界审计。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。

@@ -16,9 +16,9 @@
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
 7. 若远端 history 为空，临时只保留 0001–0007 迁移，通过 public schema 零差异和 Storage policy/bucket 核验后才将这 7 个已存在版本标记为 applied；已建立的远端 history 必须是至少包含 0001–0007 的连续本地前缀；
 8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在候选 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分和翻译评判幂等。0037–0038 候选还必须以 Azure 合成“苹果”中文 WAV 调用真实 Fish Audio STT，验证 owner/revision/word 绑定和中文 transcript 后才激活 Web release。
+9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在待激活 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分和翻译评判幂等。0037 起还必须以 Azure 合成“苹果”中文 WAV 调用真实 Fish Audio STT，验证 owner/revision/word 绑定和中文 transcript 后才激活 Web release。
 
-0037–0038 的发布 plan 应只出现 `20260804000037_learning_translation_voice_input.sql` 与 `20260804000038_verify_learning_translation_voice_input.sql`。恢复点之后 apply 会扩展 `learning_speech_usage.kind` 并增加 service-role-only reservation RPC；应用回滚仍可忽略新增 kind/RPC，数据库只 forward-fix。发布后必须确认普通 `authenticated` 不能执行 RPC/读取 usage、候选 API 的 STT 真实 gate 通过且公网 health `deps.supabase=ok`；在这些证据完成前只能描述为候选，不能把本地 fake Playwright 当生产上线。
+0037–0038 的历史发布 plan 只出现 `20260804000037_learning_translation_voice_input.sql` 与 `20260804000038_verify_learning_translation_voice_input.sql`。恢复点之后 apply 扩展 `learning_speech_usage.kind` 并增加 service-role-only reservation RPC；应用回滚仍可忽略新增 kind/RPC，数据库只 forward-fix。发布已确认普通 `authenticated` 不能执行 RPC/读取 usage、待激活 API 的 STT 真实 gate 通过且公网 health `deps.supabase=ok`；后续发布仍不得把本地 fake Playwright 当真实供应商证据。
 
 已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。迁移文件或数据库发布控制 workflow/脚本发生变化，都会把普通 main push 保持在“只验证、不部署”状态，避免发布工具修复绕过尚未完成的数据库 release。普通 push 永不直接修改生产数据库；`plan_database_migrations` 只读且不部署应用，只有单独选中 `apply_database_migrations` 才创建恢复点并执行数据库发布，两者同时选中会失败。
 
@@ -276,6 +276,13 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - [受保护 apply/deploy run `30833228406`](https://github.com/1590703336/Nalanda/actions/runs/30833228406) 在 apply 前创建并保留 `db-recovery-51252527645d9438df0414f056c8a3b088b360d8`，artifact `8864033351`、657,467 bytes、digest `sha256:36a9ec08516dff5cb198511d71b69bb63533727cad9826db050dff4a33025625`，保留至 2026-08-17。
 - apply 后远端 history 到 0036，0036 的当前数据、约束、trigger、考试/review 写入路径、客户端 progress 权限与 service-role helper 断言、remote database lint 和空 dry-run 均通过。数据库仍只采用 forward-fix，不执行 down migration。
 - 激活前真实 Japan East Azure、真实 OpenRouter 和 Courses API/Storage gate 均通过；后者验证未裁剪 WAV `assessmentBytes=88444`。不可变 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401`、新 React 资产和 Course Market 200。未使用真实用户会话在生产提交完整拼写/读音考试，不能据此声称生产用户考试流程 E2E。
+
+### 8.12 2026-08-04 Courses 0037–0038 发布记录
+
+- 发布提交：`66c919833693971ba1bda4ea33a3fdf6717ef1ca`；PR [#49](https://github.com/1590703336/Nalanda/pull/49) run `30904901828` 通过 quality、0007→0038、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter/Fish Audio 仍为 fake。
+- [只读 plan run `30906629924`](https://github.com/1590703336/Nalanda/actions/runs/30906629924) 首次在一次性 Supabase 的首个课程 RPC 收到瞬时上游错误；同 SHA 仅重跑失败 job 后真实 RLS/Storage 和依赖 plan 均通过。最终远端 0001–0036 与本地一致，dry-run 唯一列出 0037–0038；恢复、apply 与 deploy 步骤全部跳过。
+- [受保护 apply/deploy run `30907716733`](https://github.com/1590703336/Nalanda/actions/runs/30907716733) 在 apply 前创建并保留 `db-recovery-66c919833693971ba1bda4ea33a3fdf6717ef1ca`，artifact `8892006761`、730,159 bytes。apply 后远端 history 到 0038，结构/权限断言、remote database lint 与空 dry-run 均通过；数据库仍只采用 forward-fix。
+- 激活前真实 Japan East Azure、真实 OpenRouter structured、Courses API/Storage 和 Azure 中文 WAV→Fish Audio gate 均通过；STT gate 返回 `transcriptionMatched=true`。不可变 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` 健康激活。独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和新 React 资产；生产主机只读复核确认 `/opt/nalanda/web` 与 API image 均指向同一 SHA。合成中文 WAV 只证明固定样本和当时供应商可用，不是物理麦克风或多口音 E2E。
 
 ## 9. 失败处置
 

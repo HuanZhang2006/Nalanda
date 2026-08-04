@@ -4,7 +4,7 @@
 > - **内容**：说明独立学习课程的数据边界、文本导入与编辑、四阶段学习、复习/考试熟练度、`learned_at` 判定、分享/市场及当前验收状态。
 > - **作用**：作为 Courses 首版实现的技术复盘和维护入口；最终产品范围仍以项目蓝图为准。
 > - **何时更新**：课程契约、数据库、学习状态机、积分/徽章、Azure Speech/OpenRouter、分享市场或测试边界变化时。
-> - **状态基线**：2026-08-04。生产已发布 0011–0036；当前未发布候选 0037–0038 增加翻译中文语音输入和 service-only STT 配额边界，不能在受保护发布完成前描述为生产已启用。0035–0036 把 `learned_at` 加固为两个考试时间戳的精确 trigger 投影。文件 AI 导入和其他三类课程仍不得描述为已实现。
+> - **状态基线**：2026-08-04。生产已发布 0011–0038；0037–0038 增加翻译中文语音输入和 service-only STT 配额边界，0035–0036 把 `learned_at` 加固为两个考试时间戳的精确 trigger 投影。文件 AI 导入和其他三类课程仍不得描述为已实现。
 
 ## 1. 边界与入口
 
@@ -39,7 +39,7 @@ Courses、学习/复习、公开分享与 Course Market 共用 Web 的 `nalanda-
 1. **认单词**：顺序展示英文、IPA、全部翻译和发音；朗读评分可选。整体 `PronScore` 默认 70 分通过，低分会持久进入本阶段候补池；结果页显示真实阈值和候补状态，并可立即“重新朗读并评分”，达标重读会移除该候补项。
 2. **发音记忆**：每批最多五词，音频列和词列分别打乱；选中发音对应词后立即提交并在所选项显示结果。答对短暂动画后自动推进；错配记到目标词并进入下一轮候补池，错误状态持续保留，直到用户点击“下一题”。
 3. **翻译记忆**：一个翻译时点击选项立即判定；多个翻译时逐个确认正确项，最后一个正确项自动提交，任一错误项立即判错。干扰项来自课程内其他翻译；答对自动推进，答错持续显示错误选项与正确答案并等待手动“下一题”，不恢复 Check/Continue 两步确认。
-4. **拼写记忆**：播放发音后输入。Web 即时判定和数据库权威判定都对答案与课程原始 `term` 执行 NFKC、Unicode 空白合并、ASCII 大小写折叠，并用相同标点集合依次比较原文、移除标点后的文本、把标点视为空格后的文本。仅标点遗漏、替换或增加会判对，例如 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin`；字母、数字、词序和没有标点参与的词间空格仍必须正确，因此 `ice cream` / `icecream` 判错。Enter 或一次提交确定答案。开始包含 spelling 的 session 时可选择不限时或 3–300 秒限时；限时从拼写输入真正可作答时开始，归零后按当前内容（可为空）只自动提交一次。还可开启翻译前测：用户先输入翻译，0037 候选在输入框右端提供仅限此处使用的中文语音输入；录音期间显示实时波形，Fish Audio 识别结束后只填入输入框，不自动提交，用户可编辑。最终文本仍由服务端语义评判；正确后才显示拼写输入并开始计时，错误则形成该词一次 spelling 错误。答对自动推进；任何错误的字符差异、正确英文与每项翻译持续显示，用户点击“下一题”后才推进。
+4. **拼写记忆**：播放发音后输入。Web 即时判定和数据库权威判定都对答案与课程原始 `term` 执行 NFKC、Unicode 空白合并、ASCII 大小写折叠，并用相同标点集合依次比较原文、移除标点后的文本、把标点视为空格后的文本。仅标点遗漏、替换或增加会判对，例如 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin`；字母、数字、词序和没有标点参与的词间空格仍必须正确，因此 `ice cream` / `icecream` 判错。Enter 或一次提交确定答案。开始包含 spelling 的 session 时可选择不限时或 3–300 秒限时；限时从拼写输入真正可作答时开始，归零后按当前内容（可为空）只自动提交一次。还可开启翻译前测：用户先输入翻译，0037 起输入框右端提供仅限此处使用的中文语音输入；录音期间显示实时波形，Fish Audio 识别结束后只填入输入框，不自动提交，用户可编辑。最终文本仍由服务端语义评判；正确后才显示拼写输入并开始计时，错误则形成该词一次 spelling 错误。答对自动推进；任何错误的字符差异、正确英文与每项翻译持续显示，用户点击“下一题”后才推进。
 
 所有采集用户音频的课程界面共用同一实时波形，包括认词阶段可选朗读反馈、读音考试和翻译语音输入。波形只由当前浏览器音频帧即时派生，不保存为学习事实；翻译 STT 的音频/文本也不进入 Cache Storage、Supabase Storage 或数据库。语音识别结果本身没有判分权，只有用户编辑并明确提交后的既有 translation assessment 才能形成服务端事实。
 
@@ -77,7 +77,7 @@ Courses 顶部“考试历史”读取最近 100 场 owner exam session。列表
 | `spelling_exam_passed_at` | 拼写考试完整第一轮达到配置阈值，并完成轮末复盘及全部候补词，使 session 真正进入 `completed` | 单独存在时仍为未学习；与发音考试事实同时存在后才投影 `learned_at` |
 | `pronunciation_exam_passed_at` | 发音考试完整第一轮达到配置阈值，并完成轮末复盘及全部候补词，使 session 真正进入 `completed` | 单独存在时仍为未学习；与拼写考试事实同时存在后才投影 `learned_at` |
 
-两项考试先后顺序不受限制；第二项考试通过时以两个时间戳中较晚者作为首次 `learned_at`，重复通过不会改写。0035 候选把该关系从单向 check 加固为双向精确投影 trigger：缺少任一时间戳时 `learned_at` 强制为空；两个都存在时强制等于较晚值，直接赋任意 `learned_at` 也会被覆盖。客户端没有直接更新 progress 的端点或表权限。
+两项考试先后顺序不受限制；第二项考试通过时以两个时间戳中较晚者作为首次 `learned_at`，重复通过不会改写。0035 已把该关系从单向 check 加固为双向精确投影 trigger：缺少任一时间戳时 `learned_at` 强制为空；两个都存在时强制等于较晚值，直接赋任意 `learned_at` 也会被覆盖。客户端没有直接更新 progress 的端点或表权限。
 
 ### 4.2 复习只记录练习事实，不再形成掌握
 
@@ -152,7 +152,7 @@ Courses 顶部“考试历史”读取最近 100 场 owner exam session。列表
 | 唯一掌握投影 | `supabase/migrations/20260803000033_learning_exam_only_mastery.sql`：两个 `*_exam_passed_at` 字段、check constraint、`_learning_apply_passed_exam_progress`、`_learning_advance_session`、`learning_word_exam_mastery_reset`、`learning_get_session_snapshot` | 回填可证明的考试事实并清除旧 review/单项考试掌握；只在双考试通过时写 learned；编辑按语义撤销；snapshot 返回两个事实 |
 | 精确投影加固（生产 0035） | `supabase/migrations/20260803000035_learning_mastery_projection_guard.sql`：`_learning_project_exam_only_mastery`、`learning_word_exam_only_mastery_projection` 和双向 check | 所有 insert/update 都由两个考试事实重新派生 `learned_at`；禁止其它工作流或直接赋值形成掌握 |
 | Schedule | `apps/api/src/learning/learning.controller.ts`：`schedule/schedules`；`apps/api/src/learning/learning.service.ts`：`createReviewSchedules/listReviewSchedules`；0012 的 `learning_schedule_reviews` | 只创建/读取日程，不直接写熟练度；完成关联 review 后由 `_learning_advance_session` 同时结算日期并完成日程 |
-| 权限/结构发布断言 | `supabase/migrations/20260722000013_verify_learning_courses_release.sql`、`20260801000028_verify_learning_exam_retry_quota.sql`、`20260803000030_verify_learning_pronunciation_exam.sql`、`20260803000032_verify_learning_exam_history_selection.sql`、`20260803000034_verify_learning_exam_only_mastery.sql`、`20260803000036_verify_learning_mastery_projection_guard.sql` | 验证 progress/RPC/trigger/历史结构、双考试精确约束、review 无写入、客户端无 progress 写权限和 service-role-only 执行边界 |
+| 权限/结构发布断言 | `supabase/migrations/20260722000013_verify_learning_courses_release.sql`、`20260801000028_verify_learning_exam_retry_quota.sql`、`20260803000030_verify_learning_pronunciation_exam.sql`、`20260803000032_verify_learning_exam_history_selection.sql`、`20260803000034_verify_learning_exam_only_mastery.sql`、`20260803000036_verify_learning_mastery_projection_guard.sql`、`20260804000038_verify_learning_translation_voice_input.sql` | 验证 progress/RPC/trigger/历史结构、双考试精确约束、review 无写入、客户端无 progress/STT 用量写权限和 service-role-only 执行边界 |
 | Profile 页面 | `apps/web/src/legacy/profile.ts` 与 `GET /api/profile/learning-summary` | 展示服务端去重后的熟练词数、课程数、复习日期和课程徽章 |
 
 对应回归证据：
@@ -201,9 +201,13 @@ TTS 与 en-US scripted pronunciation assessment 位于服务端适配层，参�
 
 UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt RPC；结果页面无论正确或错误都显示正确英文与拆分后的 translations。生产启用必须同时有一次性数据库 RLS/幂等门禁、fake-provider Chromium 流程和独立真实 OpenRouter structured/API gate。
 
+### 7.2 Fish Audio 翻译语音输入边界
+
+0037–0038 已在生产启用：只有 translation-first spelling 的翻译输入框提供麦克风，NestJS 固定 `fish-audio/transcribe-1` 与 `language=zh`；service-role-only RPC 在供应商调用前验证 owner、active session、spelling stage、`translationFirst`、revision/current word，并独立预留分钟/本地日/月预算。识别结果只回填可编辑文本，不自动提交或判分；迟到结果若不再匹配当前题会被 Web 丢弃。WAV/transcript 不进 PostgreSQL、Storage、Cache、备份或业务日志，只有 `translation_stt` 配额事实持久化。
+
 ## 8. 数据与安全证据
 
-0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017–0018 增加按意图恢复及验证；0019–0020 增加限时拼写、翻译评判及发布断言；0021–0022 统一 Unicode 拼写归一化；0023–0024 增加标点容错；0025–0026 增加显式取消会话及断言；0027–0028 增加 `exam` mode、轮末确认、考试进度 trigger、真实 provider 配额预留及验证；0029–0030 增加读音考试及验证；0031–0032 增加任意选词、失败补练完成事实、考试快照/历史及验证；0033–0034 增加双考试唯一掌握投影、编辑撤销和验证；0035–0036 增加精确派生 trigger 和发布断言。私有表只允许 owner 读；音频队列和翻译评判表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
+0011–0013 建立私有课程、会话/尝试/progress、复习、分享/市场/举报/审核、徽章及 speech 配额；0014 补齐朗读候补池；0015 增加 revision、幂等 attempt 响应、snapshot 与私有音频队列，0016 对结构、RLS 和权限做发布断言；0017–0018 增加按意图恢复及验证；0019–0020 增加限时拼写、翻译评判及发布断言；0021–0022 统一 Unicode 拼写归一化；0023–0024 增加标点容错；0025–0026 增加显式取消会话及断言；0027–0028 增加 `exam` mode、轮末确认、考试进度 trigger、真实 provider 配额预留及验证；0029–0030 增加读音考试及验证；0031–0032 增加任意选词、失败补练完成事实、考试快照/历史及验证；0033–0034 增加双考试唯一掌握投影、编辑撤销和验证；0035–0036 增加精确派生 trigger 和发布断言；0037–0038 增加 `translation_stt` 用量、当前题/配额 RPC 与权限/结构断言。私有表只允许 owner 读；音频队列和翻译评判表连 SELECT 都不授予客户端；所有新 RPC 仅 service role 可执行。公开接口只暴露必要署名和课程快照。
 
 删除课程级联私有学习数据和日程，但保留同账号下已发 points/badge facts；用户删除遵循 Auth 外键级联，出版物、points 与 badge awards 随账号删除，只有 speech 成本行和 moderation action 以 `user_id/actor_id=NULL` 留下非账号化运营事实。Storage 清理仍须删除编排。细节见 ERD、API、安全、隐私、内容审核和积分产品规则。
 
@@ -230,6 +234,8 @@ UI 的倒计时和即时状态不是服务端事实：超时仍经权威 attempt
 2026-08-03 的 PR #45 将读音考试、任意选词、失败补练完成事实、考试历史和双考试唯一掌握规则合入 main SHA `1a58d2164f6d58feea4d3a2c8925211b8cc60dde`。最终 PR run `30811283164` 与 main run `30811817461` 通过 0007→0034、空库重建/lint、真实本地双用户 RLS/Storage E2E、jsdom/API 与 Chromium Playwright；只读 plan `30812467085` 唯一列出 0029–0034。受保护 run `30813047562` 在 apply 前保留 artifact `8855819351`，远端 history 到 0034；release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` 激活前通过真实 Japan East Azure、真实 OpenRouter 和 Courses API/Storage gate。独立公网复核为 `deps.supabase=ok`、匿名 `/api/me` 401、React root 和 Course Market 200；没有在生产提交真实用户考试，因此不能描述为生产用户流程 E2E。
 
 2026-08-04 的 PR #47 将客户端 VAD/静音裁剪移除并把双考试掌握收敛为精确数据库 trigger 投影，合入 main SHA `51252527645d9438df0414f056c8a3b088b360d8`。PR run `30831319634` 与 main run `30831964846` 通过 0007→0036、空库重建/lint、真实本地双用户 RLS/Storage E2E、jsdom/API 与 Chromium Playwright；只读 plan `30832581552` 唯一列出 0035–0036。受保护 run `30833228406` 在 apply 前保留 artifact `8864033351`，远端 history 到 0036；release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` 激活前通过真实 Japan East Azure、真实 OpenRouter 和 Courses API/Storage gate，后者报告未裁剪 `assessmentBytes=88444`。独立公网复核为 `deps.supabase=ok`、匿名 `/api/me` 401、新 React 资产和 Course Market 200；仍未在生产提交真实用户考试，因此不能描述为生产用户流程 E2E。
+
+同日 PR #49 将中文翻译语音输入和三处共享实时波形合入 main SHA `66c919833693971ba1bda4ea33a3fdf6717ef1ca`。PR run `30904901828` 通过 0007→0038、空库重建/lint、真实本地双用户 RLS/Storage E2E、API/jsdom 和 Chromium Playwright；只读 plan `30906629924` 在一次瞬时 Supabase 上游错误后仅重跑失败 job 并通过，唯一列出 0037–0038。受保护 run `30907716733` 保留 artifact `8892006761` 后把远端同步到 0038，并激活 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1`。真实 Japan East Azure、OpenRouter structured 和合成中文 WAV→真实 Fish Audio gate 均通过，生产待激活 API 返回 `transcriptionMatched=true`；独立公网与主机复核确认 `deps.supabase=ok`、匿名 `/api/me` 401、Web/API 同 SHA。合成 WAV 不代表真实用户口音或物理麦克风质量。
 
 复习日程必须引用本人该单元已完成的 initial session；由日程启动时服务端固定使用其 skills/scope，并在 review session 完成事务里写回 completed session。普通 Vitest/jsdom 不等于真实数据库 E2E；本地无 Supabase CLI/Docker 时 RLS 和 Playwright 会跳过或无法启动，只有一次性 Supabase CI 成功后才能称真实 E2E 已通过。
 
