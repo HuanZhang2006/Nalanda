@@ -207,6 +207,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8 和 4 个音素；真实 OpenRouter 固定模型返回 10,252 ms、253/27/280 tokens；Courses API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`、未裁剪 `assessmentBytes=88444`，并验证重复音频复用和 exact translation replay。
 - 不可变 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` 健康激活。独立公网复核确认 Web 200 且返回新 React 资产、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Course Market 为 200。没有使用真实用户账号在生产提交完整考试，因此迁移/RLS/发布 gate 是服务端与供应商证据，不是生产用户考试流程 E2E。
 
+### 2026-08-04 · 0037–0038 中文翻译语音输入与共享波形
+
+- PR [#49](https://github.com/1590703336/Nalanda/pull/49) 合入 main SHA `66c919833693971ba1bda4ea33a3fdf6717ef1ca`。PR run `30904901828` 通过 docs/lint/typecheck、72 个 API 测试、85 个 Web/jsdom 测试、build、0007→0038、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright；Playwright 的 Azure/OpenRouter/Fish Audio 仍为 fake。
+- [只读 plan run `30906629924`](https://github.com/1590703336/Nalanda/actions/runs/30906629924) 首次遇到一次性 Supabase 上游瞬时错误；同 SHA 仅重跑失败 job 后通过，最终 dry-run 唯一列出 0037–0038，未创建恢复点、写库或部署。
+- [受保护 apply/deploy run `30907716733`](https://github.com/1590703336/Nalanda/actions/runs/30907716733) 在 apply 前保留加密恢复 artifact `8892006761`（730,159 bytes），随后把远端 history 同步到 0038，并通过 0038 结构/权限断言、remote database lint 与空 dry-run。
+- 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter structured 判分通过；生产待激活 Courses API 的 Azure 中文 WAV→Fish Audio gate 返回 `transcriptionMatched=true`，同时音频/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`。
+- 不可变 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` 健康激活。独立公网复核确认 Web 200、新 React 资产、`/api/health` 的 `deps.supabase=ok` 与匿名 `/api/me=401`；生产主机只读复核确认 Web 软链与运行 API image 均为同一 SHA。真实 STT 使用固定合成中文 WAV，不是物理麦克风或多口音质量 E2E。
+
 ## 8. 运维速查
 
 ```bash

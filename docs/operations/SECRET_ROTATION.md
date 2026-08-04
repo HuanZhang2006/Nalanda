@@ -30,7 +30,7 @@
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
 | `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；Japan East 基础、持久队列、重复词复用与裁剪评分 gate 均已通过 |
-| `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 拼写翻译语义评判；0037 候选复用其调用 Fish Audio STT | 否 | 只轮换一个 secret；必须分别通过 structured 文本判分和中文 WAV→Fish Audio gates，fake 不得进入生产 |
+| `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 拼写翻译语义评判；0037 起复用其调用 Fish Audio STT | 否 | 只轮换一个 secret；必须分别通过 structured 文本判分和中文 WAV→Fish Audio gates，fake 不得进入生产 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
@@ -187,15 +187,15 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 ## 12. OpenRouter key（生产当前使用）
 
-`OPENROUTER_API_KEY` 只由 NestJS 读取；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。语义判分和 0037 候选 Fish Audio STT 复用该 key，但 model、timeout 和配额分别配置，不能为 STT 创建浏览器 key。生产同时在 GitHub `production` environment 和服务器 mode-600 `.env` 保存当前值：前者只用于受保护部署时经 SSH 标准输入安装，后者由 API 容器消费。仓库脚本拒绝不符合预期形状的输入，并保留其它 env 行。
+`OPENROUTER_API_KEY` 只由 NestJS 读取；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。语义判分和 0037 Fish Audio STT 复用该 key，但 model、timeout 和配额分别配置，不能为 STT 创建浏览器 key。生产同时在 GitHub `production` environment 和服务器 mode-600 `.env` 保存当前值：前者只用于受保护部署时经 SSH 标准输入安装，后者由 API 容器消费。仓库脚本拒绝不符合预期形状的输入，并保留其它 env 行。
 
 计划轮换：
 
 1. 在 OpenRouter 控制台创建新 key，记录 key ID/指纹、额度和 UTC 时间，不复制完整值到 ticket。
 2. 暂时关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`；普通拼写、限时拼写和既有学习进度继续。
 3. 安全更新 GitHub `production` environment secret；在受控发布中通过标准输入运行 `scripts/install-production-openrouter-env.sh`，确认 `/opt/nalanda/.env` 为 mode 600、`OPENROUTER_FAKE=false`，并核对文本模型与 `OPENROUTER_STT_MODEL=fish-audio/transcribe-1`。不得把 key 放在 shell 命令参数或 Actions 日志。
-4. 用无个人数据 fixture 分别执行 structured 文本判分 gate 和“Azure 合成苹果 WAV → 候选 Nalanda STT API”gate；只记录 model/耗时/usage/布尔断言，不打印输入、transcript 或响应正文。任一失败都不激活候选 release。
-5. 在候选 image 运行 `smoke-openrouter-translation.mjs`，用固定合成样本验证指定 model 的 structured JSON：语义近义回答为 true、无关回答为 false。再经真实 Courses API 验证同 UUID replay 不再次调用 provider、正确翻译后的权威 spelling attempt 与临时用户清理。
+4. 用无个人数据 fixture 分别执行 structured 文本判分 gate 和“Azure 合成苹果 WAV → 待激活 Nalanda STT API”gate；只记录 model/耗时/usage/布尔断言，不打印输入、transcript 或响应正文。任一失败都不激活待发布 release。
+5. 在待激活 image 运行 `smoke-openrouter-translation.mjs`，用固定合成样本验证指定 model 的 structured JSON：语义近义回答为 true、无关回答为 false。再经真实 Courses API 验证同 UUID replay 不再次调用 provider、正确翻译后的权威 spelling attempt 与临时用户清理。
 6. 观察 provider error、latency/token/STT duration 事件和供应商 usage；重新启用 feature。
 7. 撤销旧 key 并重复两类真实 smoke。若失败，保持功能关闭，不把 key 下发 Web 或改成客户端自行判分/识别。
 
