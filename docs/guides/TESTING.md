@@ -208,7 +208,7 @@ git check-ignore .env.rls.local
 - 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；0009 根据 2026-07-21 产品/安全决定追加等额 reversal 归零。自动测试证明迁移与冲正语义，但生产发布仍须保存聚合审计和处置记录；
 - `community-media` public bucket 的写/删/对象清理；
 - 账号删除后的全部 Storage 孤儿与隐私删除流程；
-- 0039–0040 目前是仓库候选，尚未完成生产第一阶段发布和 24 小时观察；0041–0042 contract grant 撤销不得提前执行；
+- 0039–0040 已完成生产第一阶段发布，24 小时兼容观察仍在进行；0041–0042 contract grant 撤销不得提前执行；
 - 协同检测只覆盖已锁定的四类阈值并且只标记，不包含内容语义垃圾识别、自动处罚、完整审核后台或跨站设备图谱；跨午夜行为由数据库冻结窗口设计和迁移断言约束，仍需托管 staging 的可控时钟演练；
 - Redis 集成在本机未安装 Redis 时会明确 skip；只有 CI 中的真实 Redis service 能提供该层证据。普通 answer 的并发/超时重放已覆盖，但 recognition、旧模块写入、进程崩溃窗口和长时间 session 仍需持续扩展；
 - 真实 Azure 账号、音频供应商网络、浏览器麦克风权限与实际发音质量；自动测试只使用 adapter fake/固定 WAV。
@@ -397,7 +397,7 @@ pnpm --filter @nalanda/web exec playwright install --with-deps chromium
 pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + 真实 CI Redis + provider fake env
 ```
 
-质量与数据库 job 都使用独立 Redis 7.4 service。质量 job 执行真实 Lua 集成；浏览器 job 把真实 Redis URL 注入候选 Nest API。compose/nginx 校验还会确认 Redis 无宿主机端口、密码/AOF/noeviction 配置可解析，并执行 `nginx -t`；实际 PING/AOF/私有网络检查属于受保护生产激活门禁。
+质量与数据库 job 都使用独立 Redis 7.4 service。质量 job 执行真实 Lua 集成；浏览器 job 把真实 Redis URL 注入测试 Nest API。compose/nginx 校验还会确认 Redis 无宿主机端口、密码/AOF/noeviction 配置可解析，并执行 `nginx -t`；实际 PING/AOF/私有网络检查属于受保护生产激活门禁。
 
 真实供应商 smoke 必须显式加载只含后端配置、已被 Git 忽略且权限为 600 的文件；脚本拒绝 `AZURE_SPEECH_FAKE=true`，不会打印 key 或完整供应商响应：
 
@@ -467,6 +467,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 2026-08-04 的未裁剪录音与精确掌握投影样本：PR #47 run `30831319634`、main run `30831964846` 与受保护 run `30833228406` 通过 0007→0036、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖静音/轻声/首尾完整 WAV 不被客户端删除、Nest 原样转发字节、手工 `learned_at` 和单项考试不能绕过 trigger 投影；只读 plan `30832581552` 仅列 0035–0036，受保护 run 保留 artifact `8864033351` 后应用并激活 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1`。Playwright 的 Azure/OpenRouter 仍为 fake；独立真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 证明真实依赖，gate 报告未裁剪 `assessmentBytes=88444`。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
 
 同日的翻译语音输入与共享波形样本：PR #49 run `30904901828` 通过 0007→0038、空库重建/lint、真实本地 Supabase RLS/Storage、72 个 API 测试、85 个 Web/jsdom 测试与 Chromium Playwright；main run `30905971129` 按迁移保护规则只验证不部署。只读 plan `30906629924` 首次因一次性 Supabase 上游瞬时响应失败，同 SHA 重跑失败 job 后通过且唯一列出 0037–0038。受保护 run `30907716733` 保留 artifact `8892006761`、应用到 0038 并激活 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1`。Playwright STT 仍为 fake；独立真实直连和生产待激活 API gate 使用合成中文 WAV，后者返回 `transcriptionMatched=true`。这证明当时 endpoint/key/额度与固定样本，不证明物理麦克风或多口音质量。
+
+2026-08-10 的安全/限流 Stage A 样本：PR #51 run `31367746106`、PR #52 run `31370961413` 与 main run `31371608883` 通过 docs/lint/typecheck、Web/API tests、build、真实 Redis Lua、0007→0040、空库/database lint、双用户 RLS/Storage 和 Chromium Playwright；Playwright 的供应商仍为 fake。plan `31368447660` 只列 0039–0040，protected run `31369657292` 保留 artifact `9055783205` 后应用到 0040。该 run 暴露的远端 stdin 假成功由 #52 回归修复；最终 plan `31372198037` 为空，protected run `31372888441` 以 artifact `9057062920` 再验证远端并激活 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5`。真实 Redis/nginx/Azure/OpenRouter/Fish/Courses gates 与公网 `deps.redis=ok`、auth/admin 401、注册 RateLimit headers 是独立生产证据；OpenRouter 的瞬时超时/429 均在切流前阻断，不能算成功测试。0041–0042 仍待 24 小时 go/no-go。
 
 ## 11. 新增测试约定
 

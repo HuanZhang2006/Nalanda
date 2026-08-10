@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-10。生产数据库/应用证据到 0038；0039–0040、私有 Redis 与 nginx 分层限流是尚待 CI/plan/apply 的第一阶段候选。
+> - **状态基线**：2026-08-10。生产数据库/应用证据已到 0040；私有 Redis 与 nginx 分层限流已上线，0041–0042 尚待 24 小时观察后另行发布。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -24,14 +24,14 @@
 应用层（自托管在服务器）：
   /opt/nalanda/
     ├─ docker compose: api 容器（127.0.0.1:8411 → 容器:3000，mem_limit 256m）
-    ├─ 第一阶段候选: Redis（仅 compose 私网、密码、AOF everysec、noeviction、无宿主端口）
+    ├─ Redis（仅 compose 私网、密码、AOF everysec、noeviction、无宿主端口）
     ├─ web/   前端静态产物（宿主机 nginx 直接托管）
     └─ .env   后端密钥（仅服务器持有）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
 外部：Azure Speech（生产）、OpenRouter 翻译前测（生产）、Stripe/Claude（规划）
 ```
 
-> 生产 0038 仍只需「web 静态 + api」。0039–0040 候选把 Redis 作为注册/写入限流、滥用聚合和扫描锁依赖；AI 容器仍不部署，供应商由 NestJS 直连。
+> 生产 0040 使用「web 静态 + api + 私有 Redis」。Redis 是注册/写入限流、滥用聚合和扫描锁依赖；AI 容器仍不部署，供应商由 NestJS 直连。
 
 ## 3. nginx 接入（隔离的关键）
 
@@ -218,10 +218,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter structured 判分通过；生产待激活 Courses API 的 Azure 中文 WAV→Fish Audio gate 返回 `transcriptionMatched=true`，同时音频/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`。
 - 不可变 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` 健康激活。独立公网复核确认 Web 200、新 React 资产、`/api/health` 的 `deps.supabase=ok` 与匿名 `/api/me=401`；生产主机只读复核确认 Web 软链与运行 API image 均为同一 SHA。真实 STT 使用固定合成中文 WAV，不是物理麦克风或多口音质量 E2E。
 
-### 2026-08-10 · 0039–0040 安全/限流候选（未发布）
+### 2026-08-10 · 0039–0040 安全/限流 Stage A 发布
 
-- 仓库已实现帖子/Feedback/Schedule 完整性、points 冻结日上限/审核/协同信号、私有 Redis/HMAC 限流、nginx 分层保护、真实 Redis/双用户 RLS/脚本回归及两阶段 workflow。
-- 本节不是发布记录：尚无 PR/main 完整 CI、只读 plan、恢复 artifact、远端 apply、`deps.redis=ok` 或公网限流 smoke 证据。完成这些证据并观察至少 24 小时后，才允许另建 0041–0042 contract。
+- PR [#51](https://github.com/1590703336/Nalanda/pull/51) 实现帖子/Feedback/Schedule 完整性、points 冻结日上限/审核/协同信号、私有 Redis/HMAC 限流、nginx 分层保护和两阶段 workflow；PR run `31367746106`、main run `31368361777` 通过 quality、真实 Redis、0007→0040、空库/lint、双用户 RLS/Storage 与 Chromium Playwright。PR [#52](https://github.com/1590703336/Nalanda/pull/52) 修复 Redis 检查消耗远端 heredoc stdin，并新增发布脚本回归；PR run `31370961413`、main run `31371608883` 全绿。
+- 首次 [只读 plan `31368447660`](https://github.com/1590703336/Nalanda/actions/runs/31368447660) 只列 0039–0040。[受保护 run `31369657292`](https://github.com/1590703336/Nalanda/actions/runs/31369657292) 在 apply 前保留 artifact `9055783205`（777,902 bytes，digest `6c06bc011b3d0dc436b9722b66206e6f7a12bd2ecf083f2266cbb6b529c4112f`）并把远端同步到 0040；但 workflow 因 stdin 缺陷错误结束为 success，公网 health 仍为旧 API 的 `deps.redis=unset`，因此该次不计作应用发布。
+- 修复合入后，[只读 plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端均到 0040且 dry-run 为空。最终 [受保护 run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 再保留 artifact `9057062920`（800,819 bytes，zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并通过远端 history、lint 与空 dry-run。
+- 切流前 Redis PING/AOF/private-port/noeviction、nginx `-t`、真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter Gemma（5,524 ms、253/27/280 tokens）和真实 Courses API/Storage/Fish gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`transcriptionMatched=true`）全部通过。此前一次 12 秒超时和三次 429 均在切流前阻断；同密钥额度正常且生产主机恢复 HTTP 200 后才重跑成功，未改用 fake 或绕过门禁。
+- 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 激活。公网复核确认 Web/Course Market 200、匿名 `/api/me` 与 points admin 401、注册 400 且带 `RateLimit-Limit: 5`，health 为 `deps.supabase=ok/deps.redis=ok`；主机复核确认 Web 软链与 API image 指向该 release，Redis healthy 且无宿主端口。
+- 24 小时兼容观察从激活时刻计算，最早 contract 资格时间为 `2026-08-11T09:35:34Z`。在 Redis 错误/误限流、points projection、协同 signal 和旧时间列依赖完成 go/no-go 前，不创建 0041–0042。
 
 ## 8. 运维速查
 
@@ -238,5 +242,5 @@ readlink -f web
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 完成第一阶段私有 Redis/0039–0040 受保护发布与 24 小时观测；AI/BullMQ 队列和 Stripe Webhook 仍属于后续能力。
+- 完成 0039–0040 的 24 小时观测与 go/no-go，再单独发布 0041–0042 contract；AI/BullMQ 队列和 Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。
