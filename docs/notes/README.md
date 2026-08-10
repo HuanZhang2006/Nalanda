@@ -22,4 +22,4 @@
 | [10-学习计划](10-schedule.md) | 任务/目标、幂等完成奖励 + 连续学习、关联课程资料、智能填充 |
 | [11-Courses 英语单词学习](11-learning-courses.md) | 独立学习课程、文本解析/编辑、四阶段学习、复习熟练度、分享市场、Azure Speech |
 
-> 状态：已接生产真数据 —— 注册/登录、**Materials、社区、学习计划、Courses、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API；生产迁移已到 0038，Courses/Azure/OpenRouter 翻译前测与中文语音回填/统一波形/限时拼写/Unicode 拼写归一化/仅标点差异容错/显式取消/轮末错题复盘/拼写与读音考试/任意选词/考试历史/双考试精确掌握投影/弱网答题/离线音频/按意图独立续学/分享/免费市场已启用。剩余 mock/占位：Home / AI 笔记生成（Create + Notes）/ 笔记市场 / 支付，以及 Courses 文件 AI 导入和其余类别。PR/main 使用升级/空库迁移/RLS/Playwright 门禁；数据库失败采用阻断/forward-fix/隔离恢复，应用 smoke 失败自动回退上一 release。
+> 状态：已接生产真数据 —— 注册/登录、**Materials、社区、学习计划、Courses、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API；生产迁移已到 0040，私有 Redis 限流/readiness、帖子/Feedback/Schedule 完整性和 points 日上限/审核/待审协同信号已启用。Courses/Azure/OpenRouter 翻译前测与中文语音回填/统一波形/限时拼写/Unicode 拼写归一化/仅标点差异容错/显式取消/轮末错题复盘/拼写与读音考试/任意选词/考试历史/双考试精确掌握投影/弱网答题/离线音频/按意图独立续学/分享/免费市场已启用。剩余 mock/占位：Home / AI 笔记生成（Create + Notes）/ 笔记市场 / 支付，以及 Courses 文件 AI 导入和其余类别。PR/main 使用升级/空库迁移/RLS/Playwright 门禁；数据库失败采用阻断/forward-fix/隔离恢复，应用 smoke 失败自动回退上一 release。

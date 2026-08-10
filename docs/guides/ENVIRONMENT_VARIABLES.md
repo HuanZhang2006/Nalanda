@@ -33,8 +33,8 @@
 | `SUPABASE_URL` | 当前必需（认证/注册） | 公开配置 | Auth controller、JWT guard、health | Admin Auth 基址、JWKS/issuer 基址；缺失时注册报 `SERVER_MISCONFIG`，受保护接口无法通过 JWKS 验签。 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 当前必需（注册/readiness/Courses） | **最高机密** | Auth controller、health、Courses services | 调用 Admin Auth/PostgREST/Storage 与 service-only RPC；绕过 RLS，只能存在于后端且绝不进入响应/日志。 |
 | `SUPABASE_JWT_SECRET` | 当前可选 | **最高机密** | `apps/api/src/auth/supabase.guard.ts` | 旧 HS256 令牌的回退验签。当前守卫优先使用 JWKS；非对称签名项目不应无理由复制此值。 |
-| `REDIS_URL` | 0039–0040 候选必需 | **机密连接串** | Redis service、health、全局限流、扫描器 | API 建立真实连接；生产为 `redis://:<64-hex>@redis:6379/0`。缺失/不可达使 readiness 503，受保护写入 fail-closed。 |
-| `RATE_LIMIT_HMAC_SECRET` | 0039–0040 候选必需 | **最高机密** | Redis service/health | 至少 32 bytes；只对 IP/email 派生 HMAC，不得与 Redis、JWT、备份或供应商 secret 复用。 |
+| `REDIS_URL` | 生产 0039–0040 必需 | **机密连接串** | Redis service、health、全局限流、扫描器 | API 建立真实连接；生产为 `redis://:<64-hex>@redis:6379/0`。缺失/不可达使 readiness 503，受保护写入 fail-closed。 |
+| `RATE_LIMIT_HMAC_SECRET` | 生产 0039–0040 必需 | **最高机密** | Redis service/health | 至少 32 bytes；只对 IP/email 派生 HMAC，不得与 Redis、JWT、备份或供应商 secret 复用。 |
 | `POINT_ABUSE_SCANNER_ENABLED` | 可选，默认启用（除显式 `false`） | 受限配置 | points scanner | Redis 已配置时是否周期扫描协同信号；CI Playwright 显式 false 避免后台不确定性。 |
 | `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | 可选，默认 300，最小 60 | 公开运维配置 | points scanner | 扫描周期；当前 Redis lock TTL 为 240 秒。 |
 | `AI_SERVICE_URL` | 当前仅状态标记 | 内部配置 | health | 当前 API 不调用 AI，只在健康响应显示是否设置。目标值为 AI 内网地址。 |
@@ -192,7 +192,7 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 |---|---|---|---|
 | 本地 | `apps/web/.env.local` | `apps/api/.env`；AI 进程环境 | 当前 shell/安全密码文件 |
 | GitHub Actions | Actions Secrets 注入 Web 构建 | API 运行密钥仍只在服务器；DB 发布密钥在 protected environment | `SERVER_SSH_KEY`、已核验 host key、Supabase CLI 密钥、备份加密 key |
-| 当前生产/第一阶段候选 | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env` + 隔离的 `/opt/nalanda/.redis.env`，均 `0600` | 仅维护窗口临时注入，不落日志 |
+| 当前生产 | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env` + 隔离的 `/opt/nalanda/.redis.env`，均 `0600` | 仅维护窗口临时注入，不落日志 |
 | hybrid 目标 | 构建 Web 时另行注入 `VITE_*` | `infra/hybrid-2g/.env` | 仅维护窗口临时注入 |
 
 ## 10. 新增变量检查清单
