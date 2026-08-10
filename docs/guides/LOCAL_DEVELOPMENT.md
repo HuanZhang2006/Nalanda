@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS Auth/Courses API、FastAPI AI 桩服务。业务数据、认证与文件存储使用 Supabase；0039–0040 候选应用要求 Redis 才能通过 API readiness，并用它执行限流和 points 扫描锁。Courses 文件 AI 导入仍未实现；英语词表文本学习不需要 FastAPI、BullMQ、Stripe 或 Claude。
+当前可本地运行：React/Vite Web、NestJS Auth/Courses API、FastAPI AI 桩服务。业务数据、认证与文件存储使用 Supabase；生产等价的 0039–0040 API 要求 Redis 才能通过 readiness，并用它执行限流和 points 扫描锁。Courses 文件 AI 导入仍未实现；英语词表文本学习不需要 FastAPI、BullMQ、Stripe 或 Claude。
 
 ## 2. 前置条件
 
@@ -327,7 +327,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移 0038，而不是停在旧 migration history；生产也已到 0038，但任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新迁移 0040，而不是停在旧 migration history；生产也已到 0040，但任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
 
 ### 翻译前测返回禁用、超时或配额错误
 

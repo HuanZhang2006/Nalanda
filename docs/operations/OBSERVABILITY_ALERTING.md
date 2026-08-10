@@ -8,7 +8,7 @@
 
 当前已有信号：
 
-- `GET /api/health`：生产 0038 真实探测 Supabase；0039 候选还校验 HMAC 配置并执行真实 Redis PING，Supabase/Redis 任一失败 readiness 都是 503；AI 仍只报告 `configured/unset`；
+- `GET /api/health`：生产 0040 真实探测 Supabase、校验 HMAC 配置并执行 Redis PING；Supabase/Redis 任一失败 readiness 都是 503，AI 仍只报告 `configured/unset`；
 - `GET /health`：AI 进程存活和 Anthropic key 是否存在；AI 当前未部署在生产编排中；
 - deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase/deps.redis`，并检查公网 Web root；失败会回退上一 Web/API release；
 - API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
@@ -19,13 +19,13 @@
 - 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
 - 翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。0027 后应分别监控 `quota_counted=true` 的实际 provider 请求、分钟/滚动 24 小时 429 和 `retryAfterSeconds`，不能把 exact/replay/仅领取租约计入用量。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。这些事件都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
 - 0037 STT 输出 `learning_translation_voice_transcribed`，只含 provider/model/language、音频秒数、provider/API duration 与 usage/cost 数字；不得写 base64/WAV、transcript、word、课程翻译、用户 ID 或 key。数据库以 `learning_speech_usage.kind=translation_stt` 提供分钟/本地日/月预算事实；Web 另应统计录音启动/权限拒绝、空结果、迟到 transcript 丢弃和回填后实际提交率，但不能采集识别文本。
-- 0039 候选输出 `rate_limited`、`rate_limit_degraded`、`rate_limit_audit_failed`、`redis_error`、`point_abuse_scan_completed/failed`；只含 route group/rule、HMAC actor、可选内部 user UUID、retry 秒数或聚合计数，不含原始 IP/email/正文。协同 signal 和 API abuse bucket 持久在 PostgreSQL，首版明确只有结构化日志，不接 webhook/pager。
+- 生产 0039 输出 `rate_limited`、`rate_limit_degraded`、`rate_limit_audit_failed`、`redis_error`、`point_abuse_scan_completed/failed`；只含 route group/rule、HMAC actor、可选内部 user UUID、retry 秒数或聚合计数，不含原始 IP/email/正文。协同 signal 和 API abuse bucket 持久在 PostgreSQL，首版明确只有结构化日志，不接 webhook/pager。
 
 当前缺失：
 
 - 外部持续探测、SLO 仪表盘、集中日志、结构化 request log、trace、metrics endpoint；
 - error tracking、pager/值班表、告警路由和告警演练；
-- `/api/health` 尚不检查 Storage、注册写入、完整 RLS、Redis 内存/AOF 磁盘状态或 AI 连通性；0039 候选只增加真实 Redis PING；
+- `/api/health` 尚不检查 Storage、注册写入、完整 RLS、Redis 内存/AOF 磁盘状态或 AI 连通性；生产 0039 只增加真实 Redis PING；
 - Web 前端异常和浏览器直连 Supabase 失败没有服务端集中信号；
 - 日常备份新鲜度、RLS/数据完整性、TLS 到期、成本、AI 质量和支付对账告警；迁移前加密恢复点已有 CI 门禁，但没有持续告警。
 - Courses route/阶段/恢复成功率、浏览器 outbox 深度、陈旧 active session、复习日程积压、课程 points/徽章异常、举报队列以及 Azure/OpenRouter latency/error/cost 尚无集中指标；结构化事件只是原始信号，`/api/health` 也不探测 learning schema、音频队列/Storage 或任一供应商。
@@ -43,11 +43,11 @@
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
 | FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
-| Courses API | 生产已启用至 0038 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
+| Courses API | 功能迁移已启用至 0038，生产 history 到 0040 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
-| OpenRouter 翻译前测 / Fish Audio STT | 两者均已生产启用至 0038 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
+| OpenRouter 翻译前测 / Fish Audio STT | 两者功能迁移已启用至 0038，生产 history 到 0040 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
-| Redis 请求保护（0039 候选） | 仓库 compose/API/CI 已实现，生产仍待第一阶段发布；不使用 BullMQ | PING readiness、`rate_*`/`redis_error` 日志、真实 CI Lua 测试 | 无集中 memory/AOF/eviction/window 命中率告警；Redis 不是 points 事实库 |
+| Redis 请求保护（生产 0039） | 生产已启用；不使用 BullMQ | PING readiness、`rate_*`/`redis_error` 日志、真实 CI Lua 与生产 PING/AOF/no-port 证据 | 无集中 memory/AOF/eviction/window 命中率告警；Redis 不是 points 事实库 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
 | 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
 
@@ -203,7 +203,7 @@ tail -n 200 /var/log/nginx/error.log
 1. `docker stats --no-stream`、`free -m`、`df -h` 定位内存/磁盘。
 2. 检查日志、上传 artifact、Docker layers 占用；保留事故证据后再清理。
 3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
-4. 生产 0038 只有 API 容器；0039 第一阶段后另有 128 MiB Redis 容器和持久 volume，AI 仍未部署。先核对当前 release/compose，不要按过时拓扑判断。
+4. 生产 0040 有 API 容器、128 MiB Redis 容器和持久 volume，AI 仍未部署。先核对当前 release/compose，不要按过时拓扑判断。
 
 ### 6.5 Courses / Azure / Course Market
 

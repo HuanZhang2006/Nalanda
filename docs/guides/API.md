@@ -19,7 +19,7 @@ flowchart LR
 - 生产 Web/API 同源基址：`https://nalanda.online`；本文示例默认本地 `http://localhost:3000`。
 - NestJS 全局前缀：`/api`。
 - FastAPI 默认本地基址：`http://localhost:8000`，目标上只允许内网访问；当前没有 API→AI 调用代码。
-- 当前没有 OpenAPI 文件、API 版本号、请求 ID 或通用分页规范。Nest 全局错误已统一为 `{ code, message, fieldErrors?, currentRevision?, retryAfterSeconds? }`。0039–0040 候选应用增加全局 Redis 限流；生产 0038 在受保护发布前仍没有该通用层。
+- 当前没有 OpenAPI 文件、API 版本号、请求 ID 或通用分页规范。Nest 全局错误已统一为 `{ code, message, fieldErrors?, currentRevision?, retryAfterSeconds? }`。生产 0039–0040 已启用全局 Redis 限流。
 - NestJS 跨域许可来自 `CORS_ALLOWED_ORIGINS`，未设置时复用 `PUBLIC_ORIGIN`；生产两者都缺失时不返回跨域许可，同源 nginx `/api` 不受影响，且当前不启用 credential cookie。
 
 ## 2. 认证约定
@@ -52,7 +52,7 @@ NestJS 全局错误格式：
 
 `fieldErrors` 可选；未知 4xx 映射为 `INVALID_REQUEST`，413 为 `PAYLOAD_TOO_LARGE`，未知 5xx 为 `INTERNAL_ERROR`。常见状态：400 参数/契约，401 token，403 owner/管理员，404 不存在或功能隐藏，409 冲突，413 multipart 上限，429 配额，502 供应商，503 feature flag/依赖不可用。FastAPI 桩仍使用标准 `422 detail`，不属于这个 envelope。
 
-### 2.3 0039–0040 候选：通用限流
+### 2.3 生产 0039–0040：通用限流
 
 Nest guard 完成鉴权后由全局 interceptor 应用原子 Redis 滑动窗口；nginx 另叠加 API 20 次/秒 burst 40、注册 1 次/秒 burst 3。键只含 user UUID 或 `HMAC-SHA256(IP/email)`，不把原始 IP/email 写入 Redis、Postgres 或日志。
 
@@ -140,8 +140,8 @@ Content-Type：`application/json`。
 | 409 | `EMAIL_TAKEN` | 邮箱已存在；由状态码或上游文本启发式识别 |
 | 500 | `SERVER_MISCONFIG` | API 缺 `SUPABASE_URL` 或 service-role key |
 | 502 | `UPSTREAM_UNREACHABLE` | API 无法访问 Supabase Auth |
-| 429 | `RATE_LIMITED` | 候选限流窗口已满；按 `Retry-After` 重试 |
-| 503 | `RATE_LIMIT_UNAVAILABLE` | 候选 Redis 不可用，注册 fail-closed |
+| 429 | `RATE_LIMITED` | 限流窗口已满；按 `Retry-After` 重试 |
+| 503 | `RATE_LIMIT_UNAVAILABLE` | Redis 不可用，注册 fail-closed |
 
 示例：
 
@@ -151,7 +151,7 @@ curl -i http://localhost:3000/api/auth/register \
   --data '{"email":"developer@example.com","password":"change-me"}'
 ```
 
-此接口会创建真实账号，不应作为无清理逻辑的普通 smoke test，也不能对生产反复执行。候选应用有 IP+email 双层 Redis 限流与 HMAC 审计；仍没有验证码、邮箱所有权证明或密码强度扩展规则。
+此接口会创建真实账号，不应作为无清理逻辑的普通 smoke test，也不能对生产反复执行。生产应用有 IP+email 双层 Redis 限流与 HMAC 审计；仍没有验证码、邮箱所有权证明或密码强度扩展规则。
 
 ### `GET /api/me`
 
@@ -181,7 +181,7 @@ curl -fsS http://localhost:3000/api/me \
 
 此处 `$SUPABASE_ACCESS_TOKEN` 指用户登录 access token，不是数据库迁移使用的 Supabase Personal Access Token；两者不能混用。
 
-### 0039–0040 候选：Points 管理接口
+### 生产 0039–0040：Points 管理接口
 
 三条路由都要求 Supabase bearer token，随后校验 `MODERATION_ADMIN_USER_IDS`；兼容期仅在新变量为空时回退 `COURSE_MARKET_ADMIN_USER_IDS`。无管理员 UI，普通用户与匿名请求不得读取信号或调用审核事务。
 
@@ -205,7 +205,7 @@ curl -fsS http://localhost:3000/api/me \
 
 `targetType=post` 会在数据库内解析根内容 key，并覆盖锚定该根的原创、转发、点赞和评论奖励；只冲正历史实际获得金额。`restore` 不补发日上限为零的 claim，也不恢复已删除来源。每次操作追加 `point_moderation_actions`，理由必填。PATCH 审核经 service-only `review_point_abuse_signal` 写入数据库时间和 reviewer；API service-role 对 claim、signal、moderation action 都只有 SELECT，不能绕过受控 RPC 直接改写。
 
-## 4. Courses API（生产 0011–0038）
+## 4. Courses API（功能迁移 0011–0038，生产 history 到 0040）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -596,11 +596,11 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 | Points | `point_entries` + `get_point_reward_receipt` | 本人只读账本；业务成功后按 event/source 取本人奖励回执 | state/window/claim/moderation/signal/audit 表对客户端完全隐藏；receipt 从 `auth.uid()` 推导 owner |
 | 资料库 | `courses`, `materials` | owner CRUD | materials 写入额外校验课程 owner |
 | 通知 | `notifications` | owner select/insert/update | 用户可标已读；当前 policy 也允许改其它 own 字段 |
-| 反馈 | `feedback` | owner select/insert | 0039 候选仅允许插入 `category/summary/body`，无 UPDATE/DELETE；status/time/owner 由服务端维护 |
-| 社区 | `posts`, `comments` | 公共读取；作者写/删 | 0039 候选 posts 仅允许内容列写入，作者快照/计数/owner/业务键/时间由数据库维护 |
+| 反馈 | `feedback` | owner select/insert | 生产 0039 起仅允许插入 `category/summary/body`，无 UPDATE/DELETE；status/time/owner 由服务端维护 |
+| 社区 | `posts`, `comments` | 公共读取；作者写/删 | 生产 0039 起 posts 仅允许内容列写入，作者快照/计数/owner/业务键/时间由数据库维护 |
 | 社区关系 | `post_likes`, `post_favorites`, `follows` | 当前用户增删/查询关系 | 复合主键防同时重复关系 |
 | 标签 | `tags` | authenticated 读/插入 | 无更新/删除；无 kind 白名单约束 |
-| 计划 | `study_goals`, `study_tasks` | owner CRUD 内容列 | 0039 候选 trigger 同时约束客户端/service-role 的关联 owner，`done_at` 随 `done` 维护 |
+| 计划 | `study_goals`, `study_tasks` | owner CRUD 内容列 | 生产 0039 trigger 同时约束客户端/service-role 的关联 owner，`done_at` 随 `done` 维护 |
 | Courses 私有读取 | `learning_courses/units/words/sessions/items/attempts/progress/review_schedules/shares` | Web 当前经 Nest API 读取；数据库允许 owner SELECT | authenticated 无写权限；API service-role 写事务 RPC |
 | Courses 传播/成长 | publications/reports/badges | 作者/举报人/本人只读；公共读取经 API | 匿名 PostgREST 不开放；speech usage/审核动作对客户端隐藏 |
 | Courses 音频任务 | `learning_audio_assets` | 客户端无表/API 原始读取；只经 owner unit/word API 获取脱敏 manifest/audio | RLS + 表 grant 默认拒绝；仅 service-role worker |
@@ -619,7 +619,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008–0038 已收口既有内部 helper。0039 候选新增的审核、信号 review、扫描、滥用审计与时间窗口函数全部只授予 service-role，并且 service-role 对相应事实表只有 SELECT；唯一 authenticated RPC 是：
+前端没有直接调用 Courses `rpc()`。迁移 0008–0038 已收口既有内部 helper。生产 0039 新增的审核、信号 review、扫描、滥用审计与时间窗口函数全部只授予 service-role，并且 service-role 对相应事实表只有 SELECT；唯一 authenticated RPC 是：
 
 ```ts
 get_point_reward_receipt(eventType, sourceId) => {
@@ -642,7 +642,7 @@ get_point_reward_receipt(eventType, sourceId) => {
 - 资料解析、AI 生成任务提交/排队/状态/取消/重试；
 - 笔记与四类生成产物的版本化 CRUD；
 - 笔记市场购买、credits 授权、搜索和创作者结算；Courses 只有免费发布/克隆，不提供购买或分成；
-- credits 不可变账本、余额、VIP entitlement；points 日上限/审核/待审信号已有候选窄实现，但完整规则版本管理、自动内容质量和审核 UI 未实现；
+- credits 不可变账本、余额、VIP entitlement；points 日上限、审核冲正和待审信号的窄实现已上线，但完整规则版本管理、自动内容质量和审核 UI 未实现；
 - Stripe checkout/payment intent/webhook/refund；
 - 社区/笔记的内容举报、审核、管理员处置与申诉；Courses 已有最小举报和隐藏/恢复接口但无通用队列/申诉；
 - Courses 文件上传解析：PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR、类别 prompt、结构化词表与人工确认；当前无可调用 endpoint；

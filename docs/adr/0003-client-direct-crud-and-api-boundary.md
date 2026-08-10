@@ -3,7 +3,7 @@
 > **本文内容：**定义浏览器可直接访问 Supabase 的业务范围，以及必须由核心 API 承担的操作。  
 > **作用：**避免“全部直连”导致服务端秘密/账本失控，也避免为简单私有 CRUD 增加无意义代理层。  
 > **何时更新：**任一模块改变数据访问路径、引入管理员/支付/AI/审核流程，或 RLS 无法表达所需规则时。  
-> **状态提示：**边界已接受。生产仍为 0038；0039–0040 候选在保留帖子/Feedback/Schedule 直连的同时增加列级/trigger 防线，并把 points 管理与 Redis 限流放入 NestJS。
+> **状态提示：**边界已接受并于 2026-08-10 随 0039–0040 上线：帖子/Feedback/Schedule 保持直连，同时由列级 grant/trigger 防御，points 管理与 Redis 限流位于 NestJS。
 
 - **状态：**Accepted
 - **日期：**2026-06-24
@@ -36,7 +36,7 @@ NestJS 必须再次验证 JWT、对象归属、DTO 和幂等键，不得因为�
 
 - **当前：**旧模块继续由 Web 直连 Supabase；NestJS 除 health/register/me 外，已承担并在生产运行 Courses 内容写入、会话/成长、Speech、分享/市场和公开脱敏读取。
 - **已收口：**Profile 只允许资料列更新，points/credits/level/VIP/streak 与内部 RPC 已封闭；Materials、Community、Schedule、Notifications、Feedback、Profile 的主要请求会检查 Supabase `{ error }`，并用会话版本阻止跨账号迟到响应；CI 已有双用户 RLS 权限矩阵。
-- **当前违规风险：**生产 0038 的 feedback status、notifications 服务端字段和帖子快照/冗余计数仍受过宽 owner policy 影响；0039 候选已收口 Feedback 与帖子计划内字段（notifications 不在本阶段），但完成受保护发布前不能视为线上修复。商业/AI/通用审核/删除流程仍不能沿用普通直连 CRUD。
+- **当前违规风险：**0039 已收口 Feedback 与帖子计划内可信字段；notifications 服务端字段不在本阶段，仍需持续审计。商业/AI/通用审核/删除流程仍不能沿用普通直连 CRUD。
 - **目标：**继续做旧表列级收口；把 AI、支付、通用审核和删除编排进入 API；为现有 Courses 契约生成 OpenAPI/SDK，并扩展 HTTP/权限测试。
 
 ## 验证与复审

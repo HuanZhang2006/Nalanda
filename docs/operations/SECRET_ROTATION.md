@@ -33,8 +33,8 @@
 | `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 拼写翻译语义评判；0037 起复用其调用 Fish Audio STT | 否 | 只轮换一个 secret；必须分别通过 structured 文本判分和中文 WAV→Fish Audio gates，fake 不得进入生产 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `MODERATION_ADMIN_USER_IDS` | API `.env` | Points signal/reward 审核 allowlist | 否 | 敏感授权配置；0039 兼容期为空才回退 Course Market allowlist |
-| `REDIS_PASSWORD` | GitHub `production` secret → `/opt/nalanda/.redis.env`；API `.env` 只持含密码的 `REDIS_URL` | 私有 Redis 与 Nest ioredis | 否 | 0039 候选；独立 32-byte hex，Redis 容器不接收其它 API secrets |
-| `RATE_LIMIT_HMAC_SECRET` | GitHub `production` secret → API `.env` | IP/email actor HMAC 与 readiness | 否 | 0039 候选；独立 32-byte hex，不得与 Redis password 复用 |
+| `REDIS_PASSWORD` | GitHub `production` secret → `/opt/nalanda/.redis.env`；API `.env` 只持含密码的 `REDIS_URL` | 私有 Redis 与 Nest ioredis | 否 | 生产 0039；独立 32-byte hex，Redis 容器不接收其它 API secrets |
+| `RATE_LIMIT_HMAC_SECRET` | GitHub `production` secret → API `.env` | IP/email actor HMAC 与 readiness | 否 | 生产 0039；独立 32-byte hex，不得与 Redis password 复用 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
 | TLS private key / ACME account | 生产 certbot/nginx | HTTPS | 否 | 当前由服务器维护 |
@@ -159,7 +159,7 @@
 
 GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定期清理离职人员、PAT、deploy key 和第三方 Actions 权限。
 
-## 10. Redis password 与 RateLimit HMAC（0039 候选）
+## 10. Redis password 与 RateLimit HMAC（生产 0039）
 
 两个值必须分别使用密码学随机 32 bytes（部署输入为 64 位 hex）。`REDIS_PASSWORD` 只以独立 `.redis.env` 传给 Redis；API 只收到含密码的 `REDIS_URL`。`RATE_LIMIT_HMAC_SECRET` 只进 API。`scripts/install-production-security-env.sh` 从标准输入读取并原子替换，拒绝非法长度且不打印值。
 

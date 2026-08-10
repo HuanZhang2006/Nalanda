@@ -4,23 +4,23 @@
 > - **内容**：记录学习目标/普通任务、独立课程复习日程、RLS、完成奖励、连续学习和当前规则式填充。
 > - **作用**：解释 Schedule 如何合并两套数据源，同时保持普通任务积分与 Courses 复习事实隔离。
 > - **何时更新**：任务/目标字段、奖励幂等、提醒、排程算法、时区或关联权限变化时。
-> - **状态基线**：2026-08-10。生产仍为 0038；关联 owner trigger、数据库派生 `done_at` 和任务日上限已在 0039–0040 候选实现，待受保护发布。
+> - **状态基线**：2026-08-10。生产已到 0040；关联 owner trigger、数据库派生 `done_at` 和任务日上限已上线。
 
-> 文件：`supabase/migrations/20260625000007_schedule.sql`（结构/旧触发器）、`...0008_security_points_ledger.sql`（稳定任务键、points 冲正与敏感列保护）、`...0011_learning_courses.sql`/`...0012_learning_course_workflows.sql`（复习日程及服务端工作流）、`...0039_security_integrity_rate_limit_points_abuse.sql`（候选 owner/done_at/日上限）、`apps/web/src/legacy/schedule.ts`、`apps/api/src/learning/*`。
+> 文件：`supabase/migrations/20260625000007_schedule.sql`（结构/旧触发器）、`...0008_security_points_ledger.sql`（稳定任务键、points 冲正与敏感列保护）、`...0011_learning_courses.sql`/`...0012_learning_course_workflows.sql`（复习日程及服务端工作流）、`...0039_security_integrity_rate_limit_points_abuse.sql`（生产 owner/done_at/日上限）、`apps/web/src/legacy/schedule.ts`、`apps/api/src/learning/*`。
 
 ---
 
 ## 一、数据模型
 
 ### study_goals（目标/考试）
-`id, user_id(默认 auth.uid()), title, exam_date date, course_id(可空,→courses on delete set null), created_at`。owner-only RLS。生产 0038 的策略没有像 task 一样校验 `course_id` 必须属于本人；0039 候选增加防御 trigger，在客户端和绕过 RLS 的 service-role 路径都验证 course owner，并拒绝修改 `user_id`。
+`id, user_id(默认 auth.uid()), title, exam_date date, course_id(可空,→courses on delete set null), created_at`。owner-only RLS。生产 0039 增加防御 trigger，在客户端和绕过 RLS 的 service-role 路径都验证 course owner，并拒绝修改 `user_id`。
 
 ### study_tasks（任务）
 `id, user_id, title, due_date date(默认 current_date), done bool, done_at, course_id?, material_id?, goal_id?, points_business_key, created_at`。
 - **三个可空外键**让任务能挂到 课程 / 资料 / 目标——这是和 Materials 的联动基础。
 - `on delete set null`：删了课程/资料，任务还在，只是断开关联（不级联删任务）。
 - 0008 在 INSERT 时用 owner + 规范化 title/due_date/course/material/goal 生成不可变 `task:{owner}:{sha256}:completed:v1`；相同逻辑任务共享一个奖励 claim，客户端不能指定或修改 key。
-- 0039 候选 trigger 重新验证 course/material/goal 全部属于 `new.user_id`，包括 service-role 路径；`done_at` 根据 `done` 自动设为服务器 `now()` 或清空。兼容期列 grant 保留但客户端值总被覆盖，Web 不再提交该字段。
+- 生产 0039 trigger 重新验证 course/material/goal 全部属于 `new.user_id`，包括 service-role 路径；`done_at` 根据 `done` 自动设为服务器 `now()` 或清空。兼容期列 grant 保留但客户端值总被覆盖，Web 不再提交该字段。
 
 ### profiles 增列
 `streak int`（连续学习天数）、`streak_date date`（最近计入连续的那天），以及 Courses 0011 的合法 IANA `timezone`。复习尝试与日程偏移使用该时区；历史日期不会因后续改时区而重写。
@@ -131,6 +131,6 @@ handle: settab / toggle / edit / del / addtask(带 data-date) / addgoal / delgoa
 
 ## 六、待扩展
 - **到期提醒**需服务端定时（Supabase `pg_cron`）；现在是进应用时界面高亮逾期/今日，不主动推送。
-- points 取消/重做的净额幂等已完成；每日任务奖励上限、冻结时区窗口、协同待审信号和规则版本已在 0039 候选实现，生产发布前仍不是线上能力。垃圾内容识别、完整审核 UI/申诉和自动运营规则不在本阶段。
+- points 取消/重做的净额幂等、每日任务奖励上限、冻结时区窗口、协同待审信号和规则版本已由生产 0039 启用。垃圾内容识别、完整审核 UI/申诉和自动运营规则不在本阶段。
 - Courses 复习按用户时区保存尝试的本地日期；普通 `study_tasks.due_date` 仍是无时区 date，两者不要混用为同一奖励事实。
 - Home 首页接「今日待办 + streak」串到首屏。
