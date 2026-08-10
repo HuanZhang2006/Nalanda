@@ -3,7 +3,7 @@
 > **本文内容：**规定开发环境、分支与提交、代码/数据库/文档变更流程、测试要求和完成定义。  
 > **作用：**让贡献者用可复现方式交付变更，并确保代码、迁移、测试、文档和运维说明同步。  
 > **何时更新：**工具链、目录、CI 门禁、分支策略、数据库流程或评审责任变化时；发现本文命令无法执行时应立即更新。  
-> **状态基线：**2026-07-28；当前仓库仍在从原型迁移，Courses 0011–0020 与对应应用已完成受保护生产发布；提交说明仍必须区分实现、自动化验证、真实供应商 gate 和实际上线。
+> **状态基线：**2026-08-10；生产数据库已受保护发布到 0038，0039–0040 安全/限流候选尚未发布。提交说明必须区分代码实现、本地或 fake 自动化、真实 Redis/Supabase/provider gate 与实际上线。
 
 ## 1. 开始之前
 
@@ -85,6 +85,8 @@ PR 描述至少包含：
 5. 用用户 A、用户 B、匿名、service-role 分别测试允许与拒绝路径。只验证“自己能用”不算 RLS 完成。
 6. 金额、credits、points、权益和审核状态采用不可变事件/账本与幂等键；修正使用补偿记录，不删除历史。
 7. PR 附前向发布、验证 SQL、失败停止条件、回滚或前向修复方案；生产迁移前必须有可恢复备份。
+8. expand/contract 必须拆成真正独立的发布。兼容应用与 expand migration 先上线并观察约定窗口；contract migration 只能在观测证据完成后另建、另审、另发，不能让“未来 contract 文件”被当前 CI 的 latest 自动提前应用。
+9. append-only 审核/账本表即使对 service-role 也不授予直接 mutation；管理 API 调用受控事务函数。扫描信号只能作为人工审核输入，不得用测试阈值偷偷变成自动处罚。
 
 ## 6. 测试与质量门禁
 
@@ -96,7 +98,7 @@ pnpm test
 pnpm build
 ```
 
-等价的全仓门禁是 `pnpm check`。涉及 migration/Courses 还必须在一次性本地 Supabase 运行 `pnpm test:rls`；涉及完整用户路径需按测试指南配置并运行 `pnpm --filter @nalanda/web test:playwright`。普通 `pnpm test` 中 RLS skip 不是数据库通过证据。
+等价的全仓门禁是 `pnpm check`。涉及 migration/Courses 还必须在一次性本地 Supabase 运行 `pnpm test:rls`；涉及 Redis/限流必须用真实测试 Redis 运行 `RUN_REDIS_E2E=true pnpm --filter @nalanda/api test`；涉及完整用户路径需按测试指南配置并运行 `pnpm --filter @nalanda/web test:playwright`。普通 `pnpm test` 中 Redis/RLS skip 不是对应依赖通过证据。
 
 若某工作区没有相应脚本，不能把“命令不存在”记录为通过；应补齐脚本或在 PR 中明确该门禁尚未实现。按变更类型追加：
 
@@ -105,6 +107,8 @@ pnpm build
 - 用户主流程：浏览器 E2E，不使用生产账号/数据；
 - API：未认证、坏 token、越权、重复请求和上游失败；
 - Supabase：迁移重放、RLS 双用户、Storage、函数权限和触发器幂等；
+- Redis/限流：真实 Redis 验证 Lua 原子性、窗口过期、分层 fail-open/closed、429/`Retry-After`/RateLimit headers 与 HMAC 日志；mock 只用于纯分类单元测试；
+- nginx/部署：在与生产同 major 的容器中执行 `nginx -t`，并对 secret 安装脚本验证 mode 600、幂等替换和 stdout 不泄露；
 - AI：契约、固定夹具、离线评测、安全集和成本回归；
 - Speech：固定 WAV/fake adapter 覆盖格式、大小、VAD 裁剪、超时、限流、队列租约、Storage miss 和不落录音；发布前另做真实 Azure 队列/缓存复用/评分 smoke，不能在 PR 使用个人录音；
 - 支付：只用 Stripe test mode/CLI 夹具，覆盖重复、乱序、退款和争议 Webhook。

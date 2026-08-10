@@ -1,6 +1,6 @@
 # 服务器端运行用（部署到 /opt/nalanda/docker-compose.yml，由 CI 同步）
-# 仅跑后端 api；前端是静态文件由宿主机 nginx 托管；redis/ai 暂未启用。
-# api 仅绑定 127.0.0.1:8411，对外由 nginx 反代 nalanda.online → /api。
+# 运行后端 API 与仅容器内网可达的 Redis；前端静态文件由宿主机 nginx 托管。
+# api 仅绑定 127.0.0.1:8411，Redis 不发布宿主机端口。
 
 name: nalanda
 
@@ -12,6 +12,9 @@ services:
     env_file: .env
     environment:
       PORT: "3000"
+    depends_on:
+      redis:
+        condition: service_healthy
     dns:                         # 宿主机用 systemd-resolved(127.0.0.53)，容器内解析不到，显式指定
       - 1.1.1.1
       - 8.8.8.8
@@ -19,3 +22,29 @@ services:
       - "127.0.0.1:8411:3000"
     mem_limit: 256m
     mem_reservation: 128m
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    # Deliberately separate from API .env so Redis never receives Supabase or
+    # provider credentials.
+    env_file: .redis.env
+    command:
+      - sh
+      - -ec
+      - exec redis-server --appendonly yes --appendfsync everysec --requirepass "$${REDIS_PASSWORD}" --maxmemory 96mb --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD-SHELL", "REDISCLI_AUTH=\"$$REDIS_PASSWORD\" redis-cli ping | grep -qx PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 5s
+    volumes:
+      - redis_data:/data
+    mem_limit: 128m
+    mem_reservation: 64m
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  redis_data:

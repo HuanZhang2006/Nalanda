@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { click, createSupabaseMock, defaultSeed, flush } from "../test/supabase-mock";
 import { initCommunity, mountCommunity, mountPost } from "./community";
+import { showPointRewardReceipt } from "./point-receipt";
 
 describe("社区 jsdom 集成", () => {
   it("覆盖 feed、筛选、我的子标签、composer 标签/媒体和详情评论", async () => {
@@ -63,6 +64,14 @@ describe("社区 jsdom 集成", () => {
     expect(created?.tags).toEqual(expect.arrayContaining(["复习", "记忆"]));
     expect(created?.image_url).toContain("cdn.example/u1/");
 
+    click(root.querySelector(`[data-cm="edit"][data-id="${created?.id}"]`));
+    (document.querySelector("#ps-body") as HTMLTextAreaElement).value = "编辑后的正文";
+    click(document.querySelector('[data-x="save"]'));
+    await flush(20);
+    const postUpdate = [...supabase.operations].reverse().find((operation) =>
+      operation.table === "posts" && operation.action === "update");
+    expect(postUpdate?.payload).not.toHaveProperty("updated_at");
+
     await mountPost(root, "p1");
     await flush(20);
     expect(root.textContent).toContain("很有帮助");
@@ -112,5 +121,54 @@ describe("社区 jsdom 集成", () => {
     expect(second.tables.post_likes).toHaveLength(0);
     expect(secondRoot.querySelector('[data-cm="like"][data-id="bp1"]')?.textContent).toContain("0");
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("like denied"));
+  });
+
+  it("业务成功后读取积分回执，并在每日上限时立即提示但不撤销点赞", async () => {
+    const seed = defaultSeed();
+    seed.post_likes = [];
+    const supabase = createSupabaseMock(seed, "u1", { rpcResults: {
+      get_point_reward_receipt: { data: {
+        awardedAmount: 0, dailyUsed: 20, dailyLimit: 20,
+        localDate: "2026-08-10", suppressedReason: "daily_cap",
+      } },
+    } });
+    const toast = vi.fn();
+    const root = document.createElement("div"); document.body.appendChild(root);
+    initCommunity(supabase, { id: "u1", email: "alice@example.edu" }, toast);
+    await mountCommunity(root); await flush(16);
+
+    click(root.querySelector('[data-cm="like"][data-id="p2"]'));
+    await flush(16);
+    expect(supabase.tables.post_likes.some((like) => like.post_id === "p2")).toBe(true);
+    expect(supabase.rpc).toHaveBeenCalledWith("get_point_reward_receipt", {
+      p_event_type: "like_created", p_source_id: "p2",
+    });
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/积分奖励已达上限|points limit/i));
+  });
+
+  it("账号切换后丢弃旧账号延迟返回的积分回执", async () => {
+    let resolveReceipt!: (value: unknown) => void;
+    const supabase = {
+      rpc: vi.fn(() => new Promise((resolve) => { resolveReceipt = resolve; })),
+    };
+    const toast = vi.fn();
+    let current = true;
+    const pending = showPointRewardReceipt(
+      supabase,
+      "post_created",
+      "old-account-post",
+      toast,
+      () => current,
+    );
+    current = false;
+    resolveReceipt({
+      data: {
+        awardedAmount: 0, dailyUsed: 3, dailyLimit: 3,
+        localDate: "2026-08-10", suppressedReason: "daily_cap",
+      },
+      error: null,
+    });
+    await expect(pending).resolves.toBeNull();
+    expect(toast).not.toHaveBeenCalled();
   });
 });

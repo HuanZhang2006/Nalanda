@@ -5,6 +5,8 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   REQUEST_FAILED: ["Request failed. Please try again.", "请求失败，请重试"],
   DATABASE_ERROR: ["The course database is temporarily unavailable.", "课程数据库暂不可用"],
   UPSTREAM_UNREACHABLE: ["The service is temporarily unavailable.", "服务暂不可用"],
+  RATE_LIMITED: ["Too many requests. Please wait and try again.", "请求过于频繁，请稍后重试"],
+  RATE_LIMIT_UNAVAILABLE: ["Request protection is temporarily unavailable. Please retry shortly.", "请求保护服务暂不可用，请稍后重试"],
   COURSES_DISABLED: ["Courses are not available yet.", "课程功能暂未开放"],
   SHARING_DISABLED: ["Course sharing is not available yet.", "课程分享暂未开放"],
   MARKET_DISABLED: ["Course Market is not available yet.", "课程市场暂未开放"],

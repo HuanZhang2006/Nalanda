@@ -5,6 +5,7 @@ dist/
 
 # env & secrets
 .env
+.redis.env
 .env.local
 .env.*.local
 

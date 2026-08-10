@@ -4,9 +4,10 @@
 > - **内容**：记录社区表/RLS/触发器、前端状态、互动流程和已知取舍。
 > - **作用**：作为当前社区实现的函数级复盘和后续治理改造入口。
 > - **何时更新**：帖子字段、RLS、积分、媒体、审核、前端交互或测试覆盖变化时。
+> - **状态基线**：2026-08-10。生产仍为 0038；帖子可信列、日上限、人工 points 冲正和只待审协同检测已在 0039–0040 候选实现，待受保护发布。
 
 > 目标：能照着复盘/重写。逐表讲数据与 RLS、逐触发器讲服务端逻辑、逐函数讲前端逻辑与数据流。
-> 文件：`supabase/migrations/20260625000005_community.sql`（结构）、`...0006_points_tags_notify.sql`（旧积分/通知/标签/媒体）、`...0008_security_points_ledger.sql`（稳定业务键、账本与冲正）、`apps/web/src/legacy/community.ts`（前端）。
+> 文件：`supabase/migrations/20260625000005_community.sql`（结构）、`...0006_points_tags_notify.sql`（旧积分/通知/标签/媒体）、`...0008_security_points_ledger.sql`（稳定业务键、账本与冲正）、`...0039_security_integrity_rate_limit_points_abuse.sql`（候选可信列/日上限/审核/协同信号）、`apps/web/src/legacy/community.ts`（前端）、`apps/api/src/points/*`（候选管理边界）。
 
 ---
 
@@ -42,6 +43,7 @@ create policy posts_delete_own  ... for delete using (user_id = auth.uid());    
 - comments 同款（公共读 + 作者写删）。
 - **likes/favorites 是 owner-only**（`for all using user_id=auth.uid()`）：你只能看到/改自己的点赞记录。「这帖多少赞」不靠查 likes 表，而靠帖子上的 `like_count`。这样既不泄露「谁赞了谁」，又能显示总数。
 - follows：`select using (follower_id=auth.uid() or following_id=auth.uid())`——能看自己关注的人 + 自己的粉丝。
+- 0039 候选在行级 owner policy 之外增加列级白名单：INSERT 只接受内容列和 `repost_of`，UPDATE 只接受 `title/body/kind/subject/tags/image_url/audio_url`。`user_id`、作者快照、四个计数、repost、points key 和时间由数据库维护；兼容期虽保留 `updated_at` UPDATE grant，trigger 会覆盖客户端值。
 
 > 心法：**读权限按「这数据该不该公开」定**，不是一刀切 owner-only。写权限永远卡 `auth.uid()`。
 
@@ -65,7 +67,7 @@ update posts set like_count = greatest(0, like_count + d) where id = pid;  -- �
 select username, university, major into new.author_name, new.author_university, new.author_major
 from profiles where id = auth.uid();
 ```
-INSERT 时会无视客户端传的 author_*，强制用 profiles 真值。但 UPDATE policy 当前仍允许作者修改快照、计数和时间；0008 已锁定 `repost_of` 与 points key，其它可信字段的“防伪造”尚未覆盖更新路径。
+INSERT 时会无视客户端传的 author_*，强制用 profiles 真值。生产 0038 的 UPDATE policy 仍允许作者修改快照、计数和时间；0008 只锁定 `repost_of` 与 points key。0039 候选用列 grant + `_protect_post_trusted_fields` trigger 同时保护 UPDATE：内容变化才刷新 `updated_at`，纯计数 trigger 变化不伪造“刚编辑”。
 
 ### 3) 转发计数（0005 `_bump_repost`）
 `after insert/delete on posts`：若 `repost_of` 非空，给原帖 `repost_count ±1`。
@@ -149,6 +151,8 @@ DB 触发器：likes_cnt 改 like_count(权威值)；_on_like 激活/冲正同�
 ```
 `toggleFav/toggleFollow` 同样只在后端成功后更新 UI。`addComment/delComment` 走「写库成功后整页重挂 `mountPost`」（评论量小，简单可靠）。`delPost` 用应用内 `confirmDialog` 二次确认。所有路径都会展示 Supabase 失败，不再把 `{ error }` 当成功。
 
+0039 候选在发帖、转发、点赞和评论写成功后额外调用 owner receipt。实际奖励为 0 且原因为 `daily_cap` 时立即 toast，并由数据库保证每类每天最多一条持久通知；receipt 网络失败只显示非阻断提示，不回滚已经成功的社区操作。前端显示的 +N 不是事实源，Profile 仍由账本 projection 刷新。
+
 ### 发帖/编辑（composer）
 - 一个弹窗同时干 新建 与 编辑（`existing` 有无）。
 - **标签多选**：`drawTags()` 把 `globalTags`（🏫大学/🎓专业/📚学科/#自定义）渲染成可切换 chips，点击进/出 `selected` 集合；自定义输入回车 → 加入 `globalTags.tag` + `selected` + `insert tags`。
@@ -165,10 +169,10 @@ DB 触发器：likes_cnt 改 like_count(权威值)；_on_like 激活/冲正同�
 
 ## 五、坑 / 取舍
 - **公共读 vs owner-only**：社区第一次用 `using(true)`；写仍严格。展示他人信息靠快照，不放开 profiles 读权限。
-- **当前 points 完整性**：0008 已修复点赞取消/重赞、评论/帖子删除重建、转发和任务取消重做的净额刷分；相同业务键只有一个 active claim，删除/取消写冲正。每日上限、垃圾内容识别和协同作弊检测仍未实现，所以 points 仍不能作为货币或商业权益。
+- **当前 points 完整性**：0008 已修复点赞取消/重赞、评论/帖子删除重建、转发和任务取消重做的净额刷分；相同业务键只有一个 active claim，删除/取消写冲正。0039 候选增加原创 3、转发 10、评论 10、点赞 20 的每日获奖数量上限，冻结首次 decision；协同扫描只写 pending 信号，人工 suppress/restore 才能冲正同一 root 内容链。生产发布前仍按 0038 无日上限处理；即使发布后 points 也绝非货币或商业权益。
 - **旧余额边界**：迁移前 points 由 0008 作为 `legacy_opening` 留痕，无法从旧表证明来源；2026-07-21 owner 已决定由 0009 追加等额 reversal 全部归零。
 - **UI 与权威值**：互动 UI 只在数据库成功后变更；冗余计数仍以触发器维护的列为权威，下次加载会覆盖本地显示。
 - **导航靠壳委托**：动作按钮必须 `stopPropagation`，否则会连带触发卡片的 `data-go` 跳转。
 
 ## 六、验证
-两用户 RLS E2E、0007→最新迁移的数据升级/旧 opening 归零/发布断言夹具、points 重做/并发/原帖级联冲正和 jsdom 社区失败回归的可执行覆盖矩阵见 [测试指南](../guides/TESTING.md)。套件覆盖 INSERT 防伪造、稳定 key 不可修改、敏感 Profile/RPC 拒绝；作者仍可 UPDATE 快照/冗余计数等字段（`repost_of` 与 points key 除外），这是独立的剩余列级权限缺口。
+两用户 RLS E2E、0007→最新迁移的数据升级/旧 opening 归零/发布断言夹具、points 重做/并发/日上限/原帖链审核和 jsdom 社区失败/回执回归的可执行覆盖矩阵见 [测试指南](../guides/TESTING.md)。候选套件覆盖伪造 owner/作者快照/计数/时间/key 全部失败、合法内容编辑由服务器更新时间、客户端不能读取内部 claims/signals/actions 或调用管理 RPC；只有真实 CI Supabase 执行才是数据库证据。

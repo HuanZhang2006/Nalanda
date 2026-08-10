@@ -11,6 +11,8 @@ const REG_ERR: Record<string, string> = {
   WEAK_PASSWORD: "密码至少 6 位",
   INVALID_EMAIL: "邮箱格式不正确",
   UPSTREAM_UNREACHABLE: "服务暂时不可用，请稍后再试",
+  RATE_LIMITED: "注册请求过于频繁，请按提示等待后重试",
+  RATE_LIMIT_UNAVAILABLE: "注册保护服务暂不可用，请稍后重试",
 };
 
 export function App() {
@@ -95,7 +97,8 @@ export function App() {
         if (!r.ok) {
           const j = await r.json().catch(() => ({}));
           const code = (j && (j.code || (j.message && j.message.code))) || "";
-          setErr(REG_ERR[code] || "注册失败，请重试");
+          const retry = Number(j?.retryAfterSeconds || 0);
+          setErr(`${REG_ERR[code] || "注册失败，请重试"}${retry > 0 ? `（约 ${retry} 秒后恢复）` : ""}`);
           setLoading(false);
           return;
         }

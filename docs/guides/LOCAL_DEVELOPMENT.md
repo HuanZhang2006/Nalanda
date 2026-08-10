@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS Auth/Courses API、FastAPI AI 桩服务。业务数据、认证与文件存储使用 Supabase；仓库已有 `supabase/config.toml`，推荐启动本地 Supabase，也可连接一个**独立的开发项目**。Courses 文件 AI 导入仍未实现；英语词表文本学习不需要 FastAPI、Redis、BullMQ、Stripe 或 Claude。
+当前可本地运行：React/Vite Web、NestJS Auth/Courses API、FastAPI AI 桩服务。业务数据、认证与文件存储使用 Supabase；0039–0040 候选应用要求 Redis 才能通过 API readiness，并用它执行限流和 points 扫描锁。Courses 文件 AI 导入仍未实现；英语词表文本学习不需要 FastAPI、BullMQ、Stripe 或 Claude。
 
 ## 2. 前置条件
 
@@ -26,7 +26,7 @@
 | Supabase CLI | `2.101.0`（与 CI 一致） | 启动本地栈、reset、lint、migration history |
 | Supabase 项目 | 可选的独立开发项目 | 需要验证托管环境时使用，禁止连接生产 |
 
-不用本地数据库时 Docker 可省略；要复现 CI 的数据库/RLS 门禁则必须运行 Docker。当前日常开发不要求启动 Redis。
+不用本地数据库时可连接隔离开发 Supabase；要复现 CI 的数据库/RLS 门禁必须运行 Docker。启动候选 NestJS API 时还需一个测试 Redis；可复用 Docker 或本机 Redis，禁止指向生产。
 
 启用仓库声明的 pnpm 版本：
 
@@ -136,6 +136,9 @@ cp apps/api/.env.example apps/api/.env
 
 ```dotenv
 PORT=3000
+REDIS_URL=redis://localhost:6379/15
+RATE_LIMIT_HMAC_SECRET=<at-least-32-random-local-bytes>
+POINT_ABUSE_SCANNER_ENABLED=false
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<development-service-role-key>
 # 仅旧 HS256 项目需要；使用 JWKS 的项目可以留空
@@ -164,13 +167,23 @@ STT 必须通过 active translation-first spelling session 调用，不能直接
 
 只验证当前 Azure/OpenRouter key 与供应商 wire contract 时可运行 `node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；它默认用 Azure 在内存中合成固定“苹果”WAV。没有本地 Azure key 时，可把已授权、16 kHz mono PCM 的临时中文 WAV 绝对路径放进 `OPENROUTER_STT_FIXTURE_WAV`；文件不得提交。脚本只输出 model、计量、字节数、耗时和关键词布尔值，不输出 key 或 transcript。该直连 smoke 不经过 Nalanda Auth/RPC，不能替代受保护候选 API gate。
 
-`/api/health` 会探测 JWKS 与 PostgREST profiles 空查询，失败返回 503；`REDIS_URL`/`AI_SERVICE_URL` 仍只影响状态展示。API 的 service-role key 还会调用 Courses 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
+`/api/health` 会探测 JWKS/PostgREST、校验 HMAC secret 并真实 Redis PING；Supabase 或 Redis 任一失败都返回 503。API 的 service-role key 还会调用 Courses/points 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
 
 所有 `.env`/`.env.local` 已被 `.gitignore` 排除。提交前仍应运行 `git status --short`，确认没有密钥文件进入暂存区。
 
 ## 6. 启动服务
 
-建议分别打开三个终端。
+建议分别打开 Redis、API、Web 三个终端；AI 桩按需再开。
+
+### 6.0 Redis（本地测试）
+
+若没有本机 Redis，可启动一个不发布到局域网的临时容器：
+
+```bash
+docker run --rm --name nalanda-redis-dev -p 127.0.0.1:6379:6379 redis:7.4-alpine
+```
+
+该无密码命令只适合本机一次性开发。生产必须使用 `infra/deploy/docker-compose.yml` 的私有网络、独立密码、AOF 和 `noeviction`；不要把生产 Redis URL 复制到本地。
 
 ### 6.1 NestJS API（端口 3000）
 
@@ -186,6 +199,8 @@ pnpm --filter @nalanda/api start
 ```bash
 curl -fsS http://localhost:3000/api/health
 ```
+
+健康响应必须同时含 `deps.supabase=ok` 与 `deps.redis=ok`。若只调试不依赖 API 的静态 Web，可以不启 API/Redis，但注册、Courses 和真实业务写入不会完整可用。
 
 ### 6.2 React/Vite Web（默认端口 5173）
 
@@ -288,6 +303,13 @@ eraser 橡皮
 ### 注册返回 `SERVER_MISCONFIG`
 
 API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/api` package 上下文启动，且文件名为 `apps/api/.env`。
+
+### Health 返回 `deps.redis=unavailable`
+
+- 确认 Redis 已监听 `REDIS_URL` 指向的本地地址/DB；
+- `RATE_LIMIT_HMAC_SECRET` 必须至少 32 bytes；
+- 不要把生产密码写进命令历史；本地可用独立随机值；
+- Redis 故障时私有 GET 可降级继续，但注册和写入按设计返回 `RATE_LIMIT_UNAVAILABLE`，不能通过删除保护层“修好”。
 
 ### `/api/me` 返回 401
 

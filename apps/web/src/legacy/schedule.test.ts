@@ -58,6 +58,12 @@ describe("学习计划 jsdom 集成", () => {
     await flush(24);
     expect(supabase.tables.study_tasks.find((task) => task.id === "t1")?.done).toBe(true);
     expect(toast).toHaveBeenCalledWith("任务已完成", "check");
+    const toggle = [...supabase.operations].reverse().find((operation) =>
+      operation.table === "study_tasks" && operation.action === "update");
+    expect(toggle?.payload).toEqual({ done: true });
+    expect(supabase.rpc).toHaveBeenCalledWith("get_point_reward_receipt", {
+      p_event_type: "task_completed", p_source_id: "t1",
+    });
   });
 
   it("删除返回 error 时保留任务并向用户报错", async () => {

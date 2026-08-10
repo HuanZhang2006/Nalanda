@@ -87,6 +87,11 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   translationTranscription?: "success" | "error";
   transcriptionText?: string;
   attemptTimeouts?: number;
+  attemptRateLimits?: number;
+  attemptRetryAfterSeconds?: number;
+  manifestRateLimits?: number;
+  prewarmRateLimits?: number;
+  manifestRetryAfterSeconds?: number;
   sessionState?: Record<string, unknown>;
 } = {}) {
   let cursor = 0;
@@ -100,6 +105,10 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
   const cancellations: string[] = [];
   const retryContinues: string[] = [];
   let pendingAttemptTimeouts = options.attemptTimeouts || 0;
+  let pendingAttemptRateLimits = options.attemptRateLimits || 0;
+  let pendingManifestRateLimits = options.manifestRateLimits || 0;
+  let pendingPrewarmRateLimits = options.prewarmRateLimits || 0;
+  const manifestRequests: string[] = [];
   let assessmentIndex = 0;
   let releaseAttempt: (() => void) | null = null;
   const currentSession = (
@@ -233,6 +242,14 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
         attemptId: string; expectedRevision: number; wordId: string; skill: string; answer: Record<string, unknown>;
       };
       attempts.push(request);
+      if (pendingAttemptRateLimits > 0) {
+        pendingAttemptRateLimits -= 1;
+        return json({
+          code: "RATE_LIMITED",
+          message: "Too many requests",
+          retryAfterSeconds: options.attemptRetryAfterSeconds || 30,
+        }, 429);
+      }
       if (pendingAttemptTimeouts > 0) {
         pendingAttemptTimeouts -= 1;
         return json({ code: "ATTEMPT_TIMEOUT", message: "timeout" }, 504);
@@ -292,6 +309,25 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
     if (path.includes("/api/learning-units/") && (
       path.endsWith("/audio-prewarm") || path.endsWith("/audio-manifest")
     )) {
+      if (path.endsWith("/audio-prewarm") && pendingPrewarmRateLimits > 0) {
+        pendingPrewarmRateLimits -= 1;
+        return json({
+          code: "RATE_LIMITED",
+          message: "Too many requests",
+          retryAfterSeconds: options.manifestRetryAfterSeconds || 3,
+        }, 429);
+      }
+      if (path.endsWith("/audio-manifest")) {
+        manifestRequests.push(path);
+        if (pendingManifestRateLimits > 0) {
+          pendingManifestRateLimits -= 1;
+          return json({
+            code: "RATE_LIMITED",
+            message: "Too many requests",
+            retryAfterSeconds: options.manifestRetryAfterSeconds || 3,
+          }, 429);
+        }
+      }
       if (path.endsWith("/audio-manifest") && options.audio === "pending-then-ready") {
         audioReady = true;
       }
@@ -389,6 +425,7 @@ function installApi(words: VocabularyWord[], stage: LearningSession["stage"], op
     audioRequests,
     cancellations,
     retryContinues,
+    manifestRequests,
     fetchMock,
     releaseAttempt: () => releaseAttempt?.(),
     timeoutNextAttempt: () => { pendingAttemptTimeouts += 1; },
@@ -627,6 +664,64 @@ describe("LearningView immediate feedback", () => {
     await settle();
     expect(api.attempts).toHaveLength(2);
     expect(api.attempts.map((entry) => entry.expectedRevision)).toEqual([0, 1]);
+  });
+
+  it("keeps the same attempt UUID and honors Retry-After after a 429", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "translation", {
+      attemptRateLimits: 1,
+      attemptRetryAfterSeconds: 7,
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+
+    await settle(() => click([...container.querySelectorAll("button")].find((entry) => entry.textContent === "苹果")!));
+    expect(api.attempts).toHaveLength(1);
+    const attemptId = api.attempts[0].attemptId;
+    await act(async () => { await vi.advanceTimersByTimeAsync(6_999); });
+    expect(api.attempts).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await settle();
+    expect(api.attempts).toHaveLength(2);
+    expect(api.attempts[1].attemptId).toBe(attemptId);
+  });
+
+  it("backs off manifest polling on 429 without marking pending audio failed", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "pronunciation", {
+      audio: "pending-then-ready",
+      manifestRateLimits: 1,
+      manifestRetryAfterSeconds: 9,
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    await settle();
+    expect(api.manifestRequests).toHaveLength(1);
+    expect(container.textContent).not.toContain("failed");
+    await act(async () => { await vi.advanceTimersByTimeAsync(8_999); });
+    expect(api.manifestRequests).toHaveLength(1);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await settle();
+    expect(api.manifestRequests).toHaveLength(2);
+  });
+
+  it("starts manifest polling after the initial prewarm request is rate-limited", async () => {
+    vi.useFakeTimers();
+    const words = [word(ids[2], "apple", ["苹果"], 0), word(ids[3], "banana", ["香蕉"], 1)];
+    const api = installApi(words, "pronunciation", {
+      audio: "pending-then-ready",
+      prewarmRateLimits: 1,
+      manifestRetryAfterSeconds: 6,
+    });
+    await settle(() => root.render(<LearningView sessionId={ids[4]} onExit={() => {}} onChanged={() => {}} />));
+    expect(api.manifestRequests).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_999); });
+    expect(api.manifestRequests).toHaveLength(0);
+    await act(async () => { await vi.advanceTimersByTimeAsync(1); });
+    await settle();
+    expect(api.manifestRequests).toHaveLength(1);
+    expect(container.textContent).not.toContain("failed");
   });
 
   it("clears the local-answer notice after sync and shows it again after a later timeout", async () => {

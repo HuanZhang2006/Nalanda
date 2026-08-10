@@ -33,7 +33,10 @@
 | `SUPABASE_URL` | 当前必需（认证/注册） | 公开配置 | Auth controller、JWT guard、health | Admin Auth 基址、JWKS/issuer 基址；缺失时注册报 `SERVER_MISCONFIG`，受保护接口无法通过 JWKS 验签。 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 当前必需（注册/readiness/Courses） | **最高机密** | Auth controller、health、Courses services | 调用 Admin Auth/PostgREST/Storage 与 service-only RPC；绕过 RLS，只能存在于后端且绝不进入响应/日志。 |
 | `SUPABASE_JWT_SECRET` | 当前可选 | **最高机密** | `apps/api/src/auth/supabase.guard.ts` | 旧 HS256 令牌的回退验签。当前守卫优先使用 JWKS；非对称签名项目不应无理由复制此值。 |
-| `REDIS_URL` | 当前仅状态标记 | 内部配置；若含密码则机密 | health | 当前 API 不建立 Redis 连接，只在 `/api/health` 显示 `configured/unset`。目标用于 BullMQ/缓存。 |
+| `REDIS_URL` | 0039–0040 候选必需 | **机密连接串** | Redis service、health、全局限流、扫描器 | API 建立真实连接；生产为 `redis://:<64-hex>@redis:6379/0`。缺失/不可达使 readiness 503，受保护写入 fail-closed。 |
+| `RATE_LIMIT_HMAC_SECRET` | 0039–0040 候选必需 | **最高机密** | Redis service/health | 至少 32 bytes；只对 IP/email 派生 HMAC，不得与 Redis、JWT、备份或供应商 secret 复用。 |
+| `POINT_ABUSE_SCANNER_ENABLED` | 可选，默认启用（除显式 `false`） | 受限配置 | points scanner | Redis 已配置时是否周期扫描协同信号；CI Playwright 显式 false 避免后台不确定性。 |
+| `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | 可选，默认 300，最小 60 | 公开运维配置 | points scanner | 扫描周期；当前 Redis lock TTL 为 240 秒。 |
 | `AI_SERVICE_URL` | 当前仅状态标记 | 内部配置 | health | 当前 API 不调用 AI，只在健康响应显示是否设置。目标值为 AI 内网地址。 |
 | `NODE_ENV` | 部署配置 | 公开配置 | Node/Nest、Courses flags | `production` 时未设置的 Courses/分享/市场 flag 默认关闭；非生产时前三者默认开，语音始终默认关。 |
 
@@ -85,6 +88,7 @@
 | `COURSE_REPORT_DAILY_LIMIT` | 可选，20 | 公开配置 | 每用户本地日期举报次数限制。 |
 | `COURSE_REPORT_ALERT_THRESHOLD` | 可选，3 | 受限配置 | 同一目标 open 举报达到该值写结构化告警；不会自动下架。 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | 逗号分隔的 Supabase user UUID；授权隐藏/恢复/撤回市场版本，应纳入审批与轮换。 |
+| `MODERATION_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | points signal/reward 审核管理员 UUID；新值优先，兼容期仅在为空时回退 Course Market allowlist。 |
 
 所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*`、timeout 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
 
@@ -135,9 +139,11 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | `SUPABASE_PROJECT_REF` | 有新迁移时必需 | 项目标识 | 与生产 Web URL 交叉确认。 |
 | `DB_BACKUP_ENCRYPTION_KEY` | 有新迁移时必需 | **最高机密** | 加密 14 天保留的 release recovery artifact；副本须离线保存。 |
 | `OPENROUTER_API_KEY` | 启用翻译前测时必需 | **最高机密** | GitHub `production` environment secret；部署 job 只经 SSH 标准输入交给服务器安装脚本，随后执行真实 provider gate。不得作为普通 repository variable。 |
+| `REDIS_PASSWORD` | 0039–0040 第一阶段发布必需 | **最高机密** | GitHub `production` environment secret；独立 32-byte hex，经 SSH stdin 写入服务器 mode-600 `.redis.env` 和 API `REDIS_URL`，不打印。 |
+| `RATE_LIMIT_HMAC_SECRET` | 0039–0040 第一阶段发布必需 | **最高机密** | GitHub `production` environment secret；独立 32-byte hex，经 SSH stdin 原子安装；不得等于 Redis password。 |
 | `PUBLIC_ORIGIN` | workflow 非秘密 env | 公开配置 | 公网 smoke 的规范 origin；API 分享 URL 仍从服务器 `.env` 读取，二者必须一致。 |
 
-服务器 `/opt/nalanda/.env` 至少需要 Supabase 两项才能支持注册；启用 Courses 还必须写总/子 flags 和 `PUBLIC_ORIGIN`，启用语音/离线音频再写 Azure key/region、预热 flag、TTS 配额、间隔和 synthesis version；启用语义翻译前测还需 OpenRouter flag/key/model/配额并强制 fake=false。`SUPABASE_JWT_SECRET` 仅作旧 HS256 回退。CI 不下载该文件；OpenRouter 安装脚本在服务器本地保留其它行、原子替换本域变量并恢复 mode 600。CI 随后用该 `.env` 和新 API image 执行真实 Azure gates 与真实 OpenRouter 结构化判定 gate。API image Git SHA 位于非秘密 `.deploy.env` 并由 CI 原子更新。
+服务器 `/opt/nalanda/.env` 至少需要 Supabase、`REDIS_URL` 与 HMAC secret；`/opt/nalanda/.redis.env` 只含 Redis password，不能得到 Supabase/Azure/OpenRouter/HMAC。两文件均 mode 600。CI 不下载它们；安装脚本保留其它 API 行、原子替换本域变量且 stdout 不含 secret。API image Git SHA 位于非秘密 `.deploy.env`。
 
 ## 7. Supabase RLS E2E 变量
 
@@ -150,6 +156,8 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | `SUPABASE_ANON_KEY` | E2E 必需 | 公开凭据 | 以用户 A/B 登录并验证 RLS。 |
 | `SUPABASE_SERVICE_ROLE_KEY` | E2E 必需 | **最高机密** | 创建/删除测试用户和清理 Storage；只注入 Node 测试进程。 |
 | `SUPABASE_RLS_E2E_CONFIRM_REF` | E2E 必需 | 项目标识 | 必须与 URL hostname 的 project ref 精确相等，作为防误操作二次确认。 |
+| `RUN_REDIS_E2E` | 真实 Redis 集成开关 | 公开配置 | 必须为 `true` 才运行 Lua 原子窗口/过期/token lock 测试；普通本地 `pnpm test` 可跳过，CI 必须启用。 |
+| `REDIS_URL`, `RATE_LIMIT_HMAC_SECRET` | Redis E2E 必需 | 本地测试 secret | 只能指向测试 Redis DB；CI 使用 localhost 独立 DB 与固定非生产 HMAC。 |
 
 完整运行与清理流程见 [测试指南](./TESTING.md)。确认 ref 只防手滑，不授权在生产运行。
 
@@ -170,7 +178,7 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 | `ANTHROPIC_API_KEY` | AI health 读取；业务未使用 | **最高机密** | 真实 AI 接入后才成为生成必需项。 |
 | `STRIPE_SECRET_KEY` | 目标占位 | **最高机密** | 当前无支付模块、无消费者。 |
 | `STRIPE_WEBHOOK_SECRET` | 目标占位 | **最高机密** | 当前无 webhook endpoint、无消费者；Caddy 注释不是接口实现。 |
-| `REDIS_URL` | API health 读取，业务未连接 | 内部配置 | compose 中覆盖为 `redis://redis:6379`。 |
+| `REDIS_URL` | API 限流/health/scanner 已读取 | 内部配置 | hybrid 示例无密码且不满足生产基线；若复用必须补密码与独立 HMAC。BullMQ 仍未接入。 |
 | `AI_SERVICE_URL` | API health 读取，业务未连接 | 内部配置 | compose 中覆盖为 `http://ai:8000`。 |
 | `PUBLIC_ORIGIN`、`CORS_ALLOWED_ORIGINS`、`FEATURE_*` | API 已读取 | 公开配置 | Courses 分享 URL、浏览器跨域 allowlist 和分阶段开关；hybrid 示例默认全部 production flag 为 false。 |
 | `AZURE_SPEECH_KEY` | 语音启用时 API 读取 | **最高机密** | 只注入 API；不得注入 Web/AI。 |
@@ -184,7 +192,7 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 |---|---|---|---|
 | 本地 | `apps/web/.env.local` | `apps/api/.env`；AI 进程环境 | 当前 shell/安全密码文件 |
 | GitHub Actions | Actions Secrets 注入 Web 构建 | API 运行密钥仍只在服务器；DB 发布密钥在 protected environment | `SERVER_SSH_KEY`、已核验 host key、Supabase CLI 密钥、备份加密 key |
-| 当前生产 | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env`，权限应为 `0600` | 仅维护窗口临时注入，不落日志 |
+| 当前生产/第一阶段候选 | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env` + 隔离的 `/opt/nalanda/.redis.env`，均 `0600` | 仅维护窗口临时注入，不落日志 |
 | hybrid 目标 | 构建 Web 时另行注入 `VITE_*` | `infra/hybrid-2g/.env` | 仅维护窗口临时注入 |
 
 ## 10. 新增变量检查清单
@@ -193,6 +201,6 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 2. 判断是否会进入浏览器；任何高权限凭据都禁止进入客户端。
 3. 更新对应 `.env.example`，只写占位值。
 4. 更新本矩阵、[本地开发手册](./LOCAL_DEVELOPMENT.md)和[密钥轮换](../operations/SECRET_ROTATION.md)。
-5. 为缺失/无效配置增加启动校验或明确错误；当前 health 的 `configured` 不代表连接成功。
+5. 为缺失/无效配置增加启动校验或明确错误；Supabase 与 Redis health 必须实际探测，不能把变量存在当 readiness。
 6. 更新 CI/compose 后验证变量确实被目标进程读取，避免“配置存在但代码未使用”。
 7. 若变量被移除，先确认生产、GitHub、个人环境和历史部署均不再依赖，再撤销对应秘密。

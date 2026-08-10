@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-08-04。
+最后核对：2026-08-10。生产仍为 0038；0039–0040 是已实现但待受保护发布的第一阶段候选，0041–0042 必须在生产观察至少 24 小时后另行追加。
 
 ---
 
@@ -38,9 +38,9 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
 - 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
-- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；BullMQ/Redis 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。
+- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；BullMQ 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。Redis 已在 0039–0040 候选中用于 API 限流和协同扫描锁，但尚未承担 BullMQ。
 - 安全基线进展：生产已应用 0008–0038，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；Courses 私有写入/RPC/传播、幂等 attempt、service-only 音频/翻译评判/STT/拼写与考试事实、按意图恢复和取消边界均通过双用户 RLS 与发布断言。
-- 仍需优先完成：帖子 UPDATE 可信字段、feedback 状态和部分关联归属；points 每日上限、审核撤销和协同行为检测；AI 数据契约统一与文件导入闭环。
+- 已完成待发布：0039–0040 收紧帖子可信字段、Feedback 状态和 Schedule 关联归属，增加 points 日上限、审核冲正、协同行为待审信号、Redis/HMAC 通用限流与滥用审计。生产证据和 24 小时观察完成前不得标为已上线。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 
@@ -55,7 +55,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - `user / creator / moderator / admin` 角色与最小权限。
 - 用户数据导出、账户删除、法定保留与审计。
 
-当前差距：邮箱所有权未验证；缺找回密码、OAuth、管理角色、数据导出/删除工作流；注册接口缺限流/CAPTCHA。
+当前差距：邮箱所有权未验证；缺找回密码、OAuth、通用管理角色、数据导出/删除工作流和 CAPTCHA。注册双层限流已在 0039–0040 候选应用实现，待生产发布。
 
 ### 3.2 课程与资料库
 
@@ -126,13 +126,13 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 目标能力：帖子、评论、赞、收藏、转发、关注、标签、媒体、举报、屏蔽、审核队列、申诉、频率限制和反垃圾。
 
-当前社交功能基本可用，points 删除/取消/重做已按稳定业务事件冲正去重；扩展推荐前仍须收紧作者可更新的服务端可信字段，增加奖励上限/内容质量反滥用，并治理孤儿媒体。详细规则见[内容审核](governance/CONTENT_MODERATION.md)。
+当前社交功能基本可用；0039–0040 候选已用列级白名单和防御 trigger 收紧作者可信字段，并加入冻结日上限、审核 suppress/restore 和协同待审信号。它不自动处罚、不替代举报/申诉/审核后台，孤儿媒体治理仍未完成。详细规则见[内容审核](governance/CONTENT_MODERATION.md)。
 
 ### 3.7 学习计划
 
 目标能力：任务/目标、资料关联、考试倒计时、提醒、重复任务、时区、日历同步、基于薄弱点的可解释排程。
 
-当前有基础任务、目标、连续学习、启发式填充和幂等任务奖励；取消/删除会冲正，同一永久业务事件重做不会再次推进 streak。后续需完成到期提醒、历史任务分页、目标外键归属校验和真正的 AI/规则推荐。
+当前有基础任务、目标、连续学习、启发式填充和幂等任务奖励；0039–0040 候选增加 goal/task 引用对象 owner trigger、数据库维护 `done_at` 与任务每日奖励上限。后续仍需到期提醒、历史分页和真正的 AI/规则推荐。
 
 ### 3.8 市场、钱包、VIP 与支付
 
@@ -218,9 +218,10 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 - **已实现：**限制 Profile 敏感列、撤销内部 definer 客户端执行权、points append-only 账本/冲正/幂等，以及对应双用户 RLS 回归。
 - **已实现：**修复跨账号 legacy 状态、迟到异步响应、resize 重挂、登录/退出 loading 和 Supabase/Storage error 处理；现有 Web jsdom、API 单元测试、双用户 Supabase E2E 与 Courses Playwright 流程共同覆盖新旧边界。
-- **剩余：**修复帖子 UPDATE 可信字段、feedback 状态、goal/task 关联等权限/完整性问题。
+- **已实现待发布：**0039–0040 修复帖子 UPDATE 可信字段、Feedback 状态、goal/task owner 关联与数据库时间字段；兼容期仍接受两个旧时间列但总由 trigger 覆盖。
 - **已上线：**0008–0010 已完成受保护生产发布；旧 opening 以追加式等额冲正归零，生产 history、发布断言和最终 dry-run 均通过。
-- **剩余：**给 points 增加产品级每日上限、内容审核撤销和协同行为检测；继续收紧帖子/feedback/关联归属权限。
+- **已实现待发布：**points 首次决策冻结、每日数量上限、owner 回执、审核 suppress/restore、协同行为待审信号、Redis 滑动窗口、HMAC 滥用审计和管理 API；自动处罚、完整审核 UI 与 webhook 告警不在本阶段。
+- **发布中止点：**第一阶段兼容应用与 0039–0040 发布后至少观察 24 小时；确认无旧客户端时间列依赖后，才创建/合并 0041–0042 撤销 `posts.updated_at` 与 `study_tasks.done_at` 的兼容 grant。
 - 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、Courses 浏览器主流程、构建、加密恢复点与应用回退门禁；继续补全旧模块 API HTTP/浏览器 E2E 与 FastAPI 测试。
 - 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
 
@@ -279,7 +280,8 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | ID | 能力 | 当前 | 目标阶段 | 关键依赖 |
 |---|---|---|---|---|
 | SEC-01 | Profile 敏感列与内部 RPC 收口 | 已上线 | A | 0008–0010、RLS E2E、2026-07-21 生产发布记录 |
-| SEC-02 | 注册限流、邮箱验证、找回密码 | 未完成 | A/B | SMTP、Throttler |
+| SEC-02 | 注册限流、邮箱验证、找回密码 | 部分 | A/B | 0039–0040 候选实现 Redis IP+email 限流；邮箱验证/找回/CAPTCHA 仍未完成 |
+| SEC-03 | 帖子/Feedback/Schedule 完整性与 points 反滥用 | 已实现 | A | 0039–0040 候选、真实 Redis/双用户 RLS CI；生产与 0041–0042 contract 待完成 |
 | QA-01 | jsdom、API、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API unit + CI 本地 Supabase + Courses Playwright；staging、旧模块 API HTTP/浏览器与 FastAPI 待补 |
 | OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
 | FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
@@ -296,7 +298,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | NOTE-01 | Notes CRUD、编辑、版本和导出 | mock | B/C | AI 结果表 |
 | HOME-01 | 首页真实聚合 | mock | C | Notes/Tasks/Usage |
 | PLAN-01 | 到期提醒与薄弱点排程 | 部分 | C/E | Realtime/cron |
-| COM-01 | 举报、审核、屏蔽、反垃圾 | 未完成 | E | 管理端、策略 |
+| COM-01 | 举报、审核、屏蔽、反垃圾 | 部分 | E | points 协同信号/审核 API 已实现待发布；内容举报、申诉、屏蔽和完整管理端仍未完成 |
 | PAY-01 | credits 账本与订单 | 仅字段 | D | 产品规则、API |
 | PAY-02 | Stripe/VIP/退款/Connect | 未完成 | D | PAY-01、合规 |
 | RT-01 | Realtime 通知 | 未完成 | E | 通知来源字段 |

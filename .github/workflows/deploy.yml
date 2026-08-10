@@ -39,6 +39,16 @@ jobs:
   quality:
     name: Lint, typecheck, tests, and build
     runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
     outputs:
       migrations_changed: ${{ steps.migration_changes.outputs.changed }}
     steps:
@@ -135,6 +145,10 @@ jobs:
 
       - name: Unit and jsdom tests
         run: pnpm test
+        env:
+          REDIS_URL: redis://127.0.0.1:6379/15
+          RATE_LIMIT_HMAC_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          RUN_REDIS_E2E: "true"
 
       - name: Build all workspaces
         run: pnpm build
@@ -153,7 +167,7 @@ jobs:
 
           docker build -f infra/hybrid-2g/api.Dockerfile -t "$image" .
           docker run --rm --entrypoint node "$image" -e \
-            "require.resolve('express'); require.resolve('@nalanda/types')"
+            "require.resolve('express'); require.resolve('@nalanda/types'); require.resolve('ioredis')"
           docker run -d --name "$container" -p 127.0.0.1:18411:3000 "$image"
 
           for attempt in $(seq 1 30); do
@@ -161,7 +175,7 @@ jobs:
               node -e '
                 const fs = require("node:fs");
                 const value = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
-                if (value.status !== "error" || value.service !== "nalanda-api" || value.deps?.supabase !== "unavailable") process.exit(1);
+                if (value.status !== "error" || value.service !== "nalanda-api" || value.deps?.supabase !== "unavailable" || value.deps?.redis !== "unavailable") process.exit(1);
               ' "$health_file" 2>/dev/null; then
               exit 0
             fi
@@ -172,11 +186,40 @@ jobs:
             sleep 1
           done
 
+      - name: Validate production compose and nginx rate-limit configuration
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          fixture="$RUNNER_TEMP/nalanda-compose"
+          mkdir -p "$fixture"
+          cp infra/deploy/docker-compose.yml "$fixture/docker-compose.yml"
+          printf 'NALANDA_API_IMAGE=nalanda-api:ci\n' > "$fixture/.deploy.env"
+          printf 'REDIS_PASSWORD=%064d\n' 0 > "$fixture/.redis.env"
+          {
+            printf 'REDIS_URL=redis://:%064d@redis:6379/0\n' 0
+            printf 'RATE_LIMIT_HMAC_SECRET=%064d\n' 1
+          } > "$fixture/.env"
+          docker compose --env-file "$fixture/.deploy.env" -f "$fixture/docker-compose.yml" config >/dev/null
+          docker run --rm \
+            -v "$PWD/infra/deploy/nginx-rate-limit.conf:/etc/nginx/conf.d/00-nalanda-rate-limit.conf:ro" \
+            -v "$PWD/infra/deploy/nginx.nalanda.conf:/etc/nginx/conf.d/nalanda.conf:ro" \
+            nginx:1.27-alpine nginx -t
+
   migration_validation:
     name: Rebuild, lint, and RLS-test local Supabase
     needs: quality
     runs-on: ubuntu-latest
     timeout-minutes: 25
+    services:
+      redis:
+        image: redis:7.4-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 12
     steps:
       - uses: actions/checkout@v4
 
@@ -210,7 +253,10 @@ jobs:
           )
           [[ "${#upgrade_migrations[@]}" -gt 0 ]] || { echo "No 0008+ migrations found" >&2; exit 2; }
           staged_upgrade_dir="$RUNNER_TEMP/nalanda-points-upgrade"
+          staged_security_dir="$RUNNER_TEMP/nalanda-security-upgrade"
           mkdir -p "$staged_upgrade_dir"
+          mkdir -p "$staged_security_dir"
+          security_migrations=()
           restore_upgrade_migrations() {
             local migration staged
             for migration in "${upgrade_migrations[@]}"; do
@@ -220,7 +266,20 @@ jobs:
               fi
             done
           }
-          trap restore_upgrade_migrations EXIT
+          restore_security_migrations() {
+            local migration staged
+            for migration in "${security_migrations[@]}"; do
+              staged="$staged_security_dir/$(basename "$migration")"
+              if [[ -f "$staged" ]]; then
+                mv -- "$staged" "$migration"
+              fi
+            done
+          }
+          restore_all_upgrade_migrations() {
+            restore_upgrade_migrations
+            restore_security_migrations
+          }
+          trap restore_all_upgrade_migrations EXIT
           for migration in "${upgrade_migrations[@]}"; do
             [[ -f "$migration" ]] || { echo "Missing upgrade migration: $migration" >&2; exit 2; }
             mv -- "$migration" "$staged_upgrade_dir/$(basename "$migration")"
@@ -246,6 +305,28 @@ jobs:
           node apps/web/tests/points-upgrade.e2e.mjs seed
 
           restore_upgrade_migrations
+          mapfile -t security_migrations < <(
+            find supabase/migrations -maxdepth 1 -type f -name '*.sql' -print \
+              | LC_ALL=C sort \
+              | awk -F/ '$NF >= "20260810000039"'
+          )
+          [[ "${#security_migrations[@]}" -gt 0 ]] || { echo "No 0039+ migrations found" >&2; exit 2; }
+          for migration in "${security_migrations[@]}"; do
+            mv -- "$migration" "$staged_security_dir/$(basename "$migration")"
+          done
+
+          # First reach the exact 0038 production baseline, then create the
+          # historical edge where a 0008 placeholder is cancelled without ever
+          # having received a per-business positive entry.
+          supabase migration up --local
+          ALLOW_POINTS_UPGRADE_E2E=YES \
+          POINTS_UPGRADE_FIXTURE="$fixture" \
+          SUPABASE_URL="$API_URL" \
+          SUPABASE_ANON_KEY="$ANON_KEY" \
+          SUPABASE_SERVICE_ROLE_KEY="$SERVICE_ROLE_KEY" \
+          node apps/web/tests/points-upgrade.e2e.mjs mutate
+
+          restore_security_migrations
           supabase migration up --local
           ALLOW_POINTS_UPGRADE_E2E=YES \
           POINTS_UPGRADE_FIXTURE="$fixture" \
@@ -316,6 +397,9 @@ jobs:
           FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
           AZURE_SPEECH_FAKE=true \
           OPENROUTER_FAKE=true \
+          REDIS_URL=redis://127.0.0.1:6379/14 \
+          RATE_LIMIT_HMAC_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+          POINT_ABUSE_SCANNER_ENABLED=false \
           PUBLIC_ORIGIN=http://127.0.0.1:5173 \
           pnpm --filter @nalanda/web test:playwright
 
@@ -498,11 +582,14 @@ jobs:
             "$SERVER_USER@$SERVER_HOST" "install -d -m 700 /opt/nalanda/incoming/${GITHUB_SHA}"
           scp -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
             nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
+            infra/deploy/nginx-rate-limit.conf \
             scripts/smoke-azure-speech.mjs scripts/smoke-learning-audio-production.mjs \
             scripts/learning-audio-smoke-lib.mjs \
             scripts/smoke-openrouter-translation.mjs \
             scripts/openrouter-translation-smoke-lib.mjs \
             scripts/install-production-openrouter-env.sh \
+            scripts/install-production-security-env.sh \
+            scripts/install-production-nginx-rate-limits.sh \
             "$SERVER_USER@$SERVER_HOST:/opt/nalanda/incoming/${GITHUB_SHA}/"
 
       - name: Install the protected OpenRouter runtime configuration
@@ -520,6 +607,27 @@ jobs:
             ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
               "$SERVER_USER@$SERVER_HOST" \
               "bash /opt/nalanda/incoming/${GITHUB_SHA}/install-production-openrouter-env.sh /opt/nalanda"
+
+      - name: Install protected Redis and rate-limit runtime secrets
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          REDIS_PASSWORD: ${{ secrets.REDIS_PASSWORD }}
+          RATE_LIMIT_HMAC_SECRET: ${{ secrets.RATE_LIMIT_HMAC_SECRET }}
+        run: |
+          set -Eeuo pipefail
+          [[ "$REDIS_PASSWORD" =~ ^[0-9a-fA-F]{64}$ ]] || {
+            echo "Missing or invalid protected input: REDIS_PASSWORD" >&2
+            exit 2
+          }
+          [[ "$RATE_LIMIT_HMAC_SECRET" =~ ^[0-9a-fA-F]{64}$ ]] || {
+            echo "Missing or invalid protected input: RATE_LIMIT_HMAC_SECRET" >&2
+            exit 2
+          }
+          printf '%s\n%s\n' "$REDIS_PASSWORD" "$RATE_LIMIT_HMAC_SECRET" |
+            ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+              "$SERVER_USER@$SERVER_HOST" \
+              "bash /opt/nalanda/incoming/${GITHUB_SHA}/install-production-security-env.sh /opt/nalanda"
 
       - name: Activate release and automatically roll back application on failure
         env:
@@ -552,6 +660,7 @@ jobs:
           assert value.get("status") == "ok"
           assert value.get("service") == "nalanda-api"
           assert value.get("deps", {}).get("supabase") == "ok"
+          assert value.get("deps", {}).get("redis") == "ok"
           ' <<< "$payload"
           }
 
@@ -575,6 +684,24 @@ jobs:
             local status
             status="$(curl -sS --max-time 10 -o /dev/null -w '%{http_code}' "$endpoint")" || return 1
             [[ "$status" == "401" ]]
+          }
+
+          assert_rate_limit_headers() {
+            local endpoint="$1"
+            local headers status
+            headers="$(mktemp)"
+            status="$(curl -sS --max-time 10 -D "$headers" -o /dev/null -w '%{http_code}' \
+              -H 'Content-Type: application/json' \
+              --data '{}' "$endpoint")" || {
+                rm -f "$headers"
+                return 1
+              }
+            grep -qi '^ratelimit-limit:' "$headers" \
+              && grep -qi '^ratelimit-remaining:' "$headers" \
+              && [[ "$status" == "400" ]]
+            local result=$?
+            rm -f "$headers"
+            return "$result"
           }
 
           wait_for_api() {
@@ -653,12 +780,15 @@ jobs:
           [[ -s "$incoming/nalanda-api.tar.gz" ]]
           [[ -s "$incoming/web.tgz" ]]
           [[ -s "$incoming/docker-compose.yml" ]]
+          [[ -s "$incoming/nginx-rate-limit.conf" ]]
           [[ -s "$incoming/smoke-azure-speech.mjs" ]]
           [[ -s "$incoming/smoke-learning-audio-production.mjs" ]]
           [[ -s "$incoming/learning-audio-smoke-lib.mjs" ]]
           [[ -s "$incoming/smoke-openrouter-translation.mjs" ]]
           [[ -s "$incoming/openrouter-translation-smoke-lib.mjs" ]]
           [[ -s "$incoming/install-production-openrouter-env.sh" ]]
+          [[ -s "$incoming/install-production-security-env.sh" ]]
+          [[ -s "$incoming/install-production-nginx-rate-limits.sh" ]]
           gzip -t "$incoming/nalanda-api.tar.gz"
           tar -tzf "$incoming/web.tgz" >/dev/null
 
@@ -667,6 +797,33 @@ jobs:
           cp "$incoming/docker-compose.yml" "$next_compose"
           printf 'NALANDA_API_IMAGE=nalanda-api:%s\n' "$sha" > "$next_env"
           gunzip -c "$incoming/nalanda-api.tar.gz" | docker load
+
+          # Redis starts before the new API and remains available across an
+          # application rollback. It has no published host port, requires a
+          # password, persists AOF every second and fails readiness unless PING
+          # succeeds from inside the container network.
+          docker compose --env-file "$next_env" -f "$next_compose" up -d redis
+          redis_healthy=false
+          for attempt in $(seq 1 30); do
+            redis_container="$(docker compose --env-file "$next_env" -f "$next_compose" ps -q redis)"
+            if [[ -n "$redis_container" ]] \
+              && [[ "$(docker inspect --format '{{.State.Health.Status}}' "$redis_container")" == "healthy" ]]; then
+              redis_healthy=true
+              break
+            fi
+            sleep 2
+          done
+          [[ "$redis_healthy" == true ]] || {
+            docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 redis || true
+            echo "Redis failed protected startup" >&2
+            exit 1
+          }
+          [[ -z "$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$redis_container" | grep -o 'HostPort' || true)" ]]
+          docker compose --env-file "$next_env" -f "$next_compose" exec -T redis sh -ec \
+            'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -qx PONG; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET appendonly | tail -n1)" = yes; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory-policy | tail -n1)" = noeviction'
+
+          bash "$incoming/install-production-nginx-rate-limits.sh" \
+            "$incoming/nginx-rate-limit.conf" /etc/nginx/sites-available/nalanda
 
           # The live Azure credential remains only in the production host's
           # mode-600 .env. Validate TTS + pronunciation assessment from the new
@@ -706,6 +863,14 @@ jobs:
             rollback_application "local auth guard smoke check failed" || true
             exit 1
           fi
+          if ! assert_auth_guard http://127.0.0.1:8411/api/admin/points/abuse-signals; then
+            rollback_application "local points admin auth smoke check failed" || true
+            exit 1
+          fi
+          if ! assert_rate_limit_headers http://127.0.0.1:8411/api/auth/register; then
+            rollback_application "local rate-limit header smoke check failed" || true
+            exit 1
+          fi
           if ! docker run --rm \
             --network host \
             --env-file "$root/.env" \
@@ -734,6 +899,7 @@ jobs:
             web_payload="$(curl -fsS --max-time 10 "$public_origin/" || true)"
             if assert_api_health "$public_origin/api/health" \
               && assert_auth_guard "$public_origin/api/me" \
+              && assert_auth_guard "$public_origin/api/admin/points/abuse-signals" \
               && grep -q '<div id="root"></div>' <<< "$web_payload"; then
               external_ok=true
               break
@@ -742,6 +908,10 @@ jobs:
           done
           if [[ "$external_ok" != true ]]; then
             rollback_application "external API/Web smoke check failed" || true
+            exit 1
+          fi
+          if ! assert_rate_limit_headers "$public_origin/api/auth/register"; then
+            rollback_application "external rate-limit header smoke check failed" || true
             exit 1
           fi
 
