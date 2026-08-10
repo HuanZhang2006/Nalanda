@@ -11,7 +11,7 @@
 - 轮换必须包含四步：**创建/启用新凭据 → 更新全部消费者 → 验证 → 撤销旧凭据**。
 - 若凭据已确认泄露，优先撤销和控制影响；不能为了“可回退”继续保留旧泄露 key。
 - 供应商控制台流程和 key 类型可能变化。操作前在当前控制台确认是否支持双 key/重叠期、对 session/webhook 的影响和审计记录。
-- 当前没有 secret manager、自动到期、轮换日历或凭据使用审计的仓库实现；`/opt/nalanda/.env` 是服务器本地文件。受保护 deploy 只会通过标准输入原子更新 OpenRouter 域变量，不下载或重建整份文件。
+- 当前没有 secret manager、自动到期、轮换日历或凭据使用审计的仓库实现；`/opt/nalanda/.env` 是服务器本地文件。受保护 deploy 只会通过标准输入原子更新 OpenRouter 域变量，以及 Redis URL/HMAC 与隔离的 `.redis.env`，不会下载或重建整份文件。
 
 ## 2. 凭据清单
 
@@ -32,6 +32,9 @@
 | `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；Japan East 基础、持久队列、重复词复用与裁剪评分 gate 均已通过 |
 | `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 拼写翻译语义评判；0037 起复用其调用 Fish Audio STT | 否 | 只轮换一个 secret；必须分别通过 structured 文本判分和中文 WAV→Fish Audio gates，fake 不得进入生产 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
+| `MODERATION_ADMIN_USER_IDS` | API `.env` | Points signal/reward 审核 allowlist | 否 | 敏感授权配置；0039 兼容期为空才回退 Course Market allowlist |
+| `REDIS_PASSWORD` | GitHub `production` secret → `/opt/nalanda/.redis.env`；API `.env` 只持含密码的 `REDIS_URL` | 私有 Redis 与 Nest ioredis | 否 | 0039 候选；独立 32-byte hex，Redis 容器不接收其它 API secrets |
+| `RATE_LIMIT_HMAC_SECRET` | GitHub `production` secret → API `.env` | IP/email actor HMAC 与 readiness | 否 | 0039 候选；独立 32-byte hex，不得与 Redis password 复用 |
 | `STRIPE_SECRET_KEY` | hybrid `.env` 目标 | 未来支付服务 | 否 | 未实现 |
 | `STRIPE_WEBHOOK_SECRET` | hybrid `.env` 目标 | 未来 webhook 验签 | 否 | endpoint 未实现 |
 | TLS private key / ACME account | 生产 certbot/nginx | HTTPS | 否 | 当前由服务器维护 |
@@ -156,7 +159,22 @@
 
 GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定期清理离职人员、PAT、deploy key 和第三方 Actions 权限。
 
-## 10. Anthropic key（目标）
+## 10. Redis password 与 RateLimit HMAC（0039 候选）
+
+两个值必须分别使用密码学随机 32 bytes（部署输入为 64 位 hex）。`REDIS_PASSWORD` 只以独立 `.redis.env` 传给 Redis；API 只收到含密码的 `REDIS_URL`。`RATE_LIMIT_HMAC_SECRET` 只进 API。`scripts/install-production-security-env.sh` 从标准输入读取并原子替换，拒绝非法长度且不打印值。
+
+计划轮换：
+
+1. 在受控终端生成两个新值，更新 GitHub `production` environment；不要粘到命令参数、工单或 Actions 输出。
+2. 低流量窗口先保留 nginx 限流，备份 `.env/.redis.env` 的权限和非秘密 checksum；通过标准输入运行 installer。
+3. Redis password 变化时先重建 Redis，再立即重建 API；这段短窗口内写入/注册/成本路径应按设计 503，不能临时 fail-open。若只轮换 HMAC，可复用当前 Redis password 并只重建 API。
+4. 验证 Redis 无宿主机端口、认证 PING、AOF `everysec`、`noeviction`、API `deps.redis=ok`、注册/认证/Courses 的标准 headers，以及私有 read 与 protected write 的故障分级。
+5. HMAC 变化会产生全新 actor key，旧窗口不能跨 secret 关联且请求额度会重新开始；记录明确的审计断点和 UTC 时间，保留 nginx 突发层，不能尝试反推旧 IP/email。
+6. 验证旧 Redis password 无法认证；删除临时备份中的旧明文并确认日志/artifact 未包含 secret。
+
+泄露时立即替换两个值中受影响者并审计 `api_abuse_events`、429/503、注册和 provider 用量。Redis AOF 不是 points 事实库；不得通过删除 claim/ledger 来“同步”新窗口。
+
+## 11. Anthropic key（目标）
 
 当前 Python 代码只用 key 是否存在来显示 health，生成函数仍为桩。真实接入前：
 
@@ -168,7 +186,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 禁止把 key 送入 Web 或记录模型请求中的原始课件正文。轮换不应改变模型/提示词版本；若同时改变，评测无法隔离原因。
 
-## 11. Azure Speech key（生产当前使用）
+## 12. Azure Speech key（生产当前使用）
 
 `AZURE_SPEECH_KEY` 只在 Nest API。region/voice 不是秘密，但必须与 key 所属 resource 一致。自动测试的 `AZURE_SPEECH_FAKE=true` 绝不能作为轮换验证。
 
@@ -185,7 +203,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 `COURSE_MARKET_ADMIN_USER_IDS` 变更需双人复核 Supabase UUID：先添加新管理员并验证受审计 hide/restore，再移除旧 UUID、重启 API，并确认旧账号返回 `ADMIN_REQUIRED`。不得用共享 service-role 或开放 RPC 替代管理员列表。
 
-## 12. OpenRouter key（生产当前使用）
+## 13. OpenRouter key（生产当前使用）
 
 `OPENROUTER_API_KEY` 只由 NestJS 读取；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。语义判分和 0037 Fish Audio STT 复用该 key，但 model、timeout 和配额分别配置，不能为 STT 创建浏览器 key。生产同时在 GitHub `production` environment 和服务器 mode-600 `.env` 保存当前值：前者只用于受保护部署时经 SSH 标准输入安装，后者由 API 容器消费。仓库脚本拒绝不符合预期形状的输入，并保留其它 env 行。
 
@@ -201,7 +219,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 泄露时立即关闭翻译前测、撤销 key、核查 usage/账单、GitHub/服务器/Actions 访问与 API 日志。数据库没有用户答案正文，但要审计 provider 请求时间窗和异常评判量。模型或 base URL 变化不是普通 key 轮换，必须独立评测并更新 ADR/成本文档。
 
-## 13. Stripe secret/webhook secret（尚未实现）
+## 14. Stripe secret/webhook secret（尚未实现）
 
 当前没有支付 controller、webhook endpoint、订单/账本表或 Stripe SDK。`infra/hybrid-2g/.env.example` 和 Caddy 注释只是目标占位。
 
@@ -212,7 +230,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 必须保留 webhook event ID 幂等、事件重放、订单/credits 账本对账与退款告警。任何 key 轮换都不能通过直接改余额来“修复”。
 
-## 14. TLS/ACME
+## 15. TLS/ACME
 
 当前 nginx TLS 由服务器 certbot 管理。证书续期通常不需要应用 `.env` 变更，但 private key/ACME 账号泄露必须重新签发/撤销。
 
@@ -226,7 +244,7 @@ systemctl reload nginx
 
 轮换/续期后从外部检查证书 subject、issuer、有效期和完整链。监控阈值见 [可观测性与告警](./OBSERVABILITY_ALERTING.md)。
 
-## 15. 紧急泄露处置
+## 16. 紧急泄露处置
 
 1. 宣布安全事件，记录发现时间、凭据类型、环境、可能暴露位置和 incident commander。
 2. 立即撤销/禁用受影响 key；若无法无损切换，暂停对应入口。
@@ -238,7 +256,7 @@ systemctl reload nginx
 8. 验证旧 key 已失效、新 key 路径正常，持续提高监控等级。
 9. 复盘根因、实际影响、轮换耗时和永久修复。
 
-## 16. 建议轮换周期（待批准）
+## 17. 建议轮换周期（待批准）
 
 | 凭据 | 建议最长周期 | 立即轮换条件 |
 |---|---:|---|
@@ -248,6 +266,7 @@ systemctl reload nginx
 | Anthropic/Stripe secret | 90 天 | usage 异常、泄露、供应商建议 |
 | Azure Speech key | 90 天 | usage/账单异常、泄露、人员/环境变化 |
 | OpenRouter key | 90 天 | usage/账单异常、泄露、模型/供应商访问策略变化 |
+| Redis password / RateLimit HMAC | 90 天 | 任一值泄露、服务器/runner 失陷、actor 审计边界变更 |
 | webhook signing secret | 180 天 | 签名异常、endpoint 泄露 |
 | JWT signing key | 按供应商能力和 session 策略 | key 泄露/算法变更/供应商通知 |
 | TLS 证书 | 自动续期；21/7/2 天告警 | private key 泄露 |
@@ -255,7 +274,7 @@ systemctl reload nginx
 
 周期是目标上限，不代表当前已经自动执行。每个 secret 必须有 owner、创建日、到期日、消费者、最近验证日和撤销证据。
 
-## 17. 轮换完成检查清单
+## 18. 轮换完成检查清单
 
 - [ ] 新凭据只存在于批准的 secret store/目标进程；
 - [ ] Web 中没有任何服务器 secret，静态 artifact 已按需重建；

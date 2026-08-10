@@ -4,6 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
+> - **状态基线**：2026-08-10。生产数据库/应用证据到 0038；0039–0040、私有 Redis 与 nginx 分层限流是尚待 CI/plan/apply 的第一阶段候选。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -23,13 +24,14 @@
 应用层（自托管在服务器）：
   /opt/nalanda/
     ├─ docker compose: api 容器（127.0.0.1:8411 → 容器:3000，mem_limit 256m）
+    ├─ 第一阶段候选: Redis（仅 compose 私网、密码、AOF everysec、noeviction、无宿主端口）
     ├─ web/   前端静态产物（宿主机 nginx 直接托管）
     └─ .env   后端密钥（仅服务器持有）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
 外部：Azure Speech（生产）、OpenRouter 翻译前测（生产）、Stripe/Claude（规划）
 ```
 
-> 登录版只需「web 静态 + api」，redis/ai 暂不部署以省内存。
+> 生产 0038 仍只需「web 静态 + api」。0039–0040 候选把 Redis 作为注册/写入限流、滥用聚合和扫描锁依赖；AI 容器仍不部署，供应商由 NestJS 直连。
 
 ## 3. nginx 接入（隔离的关键）
 
@@ -60,13 +62,13 @@ server {
 文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 在无新 migration 时发布应用，若含新 migration 则验证后停止。数据库 owner 必须在对应 `main` commit 上先手动运行只读 `plan_database_migrations`，复核 history/dry-run 后再单独运行 `apply_database_migrations`；成功发布数据库后才继续应用发布。两个开关不能同时选择；都不选时只重发应用。纯文档变更由 docs workflow 处理。
 
 步骤逻辑：
-1. **质量门**：docs check、typecheck、默认 Vitest（Web jsdom + API/Courses unit）、全部 workspace build。
-2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，随后销毁 fixture 栈并从全新空卷启动 latest/lint；Auth/PostgREST 有界 readiness 通过后运行双用户 RLS/Storage/points/Courses E2E，并以 Azure/OpenRouter fake 跑 Playwright Courses。
+1. **质量门**：docs check、lint/typecheck、默认 Vitest（Web jsdom + API/Courses unit）、真实 CI Redis Lua 原子/过期/锁测试、全部 workspace build。
+2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，随后销毁 fixture 栈并从全新空卷启动 latest/lint；Auth/PostgREST 有界 readiness 通过后运行双用户 RLS/Storage/points/Courses E2E、nginx 容器配置验证，并以 Azure/OpenRouter/Fish fake 跑 Playwright。
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
 5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
 6. **真实供应商 gate**：生产主机从 mode-600 `.env` 向新 image 注入 Azure/OpenRouter keys。Azure gate 验证 MP3/PCM TTS、scripted assessment、队列/private Storage/重复词复用和裁剪评分；0019+ 另验证 OpenRouter structured 同义 true/无关 false，以及真实 Courses API 的同 UUID replay 和权威 spelling attempt。任一失败时尚未切换 Web。
-7. **激活**：API 本地 health 的 Supabase JWKS/PostgREST 双探针通过后原子切换 Web symlink，再从公网验证 Web/API。
+7. **激活**：第一阶段先安装独立 Redis/HMAC secrets、启动并验证 Redis PING/AOF/私网；API 本地 health 的 Supabase JWKS/PostgREST 与 Redis PING/HMAC 全部通过后原子切换 Web symlink，再从公网验证 Web/API/RateLimit headers。
 8. **应用回退**：任一激活后 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；新 release 始终要求 Supabase 双探针为 `ok`，回退验证只要求旧 API 进程契约可用且 `/api/me` 未认证返回 401，以兼容尚未提供依赖级 health 的旧 image；数据库不自动逆向。
 
 Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
@@ -77,6 +79,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - **repository Actions Secrets（当前实际位置）**：`SERVER_HOST`、`SERVER_USER`、`SERVER_SSH_KEY`、`SERVER_SSH_KNOWN_HOSTS`、`VITE_SUPABASE_URL`、`VITE_SUPABASE_ANON_KEY`；`production` environment 会在部署 job 中使用这些仓库级 Secrets。后续如迁移为 environment Secrets，应一次性迁移整组并验证。
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
 - **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与供应商 key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音、音频预热和翻译前测 flags 已开启，Azure/OpenRouter fake=false；受保护步骤只更新 OpenRouter 域变量。TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
+- **第一阶段 security secrets**：`production` environment 的 `REDIS_PASSWORD` 与 `RATE_LIMIT_HMAC_SECRET` 必须独立随机生成，经 stdin 原子安装到 mode-600 `.redis.env` 与 API `.env`；Redis 容器只拿密码，不拿 Supabase/provider/HMAC。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
@@ -215,6 +218,11 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 切流前真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter structured 判分通过；生产待激活 Courses API 的 Azure 中文 WAV→Fish Audio gate 返回 `transcriptionMatched=true`，同时音频/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`。
 - 不可变 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` 健康激活。独立公网复核确认 Web 200、新 React 资产、`/api/health` 的 `deps.supabase=ok` 与匿名 `/api/me=401`；生产主机只读复核确认 Web 软链与运行 API image 均为同一 SHA。真实 STT 使用固定合成中文 WAV，不是物理麦克风或多口音质量 E2E。
 
+### 2026-08-10 · 0039–0040 安全/限流候选（未发布）
+
+- 仓库已实现帖子/Feedback/Schedule 完整性、points 冻结日上限/审核/协同信号、私有 Redis/HMAC 限流、nginx 分层保护、真实 Redis/双用户 RLS/脚本回归及两阶段 workflow。
+- 本节不是发布记录：尚无 PR/main 完整 CI、只读 plan、恢复 artifact、远端 apply、`deps.redis=ok` 或公网限流 smoke 证据。完成这些证据并观察至少 24 小时后，才允许另建 0041–0042 contract。
+
 ## 8. 运维速查
 
 ```bash
@@ -230,5 +238,5 @@ readlink -f web
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 上线 redis/ai 服务（做 AI 生成时）；Stripe Webhook 入口（做支付时）。
+- 完成第一阶段私有 Redis/0039–0040 受保护发布与 24 小时观测；AI/BullMQ 队列和 Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。

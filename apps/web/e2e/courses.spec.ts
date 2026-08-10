@@ -80,6 +80,15 @@ async function signOut(page: Page) {
   await expect(page.getByRole("button", { name: "注册", exact: true })).toBeVisible();
 }
 
+async function createCommunityPost(page: Page, title: string) {
+  await page.getByRole("button", { name: "发帖", exact: true }).first().click();
+  const modal = page.locator(".modal");
+  await modal.getByPlaceholder("标题（可选）").fill(title);
+  await modal.getByRole("button", { name: "发布", exact: true }).click();
+  await expect(modal).toBeHidden();
+  await expect(page.getByRole("heading", { name: title, exact: true })).toBeVisible();
+}
+
 async function currentLearningQuestion(page: Page, courseTitle: string) {
   return page.evaluate(async (title) => {
     const stored = Array.from({ length: localStorage.length }, (_, index) => localStorage.getItem(localStorage.key(index)!)).map((value) => {
@@ -230,6 +239,31 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await reviewModal.getByRole("checkbox", { name: "拼写", exact: true }).uncheck();
   const reviewAudioRequests = new Set<string>();
   let forceAudioPending = true;
+  let manifestRateLimits = 0;
+  let manifestPolls = 0;
+  await page.route("**/api/learning-units/*/audio-manifest", async (route) => {
+    manifestPolls += 1;
+    if (manifestRateLimits === 0) {
+      manifestRateLimits += 1;
+      await route.fulfill({
+        status: 429,
+        headers: {
+          "Retry-After": "1",
+          "RateLimit-Limit": "120",
+          "RateLimit-Remaining": "0",
+          "RateLimit-Reset": "1",
+        },
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "RATE_LIMITED",
+          message: "Too many requests",
+          retryAfterSeconds: 1,
+        }),
+      });
+      return;
+    }
+    await route.continue();
+  });
   await page.route(/\/api\/pronunciation\/audio\//, async (route) => {
     reviewAudioRequests.add(new URL(route.request().url()).pathname.split("/").pop() || "");
     if (forceAudioPending) {
@@ -246,6 +280,9 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await reviewModal.getByRole("button", { name: "开始复习" }).click();
   await expect(page.getByRole("heading", { name: "发音记忆", exact: true })).toBeVisible();
   await expect.poll(() => reviewAudioRequests.size).toBeGreaterThanOrEqual(5);
+  await expect.poll(() => manifestPolls, { timeout: 15_000 }).toBeGreaterThanOrEqual(2);
+  expect(manifestRateLimits).toBe(1);
+  await expect(page.getByText("离线音频准备失败")).toBeHidden();
 
   const firstReviewAudio = page.locator(".course-match > div").first().getByRole("button").first();
   const firstReviewTerm = (await firstReviewAudio.getAttribute("aria-label"))!.replace(/^播放 /, "");
@@ -258,6 +295,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   ).toBeGreaterThanOrEqual(cacheBeforeColdReview + 5);
   await expect(page.getByText(/音频仍在准备中/)).toBeHidden();
   await page.unroute(/\/api\/pronunciation\/audio\//);
+  await page.unroute("**/api/learning-units/*/audio-manifest");
 
   await page.locator(".course-match > div").nth(1)
     .getByRole("button", { name: firstReviewTerm, exact: true }).click();
@@ -293,8 +331,31 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   }
   await expect(page.locator(".course-term")).toHaveText("apple");
   let offlineAttemptCount = 0;
+  let firstRateLimitedAttemptId = "";
+  const routedAttemptIds: string[] = [];
   await page.route("**/api/learning-sessions/*/attempts", async (route) => {
     offlineAttemptCount += 1;
+    const attemptId = String(route.request().postDataJSON()?.attemptId || "");
+    routedAttemptIds.push(attemptId);
+    if (!firstRateLimitedAttemptId) {
+      firstRateLimitedAttemptId = attemptId;
+      await route.fulfill({
+        status: 429,
+        headers: {
+          "Retry-After": "1",
+          "RateLimit-Limit": "120",
+          "RateLimit-Remaining": "0",
+          "RateLimit-Reset": "1",
+        },
+        contentType: "application/json",
+        body: JSON.stringify({
+          code: "RATE_LIMITED",
+          message: "Too many requests",
+          retryAfterSeconds: 1,
+        }),
+      });
+      return;
+    }
     await route.abort("internetdisconnected");
   });
   await page.getByRole("button", { name: "香蕉", exact: true }).click();
@@ -311,6 +372,11 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByText("回答正确，正在进入下一题…")).toBeHidden();
   await expect(page.getByText("2 个答案等待服务器确认。")).toBeVisible();
   expect(offlineAttemptCount).toBeGreaterThan(0);
+  await expect.poll(
+    () => routedAttemptIds.filter((attemptId) => attemptId === firstRateLimitedAttemptId).length,
+    { timeout: 5_000 },
+  ).toBeGreaterThanOrEqual(2);
+  expect(firstRateLimitedAttemptId).toMatch(/^[0-9a-f-]{36}$/i);
 
   await page.unroute("**/api/learning-sessions/*/attempts");
   await page.evaluate(() => window.dispatchEvent(new Event("online")));
@@ -440,6 +506,23 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByRole("heading", { name: "答题明细" })).toBeVisible();
   await page.getByRole("button", { name: "返回历史" }).click();
   await page.getByRole("button", { name: "返回课程" }).click();
+
+  // Daily points caps never reject the underlying community write. The first
+  // three unique original posts award 30 points; the fourth remains visible,
+  // produces the owner receipt toast, and leaves the ledger projection at 30.
+  const postTitles = Array.from({ length: 4 }, (_, index) => `E2E cap post ${index + 1} ${nonce}`);
+  await page.locator('#nav [data-go="community"]').click();
+  await expect(page.getByRole("heading", { name: "学习社区", exact: true })).toBeVisible();
+  for (const title of postTitles.slice(0, 3)) await createCommunityPost(page, title);
+  await page.locator('#nav [data-go="profile"]').click();
+  const profilePoints = page.getByText("积分 Points", { exact: true }).locator("..").locator(".stat-n");
+  await expect(profilePoints).toHaveText("30");
+  await page.locator('#nav [data-go="community"]').click();
+  await createCommunityPost(page, postTitles[3]);
+  await expect(page.getByText(/今日该类积分奖励已达上限/)).toBeVisible();
+  await page.locator('#nav [data-go="profile"]').click();
+  await expect(profilePoints).toHaveText("30");
+  await openCourses(page);
 
   const dialogs = async (dialog: import("@playwright/test").Dialog) => {
     if (dialog.type() === "prompt") await dialog.accept("A free E2E vocabulary course");

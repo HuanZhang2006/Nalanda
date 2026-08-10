@@ -17,26 +17,26 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 |---|---|
 | 注册 / 登录 / 退出 | ✅ Supabase Auth；注册经 NestJS service-role 接口创建已确认账号 |
 | Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除 |
-| Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；数据在 Supabase |
-| Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；“智能填充”为规则式生成 |
+| Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；0039–0040 候选迁移已在仓库收紧帖子可信列并增加 points 日上限、审核冲正与只标记协同检测，生产仍待受保护第一阶段发布 |
+| Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；0039–0040 候选迁移增加关联 owner trigger 与数据库维护 `done_at`；“智能填充”为规则式生成 |
 | Courses / Course Market | ✅ 生产已上线英语词表文本导入、编辑、四阶段学习、复习、Schedule/Profile、免费分享/市场、徽章与积分、即时反馈、幂等弱网答题、持久音频预热、浏览器离线音频、按意图独立续学、显式取消、可选限时拼写、OpenRouter 语义翻译前测、中文翻译语音输入、统一录音波形、轮末错题复盘、默认 90% 可调阈值的拼写/读音考试、复习/考试任意选词、失败考试补练自动结束、考试历史详情和编辑器学习属性；生产迁移已到 0038。词汇只有拼写考试和发音考试均通过才算已学习，`learned_at` 由数据库 trigger 精确派生为两个考试通过时间的较晚值；首次学习、复习、单项考试或手工赋值都不能形成掌握。发音录音已移除本地 VAD/静音裁剪，只保留 Azure 要求的 PCM 格式转换。 |
-| Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；通知当前是查询刷新，不是 Realtime |
+| Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；0039–0040 候选迁移把 Feedback 收敛为用户只读/新增并加入奖励日上限与审核审计；通知当前是查询刷新，不是 Realtime |
 | Home | 🟡 高保真 mock，统计/课程/活动不是真实聚合 |
 | Notes / AI Create | 🟡 高保真 mock；FastAPI 只是桩，未形成解析/生成/落库链路 |
 | Note Market / credits / VIP / 支付 | 🟡 Note Market 仍为 Demo，Course Market 只支持免费克隆；无 credits 账本、订单或 Stripe |
 | Courses 文件导入 / 其他类别 | ⬜ PDF/Word/JSON/Markdown/HTML/图片仅有禁用入口；AI 解析、知识点/阅读理解/题库训练未实现 |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-07-22 发布 0011–0013、2026-07-23 发布 0014，2026-07-27 发布 0015–0018，2026-07-28 发布 0019–0020，2026-07-31 同步到 0024，2026-08-01 同步到 0028，并于 2026-08-04 经独立只读 plan、加密恢复点、apply、远端验证和不可变应用发布依次同步到 0036 与 0038。限时拼写、翻译前测、中文翻译语音输入、统一录音波形、显式取消、轮末错题复盘、拼写/读音考试、任意选词和考试历史均已在线：客户端只负责计时与即时显示，语义判定、错误事实、retry pool、考试分数、双考试掌握、熟练度和奖励继续由服务端决定。翻译语音只在拼写前翻译输入框使用，固定调用 `fish-audio/transcribe-1` 并由 service-only RPC 校验 owner/session/revision/current word 与预留配额；识别结果只回填、可编辑且不自动提交。用户输入正文、WAV 与 transcript 只在请求内存中转发，数据库仅留必要的 SHA-256、判定和计量事实。文件 AI 导入仍是禁用入口；完整离线 PWA app shell 不在本次范围；credits/VIP 仍只是客户端不可写的预留缓存，不是商业账本。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
+旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-08-04 经独立只读 plan、加密恢复点、apply、远端验证和不可变应用发布同步到 0038。仓库现含尚未进入生产的第一阶段 0039–0040：帖子/Feedback/Schedule 数据完整性、冻结自然日 points 决策、审核冲正、协同信号、Redis 滑动窗口限流、HMAC 滥用审计和真实 Redis readiness；第二阶段 0041–0042 只能在兼容应用上线并观察至少 24 小时后追加，不能随第一阶段一起应用。限时拼写、翻译前测、中文翻译语音输入和 Courses 现有业务均继续由服务端决定事实。文件 AI 导入仍是禁用入口；完整离线 PWA、credits/VIP 商业账本未实现。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
 
 ## 当前技术结构
 
 - Web：React 18 + Vite 鉴权壳，内部挂载 legacy DOM 应用。
 - 数据/Auth/Storage：Supabase PostgreSQL、Auth、Storage、RLS。
-- API：NestJS，提供 health/auth/me 与 Courses、会话/复习、语音、分享、课程市场、学习 Profile 聚合、OpenRouter 语义翻译评判，以及 Fish Audio 翻译 STT 接口。
+- API：NestJS，提供 health/auth/me、Courses、语音/AI 适配和 points 管理接口；0039–0040 候选应用增加 ioredis 原子限流、协同扫描器和真实 Redis readiness。
 - AI：FastAPI 骨架和固定桩输出，未接入生产。
 - 共享：pnpm + Turborepo；`packages/ui` 是 CSS 包，Courses 的 camelCase 契约由 `packages/types` 在 Web/API 共用。
-- 生产：GitHub Actions 构建，宿主 nginx 托管 Web，Docker 运行 API，Supabase 使用云服务。
+- 生产：GitHub Actions 构建，宿主 nginx 托管 Web，Docker 运行 API；0039–0040 候选 compose 增加仅容器内网可达、密码认证、AOF everysec 的 Redis，Supabase 继续使用云服务。
 
 ## 仓库入口
 
@@ -44,9 +44,9 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 - `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
 - `apps/ai`：AI 桩。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：仓库当前 38 个追加式迁移；0008–0036 覆盖安全、Courses、音频、考试和精确掌握投影；0037–0038 增加 service-only 翻译 STT 配额/当前题校验及发布断言。生产已于 2026-08-04 受保护同步到 0038。
+- `supabase/migrations`：仓库当前 40 个追加式迁移；0039 为第一阶段安全/points/审计扩展，0040 为失败关闭的结构与权限断言。生产当前仍为 0038，必须完成 plan/恢复点/apply 后才可改写为已上线。
 - `infra/deploy`：当前生产部署配置。
-- `infra/hybrid-2g`：未来 AI/Redis 接入时的通用部署模板。
+- `infra/hybrid-2g`：未来 AI/BullMQ 接入时的通用部署模板；当前生产 Redis 配置在 `infra/deploy`，两者不可混称。
 
 ## 快速开始
 
@@ -70,7 +70,7 @@ pnpm --filter @nalanda/web dev
 pnpm check   # docs:check + release-tool tests + code lint + typecheck + test + build
 ```
 
-默认 `pnpm test` 运行 Web jsdom、API 单元测试和发布工具测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 会启动一次性本地 Supabase，验证 0007→最新和空库重建、双用户 RLS/Storage/Courses，并以 Azure/OpenRouter fake + 固定 WAV 运行 Playwright。0037–0038 另覆盖 STT 当前题/RPC 权限/配额、语音只回填不提交和录音波形。生产应用激活前由服务器 mode-600 `.env` 执行真实 Azure、OpenRouter structured semantic，以及 Azure 中文 WAV→Fish Audio STT 待激活 API gate；2026-08-04 的 0037–0038 发布已通过该 gate。普通 jsdom/mock 结果不能称为真实数据库或供应商 E2E，见[测试指南](docs/guides/TESTING.md)。
+默认 `pnpm test` 运行 Web jsdom 与 API 单元测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 还启动真实 Redis 与一次性本地 Supabase，验证 Lua 原子窗口、0007→最新、空库重建、帖子/Feedback/Schedule 权限、points 并发上限/审核/协同信号及 Courses，并以供应商 fake 运行 Playwright。生产应用激活前仍执行真实 Azure/OpenRouter/Fish gates，同时要求 `deps.supabase=ok` 和 `deps.redis=ok`。本地跳过的 Redis/RLS、jsdom 或 fake provider 都不能称为对应真实 E2E，见[测试指南](docs/guides/TESTING.md)。
 
 ## 静态设计原型
 

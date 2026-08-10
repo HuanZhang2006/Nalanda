@@ -16,12 +16,13 @@
 | 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
 | 发布工具单元 | Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
 | NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter/队列/配额，以及翻译判分与 Fish Audio STT endpoint/body、中文提示、WAV/revision 校验、quota、timeout/非法响应和无正文持久化 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
+| Redis 集成 | 真实 Redis 7.4 验证 Lua 滑动窗口并发原子性、过期和 token lock；未显式开启时只跳过这两项，不得称为 Redis E2E | 本地/CI Redis | `RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 RATE_LIMIT_HMAC_SECRET=<32+ bytes> pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | OpenRouter 供应商 smoke | 文本脚本验证 structured 语义判分；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应 | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
 | FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
 | 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure/OpenRouter fake 运行 Courses、弱网 outbox、Cache Storage、限时拼写、翻译前测、语音回填和实时波形流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
-重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest 和本地 Supabase，但 Azure/OpenRouter 都是 fake。真实 provider smoke 证明当前 key/model/endpoint/structured response，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
+重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；只有启用 `RUN_REDIS_E2E=true` 的两项测试会连接真实 Redis；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest、本地 Supabase 和真实 Redis，但 Azure/OpenRouter 都是 fake。真实 provider smoke 证明当前 key/model/endpoint/structured response，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
 
 ## 2. 首次准备
 
@@ -180,14 +181,17 @@ git check-ignore .env.rls.local
 
 - Profile owner 读写与跨用户隐藏；只允许资料列更新，points/credits/level/VIP/streak 写入均被拒；profile university/major → tags 同步；
 - `_add_points`、`_notify`、`_set_point_event` 客户端 RPC 被拒；普通用户和 service-role 都不能直接写 points ledger/state，用户只能读自己的 entries；
-- 通知、反馈、课程、资料 owner 隔离；owner 资料列表与显式删除路径；
+- 通知、课程、资料 owner 隔离；Feedback 只允许 owner SELECT/INSERT，客户端 UPDATE/DELETE/伪造 status 均失败，service-role 支持更新仍可执行；
 - 跨用户课程不能创建 material；
 - private `materials` Storage：owner 上传/下载/签 URL/删除，另一用户不能下载、签 URL 或写入 owner 路径；
-- 社区 authenticated 公共读，帖子作者权限、作者快照防伪造、`repost_of`/points key 不可修改；
+- 社区 authenticated 公共读；帖子 INSERT/UPDATE 只能使用内容白名单，伪造 owner、作者快照、四个计数、points key 与时间失败，合法内容编辑由数据库刷新 `updated_at`，计数 trigger 不改变内容编辑时间；
 - like/favorite/comment/repost 四类计数、关系行可见性、关注和互动通知；
 - like/comment/repost/original post 的稳定业务键、取消/删除冲正、重建恢复净额、并发删除最后评论、原帖级联冲正、ledger projection 与跨用户隐藏；
 - 发帖积分达到等级阈值后的 points/level/name；
-- study task/goal owner 隔离、关联归属、task key 不可修改、完成/取消/删除/重建净额和 streak 只首次推进；
+- study task/goal owner 隔离；客户端和 service-role 的跨 owner course/material/goal 引用都由 trigger 拒绝，`user_id` 不可修改，`done_at` 只由 `done` 派生；task key 不可修改，完成/取消/删除/重建净额和 streak 只首次推进；
+- 0039 points 决策：原创/转发/评论/点赞/任务的 3/10/10/20/10 每日数量上限在并发下收敛；超限操作成功但永久零奖励，改时区、删除重建不会补领，每类窗口只持久通知一次；0007→0038→latest 夹具验证旧 business key 保持 grandfather 语义，只有 transition 1 的正向分录可证明历史实际奖励；夹具还会在 0038 取消一个 0008 回填任务，确认 0039 以 append-only `grandfather-zero-reset-v1` 补偿无来源负债，之后删除、恢复和审核始终不产生负分；
+- 原帖根链 suppress/restore 只冲正实际获得金额，不重复冲正、不补发日上限 claim；重复 restore 返回 0 变化但保留审计，普通奖励与审核的共享/独占 gate 维持一致锁序；普通客户端及 service-role PostgREST 都不能改写 claim、审核 action 或 signal，审核/扫描只能走 service-only RPC；
+- 同一 actor 对同一 owner 的 8 次互动产生 pending 协同 signal，scanner 不自动改内容、冻结账号或冲正；
 - 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
 - Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage/翻译配额，也不能执行取消、考试、轮次确认、配额预留等特权 RPC；Profile timezone 只接受 IANA 名称；
 - 考试以服务端乱序队列覆盖整单元或 0031 起的 owner-validated 自定义集合：轮末确认期间 attempt/读音评分被拒绝，确认后错词集合不变且重排；第一轮未达线但补练完成会自动结束并写 `practiceCompleted`、不写考试事实。0033 起，达线的单项考试只写对应时间戳，跨日三能力复习仍不 learned，只有拼写/发音考试事实都存在时才 learned；0029 断言读音错词分数，0031 断言选词 scope、历史脱敏和新增 RPC 客户端拒绝，0034 断言双考试约束和唯一投影；
@@ -202,11 +206,11 @@ git check-ignore .env.rls.local
 当前未覆盖或尚未实现的重要风险：
 
 - 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；0009 根据 2026-07-21 产品/安全决定追加等额 reversal 归零。自动测试证明迁移与冲正语义，但生产发布仍须保存聚合审计和处置记录；
-- 帖子作者仍可在 UPDATE 时篡改 author 快照、冗余计数和时间；0008 只锁住 `repost_of` 与 points key；
-- `study_goals.course_id` 跨 owner 归属；
 - `community-media` public bucket 的写/删/对象清理；
 - 账号删除后的全部 Storage 孤儿与隐私删除流程；
-- 每日 points 上限、垃圾/重复内容和协同作弊；普通 answer 的并发/超时重放已覆盖，但 recognition、旧模块写入、进程崩溃窗口和长时间 session 仍需持续扩展。
+- 0039–0040 目前是仓库候选，尚未完成生产第一阶段发布和 24 小时观察；0041–0042 contract grant 撤销不得提前执行；
+- 协同检测只覆盖已锁定的四类阈值并且只标记，不包含内容语义垃圾识别、自动处罚、完整审核后台或跨站设备图谱；跨午夜行为由数据库冻结窗口设计和迁移断言约束，仍需托管 staging 的可控时钟演练；
+- Redis 集成在本机未安装 Redis 时会明确 skip；只有 CI 中的真实 Redis service 能提供该层证据。普通 answer 的并发/超时重放已覆盖，但 recognition、旧模块写入、进程崩溃窗口和长时间 session 仍需持续扩展；
 - 真实 Azure 账号、音频供应商网络、浏览器麦克风权限与实际发音质量；自动测试只使用 adapter fake/固定 WAV。
 
 这些是后续安全迁移、产品治理与负向 E2E 的优先项，不属于当前套件已证明安全的范围。
@@ -272,6 +276,7 @@ ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
 
 ```bash
 pnpm --filter @nalanda/web exec playwright install chromium
+docker run --rm -d --name nalanda-test-redis -p 127.0.0.1:6379:6379 redis:7.4-alpine
 supabase start
 supabase db reset --local --no-seed
 supabase status -o env > /tmp/nalanda-supabase.env
@@ -293,11 +298,14 @@ FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
 FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
 AZURE_SPEECH_FAKE=true \
 OPENROUTER_FAKE=true \
+REDIS_URL=redis://127.0.0.1:6379/14 \
+RATE_LIMIT_HMAC_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
+POINT_ABUSE_SCANNER_ENABLED=false \
 PUBLIC_ORIGIN=http://127.0.0.1:5173 \
 pnpm --filter @nalanda/web test:playwright
 ```
 
-确保 3000/5173 没有遗留进程，结束后 `supabase stop --no-backup`。流程覆盖：注册→空 Courses→多单元导入/纠错/滚动/排序→保存→四阶段→刷新续学→复习/考试→发布/克隆；并验证 Cache Storage、弱网 outbox、限时/翻译前测、翻译麦克风回填不自动提交，以及翻译/认词/读音考试录音时的波形。这里的音频、语义和 STT 均由 API fake provider 产生，只证明浏览器/API/本地 Supabase 协作，不证明 Azure 或 OpenRouter。它是真 Chromium 布局与交互 E2E，不是供应商或截图视觉回归。
+确保 3000/5173/6379 没有遗留进程，结束后执行 `supabase stop --no-backup` 与 `docker rm -f nalanda-test-redis`。流程覆盖：注册→空 Courses→多单元导入/纠错/滚动/排序→保存→四阶段→刷新续学→复习/考试→发布/克隆；并验证 Cache Storage、弱网 outbox、限时/翻译前测、翻译麦克风回填不自动提交，以及翻译/认词/读音考试录音时的波形。Redis 是真实容器；音频、语义和 STT 供应商均为 API fake，因此该层只证明浏览器/API/本地 Supabase/Redis 协作，不证明 Azure 或 OpenRouter。它是真 Chromium 布局与交互 E2E，不是供应商或截图视觉回归。
 
 同一修复的 jsdom 层分别断言：整份导入生成预期单元、多个翻译渲染为独立输入、编辑器批量追加成功，以及与已有词重复时出现 `DUPLICATE_EXISTING_TERM` 且不追加。jsdom 不计算真实尺寸，所以“底部操作是否可达”必须保留在 Playwright 层。
 
@@ -312,6 +320,19 @@ API readiness 单元测试已包含在根 `pnpm test`，也可单独运行：
 ```bash
 pnpm --filter @nalanda/api test
 ```
+
+Redis 集成默认显式 skip；要取得真实 Lua 原子性/过期/lock 证据，先启动一次性 Redis，再运行：
+
+```bash
+docker run --rm -d --name nalanda-test-redis -p 127.0.0.1:6379:6379 redis:7.4-alpine
+RUN_REDIS_E2E=true \
+REDIS_URL=redis://127.0.0.1:6379/15 \
+RATE_LIMIT_HMAC_SECRET=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+pnpm --filter @nalanda/api test
+docker rm -f nalanda-test-redis
+```
+
+`redis.service.integration.test.ts` 只使用随机、短 TTL 的测试 key；不得把它指向生产 Redis。API unit 另覆盖路由分类、HMAC actor、标准 429/503、fail-open/closed 与审计里程碑，但 fake Redis unit 不能替代上述真实服务测试。
 
 启动 API 后：
 
@@ -363,7 +384,8 @@ pnpm docs:check
 pnpm test:release
 pnpm lint
 pnpm typecheck
-pnpm test
+RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 \
+  RATE_LIMIT_HMAC_SECRET=<CI fixture secret> pnpm test
 pnpm build
 supabase start
 # 先运行上文 0007→latest seed / migration up / assert
@@ -372,8 +394,10 @@ supabase db lint --local --schema public --level error --fail-on error
 # 从 supabase status -o env 注入本地 URL/keys 后：
 pnpm test:rls
 pnpm --filter @nalanda/web exec playwright install --with-deps chromium
-pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + Azure/OpenRouter fake env
+pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + 真实 CI Redis + provider fake env
 ```
+
+质量与数据库 job 都使用独立 Redis 7.4 service。质量 job 执行真实 Lua 集成；浏览器 job 把真实 Redis URL 注入候选 Nest API。compose/nginx 校验还会确认 Redis 无宿主机端口、密码/AOF/noeviction 配置可解析，并执行 `nginx -t`；实际 PING/AOF/私有网络检查属于受保护生产激活门禁。
 
 真实供应商 smoke 必须显式加载只含后端配置、已被 Git 忽略且权限为 600 的文件；脚本拒绝 `AZURE_SPEECH_FAKE=true`，不会打印 key 或完整供应商响应：
 
@@ -411,6 +435,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Web/legacy UI | typecheck + 相关 jsdom + 全部 `pnpm test` + build |
 | Supabase query shape | jsdom + disposable project RLS E2E |
 | Migration/RLS/trigger/function | 空项目全迁移 + 相关旧版本→新版本升级夹具 + lint + RLS E2E + 发布前备份 |
+| 帖子/Feedback/Schedule/points 安全 | 0007→0039/0040 + 空库 + exact grants + 双用户 RLS/service-role 负向测试 + cap 并发/时区/重建 + root suppress/restore + pending scanner signal + ledger/Profile projection；0041/0042 另在 24 小时观察后执行 |
 | NestJS auth/Courses API | typecheck/build + API unit + RLS E2E + Playwright；attempt 变更另测 UUID 重放/revision conflict/outbox；multipart/真实 Azure 与真实 OpenRouter 另做受控 smoke |
 | Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
 | Courses 音频/离线 | cache key/不裁剪录音 unit + API 原字节转发/queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
@@ -422,7 +447,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Courses 双考试掌握 | 真实 Supabase E2E 验证跨日复习与单项考试均不 learned、两项考试任意顺序共同 learned、失败考试不写事实、term/translations/IPA 编辑精确撤销；0034 空库/升级断言字段、check constraint、review 无正向写入和 service-role-only 权限 |
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
-| nginx/compose/CI | build image + staging deploy + 外部 health/login |
+| nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 
 2026-07-27 的可核验发布样本：PR #21 run `30243998633` 与 main run `30244402278` 完成自动化矩阵；只读 plan `30244967669` 只列 0015–0016；apply/deploy `30245430630` 创建恢复 artifact `8644999285`，并在切流前用 Japan East 真实 Azure 验证首次生成、private Storage 命中、跨用户重复词复用和 VAD 裁剪评分。Playwright 在这些 run 中仍使用 fake provider，真实供应商证据只来自独立生产 gate。
