@@ -820,7 +820,9 @@ jobs:
           }
           [[ -z "$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$redis_container" | grep -o 'HostPort' || true)" ]]
           docker compose --env-file "$next_env" -f "$next_compose" exec -T redis sh -ec \
-            'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -qx PONG; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET appendonly | tail -n1)" = yes; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory-policy | tail -n1)" = noeviction'
+            'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -qx PONG; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET appendonly | tail -n1)" = yes; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory-policy | tail -n1)" = noeviction' \
+            </dev/null
+          echo "Redis protected startup verified (PING, AOF, private port, noeviction)."
 
           bash "$incoming/install-production-nginx-rate-limits.sh" \
             "$incoming/nginx-rate-limit.conf" /etc/nginx/sites-available/nalanda
