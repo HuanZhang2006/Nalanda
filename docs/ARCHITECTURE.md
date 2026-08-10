@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-10。生产数据库仍有受保护发布证据到 0038。仓库的 0039–0040 与兼容应用已实现帖子/Feedback/Schedule 完整性、points 日上限/审核/协同信号、Redis 限流和滥用审计，但尚待真实 CI 与受保护生产第一阶段发布；0041–0042 尚未创建，必须等兼容应用在线观察至少 24 小时。Courses 既有能力和 0038 生产事实不变。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-10。生产数据库与兼容应用已受保护发布到 0040：帖子/Feedback/Schedule 完整性、points 日上限/审核/协同信号、Redis 限流和滥用审计均已启用；0041–0042 尚未创建，必须等兼容应用从 `2026-08-10T09:35:34Z` 起在线观察至少 24 小时并通过 go/no-go。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
@@ -43,7 +43,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-08-04 同步到 0038，既有远端 history、lint/空 dry-run、加密恢复点、真实 Azure/OpenRouter/Fish Audio gate、待激活 API readiness 和公网 smoke 均有记录。0039–0040 当前只属于仓库候选：0039 增加直接 PostgREST 写入的防御 trigger/列 grant、冻结奖励窗口与 claim、审核和协同/滥用审计表；0040 逐项断言 trigger、列权限、RLS 与 RPC grant。生产 plan/apply 完成前，架构运行时仍按 0038 解释。
+生产 migration history 已于 2026-08-10 同步到 0040：0039 增加直接 PostgREST 写入的防御 trigger/列 grant、冻结奖励窗口与 claim、审核和协同/滥用审计表；0040 逐项断言 trigger、列权限、RLS 与 RPC grant。独立 plan、加密恢复 artifact `9057062920`、远端 history/lint/空 dry-run、真实 Redis/Azure/OpenRouter/Fish/Courses gates、API readiness 和公网 smoke 均有记录。0041–0042 contract 不属于当前生产或仓库状态。
 
 第一阶段应用把同机 Redis 纳入生产依赖：Redis 只连接默认 compose 私网、无宿主端口、密码认证、AOF `everysec`、`noeviction`；API 使用原子 Lua 滑动窗口和 HMAC(IP/email)键，不保存原始 IP/email。写入/注册/克隆/举报/成本接口在 Redis 故障时 fail-closed，私有只读 fail-open 并输出 `rate_limit_degraded`；readiness 只有 Supabase 与 Redis PING 均成功才为 200。协同扫描器每五分钟以 Redis token lock 单实例执行，只写待审 signal，不自动冻结或冲正。
 
@@ -102,10 +102,10 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产为 0011–0038，含显式取消、拼写/读音考试、任意选词、历史、双考试精确掌握投影、翻译中文 STT 及真实 provider 配额预留 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产 history 为 0040，Courses 功能迁移为 0011–0038，含显式取消、拼写/读音考试、任意选词、历史、双考试精确掌握投影、翻译中文 STT 及真实 provider 配额预留 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
-| Feedback | Supabase table | 生产 0038 真实但状态权限待修；0039 候选收敛为用户只读/新增 |
+| Feedback | Supabase table | 生产 0039 起用户只可新增/读取，status/time/owner 由支持流程维护 |
 | Home | `legacy/data.ts` | mock |
 | Notes/详情四 Tab | `legacy/data.ts` | mock |
 | Create | mock Materials + timeout/toast | mock |
@@ -177,7 +177,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 | 通知反馈 | `notifications`, `feedback` |
 | 社区 | `posts`, `comments`, `post_likes`, `post_favorites`, `follows`, `tags` |
 | 计划 | `study_goals`, `study_tasks` |
-| 成长积分/反滥用（0039 候选） | `point_entries`, `point_event_states`, `point_daily_windows`, `point_daily_award_claims`, `point_moderation_actions`, `point_abuse_signals` |
+| 成长积分/反滥用（0039 生产） | `point_entries`, `point_event_states`, `point_daily_windows`, `point_daily_award_claims`, `point_moderation_actions`, `point_abuse_signals` |
 | 学习内容 | `learning_courses`, `learning_course_units`, `learning_course_words` |
 | 学习事实 | `learning_sessions`, `learning_session_items`, `learning_attempts`, `learning_word_progress`, `learning_spelling_translation_assessments` |
 | 复习 | `learning_review_schedules` |
@@ -188,8 +188,8 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 
 ### 7.2 RLS 概览
 
-- `profiles/courses/materials/notifications/study_*` 采用 owner-only 行策略；Profile 另以列级 UPDATE grant 和触发器保护服务端字段。0039 候选把 Feedback 拆为 owner SELECT/INSERT，用户无 UPDATE/DELETE。
-- `posts/comments` 对认证用户公共读，作者写删；0039 候选把帖子 INSERT/UPDATE 收敛为内容列白名单，并由 trigger 维护 owner、作者快照、计数、业务键和时间。
+- `profiles/courses/materials/notifications/study_*` 采用 owner-only 行策略；Profile 另以列级 UPDATE grant 和触发器保护服务端字段。0039 已把 Feedback 拆为 owner SELECT/INSERT，用户无 UPDATE/DELETE。
+- `posts/comments` 对认证用户公共读，作者写删；0039 已把帖子 INSERT/UPDATE 收敛为内容列白名单，并由 trigger 维护 owner、作者快照、计数、业务键和时间。
 - likes/favorites 只允许用户读写自己的记录。
 - follows 允许关注双方读取，关注者创建/删除。
 - tags 对认证用户公共读，当前也允许任意插入。
@@ -204,11 +204,11 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 - 0008 已关闭 Profile 敏感列写入、内部 RPC 客户端 EXECUTE，以及赞/评论/原创/转发/任务删除重做累计获分问题。
 - points 使用 append-only entries、持久 event state、稳定业务键和冲正；Profile 的 points/level 只是账本投影。迁移前缓存先作为 `legacy_opening` 留痕，再由 0009 追加 reversal 归零，无法追溯为逐笔可信历史。
 - Courses 的尝试 append-only、progress 是保护投影；复习只有在会话完成时才写入不同本地日期并累计复习次数。+20 课程奖励使用用户与规范化不同词集合的 SHA-256 业务键，删除/重建/克隆不能重复领取。
-- 生产 0038 中帖子 `repost_of` 与 points key 已不可变，但作者仍可在 UPDATE 时修改作者快照、冗余计数和时间。0039 候选用内容列白名单与防御 trigger 补齐 owner/快照/计数/时间边界，兼容期只保留会被服务器覆盖的 `updated_at` grant。
-- 0039 候选已验证 `study_goals.course_id` 以及 task 的 course/material/goal 均属于记录 owner；它不强制 material 必须与 task.course_id 是同一课程，这仍是产品级一致性改进项。
-- 0039 候选已移除 Feedback UPDATE/DELETE，状态只由 service-role 支持流程维护；生产 0038 在第一阶段 apply 前仍存在旧权限。
+- 0039 已用内容列白名单与防御 trigger 补齐帖子 owner/快照/计数/时间边界；兼容期只保留会被服务器覆盖的 `updated_at` grant。
+- 0039 已验证 `study_goals.course_id` 以及 task 的 course/material/goal 均属于记录 owner；它不强制 material 必须与 task.course_id 是同一课程，这仍是产品级一致性改进项。
+- 0039 已移除 Feedback UPDATE/DELETE，状态只由 service-role 支持流程维护。
 - Storage 文件和 metadata 删除不是事务；社区媒体存在孤儿文件。
-- 生产 0038 的 points 尚无每日计分上限、审核撤销和协同行为检测；0039 候选已实现冻结 decision、人工 root-chain suppress/restore 和只待审协同信号。内容质量检测、自动处罚、审核 UI/申诉仍未实现；credits/VIP 虽已锁写，但没有商业事实账本。
+- 生产 0039 已实现 points 冻结 decision、每日计分上限、人工 root-chain suppress/restore 和只待审协同信号。内容质量检测、自动处罚、审核 UI/申诉仍未实现；credits/VIP 虽已锁写，但没有商业事实账本。
 
 剩余授权/完整性项仍属于阶段 A；商业账本、反滥用和 Storage 治理必须在相应功能开放前完成。
 
@@ -227,7 +227,7 @@ GitHub Actions 在 runner 上：
 7. API 本地 health 通过后原子切换 Web release，再验证公网 Web/API。
 8. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
 
-服务器上宿主 nginx 托管 `/opt/nalanda/web`，把 `/api/` 反代到仅绑定 `127.0.0.1:8411` 的 API 容器。当前生产 0038 不启动 AI/Redis；第一阶段候选 compose 会启动私有 Redis，但仍不启动 AI。
+服务器上宿主 nginx 托管 `/opt/nalanda/web`，把 `/api/` 反代到仅绑定 `127.0.0.1:8411` 的 API 容器。当前生产 compose 同时运行仅私网开放的 Redis；FastAPI AI 仍未部署。
 Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考 server block 与 Nest body parser 都设为 10 MB；评分 multipart 仍为 2 MB。CI 不自动改 certbot 管理的现网站点，所以首次启用前必须按发布手册同步并 reload nginx。
 
 ### 8.2 通用 2G 模板
@@ -256,7 +256,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 
 ## 10. 当前优先风险
 
-1. 完成 0039–0040 的真实 CI、只读 plan、恢复点和第一阶段生产发布，观察至少 24 小时后再追加 0041–0042 撤销时间列兼容权限。
+1. 持续观察已上线 0039–0040 的 Redis 错误、误限流、points projection 和旧时间列依赖；最早于 `2026-08-11T09:35:34Z` 通过 go/no-go 后再追加 0041–0042 撤销兼容权限。
 2. 在第一阶段生产观察中核对 points cap/审核/协同信号的误报、投影差异和 Redis 降级；再补完整审核 UI/申诉与内容质量检测。credits/VIP 另建商业账本。
 3. 实现 Courses 文件 AI 导入前先统一模型契约、人工确认、评测集、成本和隐私留存；当前禁用入口不能算能力。
 4. 为已上线 Courses/Azure/市场建立持续指标、成本对账和审核工作台；执行数据库/Storage/TTS 缓存恢复与告警演练。

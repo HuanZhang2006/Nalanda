@@ -5,13 +5,13 @@
 > **作用：** 固定实时流量控制与长期业务审计的职责边界，避免把 Redis 当事实库、把客户端反馈当奖励权威，或让 service-role 绕过审核流程。
 > **何时更新：** Redis 拓扑/算法/故障策略、路由分组、points 上限/账本、管理员授权、协同检测、审计保留或两阶段发布方式变化时。
 
-- **状态：** Accepted；0039–0040 与兼容应用已在仓库实现，尚待第一阶段受保护生产发布和至少 24 小时观察；0041–0042 contract 尚未创建。
+- **状态：** Accepted / Stage A deployed；0039–0040 与兼容应用已于 `2026-08-10T09:35:34Z` 受保护生产发布，正在至少 24 小时观察；0041–0042 contract 尚未创建。
 - **日期：** 2026-08-10
 - **决策者：** Nalanda owner
 
 ## 背景
 
-生产 0038 已有 append-only points 账本和稳定业务键，但没有每日奖励上限、人工审核冲正或协同行为信号。注册使用 service-role 创建已确认用户，Courses 包含克隆、举报和外部供应商成本路径；仅靠 nginx 突发限制不能形成 user/email 维度的原子窗口，也不能保存隐私最小化的长期滥用审计。
+本 ADR 通过前，生产 0038 已有 append-only points 账本和稳定业务键，但没有每日奖励上限、人工审核冲正或协同行为信号。注册使用 service-role 创建已确认用户，Courses 包含克隆、举报和外部供应商成本路径；仅靠 nginx 突发限制不能形成 user/email 维度的原子窗口，也不能保存隐私最小化的长期滥用审计。上述缺口中的本 ADR 范围已由生产 0039 收口。
 
 同时，帖子、Feedback 和 Schedule 仍有过宽的直接 PostgREST 写面。安全收口必须保持现有 Web 兼容，不能把数据库 contract 权限与应用更新放在同一次不可观察发布中。
 
@@ -37,5 +37,5 @@
 ## 验证与发布
 
 - CI 使用真实 Redis service 验证 Lua 并发/过期/lock，使用一次性 Supabase 验证精确 grants、双用户负向路径、cap 并发、时区/重建、root suppress/restore 和 pending signal；浏览器供应商仍为 fake。
-- 第一阶段：只读 migration plan → 加密恢复点 → apply 0039–0040 → Redis PING/AOF/private network → 新 API readiness/auth/限流/admin 拒绝 → 真实既有供应商 gate → 激活兼容应用。
-- 至少观察 24 小时 Redis 错误、误限流、points projection 和旧客户端时间字段依赖。通过后才编写、验证和发布 0041–0042；数据库始终 forward-fix，应用可回退上一兼容 release。
+- 第一阶段已完成：只读 migration plan → 加密恢复点 → apply 0039–0040 → Redis PING/AOF/private network → 新 API readiness/auth/限流/admin 拒绝 → 真实既有供应商 gate → 激活兼容应用；证据见部署记录 run `31372888441`。
+- 从 `2026-08-10T09:35:34Z` 起至少观察 24 小时 Redis 错误、误限流、points projection 和旧客户端时间字段依赖。通过后才编写、验证和发布 0041–0042；数据库始终 forward-fix，应用可回退上一兼容 release。

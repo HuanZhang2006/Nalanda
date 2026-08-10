@@ -3,7 +3,7 @@
 > **本文内容：**记录当前已上线生产拓扑，并把它与未部署的混合/目标拓扑分开。  
 > **作用：**让部署、监控和故障排查围绕真实运行系统，而不是早期 Vercel/Railway 或 2G 脚手架假设。  
 > **何时更新：**生产入口、主机、容器、域名、Supabase、AI/Redis 部署或发布方式变化时。  
-> **状态基线：**2026-08-10；生产仍为 nginx + Web/API + Supabase Cloud。0039–0040 候选将在同一 compose 私网增加 Redis，但完成受保护发布前不属于生产事实；敏感主机信息和密钥不写入 ADR。
+> **状态基线：**2026-08-10；生产为 nginx + Web/API + 私有 Redis + Supabase Cloud。Redis 已随 0039–0040 受保护发布；敏感主机信息和密钥不写入 ADR。
 
 - **状态：**Accepted
 - **日期：**2026-06-24
@@ -18,7 +18,7 @@
 
 - 当前生产事实以 `.github/workflows/deploy.yml`、`infra/deploy/docker-compose.yml` 和 nginx 配置为准。
 - nginx 是公网入口，提供 Web 静态产物并反代 `/api`；NestJS API 运行于容器；Supabase Cloud 承担 Auth/Postgres/Storage。
-- 当前不把 FastAPI AI、Redis、Stripe、pgvector、Electron、React Native 或 Supabase Realtime 声称为已生产部署。ADR-0011 已接受仅用于请求保护/扫描锁的同机私有 Redis 候选；它与 `infra/hybrid-2g` 的未来 AI/BullMQ Redis 拓扑不是同一发布事实。
+- 当前不把 FastAPI AI、Stripe、pgvector、Electron、React Native 或 Supabase Realtime 声称为已生产部署。ADR-0011 的同机私有 Redis 已生产运行，但只用于请求保护、审计聚合和扫描锁；它与 `infra/hybrid-2g` 的未来 AI/BullMQ Redis 拓扑不是同一发布事实。
 - `infra/hybrid-2g` 保留为候选脚手架，不是当前运行手册；启用前需新的容量、安全、备份、监控和回滚评审。
 
 ## 后果

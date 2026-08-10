@@ -6,10 +6,10 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至候选 `20260810000040_verify_security_integrity_rate_limit_points_abuse.sql` 的最终叠加结果整理。迁移 SQL是仓库结构权威；生产 migration history 仍只确认到 0038。0039–0040 的表/列在本文标为“候选”，必须经 plan/apply 才能视为生产事实。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至生产 `20260810000040_verify_security_integrity_rate_limit_points_abuse.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 已确认到 0040。0041–0042 contract 尚未创建。
 
-- **生产结构**：生产 0038 为 33 张 `public` 业务/配置表，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
-- **候选结构**：0039 新增 6 张 service-only 表并扩展 `point_event_states`；应用后为 39 张 `public` 表。0040 仅验证，不新增表。
+- **生产结构**：生产 0040 为 39 张 `public` 业务/配置表，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
+- **本次增量**：0039 新增 6 张 service-only 表并扩展 `point_event_states`；0040 仅验证，不新增表。
 - **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。points 信号/审核审计是窄治理能力，不等于通用审核台。
 
 ## 2. 当前 ERD
@@ -370,7 +370,7 @@ erDiagram
 |  | `category` | `text` | 可空 | — |
 |  | `summary` | `text` | 非空 | — |
 |  | `body` | `text` | 可空 | — |
-|  | `status` | `text` | 非空，`'open'` | 0039 候选起仅 service-role 支持流程可改；用户只可新增/读取自己的反馈 |
+|  | `status` | `text` | 非空，`'open'` | 生产 0039 起仅 service-role 支持流程可改；用户只可新增/读取自己的反馈 |
 |  | `created_at` | `timestamptz` | 非空，`now()` | 索引 `(user_id, created_at DESC)` |
 
 ### 3.4 社区表
@@ -390,7 +390,7 @@ erDiagram
 | `image_url`, `audio_url` | `text` | 可空 | 通常是公开 bucket URL，无 FK/所有权校验 |
 | `points_business_key` | `text` | 非空 | 0008 增加；原创按 owner + 规范化内容生成，转发按 actor + 根原创内容键生成，且与 `repost_of` 一并不可变 |
 | `like_count`, `comment_count`, `favorite_count`, `repost_count` | `int` | 非空，`0` | 触发器维护的冗余计数 |
-| `created_at`, `updated_at` | `timestamptz` | 非空，`now()` | 0039 候选 trigger 维护：内容变化才更新 `updated_at`，计数变化不刷新；兼容期客户端值会被覆盖 |
+| `created_at`, `updated_at` | `timestamptz` | 非空，`now()` | 生产 0039 trigger 维护：内容变化才更新 `updated_at`，计数变化不刷新；兼容期客户端值会被覆盖 |
 
 索引：`created_at DESC`、`user_id`、`subject`、`points_business_key`。
 
@@ -419,14 +419,14 @@ erDiagram
 |  | `title` | `text` | 非空 | — |
 |  | `due_date` | `date` | 非空，`current_date` | 索引 `(user_id,due_date)` |
 |  | `done` | `boolean` | 非空，`false` | 任何 done 更新进入幂等状态机；首次完成激活 points/streak，取消会冲正 points |
-|  | `done_at` | `timestamptz` | 可空 | 0039 候选起由 trigger 随 `done` 设置/清空；兼容期客户端值会被覆盖 |
+|  | `done_at` | `timestamptz` | 可空 | 生产 0039 起由 trigger 随 `done` 设置/清空；兼容期客户端值会被覆盖 |
 |  | `points_business_key` | `text` | 非空 | 0008 增加；插入时按 owner、规范化标题、日期和关联实体生成，之后不可变 |
 |  | `course_id` | `uuid` | 可空 | → `courses.id SET NULL`；RLS 校验 owner |
 |  | `material_id` | `uuid` | 可空 | → `materials.id SET NULL`；RLS 校验 owner |
 |  | `goal_id` | `uuid` | 可空 | → `study_goals.id SET NULL`；RLS 校验 owner |
 |  | `created_at` | `timestamptz` | 非空，`now()` | — |
 
-0039 候选为 goal/task 增加防御 trigger：`course_id/material_id/goal_id` 必须属于行 owner，`user_id` 不可修改，service-role 路径也受同一 owner 约束。现有 FK 的 `ON DELETE SET NULL` 语义不变。
+生产 0039 为 goal/task 增加防御 trigger：`course_id/material_id/goal_id` 必须属于行 owner，`user_id` 不可修改，service-role 路径也受同一 owner 约束。现有 FK 的 `ON DELETE SET NULL` 语义不变。
 
 ### 3.6 Points 账本与事件状态
 
@@ -450,12 +450,12 @@ erDiagram
 |  | `event_type`, `reward_amount` | 非空 | 键碰撞时类型/用户/奖励必须一致，否则事务失败 |
 |  | `is_active`, `transition_no` | 非空 | 当前净状态及最新 transition |
 |  | `source_id`, `last_entry_id` | 可空 | 当前源记录；最新分录引用为 `ON DELETE NO ACTION` |
-|  | `source_active`, `moderation_suppressed`, `awarded_amount`, `decision_rule_version`, `suppressed_reason` | 0039 候选，非空/受 check | 分离内容存在、审核、首次实际奖励和当前有效账本状态 |
+|  | `source_active`, `moderation_suppressed`, `awarded_amount`, `decision_rule_version`, `suppressed_reason` | 生产 0039，非空/受 check | 分离内容存在、审核、首次实际奖励和当前有效账本状态 |
 |  | `metadata`, `created_at`, `updated_at` | 非空 | 内部状态与审计时间 |
 
-状态转换通过 `_set_point_event` 的共享 moderation gate、business-key advisory lock、profile 行锁、状态行锁和唯一键串行化；审核取得同一 gate 的独占锁并按 UUID 顺序先锁 Profile、再锁状态，避免锁顺序反转。0039 候选把第一次奖励决策永久写入 claim：原创/转发/评论/点赞/任务的每日可奖励数量分别为 3/10/10/20/10，课程完成不设日上限。超额 claim 为 0 且删除、重建、换时区都不能补领；审核 suppress 只撤回实际已获金额，restore 不恢复已删除来源或 cap=0 的奖励。`grandfather-v1` 的实际金额由该 business key 的 transition 1 正向分录证明；0008/0009 只有状态占位、没有逐业务正向分录的历史键其 `awarded_amount=0,is_active=false`，因此无法产生无来源的负向冲正。旧占位若已留下负 transition，0039 追加 `grandfather-zero-reset-v1` 等额补偿并推进 transition 链，绝不删除或改写原分录。
+状态转换通过 `_set_point_event` 的共享 moderation gate、business-key advisory lock、profile 行锁、状态行锁和唯一键串行化；审核取得同一 gate 的独占锁并按 UUID 顺序先锁 Profile、再锁状态，避免锁顺序反转。生产 0039 把第一次奖励决策永久写入 claim：原创/转发/评论/点赞/任务的每日可奖励数量分别为 3/10/10/20/10，课程完成不设日上限。超额 claim 为 0 且删除、重建、换时区都不能补领；审核 suppress 只撤回实际已获金额，restore 不恢复已删除来源或 cap=0 的奖励。`grandfather-v1` 的实际金额由该 business key 的 transition 1 正向分录证明；0008/0009 只有状态占位、没有逐业务正向分录的历史键其 `awarded_amount=0,is_active=false`，因此无法产生无来源的负向冲正。旧占位若已留下负 transition，0039 追加 `grandfather-zero-reset-v1` 等额补偿并推进 transition 链，绝不删除或改写原分录。
 
-#### 0039 候选：points 与 API 反滥用表
+#### 生产 0039：points 与 API 反滥用表
 
 | 表 | 关键列 | 生命周期与权限 |
 |---|---|---|
@@ -546,7 +546,7 @@ erDiagram
 | `badge_definitions` | 所有 authenticated | 无 | 无 | 无 |
 | `user_badge_awards` | 本人 | 无 | 无 | 无 |
 
-迁移 0008 已修复 Profile 整行更新缺口。0039 候选进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。第一阶段仍保留 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE grant，但值由 trigger 覆盖；观察至少 24 小时后的 0041–0042 才最终撤权。
+迁移 0008 已修复 Profile 整行更新缺口。生产 0039 进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。第一阶段仍保留 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE grant，但值由 trigger 覆盖；观察至少 24 小时后的 0041–0042 才最终撤权。
 
 ## 6. Storage 模型
 
@@ -573,11 +573,11 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_add_points` | 已停用的旧 helper | 不再被业务触发器使用，PUBLIC/anon/authenticated/service_role EXECUTE 均已撤销 |
 | `_notify` | 被其它函数调用 | 插入通知 |
 | `_set_point_event` | 内部状态转换 | 以业务键写分录/状态、重算 points/等级；客户端无 EXECUTE，service_role 可通过受信 RPC 调用 |
-| `_point_daily_bounds`, `_point_daily_window`, `_point_daily_limit` | 0039 候选内部 helper | 计算并冻结奖励自然日/时区边界、避免换时区产生重叠窗口，并返回事件数量上限；客户端无 EXECUTE |
-| `get_point_reward_receipt` | 0039 候选 owner RPC | 从 `auth.uid()` 查本人的 source/event 决策并返回金额/用量/上限/抑制原因；超限通知已与奖励 decision 在原业务事务中幂等创建 |
-| `moderate_point_rewards` | 0039 候选 service-only RPC | 按 business key 或帖子根链 suppress/restore 实际奖励并追加审核事实 |
-| `scan_point_abuse_signals`, `record_api_abuse_event`, `prune_api_abuse_events` | 0039 候选 service-only RPC | 生成待审协同信号、聚合 HMAC API 拒绝事件并清理 30 天旧桶 |
-| `_guard_post_integrity`, `_guard_feedback_insert`, `_guard_study_goal_integrity`, `_guard_study_task_integrity` | 0039 候选 BEFORE triggers | 覆盖或拒绝可信字段、时间和跨 owner 引用；普通角色无 EXECUTE |
+| `_point_daily_bounds`, `_point_daily_window`, `_point_daily_limit` | 生产 0039 内部 helper | 计算并冻结奖励自然日/时区边界、避免换时区产生重叠窗口，并返回事件数量上限；客户端无 EXECUTE |
+| `get_point_reward_receipt` | 生产 0039 owner RPC | 从 `auth.uid()` 查本人的 source/event 决策并返回金额/用量/上限/抑制原因；超限通知已与奖励 decision 在原业务事务中幂等创建 |
+| `moderate_point_rewards` | 生产 0039 service-only RPC | 按 business key 或帖子根链 suppress/restore 实际奖励并追加审核事实 |
+| `scan_point_abuse_signals`, `record_api_abuse_event`, `prune_api_abuse_events` | 生产 0039 service-only RPC | 生成待审协同信号、聚合 HMAC API 拒绝事件并清理 30 天旧桶 |
+| `_guard_post_integrity`, `_guard_feedback_insert`, `_guard_study_goal_integrity`, `_guard_study_task_integrity` | 生产 0039 BEFORE triggers | 覆盖或拒绝可信字段、时间和跨 owner 引用；普通角色无 EXECUTE |
 | `_post_points_key`、`_root_post_points_key`、`_task_points_key` 与 assign/preserve triggers | post/like/comment/task INSERT 与受保护 UPDATE | 生成并冻结内容锚定业务键；post 的 `repost_of` 与互动 identity 同时冻结 |
 | `_guard_profile_managed_fields` | profile BEFORE UPDATE | 防止普通 JWT 角色修改经济、等级、VIP、streak 字段 |
 | `_on_like` / `likes_award` | like AFTER INSERT/DELETE | 非自赞首次激活 +1；删除冲正；通知帖主 |
@@ -609,7 +609,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPC | token hash 生命周期和撤销竞态内的事务克隆 |
 | `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPC | 不可变发布版本、免费独立克隆、限频举报与受审计隐藏/恢复 |
 
-迁移 0008 已显式撤销内部 helper 的客户端执行权。0039–0040 候选延续 default-deny，只把 owner receipt 授予 authenticated；`review_point_abuse_signal`、`moderate_point_rewards`、扫描和 API 审计 RPC 只授予 service-role，而 service-role 对相应内部事实表只有 SELECT，不能通过 PostgREST 绕过 workflow。它仍不包含内容质量自动判定、自动处罚、申诉 UI 或通用 RBAC。
+迁移 0008 已显式撤销内部 helper 的客户端执行权。生产 0039–0040 延续 default-deny，只把 owner receipt 授予 authenticated；`review_point_abuse_signal`、`moderate_point_rewards`、扫描和 API 审计 RPC 只授予 service-role，而 service-role 对相应内部事实表只有 SELECT，不能通过 PostgREST 绕过 workflow。它仍不包含内容质量自动判定、自动处罚、申诉 UI 或通用 RBAC。
 
 0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013–0036 持续检查 append-only、RLS、精确函数签名与 service-role grant；0023–0024 验证标点 matcher，0025–0026 验证取消，0027–0028 验证考试/轮次确认/配额预留 RPC，0029–0034 验证读音考试、自选词、历史、双考试约束、trigger 与客户端拒绝；0035–0036 验证精确 mastery 投影、review 无写入与客户端无 progress 变更权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
 
@@ -630,7 +630,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `point_entries_user_created_idx(user_id, created_at DESC)`
 - `point_event_states_user_idx(user_id, updated_at DESC)`
 - `point_entries UNIQUE(business_key, transition_no)`
-- 0039 候选：`point_daily_windows(user_id,ends_at DESC)`、claim 的 window/event、target owner 与 root 索引；`point_moderation_actions(target_type,target_key,created_at DESC)`；`point_abuse_signals(status,detected_at DESC)`；`api_abuse_events(last_seen_at)`，以及各自主键/唯一 fingerprint 或时间桶约束。
+- 生产 0039：`point_daily_windows(user_id,ends_at DESC)`、claim 的 window/event、target owner 与 root 索引；`point_moderation_actions(target_type,target_key,created_at DESC)`；`point_abuse_signals(status,detected_at DESC)`；`api_abuse_events(last_seen_at)`，以及各自主键/唯一 fingerprint 或时间桶约束。
 - `learning_courses_user_updated_idx(user_id, updated_at DESC)`
 - `learning_course_units_owner_idx(user_id, course_id, position)`
 - `learning_course_words_course_idx(course_id, unit_id, position)`、`learning_course_words_owner_term_idx(user_id, normalized_term)`
