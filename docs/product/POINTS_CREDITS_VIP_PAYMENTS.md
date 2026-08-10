@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-08-04。生产已验证 0008–0038；课程 +20、九级徽章、服务端权威的幂等弱网答题、按意图独立续学、限时/翻译前测、中文翻译语音回填、Unicode 拼写归一化、仅标点差异容错、显式取消、轮末错题复盘、拼写/读音考试、任意选词、历史和双考试精确掌握投影已上线，但仍不把 retry pool、错误次数、考试通过、熟练度、积分或徽章决定权交给客户端；同一词只有同时存在拼写考试与发音考试通过事实才会由 trigger 把 `learned_at` 精确派生为两个通过时间的较晚值，可能经原有课程完成规则触发 +20/徽章，不新增 points 事件类型。Course Market v1 永久按“免费克隆”实现，不接 credits/支付，商业账本、Stripe、VIP 与创作者结算仍未实现。
+> **状态基线：**2026-08-10。生产已验证 0008–0038；课程 +20、九级徽章和服务端权威学习事实已上线。仓库 0039–0040 是尚待受保护发布的 points v2 候选：冻结自然日奖励决策、每日数量上限、owner receipt、人工 suppress/restore 和只标记协同检测。发布前这些能力不得描述为生产事实。Course Market v1 继续只免费克隆，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
 
 ## 1. 规范用语和总原则
 
@@ -33,10 +33,11 @@
 - Create、Market、Home 中的余额、价格、25 credits、70% 分成和兑换 VIP 目前是假数据/原型交互。
 - 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
 - Course Market 的 publication/clone/report 表不是商业市场账本；卡片只显示“免费”，不会产生购买、销量分成、credits debit 或 creator payable。
+- 0039 候选增加 `point_daily_windows/point_daily_award_claims/point_moderation_actions/point_abuse_signals`，并扩展 event state；内部表不开放 PostgREST 写入，service-role 也只能通过受控 SECURITY DEFINER 工作流改变事实。普通用户只能通过 owner-only receipt 读取自己的单次奖励决策。
 
 ### 2.2 发布限制
 
-Profile/RPC/当前 points 重做路径的 P0 已由生产迁移 0008–0010 封堵并验证，但 credits/VIP/支付账本、对账、日上限和商业测试仍未实现。因此：
+Profile/RPC/当前 points 重做路径的 P0 已由生产迁移 0008–0010 封堵并验证。日上限、审核冲正和协同检测已在 0039–0040 候选实现，但仍须完成真实 CI、只读 plan、恢复点、第一阶段发布和观察；credits/VIP/支付账本及商业测试仍未实现。因此：
 
 - 不接入 live Stripe key，不接受真实付款；
 - 不把 `profiles.credits` 当可消费余额；
@@ -54,7 +55,7 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 ### 3.2 奖励事件与初始值
 
-为保持当前体验，迁移 0008 沿用以下数值并已接入事件账本。业务键是数据库生成且不可由客户端改写；“初始防滥用上限”仍是下一阶段门禁，当前尚未执行：
+为保持当前体验，迁移 0008 沿用以下数值并接入事件账本。业务键由数据库生成且不可由客户端改写；0039 候选按下表的每日“可获得奖励事件数量”执行上限，课程完成奖励不进入日上限：
 
 | 事件 | Points | 业务事件 ID | 撤销规则 | 初始防滥用上限 |
 |---|---:|---|---|---|
@@ -65,9 +66,23 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 | 首次完成任务 | +5 | `task:{owner}:{normalized-task-sha256}:completed:v1` | 最后一个同键任务取消/删除时 -5；重做只恢复净额 | 每日计分 10 个任务 |
 | 首次熟练合格词表 | +20 | `learning-course-completed:{user}:{sha256(sorted distinct normalized terms)}` | 历史成就不因删课程冲正；相同词集合的重建/克隆永不重复奖励 | 每个用户/不同词集合永久一次；至少 20 个不同词 |
 
-自赞、自评、自关注、同一内容重复关系、被系统判定为垃圾/协同行为的事件不奖励。上限按用户主时区自然日计算并记录时区快照；换时区不能重置。达到上限不阻止正常使用，只是不再加 points，并向用户清楚提示。
+自赞、自评、自关注、同一内容重复关系仍由既有业务规则处理。协同行为检测只生成待审信号，未经过人工 `suppress` 不能自动拒奖或冲正。达到上限不阻止发帖、转发、评论、点赞或完成任务，只把该稳定 business key 的首次奖励 decision 永久记录为 0；删除、取消、换时区或重建都不能补领。Web 在业务写成功后读取 receipt 并提示，receipt 失败不得回滚已经成功的业务操作。
 
 运营若调整数值/上限，只影响新事件，不重写历史；大规模补算必须创建带活动/规则版本的批次和可冲正记录。
+
+### 3.3 冻结日窗口、回执与审核
+
+- `point_daily_windows` 在首次受限奖励时冻结用户当时的合法 IANA 时区、local date 和对应 UTC 起止。同一活动窗口结束前修改 Profile 时区不会提前开启第二个窗口；跨午夜后的下一窗口由数据库重新计算。
+- `point_daily_award_claims` 对每个稳定 business key 保存规则版本、名义金额、实际金额、上限、owner/root 和唯一 decision。迁移前已有 business key 以 `grandfather-v1` 固化，不追溯套用新上限；实际金额只采信该 business key 的首条正向 transition。0008 只有 active 占位、但没有逐业务正向分录且已由 0009 归零的旧事实永久固化为 0，删除、重建或审核不得制造负分或重新领奖。若旧占位在 0039 前已被取消并留下无正向来源的负账，0039 不改旧分录，而是追加一条 `grandfather-zero-reset-v1` 等额补偿并重新投影 Profile，使其净额可审计地回到 0。
+- `get_point_reward_receipt(eventType,sourceId)` 只从 `auth.uid()` 推导 owner，返回实际金额、当日已用数量/上限、local date 与 `daily_cap/moderation` 原因。每类每天首次超限由数据库写一条持久通知；重复读取不重复通知。
+- `suppress/restore` 只允许配置 allowlist 中的管理员经 NestJS API 执行，必须携带理由和可选 case reference。原创帖 suppress 处理锚定同一 root 的原创、转发、评论和点赞奖励；只撤回历史实际得到的金额，不制造额外负分，删除内容不重复冲正。restore 只恢复原本实际获奖且仍存在的事实，不补发 daily-cap decision 为 0 的奖励。审核使用独占 gate，并在锁状态前按 UUID 顺序锁定相关 Profile；普通奖励使用共享 gate，避免两条事务路径形成 Profile/状态行反向锁死。重复 suppress/restore 仍追加 0 变化审计，不能伪装成目标不存在。
+- `point_moderation_actions` 只追加；信号 review 和奖励 moderation 均经受控数据库函数写入。直接客户端调用、客户端/匿名读取内部表、service-role 直接 INSERT/UPDATE/DELETE 都必须失败。
+
+### 3.4 协同检测不是自动处罚
+
+候选扫描器每五分钟用 Redis 分布式锁确保单实例，检测四类线索：单 actor 对单 owner 24 小时 ≥8 且集中度 ≥70%；双方合计 ≥12 且双向各 ≥4；3–8 个账户七天内部互动 ≥30 且集中度 ≥70%；至少 8 个注册不足七天的账户在十分钟内集中到同一 root/owner。信号按类型、排序账户集合和对齐窗口去重，只能处于 `pending`、`reviewing`、`dismissed` 或 `escalated` 审核状态。
+
+命中阈值不自动扣分、冻结、隐藏、封禁或改变后续奖励。审核员应结合内容、关系和误报情形人工判断；确认信号后若要冲正，仍需单独提交带理由的 moderation action。首版没有管理 UI，也没有 webhook/pager，只有受控管理 API、数据库审计和脱敏结构化日志。
 
 课程奖励的“100%”只看服务端 `learning_word_progress.learned_at`，不看首次四阶段完成度。该字段只由双考试事实派生，相关事实分为：
 
@@ -78,7 +93,7 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 弱网流程中的前端正误、cursor 和“等待同步”都只是 provisional UI。每个答案用 `(user_id,session_id,attempt_id)` 幂等，revision 冲突由服务端拒绝；只有服务端事务确认 attempt、阶段完成、progress、徽章和课程 fingerprint 后才能显示或发放成长事实。离线预测完成、超时重试、重复 replay、Cache Storage 命中和音频生成都不能直接产生 points、徽章、credits 或 VIP。
 
-### 3.3 Courses 徽章（非经济权益）
+### 3.5 Courses 徽章（非经济权益）
 
 徽章是历史成长展示，不可购买、消费、转让、兑换或提现，也不赋予 VIP/市场/审核特权。阈值：
 
@@ -90,7 +105,7 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 `(user_id,badge_code)` 唯一且只追加发放；删课或后来编辑导致统计回落不撤销、不重新发同一枚。删除整个 Auth 账户按隐私流程级联用户 award。Profile 只显示聚合/奖章，不能修改事实。
 
-### 3.4 账本与等级
+### 3.6 账本与等级
 
 `point_entries` 至少包含 `id,user_id,event_type,business_key,amount,rule_version,source_id,reversal_of,created_at,metadata`。`business_key` + 生效方向有唯一约束；金额为有符号整数；禁止 UPDATE/DELETE 已入账记录，纠错新增冲正。
 

@@ -4,6 +4,7 @@
 import { ICON } from "./icons";
 import { syncShellUser } from "./profile";
 import { apiJson } from "../lib/api";
+import { showPointRewardReceipt } from "./point-receipt";
 
 let sb = null, USER = null, toastFn = () => {};
 let rootEl = null;
@@ -208,12 +209,16 @@ async function toggleTask(id) {
   const t = state.tasks.find((x) => x.id === id); if (!t) return;
   const done = !t.done;
   try {
-    const { error } = await client.from("study_tasks").update({ done, done_at: done ? new Date().toISOString() : null }).eq("id", id);
+    const { error } = await client.from("study_tasks").update({ done }).eq("id", id);
     if (error) throw error;
     if (currentVersion !== sessionVersion) return;
     // 相同业务指纹可能是幂等恢复而非新奖励；客户端拿不到账本 transition，
     // 因此这里只确认任务状态，不虚报本次一定增加了 5 points。
-    if (done) toastFn("任务已完成", "check");
+    if (done) {
+      toastFn("任务已完成", "check");
+      void showPointRewardReceipt(client, "task_completed", id, toastFn,
+        () => currentVersion === sessionVersion);
+    }
     await load();
     syncShellUser();
   } catch (e) { if (currentVersion === sessionVersion) toastFn("操作失败：" + (e.message || "")); }

@@ -10,6 +10,10 @@ async function bootstrap() {
   // pronunciation multipart route keeps its independent 2 MB hard limit.
   app.use(json({ limit: "10mb" }));
   app.use(urlencoded({ extended: true, limit: "10mb" }));
+  // The production API is reachable only through the host nginx proxy. Trust
+  // exactly that hop so IP rate limits cannot be replaced by a client-supplied
+  // X-Forwarded-For chain.
+  app.getHttpAdapter().getInstance().set("trust proxy", 1);
   app.setGlobalPrefix("api"); // 匹配 Caddy 的 /api/* 路由
   const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || process.env.PUBLIC_ORIGIN || "")
     .split(",").map((value) => value.trim().replace(/\/$/, "")).filter(Boolean);

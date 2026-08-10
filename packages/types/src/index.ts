@@ -453,4 +453,60 @@ export interface ApiErrorBody {
   code: string;
   message: string;
   fieldErrors?: Record<string, string>;
+  retryAfterSeconds?: number;
+}
+
+// ── Points rewards and moderation ────────────────────────────────────────────
+
+export type PointRewardSuppressedReason = "daily_cap" | "moderation" | null;
+
+export interface PointRewardReceipt {
+  awardedAmount: number;
+  dailyUsed: number | null;
+  dailyLimit: number | null;
+  localDate: string | null;
+  suppressedReason: PointRewardSuppressedReason;
+}
+
+export type PointAbuseSignalStatus = "pending" | "reviewing" | "dismissed" | "escalated";
+
+export interface PointAbuseSignal {
+  id: string;
+  signalType: "owner_concentration" | "reciprocal_pair" | "interaction_cluster" | "new_account_burst";
+  accountIds: string[];
+  targetOwnerId: string | null;
+  targetRootKey: string | null;
+  windowStart: string;
+  windowEnd: string;
+  metrics: Record<string, unknown>;
+  status: PointAbuseSignalStatus;
+  reviewerUserId: string | null;
+  reviewNote: string | null;
+  caseReference: string | null;
+  detectedAt: string;
+  updatedAt: string;
+  reviewedAt: string | null;
+}
+
+export interface ReviewPointAbuseSignalRequest {
+  status: Exclude<PointAbuseSignalStatus, "pending">;
+  reviewNote?: string | null;
+  caseReference?: string | null;
+}
+
+export interface ModeratePointRewardsRequest {
+  action: "suppress" | "restore";
+  targetType: "post" | "post_root" | "business_key";
+  targetKey: string;
+  reason: string;
+  caseReference?: string | null;
+}
+
+export interface PointModerationResult {
+  id: number;
+  action: "suppress" | "restore";
+  targetType: "post_root" | "business_key";
+  targetKey: string;
+  affectedEventCount: number;
+  affectedAmount: number;
 }

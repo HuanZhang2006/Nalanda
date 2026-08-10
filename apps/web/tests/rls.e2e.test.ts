@@ -80,6 +80,9 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       const removed = await admin.from("learning_audio_assets").delete().in("cache_key", audioCacheKeys);
       if (removed.error) cleanupErrors.push(`Audio queue cleanup: ${removed.error.message}`);
     }
+    // Moderation actions and abuse signals intentionally reject direct
+    // service-role DELETE. This disposable Supabase stack is destroyed after
+    // the suite, so test audit facts deliberately remain append-only here.
     // 删除 auth 用户会通过外键级联删除本套件产生的业务表数据。
     if (admin && aId) {
       const deleted = await admin.auth.admin.deleteUser(aId);
@@ -90,9 +93,14 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       if (deleted.error) cleanupErrors.push(`User B cleanup: ${deleted.error.message}`);
     }
     if (admin && aId && bId) {
-      const [entryRemnants, stateRemnants, courseRemnants, attemptRemnants, badgeRemnants, usageRemnants] = await Promise.all([
+      const [
+        entryRemnants, stateRemnants, claimRemnants, windowRemnants,
+        courseRemnants, attemptRemnants, badgeRemnants, usageRemnants,
+      ] = await Promise.all([
         admin.from("point_entries").select("id").in("user_id", [aId, bId]),
         admin.from("point_event_states").select("business_key").in("user_id", [aId, bId]),
+        admin.from("point_daily_award_claims").select("business_key").in("user_id", [aId, bId]),
+        admin.from("point_daily_windows").select("id").in("user_id", [aId, bId]),
         admin.from("learning_courses").select("id").in("user_id", [aId, bId]),
         admin.from("learning_attempts").select("id").in("user_id", [aId, bId]),
         admin.from("user_badge_awards").select("badge_code").in("user_id", [aId, bId]),
@@ -102,6 +110,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       else if (entryRemnants.data.length) cleanupErrors.push(`Ledger cleanup check: ${entryRemnants.data.length} rows remain`);
       if (stateRemnants.error) cleanupErrors.push(`Point state cleanup check: ${stateRemnants.error.message}`);
       else if (stateRemnants.data.length) cleanupErrors.push(`Point state cleanup check: ${stateRemnants.data.length} rows remain`);
+      if (claimRemnants.error) cleanupErrors.push(`Point claim cleanup check: ${claimRemnants.error.message}`);
+      else if (claimRemnants.data.length) cleanupErrors.push(`Point claim cleanup check: ${claimRemnants.data.length} rows remain`);
+      if (windowRemnants.error) cleanupErrors.push(`Point window cleanup check: ${windowRemnants.error.message}`);
+      else if (windowRemnants.data.length) cleanupErrors.push(`Point window cleanup check: ${windowRemnants.data.length} rows remain`);
       for (const [label, result] of [["Learning courses", courseRemnants], ["Learning attempts", attemptRemnants], ["Badge awards", badgeRemnants], ["Speech user links", usageRemnants]] as const) {
         if (result.error) cleanupErrors.push(`${label} cleanup check: ${result.error.message}`);
         else if (result.data.length) cleanupErrors.push(`${label} cleanup check: ${result.data.length} rows remain`);
@@ -216,6 +228,14 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(feedback.error).toBeNull();
     const hiddenFeedback = await b.from("feedback").select("id").eq("id", feedback.data!.id);
     expect(hiddenFeedback.data).toEqual([]);
+    expect((await a.from("feedback").insert({
+      category: "Bug", summary: "forged status", status: "resolved",
+    })).error).not.toBeNull();
+    expect((await a.from("feedback").update({ summary: "mutated" }).eq("id", feedback.data!.id)).error).not.toBeNull();
+    expect((await a.from("feedback").update({ status: "resolved" }).eq("id", feedback.data!.id)).error).not.toBeNull();
+    expect((await a.from("feedback").delete().eq("id", feedback.data!.id)).error).not.toBeNull();
+    expect((await admin.from("feedback").update({ status: "resolved" }).eq("id", feedback.data!.id)).error).toBeNull();
+    expect((await a.from("feedback").select("status").eq("id", feedback.data!.id).single()).data?.status).toBe("resolved");
 
     const course = await a.from("courses").insert({ code: "E2E 101", name: "RLS Course" }).select("id").single();
     expect(course.error).toBeNull();
@@ -262,16 +282,47 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
   }, 30_000);
 
   it("验证社区公共读、四类计数、作者防伪造、关注和作者权限", async () => {
+    const forgedPostInserts = [
+      { title: "forged owner", user_id: bId },
+      { title: "forged author", author_name: "HACKER", author_university: "FAKE" },
+      { title: "forged counters", like_count: 999, comment_count: 999 },
+      { title: "forged key", points_business_key: `forged:${aId}` },
+      { title: "forged creation", created_at: "2099-01-01T00:00:00.000Z" },
+      { title: "forged update", updated_at: "2099-01-01T00:00:00.000Z" },
+    ];
+    for (const payload of forgedPostInserts) {
+      expect((await a.from("posts").insert(payload)).error).not.toBeNull();
+    }
     const post = await a.from("posts").insert({
       title: "RLS community post",
       body: "body",
       kind: "question",
       tags: ["e2e"],
-      author_name: "HACKER",
-      author_university: "FAKE",
     }).select("*").single();
     expect(post.error).toBeNull();
     expect(post.data?.author_name).toBe(aName);
+
+    const createdAt = post.data!.created_at;
+    const originalUpdatedAt = post.data!.updated_at;
+    const edited = await a.from("posts")
+      .update({ title: "RLS community post edited", updated_at: "2099-01-01T00:00:00.000Z" })
+      .eq("id", post.data!.id)
+      .select("title,created_at,updated_at")
+      .single();
+    expect(edited.error).toBeNull();
+    expect(edited.data?.title).toBe("RLS community post edited");
+    expect(edited.data?.created_at).toBe(createdAt);
+    expect(edited.data?.updated_at).not.toBe("2099-01-01T00:00:00.000Z");
+    expect(edited.data?.updated_at).not.toBe(originalUpdatedAt);
+
+    for (const patch of [
+      { user_id: bId },
+      { author_name: "HACKER" },
+      { like_count: 999 },
+      { created_at: "2099-01-01T00:00:00.000Z" },
+    ]) {
+      expect((await a.from("posts").update(patch).eq("id", post.data!.id)).error).not.toBeNull();
+    }
 
     const publicRead = await b.from("posts").select("id").eq("id", post.data!.id).single();
     expect(publicRead.error).toBeNull();
@@ -300,6 +351,8 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     const counted = await a.from("posts").select("like_count,favorite_count,comment_count,repost_count").eq("id", post.data!.id).single();
     expect(counted.data).toMatchObject({ like_count: 1, favorite_count: 1, comment_count: 1, repost_count: 1 });
+    expect((await a.from("posts").select("updated_at").eq("id", post.data!.id).single()).data?.updated_at)
+      .toBe(edited.data?.updated_at);
     expect((await a.from("post_likes").select("post_id").eq("post_id", post.data!.id)).data).toEqual([]);
     expect((await b.from("post_likes").select("post_id").eq("post_id", post.data!.id)).data).toHaveLength(1);
 
@@ -308,6 +361,38 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const forbiddenDelete = await b.from("posts").delete().eq("id", post.data!.id).select("id");
     expect(forbiddenDelete.data).toEqual([]);
     expect((await a.from("notifications").select("id").in("type", ["like", "comment", "favorite", "repost", "follow"])).data!.length).toBeGreaterThanOrEqual(5);
+    const ownReceipt = await a.rpc("get_point_reward_receipt", {
+      p_event_type: "post_created", p_source_id: post.data!.id,
+    });
+    expect(ownReceipt.error).toBeNull();
+    expect(ownReceipt.data).toMatchObject({ awardedAmount: 10, dailyUsed: 1, dailyLimit: 3, suppressedReason: null });
+    expect((await b.rpc("get_point_reward_receipt", {
+      p_event_type: "post_created", p_source_id: post.data!.id,
+    })).error).not.toBeNull();
+    for (const table of [
+      "point_daily_windows", "point_daily_award_claims", "point_daily_cap_notifications",
+      "point_moderation_actions", "point_abuse_signals", "api_abuse_events",
+    ]) {
+      expect((await a.from(table).select("*").limit(1)).error, `${table} must remain service-only`).not.toBeNull();
+    }
+    expect((await a.rpc("scan_point_abuse_signals")).error).not.toBeNull();
+    expect((await a.rpc("review_point_abuse_signal", {
+      p_reviewer_user_id: aId,
+      p_signal_id: randomUUID(),
+      p_status: "dismissed",
+      p_review_note: "client forgery",
+      p_case_reference: null,
+    })).error).not.toBeNull();
+    expect((await a.rpc("moderate_point_rewards", {
+      p_admin_user_id: aId, p_action: "suppress", p_target_type: "post",
+      p_target_key: post.data!.id, p_reason: "client forgery", p_case_reference: null,
+    })).error).not.toBeNull();
+    expect((await admin.from("point_daily_award_claims")
+      .update({ awarded_amount: 999 }).eq("business_key", "not-present")).error).not.toBeNull();
+    expect((await admin.from("point_moderation_actions")
+      .delete().eq("id", -1)).error).not.toBeNull();
+    expect((await admin.from("point_abuse_signals")
+      .update({ status: "dismissed" }).eq("id", randomUUID())).error).not.toBeNull();
 
     // like：actor + 原帖不可变内容键为永久业务键；取消会冲正，重赞只恢复同一净额。
     const bPointsAfterInteractions = await b.from("profiles").select("points").eq("id", bId).single();
@@ -442,6 +527,54 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       { business_key: disposablePost.data!.points_business_key, is_active: false, transition_no: 4 },
     ]));
 
+    // Admin moderation covers the entire root content chain. The operation is
+    // reversible, audited and inaccessible through an authenticated client.
+    const beforeSuppressionA = (await a.from("profiles").select("points").eq("id", aId).single()).data!.points;
+    const beforeSuppressionB = (await b.from("profiles").select("points").eq("id", bId).single()).data!.points;
+    const suppressed = await admin.rpc("moderate_point_rewards", {
+      p_admin_user_id: aId,
+      p_action: "suppress",
+      p_target_type: "post",
+      p_target_key: post.data!.id,
+      p_reason: "RLS root-chain test",
+      p_case_reference: "E2E-ROOT-1",
+    });
+    expect(suppressed.error).toBeNull();
+    expect(suppressed.data).toMatchObject({
+      action: "suppress", targetType: "post_root", targetKey: originalPostKey,
+      affectedEventCount: 4, affectedAmount: 16,
+    });
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points)
+      .toBe(beforeSuppressionA - 10);
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(beforeSuppressionB - 6);
+
+    const restored = await admin.rpc("moderate_point_rewards", {
+      p_admin_user_id: aId,
+      p_action: "restore",
+      p_target_type: "post_root",
+      p_target_key: originalPostKey,
+      p_reason: "RLS root-chain restored",
+      p_case_reference: "E2E-ROOT-1",
+    });
+    expect(restored.error).toBeNull();
+    expect(restored.data).toMatchObject({ affectedEventCount: 4, affectedAmount: 16 });
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points)
+      .toBe(beforeSuppressionA);
+    expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
+      .toBe(beforeSuppressionB);
+    const repeatedRestore = await admin.rpc("moderate_point_rewards", {
+      p_admin_user_id: aId,
+      p_action: "restore",
+      p_target_type: "post_root",
+      p_target_key: originalPostKey,
+      p_reason: "RLS idempotent restore audit",
+      p_case_reference: "E2E-ROOT-1-REPLAY",
+    });
+    expect(repeatedRestore.error).toBeNull();
+    expect(repeatedRestore.data).toMatchObject({ affectedEventCount: 0, affectedAmount: 0 });
+    expect((await admin.from("point_moderation_actions").select("id").eq("admin_user_id", aId)).data).toHaveLength(3);
+
     // 删除原帖会级联删除 like/comment/repost；每个 actor 的净奖励都必须各冲正一次。
     const aBeforeCascade = await a.from("profiles").select("points").eq("id", aId).single();
     const bBeforeCascade = await b.from("profiles").select("points").eq("id", bId).single();
@@ -454,9 +587,9 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       .select("business_key,is_active,transition_no")
       .in("business_key", [likeKey, commentKey, repostKey]);
     expect(cascadedStates.data).toEqual(expect.arrayContaining([
-      { business_key: likeKey, is_active: false, transition_no: 4 },
-      { business_key: commentKey, is_active: false, transition_no: 6 },
-      { business_key: repostKey, is_active: false, transition_no: 4 },
+      { business_key: likeKey, is_active: false, transition_no: 6 },
+      { business_key: commentKey, is_active: false, transition_no: 8 },
+      { business_key: repostKey, is_active: false, transition_no: 6 },
     ]));
     const bLedgerAfterCascade = await b.from("point_entries").select("amount");
     expect(bLedgerAfterCascade.error).toBeNull();
@@ -469,18 +602,118 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       body: "body",
       kind: "question",
       tags: ["e2e"],
-    }).select("points_business_key").single();
+    }).select("id,points_business_key").single();
     expect(restoredOriginal.error).toBeNull();
     expect(restoredOriginal.data!.points_business_key).toBe(originalPostKey);
     expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points)
       .toBe(aBeforeCascade.data!.points);
 
-    // 发帖触发器每篇 +10；达到 50 后等级应同步提升为 Learner。
-    const extraPosts = Array.from({ length: 4 }, (_, index) => ({ title: `Level post ${index}`, kind: "experience", tags: [] }));
-    expect((await a.from("posts").insert(extraPosts)).error).toBeNull();
-    const leveled = await a.from("profiles").select("points,level,level_name").eq("id", aId).single();
-    expect(leveled.data!.points).toBeGreaterThanOrEqual(50);
-    expect(leveled.data).toMatchObject({ level: 2, level_name: "Learner" });
+    // 原创每日只有前 3 个不同 business key 领奖；超额帖子仍然发布。
+    // 本日已有 originalPostKey，因此以下四帖只有两帖加分。
+    const beforeCap = (await a.from("profiles").select("points").eq("id", aId).single()).data!.points;
+    const capPosts: Array<{ id: string; points_business_key: string; title: string }> = [];
+    for (let index = 0; index < 4; index += 1) {
+      const inserted = await a.from("posts").insert({
+        title: `Daily cap post ${index}`, kind: "experience", tags: ["daily-cap"],
+      }).select("id,points_business_key,title").single();
+      expect(inserted.error).toBeNull();
+      capPosts.push(inserted.data!);
+    }
+    const afterCap = (await a.from("profiles").select("points").eq("id", aId).single()).data!.points;
+    expect(afterCap).toBe(beforeCap + 20);
+    const capClaims = await admin.from("point_daily_award_claims")
+      .select("business_key,awarded_amount,suppressed_reason,source_id")
+      .in("business_key", capPosts.map((item) => item.points_business_key));
+    expect(capClaims.error).toBeNull();
+    expect(capClaims.data!.filter((claim) => claim.awarded_amount === 10)).toHaveLength(2);
+    expect(capClaims.data!.filter((claim) => claim.awarded_amount === 0)).toHaveLength(2);
+    const cappedClaim = capClaims.data!.find((claim) => claim.awarded_amount === 0)!;
+    const cappedPost = capPosts.find((item) => item.points_business_key === cappedClaim.business_key)!;
+    // The authoritative transaction writes the first cap notification even if
+    // the client is offline and never performs the optional receipt read.
+    expect((await admin.from("notifications").select("id")
+      .eq("user_id", aId).eq("type", "points_daily_cap")).data).toHaveLength(1);
+    const cappedReceipt = await a.rpc("get_point_reward_receipt", {
+      p_event_type: "post_created", p_source_id: cappedPost.id,
+    });
+    expect(cappedReceipt.error).toBeNull();
+    expect(cappedReceipt.data).toMatchObject({
+      awardedAmount: 0, dailyUsed: 3, dailyLimit: 3, suppressedReason: "daily_cap",
+    });
+    expect((await a.rpc("get_point_reward_receipt", {
+      p_event_type: "post_created", p_source_id: cappedPost.id,
+    })).error).toBeNull();
+    expect((await admin.from("notifications").select("id")
+      .eq("user_id", aId).eq("type", "points_daily_cap")).data).toHaveLength(1);
+
+    const timezoneBefore = (await a.from("profiles").select("timezone").eq("id", aId).single()).data!.timezone;
+    expect((await a.from("profiles").update({ timezone: "Asia/Shanghai" }).eq("id", aId)).error).toBeNull();
+    const postAfterTimezoneChange = await a.from("posts").insert({
+      title: "Timezone cannot reset cap", kind: "tip", tags: [],
+    }).select("id,points_business_key").single();
+    expect(postAfterTimezoneChange.error).toBeNull();
+    expect((await admin.from("point_daily_award_claims").select("awarded_amount")
+      .eq("business_key", postAfterTimezoneChange.data!.points_business_key).single()).data?.awarded_amount).toBe(0);
+    expect((await a.from("profiles").update({ timezone: timezoneBefore }).eq("id", aId)).error).toBeNull();
+
+    expect((await a.from("posts").delete().eq("id", cappedPost.id)).error).toBeNull();
+    const recreatedCappedPost = await a.from("posts").insert({
+      title: cappedPost.title, kind: "experience", tags: ["daily-cap"],
+    }).select("id,points_business_key").single();
+    expect(recreatedCappedPost.error).toBeNull();
+    expect(recreatedCappedPost.data!.points_business_key).toBe(cappedPost.points_business_key);
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(afterCap);
+
+    // Eight same-owner interactions are only flagged for review. The scanner
+    // does not freeze points or mutate business content.
+    const scanTargets = [
+      restoredOriginal.data!.id,
+      ...capPosts.filter((item) => item.id !== cappedPost.id).map((item) => item.id),
+      recreatedCappedPost.data!.id,
+      postAfterTimezoneChange.data!.id,
+    ];
+    for (let index = scanTargets.length; index < 8; index += 1) {
+      const extra = await a.from("posts").insert({
+        title: `Collaboration scan target ${index}`, kind: "question", tags: ["abuse-scan"],
+      }).select("id").single();
+      expect(extra.error).toBeNull();
+      scanTargets.push(extra.data!.id);
+    }
+    expect(scanTargets).toHaveLength(8);
+    for (const postId of scanTargets) {
+      expect((await b.from("post_likes").insert({ post_id: postId })).error).toBeNull();
+    }
+    const scanResult = await admin.rpc("scan_point_abuse_signals");
+    expect(scanResult.error).toBeNull();
+    const concentration = await admin.from("point_abuse_signals")
+      .select("id,status,account_ids,target_owner_id,metrics")
+      .eq("signal_type", "owner_concentration")
+      .eq("target_owner_id", aId)
+      .contains("account_ids", [bId])
+      .single();
+    expect(concentration.error).toBeNull();
+    expect(concentration.data).toMatchObject({ status: "pending", target_owner_id: aId });
+    expect(Number(concentration.data!.metrics.interactionCount)).toBeGreaterThanOrEqual(8);
+    const reviewedSignal = await admin.rpc("review_point_abuse_signal", {
+      p_reviewer_user_id: aId,
+      p_signal_id: concentration.data!.id,
+      p_status: "reviewing",
+      p_review_note: "RLS workflow review",
+      p_case_reference: "E2E-SIGNAL-1",
+    });
+    expect(reviewedSignal.error).toBeNull();
+    expect(reviewedSignal.data).toMatchObject({
+      id: concentration.data!.id,
+      status: "reviewing",
+      reviewer_user_id: aId,
+      review_note: "RLS workflow review",
+    });
+
+    const [finalLedger, finalProfile] = await Promise.all([
+      a.from("point_entries").select("amount"),
+      a.from("profiles").select("points").eq("id", aId).single(),
+    ]);
+    expect(finalLedger.data!.reduce((sum, entry) => sum + entry.amount, 0)).toBe(finalProfile.data!.points);
   }, 60_000);
 
   it("验证计划 RLS、跨用户课程校验、完成积分和同日 streak 去重", async () => {
@@ -495,6 +728,12 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const goal = await a.from("study_goals").insert({ title: "Plan exam", course_id: course.data!.id }).select("id").single();
     expect(material.error).toBeNull();
     expect(goal.error).toBeNull();
+    expect((await b.from("study_goals").insert({
+      title: "Cross-owner goal", course_id: course.data!.id,
+    })).error).not.toBeNull();
+    expect((await admin.from("study_goals").insert({
+      user_id: bId, title: "Service cross-owner goal", course_id: course.data!.id,
+    })).error).not.toBeNull();
 
     const tasks = await a.from("study_tasks").insert([
       { title: "Plan task one", course_id: course.data!.id, material_id: material.data!.id, goal_id: goal.data!.id },
@@ -506,13 +745,27 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     const crossOwnerTask = await b.from("study_tasks").insert({ title: "Cross owner", course_id: course.data!.id });
     expect(crossOwnerTask.error).not.toBeNull();
+    expect((await admin.from("study_tasks").insert({
+      user_id: bId,
+      title: "Service cross owner",
+      course_id: course.data!.id,
+      material_id: material.data!.id,
+      goal_id: goal.data!.id,
+    })).error).not.toBeNull();
+    expect((await a.from("study_goals").update({ user_id: bId }).eq("id", goal.data!.id)).error).not.toBeNull();
+    expect((await a.from("study_tasks").update({ user_id: bId }).eq("id", tasks.data![0].id)).error).not.toBeNull();
     const forgedTaskKey = await a.from("study_tasks")
       .update({ points_business_key: `forged:${aId}` })
       .eq("id", tasks.data![0].id);
     expect(forgedTaskKey.error).not.toBeNull();
 
     const before = await a.from("profiles").select("points,streak").eq("id", aId).single();
-    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({
+      done: true, done_at: "2099-01-01T00:00:00.000Z",
+    }).eq("id", tasks.data![0].id)).error).toBeNull();
+    const databaseDoneAt = (await a.from("study_tasks").select("done_at").eq("id", tasks.data![0].id).single()).data!.done_at;
+    expect(databaseDoneAt).toBeTruthy();
+    expect(databaseDoneAt).not.toBe("2099-01-01T00:00:00.000Z");
     const afterFirst = await a.from("profiles").select("points,streak").eq("id", aId).single();
     expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![1].id)).error).toBeNull();
     const afterSecond = await a.from("profiles").select("points,streak").eq("id", aId).single();
@@ -559,6 +812,58 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       .eq("business_key", tasks.data![0].points_business_key)
       .single();
     expect(taskState.data).toEqual({ is_active: true, transition_no: 7 });
+
+    // Two task claims already received rewards. Completing twelve new tasks in
+    // parallel therefore awards only eight and records four permanent zero
+    // decisions; all twelve business operations still succeed.
+    const beforeTaskCap = (await a.from("profiles").select("points").eq("id", aId).single()).data!.points;
+    const capTasks = await a.from("study_tasks").insert(Array.from({ length: 12 }, (_, index) => ({
+      title: `Daily task cap ${index}`,
+      course_id: course.data!.id,
+    }))).select("id,title,points_business_key");
+    expect(capTasks.error).toBeNull();
+    expect(capTasks.data).toHaveLength(12);
+    const completions = await Promise.all(capTasks.data!.map((task) => (
+      a.from("study_tasks").update({ done: true }).eq("id", task.id)
+    )));
+    expect(completions.every((result) => result.error === null)).toBe(true);
+    const afterTaskCap = (await a.from("profiles").select("points").eq("id", aId).single()).data!.points;
+    expect(afterTaskCap).toBe(beforeTaskCap + 40);
+    const taskCapClaims = await admin.from("point_daily_award_claims")
+      .select("business_key,awarded_amount,source_id")
+      .in("business_key", capTasks.data!.map((task) => task.points_business_key));
+    expect(taskCapClaims.error).toBeNull();
+    expect(taskCapClaims.data!.filter((claim) => claim.awarded_amount === 5)).toHaveLength(8);
+    expect(taskCapClaims.data!.filter((claim) => claim.awarded_amount === 0)).toHaveLength(4);
+    const cappedTaskClaim = taskCapClaims.data!.find((claim) => claim.awarded_amount === 0)!;
+    const cappedTask = capTasks.data!.find((task) => task.points_business_key === cappedTaskClaim.business_key)!;
+    const cappedTaskReceipt = await a.rpc("get_point_reward_receipt", {
+      p_event_type: "task_completed", p_source_id: cappedTask.id,
+    });
+    expect(cappedTaskReceipt.error).toBeNull();
+    expect(cappedTaskReceipt.data).toMatchObject({
+      awardedAmount: 0, dailyUsed: 10, dailyLimit: 10, suppressedReason: "daily_cap",
+    });
+
+    const taskTimezoneBefore = (await a.from("profiles").select("timezone").eq("id", aId).single()).data!.timezone;
+    expect((await a.from("profiles").update({ timezone: "Pacific/Auckland" }).eq("id", aId)).error).toBeNull();
+    const timezoneTask = await a.from("study_tasks").insert({
+      title: "Timezone cannot reset task cap", course_id: course.data!.id,
+    }).select("id,points_business_key").single();
+    expect(timezoneTask.error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: true }).eq("id", timezoneTask.data!.id)).error).toBeNull();
+    expect((await admin.from("point_daily_award_claims").select("awarded_amount")
+      .eq("business_key", timezoneTask.data!.points_business_key).single()).data?.awarded_amount).toBe(0);
+    expect((await a.from("profiles").update({ timezone: taskTimezoneBefore }).eq("id", aId)).error).toBeNull();
+
+    expect((await a.from("study_tasks").delete().eq("id", cappedTask.id)).error).toBeNull();
+    const recreatedCappedTask = await a.from("study_tasks").insert({
+      title: cappedTask.title, course_id: course.data!.id,
+    }).select("id,points_business_key").single();
+    expect(recreatedCappedTask.error).toBeNull();
+    expect(recreatedCappedTask.data!.points_business_key).toBe(cappedTask.points_business_key);
+    expect((await a.from("study_tasks").update({ done: true }).eq("id", recreatedCappedTask.data!.id)).error).toBeNull();
+    expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(afterTaskCap);
 
     const [allEntries, projectedProfile] = await Promise.all([
       a.from("point_entries").select("amount"),

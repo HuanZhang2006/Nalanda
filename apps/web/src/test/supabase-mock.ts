@@ -15,6 +15,7 @@ type Action = RecordedOperation["action"];
 export type SupabaseMockOptions = {
   errors?: Record<string, Partial<Record<Action, string>>>;
   storageErrors?: Partial<Record<"upload" | "remove" | "createSignedUrl", string>>;
+  rpcResults?: Record<string, { data?: unknown; error?: string }>;
 };
 
 class Query implements PromiseLike<any> {
@@ -203,11 +204,22 @@ export function createSupabaseMock(seed: Seed = defaultSeed(), userId = "u1", op
     error: options.storageErrors?.createSignedUrl ? new Error(options.storageErrors.createSignedUrl) : null,
   }));
   const getPublicUrl = vi.fn((path: string) => ({ data: { publicUrl: `https://cdn.example/${path}` } }));
+  const rpc = vi.fn(async (name: string) => {
+    const configured = options.rpcResults?.[name];
+    return {
+      data: configured?.data ?? {
+        awardedAmount: 1, dailyUsed: 1, dailyLimit: 20,
+        localDate: "2026-08-10", suppressedReason: null,
+      },
+      error: configured?.error ? new Error(configured.error) : null,
+    };
+  });
 
   return {
     tables,
     operations,
     from: vi.fn((table: string) => new Query(table, tables, operations, userId, options.errors)),
+    rpc,
     storage: { from: vi.fn(() => ({ upload, getPublicUrl, remove, createSignedUrl })) },
     upload,
     remove,

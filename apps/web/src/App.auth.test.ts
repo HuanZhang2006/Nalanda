@@ -1,6 +1,6 @@
 import React, { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const authHarness = vi.hoisted(() => ({
   callback: null as null | ((event: string, session: any) => void),
@@ -45,6 +45,7 @@ describe("认证界面状态", () => {
   let container: HTMLDivElement;
 
   beforeEach(async () => {
+    vi.clearAllMocks();
     authHarness.callback = null;
     authHarness.getSession.mockResolvedValue({ data: { session: null }, error: null });
     authHarness.signInWithPassword.mockResolvedValue({ data: { session: null }, error: null });
@@ -58,6 +59,8 @@ describe("认证界面状态", () => {
     root = createRoot(container);
     await settle(() => root.render(React.createElement(App)));
   });
+
+  afterEach(() => vi.unstubAllGlobals());
 
   it("登录成功及退出后会复位 loading，并把退出错误展示给用户", async () => {
     const inputs = container.querySelectorAll("input");
@@ -87,6 +90,26 @@ describe("认证界面状态", () => {
     expect(container.textContent).toContain("邮箱或密码错误");
     expect(container.textContent).not.toContain("处理中…");
 
+    await settle(() => root.unmount());
+  });
+
+  it("注册 429 显示恢复时间且不会继续请求登录", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      code: "RATE_LIMITED", message: "Too many requests", retryAfterSeconds: 42,
+    }), { status: 429, headers: { "Content-Type": "application/json" } })));
+    const signupTab = [...container.querySelectorAll("button")].find((button) => button.textContent === "注册")!;
+    await settle(() => signupTab.click());
+    const inputs = container.querySelectorAll("input");
+    await settle(() => {
+      setInput(inputs[0] as HTMLInputElement, "alice@example.edu");
+      setInput(inputs[1] as HTMLInputElement, "password");
+    });
+    const submit = [...container.querySelectorAll("button")].find((button) => button.textContent === "注册并进入")!;
+    await settle(() => submit.click());
+    expect(container.textContent).toContain("注册请求过于频繁");
+    expect(container.textContent).toContain("42 秒后恢复");
+    expect(authHarness.signInWithPassword).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("处理中…");
     await settle(() => root.unmount());
   });
 });
