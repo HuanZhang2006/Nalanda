@@ -3,11 +3,37 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-04。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-08-10。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
 ## [Unreleased]
+
+### Added
+
+- 新增第一阶段 0039–0040 候选：冻结用户时区的 points 日窗口、稳定 business-key 奖励 decision、owner-only reward receipt、每日上限通知、append-only 审核冲正和四类只待审协同信号。
+- NestJS 增加同机私有 Redis 原子 Lua 滑动窗口、注册 IP+邮箱双限流、认证/Courses/公开市场分层限流、HMAC 滥用聚合、真实 Redis readiness 和 points 管理 API；协同扫描使用分布式锁且不自动处罚。
+- 生产 compose 候选增加密码认证、AOF `everysec`、`noeviction`、私有网络 Redis，以及 secret 原子安装、nginx 标准 JSON 429、配置验证和两阶段发布脚本/门禁。
+
+### Changed
+
+- 帖子直接 Supabase 写入收敛为内容列白名单，owner/作者快照/计数/repost/key/时间由数据库维护；Feedback 用户仅可新增/读取；Schedule 引用由 owner trigger 校验，`done_at` 由数据库派生。
+- Web 在社区与任务业务写成功后读取服务端 points receipt，超限提示不回滚内容操作；Courses outbox 对 429 保持相同 attempt UUID 并按 `Retry-After` 串行恢复，音频 manifest 轮询退避而不误报永久失败。
+
+### Security
+
+- 新内部 points/audit 表对客户端完全隐藏；service-role 也只有 SELECT，所有奖励、signal review、moderation 和审计变更均经固定 `search_path` 的受控函数执行。新增函数默认撤销 `public/anon/authenticated` EXECUTE。
+- 历史 points grandfather 只把存在 transition 1 正向分录的业务键视为实际获奖；0008/0009 零金额占位永久不可冲正/补领，既有无来源负 transition 通过 append-only `grandfather-zero-reset-v1` 等额归零，避免吞掉未来合法积分。
+- 普通奖励与人工审核分别取得共享/独占 advisory gate，并统一 Profile→状态行锁序；重复审核留下 0 变化审计，不再与“目标不存在”混淆。
+- Redis 故障时注册、写入、克隆、举报及成本路径 fail-closed，私有只读 fail-open 并记录脱敏降级事件；日志和数据库不保存原始 IP、邮箱、正文或课程内容。
+
+### Testing
+
+- 增加帖子/Feedback/Schedule 双用户负向 RLS、points 并发上限/时区/删除重建/suppress-restore/协同信号、Redis Lua/路由分类、Web 上限通知与 429 回退、nginx/secret 安装脚本回归。真实 Redis、一次性 Supabase、nginx 容器和 Playwright 仍须由 PR/main CI 形成证据，本地跳过不算通过。
+
+### Release
+
+- 0039–0040 尚未进入生产。第一阶段必须先完成完整 CI、只读 migration plan、加密恢复点、Redis/HMAC secrets 与 Redis PING/AOF/私网验证，再 apply 和激活应用；观察至少 24 小时后才允许另行创建 0041–0042 撤销兼容时间列 grant。
 
 ## [0.10.2] - 2026-08-04
 

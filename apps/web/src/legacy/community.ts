@@ -2,6 +2,7 @@
 // 社区：帖子流 + 详情 + 「我的」。发帖(图片/音频/标签)/编辑/删除、点赞、评论、收藏、转发、关注。
 // 标签来自全局(所有用户的大学/专业/学科)，发帖时多选；按标签/关注/类型/我的 筛选。Supabase 直连 + RLS。
 import { ICON } from "./icons";
+import { showPointRewardReceipt } from "./point-receipt";
 
 let sb = null, USER = null, toastFn = () => {};
 const me = { id: null, name: "", university: "", major: "" };
@@ -342,6 +343,8 @@ async function toggleLike(id) {
       if (error) throw error;
       if (currentVersion !== sessionVersion) return;
       state.liked.add(id); patch(id, (p) => p.like_count = (p.like_count || 0) + 1);
+      void showPointRewardReceipt(client, "like_created", id, toastFn,
+        () => currentVersion === sessionVersion);
     }
   } catch (e) { if (currentVersion === sessionVersion) toastFn("操作失败：" + (e.message || "")); }
   if (currentVersion !== sessionVersion) return;
@@ -390,7 +393,7 @@ async function addComment(postId) {
   const input = document.getElementById("cm-input");
   const body = (input && input.value || "").trim();
   if (!body) { toastFn("评论不能为空"); return; }
-  try { const { error } = await client.from("comments").insert({ post_id: postId, body }); if (error) throw error; if (currentVersion !== sessionVersion) return; const el = document.getElementById("post-root"); if (el) mountPost(el, postId); }
+  try { const { data, error } = await client.from("comments").insert({ post_id: postId, body }).select("id").single(); if (error) throw error; if (currentVersion !== sessionVersion) return; void showPointRewardReceipt(client, "comment_created", data?.id, toastFn, () => currentVersion === sessionVersion); const el = document.getElementById("post-root"); if (el) mountPost(el, postId); }
   catch (e) { if (currentVersion === sessionVersion) toastFn("评论失败：" + (e.message || "")); }
 }
 async function delComment(id, postId) {
@@ -429,8 +432,8 @@ function repostModal(id) {
     if (saving) return; saving = true; btn.disabled = true; btn.textContent = "转发中…";
     try {
       const body = scrim.querySelector("#rp-body").value.trim();
-      const { error } = await client.from("posts").insert({ repost_of: id, body: body || null, kind: "experience", tags: orig ? (orig.tags || []) : [] });
-      if (error) throw error; if (modalVersion !== sessionVersion) return; scrim.remove(); toastFn("已转发", "check"); state.filter = "all"; load();
+      const { data, error } = await client.from("posts").insert({ repost_of: id, body: body || null, kind: "experience", tags: orig ? (orig.tags || []) : [] }).select("id").single();
+      if (error) throw error; if (modalVersion !== sessionVersion) return; scrim.remove(); toastFn("已转发", "check"); void showPointRewardReceipt(client, "repost_created", data?.id, toastFn, () => modalVersion === sessionVersion); state.filter = "all"; load();
     } catch (e) { if (modalVersion !== sessionVersion) return; saving = false; btn.disabled = false; btn.textContent = "转发"; toastFn("转发失败：" + (e.message || "")); }
   };
 }
@@ -500,11 +503,12 @@ function composer(existing) {
     const row = { kind: scrim.querySelector("#ps-kind").value, title: title || null, body: body || null, tags: [...selected], image_url: imageUrl, audio_url: audioUrl };
     saving = true; btn.disabled = true; btn.textContent = isEdit ? "保存中…" : "发布中…";
     try {
-      if (isEdit) { const { error } = await client.from("posts").update({ ...row, updated_at: new Date().toISOString() }).eq("id", existing.id); if (error) throw error; }
-      else { const { error } = await client.from("posts").insert(row); if (error) throw error; }
+      let createdId = null;
+      if (isEdit) { const { error } = await client.from("posts").update(row).eq("id", existing.id); if (error) throw error; }
+      else { const { data, error } = await client.from("posts").insert(row).select("id").single(); if (error) throw error; createdId = data?.id; }
       if (composerVersion !== sessionVersion) return;
       if (isEdit) toastFn("已保存", "check");
-      else { toastFn("已发布", "check"); state.filter = "all"; }
+      else { toastFn("已发布", "check"); void showPointRewardReceipt(client, "post_created", createdId, toastFn, () => composerVersion === sessionVersion); state.filter = "all"; }
       scrim.remove(); load();
     } catch (e) { if (composerVersion !== sessionVersion) return; saving = false; btn.disabled = false; btn.textContent = isEdit ? "保存" : "发布"; toastFn("失败：" + (e.message || "")); }
   };

@@ -342,7 +342,7 @@ export function LearningView({ sessionId, onExit, onChanged }: {
           }
           const retryCount = entry.retryCount + 1;
           const delay = caught instanceof ApiClientError && caught.status === 429
-            ? 30_000
+            ? Math.max(1_000, (caught.retryAfterSeconds || 30) * 1_000)
             : retryDelay(retryCount);
           await putPendingAttempt({
             ...entry,
@@ -574,6 +574,8 @@ export function LearningView({ sessionId, onExit, onChanged }: {
   useEffect(() => {
     if (!session?.unitId) return;
     let active = true;
+    let timer: number | null = null;
+    let delay = 3_000;
     prioritizedAudioRef.current.clear();
     setAudioNotice(null);
     setCurrentAudioManifest(null);
@@ -583,16 +585,33 @@ export function LearningView({ sessionId, onExit, onChanged }: {
         : await coursesApi.audioManifest(session.unitId!);
       if (active) setCurrentAudioManifest(next);
     };
-    void update(true).catch(() => undefined);
-    const timer = window.setInterval(() => {
+    const poll = async () => {
+      if (!active) return;
       const manifest = audioManifestRef.current;
-      if (manifest?.pending !== 0 && quotaPausedCount(manifest) < (manifest?.pending || 0)) {
-        void update(false).catch(() => undefined);
+      if (!manifest || (
+        manifest.pending !== 0 && quotaPausedCount(manifest) < manifest.pending
+      )) {
+        try {
+          await update(false);
+          delay = 3_000;
+        } catch (error) {
+          delay = error instanceof ApiClientError && error.status === 429
+            ? Math.max(3_000, (error.retryAfterSeconds || 3) * 1_000)
+            : Math.min(30_000, delay * 2);
+        }
       }
-    }, 3_000);
+      if (active) timer = window.setTimeout(() => void poll(), delay);
+    };
+    void update(true).catch((error) => {
+      delay = error instanceof ApiClientError && error.status === 429
+        ? Math.max(3_000, (error.retryAfterSeconds || 3) * 1_000)
+        : 6_000;
+    }).finally(() => {
+      if (active) timer = window.setTimeout(() => void poll(), delay);
+    });
     return () => {
       active = false;
-      window.clearInterval(timer);
+      if (timer != null) window.clearTimeout(timer);
     };
   }, [session?.unitId]);
 

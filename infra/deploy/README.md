@@ -4,6 +4,7 @@
 > - **内容**：记录当前生产服务器上的 Web/API/nginx 拓扑、部署依赖和维护入口。
 > - **作用**：帮助理解现网布局；正式发布、数据库变更、备份与恢复应按 operations 手册执行。
 > - **何时更新**：域名、服务器、CI、compose、nginx/TLS、部署账号或密钥位置变化时。
+> - **状态基线**：2026-08-10。生产仍运行 0038/Web+API 拓扑；本目录已包含 0039–0040 第一阶段的私有 Redis、nginx 限流和 secret 安装候选，尚待受保护发布。
 
 服务器已运行多个项目（共用 nginx + uofa.ink）。Nalanda 以**隔离、可叠加**的方式接入，不影响既有服务。
 
@@ -11,7 +12,7 @@
 
 ```
 GitHub push → Actions（在 runner 上构建，不占服务器内存）
-  ├─ check + 0007→最新迁移夹具 + 本地 Supabase 重建/lint/RLS E2E
+  ├─ check + 真实测试 Redis + 0007→最新迁移夹具 + 本地 Supabase 重建/lint/RLS E2E
   ├─ Azure fake + Playwright Courses 主流程
   ├─ 新迁移：dry-run → 加密恢复点 → protected DB push → 验证
   ├─ 前端 vite build → Git SHA release/web
@@ -21,9 +22,10 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 服务器 /opt/nalanda/
   ├─ 新 image + 服务器 .env → 真实 Azure TTS/评分 gate
   ├─ 0015+ 候选 API → 队列首次生成/Storage hit/重复词/裁剪评分 gate
-  ├─ docker compose（.deploy.env 选择不可变 API image）
+  ├─ docker compose（.deploy.env 选择不可变 API image；候选另启私有 Redis）
   ├─ releases/<release-id>/web + web 原子 symlink
-  └─ .env（Supabase/Azure 密钥，仅服务器持有，不入库/不进 CI）
+  ├─ .env（API secrets，含 password URL；mode 600）
+  └─ .redis.env（仅 Redis password；mode 600）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
 ```
 
@@ -49,17 +51,19 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 `production-database` environment 还需 `SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 和 `DB_BACKUP_ENCRYPTION_KEY`。该 environment 已创建并只允许 `main`；当前私有仓库套餐不支持 required reviewer，升级套餐前必须只通过人工发起的 `workflow_dispatch` 发布数据库，并按[数据库发布手册](../../docs/operations/DATABASE_RELEASE_ROLLBACK.md)保存 owner 复核记录。数据库 migration history 的首次 baseline 不能由 CI 猜测。
 
+0039–0040 第一阶段还要求 `production` environment 设置两个彼此独立的随机 secret：`REDIS_PASSWORD`（32-byte hex）与 `RATE_LIMIT_HMAC_SECRET`（至少 32 bytes）。workflow 通过 SSH stdin 交给 `scripts/install-production-security-env.sh`，原子写入 mode-600 `.redis.env` 和 API `.env` 中的 `REDIS_URL`/HMAC，不打印值；Redis 容器永不获得 Supabase、Azure 或 OpenRouter secret。
+
 > **2026-07-21 Supabase 暂停事故与恢复：** 项目暂停期间，生产 Ref 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；恢复后 DNS、JWKS 和服务器 service-role PostgREST 探针恢复。0008–0010 随后发布，0011–0013 又于 2026-07-22 按受保护流程发布。不得因依赖暂停而降低 health 门禁。
 
 首次增加 `SERVER_SSH_KNOWN_HOSTS` 时，在可信网络取得 host key，用 `ssh-keygen -lf` 查看 fingerprint，并通过服务器控制台/云厂商记录进行第二通道核对后，才把完整 known_hosts 行写入 Secret。不要直接把未经核验的 `ssh-keyscan` 输出当作信任根。`DB_BACKUP_ENCRYPTION_KEY` 应使用密码学随机值生成，并在 GitHub 之外的受控恢复保管中保存副本。
 
 ## 流程
 
-推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check → 自动暂存 0008 及以后迁移并验证 0007→最新升级 → 空库重建 → db lint → 本地真实 RLS/Storage/points/Courses E2E → Azure fake Playwright Courses 主流程。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动选中 `plan_database_migrations` 只读核对远端 history/dry-run，再单独选中 `apply_database_migrations`；数据库发布成功后才继续部署应用。上传完成后，生产主机用自己的 mode-600 `.env` 先运行原始真实 Azure gate；0015+ 再在新 API 候选上运行 `scripts/smoke-learning-audio-production.mjs`，证明持久队列首次生成、private Storage hit、第二用户重复词不增加 Azure attempt、裁剪后评分和 session patch。任一 gate 失败都不会切换 Web；后续应用 smoke 失败会恢复上一 Web symlink/API image，数据库不会危险地自动逆向。
+推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check + 真实 Redis Lua E2E → 自动暂存 0008 及以后迁移并验证 0007→最新升级 → 空库重建 → db lint → 本地真实 RLS/Storage/points/Courses E2E → nginx 容器 `-t` → Azure/OpenRouter/Fish fake Playwright。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动选中 `plan_database_migrations` 只读核对远端 history/dry-run，再单独选中 `apply_database_migrations`；数据库发布成功后才继续部署应用。第一阶段服务器先安装 secrets、启动 Redis并验证 PING/AOF/no host port，再激活需要 `deps.supabase=ok` 和 `deps.redis=ok` 的候选 API；真实 Azure/OpenRouter/Fish 和 Courses Storage gates 仍照常执行。任一 gate 失败都不会切换 Web；后续应用 smoke 失败会恢复上一 Web symlink/API image，数据库不会危险地自动逆向。
 
-手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求真实 Azure gates 成功、API JSON 的 `status/service/deps.supabase=ok`（内部已探测 JWKS/PostgREST），并从公网检查 API 和 Web root，不再只判断任意 HTTP 200。Playwright 的 fake provider 与本地 Cache Storage 流程不能替代这项生产证据。
+手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。第一阶段部署要求真实供应商 gates 成功、API JSON 的 `status/service/deps.supabase=ok/deps.redis=ok`，并从公网检查注册/普通 API 的 RateLimit headers、管理拒绝、API 和 Web root。Playwright fake、mock Redis 或本地 Cache Storage 流程不能替代生产证据。
 
-仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。CI 不覆盖 certbot 管理的生产站点文件；生产站点已于 2026-07-22 同步该值并通过 `nginx -t`。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
+仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。0039 候选由受限安装脚本在同一 Nalanda server block 叠加 API 20 r/s burst 40、注册 1 r/s burst 3，以及标准 JSON 429、`Retry-After`/RateLimit headers；只在 `nginx -t` 通过后 reload，不修改其它站点。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
 
 纯 Markdown 变更由 [docs workflow](../../.github/workflows/docs.yml) 校验文档定位字段和相对链接，不重新部署应用。
 
@@ -71,9 +75,11 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 cd /opt/nalanda
 docker compose --env-file .deploy.env ps
 docker compose --env-file .deploy.env logs --tail=50 api
+docker compose --env-file .deploy.env logs --tail=50 redis
 docker compose --env-file .deploy.env restart api
+docker compose --env-file .deploy.env exec -T redis sh -c 'redis-cli -a "$REDIS_PASSWORD" ping'
 readlink -f web
 cat .deploy.env
 ```
 
-不要手工把 `nalanda-api:latest` 覆盖成新版本；当前 release 使用 Git SHA tag。手动回退时应按失败 workflow 保存的上一 image/web release 双人复核，并确认新数据库 schema 仍兼容旧应用。
+不要手工把 `nalanda-api:latest` 覆盖成新版本；当前 release 使用 Git SHA tag。手动回退时应按失败 workflow 保存的上一 image/web release 双人复核，并确认新数据库 schema 仍兼容旧应用。Redis 是限流/锁的可重建运行依赖，不是 points 或课程事实源；应用回退后可继续运行，不能用删除 AOF 代替数据库恢复。

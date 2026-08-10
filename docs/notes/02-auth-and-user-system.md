@@ -4,6 +4,7 @@
 > - **内容**：记录当前 Supabase Auth、NestJS JWT 守卫、Profile 建档和注册流程。
 > - **作用**：说明认证数据流与安全边界，供登录故障排查和后续邮箱/OAuth 改造参考。
 > - **何时更新**：认证提供商、令牌校验、注册/找回密码、角色、Profile 权限或密钥变化时。
+> - **状态基线**：2026-08-10。生产仍为 0038；注册 Redis/HMAC 双限流已在 0039–0040 候选应用实现，待受保护发布。
 
 > 目标：用户能注册 / 登录 / 退出（真实后端），后端能信任登录态，每个用户有自己的资料档案且只能访问自己的数据。
 
@@ -94,7 +95,7 @@ HS256 回退已有错误 issuer/audience 的单元回归；真实 JWKS 拉取、
 
 **权衡**：当前**不做邮箱验证**（任意邮箱可注册）。这是 MVP 取舍，保证可用。将来要真验证：接可发信的 SMTP（如 Resend）+ 配 Site URL（`https://nalanda.online`）+ 打开邮箱确认即可。
 
-安全边界：该公开注册接口持有 service-role 能力，当前没有验证码、限流或 CAPTCHA，并明确返回重复邮箱。正式增长前必须增加滥用防护与邮箱验证，详见 [SECURITY](../../SECURITY.md)。
+安全边界：该公开注册接口持有 service-role 能力，生产 0038 仍没有验证码、限流或 CAPTCHA，并明确返回重复邮箱。0039–0040 候选通过私有 Redis 同时限制每 IP 5 次/15 分钟、每个规范化邮箱 3 次/小时，key 只使用独立 secret 生成的 HMAC；Redis 不可用时注册返回 `503 RATE_LIMIT_UNAVAILABLE`，不会绕过保护继续创建用户。nginx 另叠加 1 次/秒、burst 3，但邮箱验证、CAPTCHA 和防枚举产品调整仍是后续工作。
 
 ## 7. 配置与密钥（谁用哪把）
 
@@ -104,16 +105,19 @@ HS256 回退已有错误 issuer/audience 的单元回归；真实 JWKS 拉取、
 | `SUPABASE_URL` | 后端 JWKS / admin 基址 | 否 |
 | `SUPABASE_JWT_SECRET` | 后端 HS256 回退验签 | 是 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 后端 admin 建用户（绕 RLS） | **绝密** |
+| `REDIS_URL` | 候选后端滑动窗口与 readiness；生产 URL 内含独立 Redis 密码 | **绝密** |
+| `RATE_LIMIT_HMAC_SECRET` | 对 IP/规范化邮箱派生不可逆限流 actor | **绝密** |
 
 - 前端密钥经 GitHub Secrets 在 CI 构建期注入；后端密钥只存服务器 `/opt/nalanda/.env`（不入库、不进 CI 日志）。
 - **service_role 切勿进前端**：它能绕过所有 RLS 读写整库。
 
 ## 8. 验证
 
-历史线上实测曾覆盖注册状态码、ES256 `/api/me` 和 Profile 自动建档。当前可复现测试、所需隔离 Supabase 项目和命令以 [测试指南](../guides/TESTING.md) 为准；不要用生产项目运行会创建/删除用户的 E2E。
+历史线上实测曾覆盖注册状态码、ES256 `/api/me` 和 Profile 自动建档。0039 候选的 Redis 原子窗口、429 headers、分级故障和 HMAC 脱敏必须在真实 CI Redis 运行，mock 单测不算依赖证据。当前可复现测试、所需隔离 Supabase 项目和命令以 [测试指南](../guides/TESTING.md) 为准；不要用生产项目运行会创建/删除用户的 E2E。
 
 ## 9. 后续 TODO
 
 - `/api/me` 由「回显 JWT claims」升级为「用 service_role 读 `profiles` 返回完整档案」。
 - 角色/权限（user/creator/admin）守卫；points 已有账本，后续为 credits/VIP/支付建立独立事实账本和只读 Profile projection。
 - 真邮箱验证（SMTP）、OAuth、找回密码。
+- CAPTCHA、对外防枚举文案与注册安全事件运营流程；Redis 双限流只解决请求频率，不证明邮箱所有权。

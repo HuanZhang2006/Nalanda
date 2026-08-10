@@ -3,7 +3,7 @@
 > **本文内容：**记录当前已上线生产拓扑，并把它与未部署的混合/目标拓扑分开。  
 > **作用：**让部署、监控和故障排查围绕真实运行系统，而不是早期 Vercel/Railway 或 2G 脚手架假设。  
 > **何时更新：**生产入口、主机、容器、域名、Supabase、AI/Redis 部署或发布方式变化时。  
-> **状态基线：**2026-07-10；敏感主机信息和密钥不写入 ADR。
+> **状态基线：**2026-08-10；生产仍为 nginx + Web/API + Supabase Cloud。0039–0040 候选将在同一 compose 私网增加 Redis，但完成受保护发布前不属于生产事实；敏感主机信息和密钥不写入 ADR。
 
 - **状态：**Accepted
 - **日期：**2026-06-24
@@ -18,7 +18,7 @@
 
 - 当前生产事实以 `.github/workflows/deploy.yml`、`infra/deploy/docker-compose.yml` 和 nginx 配置为准。
 - nginx 是公网入口，提供 Web 静态产物并反代 `/api`；NestJS API 运行于容器；Supabase Cloud 承担 Auth/Postgres/Storage。
-- 当前不把 FastAPI AI、Redis、Stripe、pgvector、Electron、React Native 或 Supabase Realtime 声称为已生产部署。
+- 当前不把 FastAPI AI、Redis、Stripe、pgvector、Electron、React Native 或 Supabase Realtime 声称为已生产部署。ADR-0011 已接受仅用于请求保护/扫描锁的同机私有 Redis 候选；它与 `infra/hybrid-2g` 的未来 AI/BullMQ Redis 拓扑不是同一发布事实。
 - `infra/hybrid-2g` 保留为候选脚手架，不是当前运行手册；启用前需新的容量、安全、备份、监控和回滚评审。
 
 ## 后果
@@ -29,7 +29,7 @@
 
 - **当前：**PR/main 会执行 typecheck、Web jsdom、API readiness unit、build、本地 Supabase 升级/重建/lint/RLS E2E；新增 migration 在加密恢复点后通过受保护 environment 发布；应用以 Git SHA release 部署并自动回退上一 Web/API；health 会探测 Supabase JWKS/PostgREST。
 - **当前限制：**health 尚不证明 Storage、真实注册/登录、完整 RLS 或全部业务路径；数据库不自动逆向；Storage bytes、异地 artifact、持续监控和完整恢复演练仍缺失。
-- **目标：**增加 staging/canary、异地 artifact/Storage 备份、完整恢复演练、结构化日志和 SLO 告警；AI/Redis/Stripe 只有达到各自门禁后才加入拓扑。
+- **目标：**先按 ADR-0011 门禁发布私有 Redis 请求保护，再增加 staging/canary、异地 artifact/Storage 备份、完整恢复演练、集中日志和 SLO 告警；AI/BullMQ 与 Stripe 仍须各自独立门禁。
 
 ## 验证与复审
 

@@ -33,8 +33,8 @@ const hostname = new URL(url).hostname;
 if (hostname !== "127.0.0.1" && hostname !== "localhost") {
   throw new Error(`Upgrade fixture refuses non-local Supabase URL: ${hostname}`);
 }
-if (phase !== "seed" && phase !== "assert") {
-  throw new Error("Usage: node points-upgrade.e2e.mjs <seed|assert>");
+if (!["seed", "mutate", "assert"].includes(phase)) {
+  throw new Error("Usage: node points-upgrade.e2e.mjs <seed|mutate|assert>");
 }
 
 const options = {
@@ -130,8 +130,22 @@ async function seedLegacyFixture() {
   process.stdout.write("Legacy 0007 points fixture seeded.\n");
 }
 
+async function mutateLegacyFixture() {
+  const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
+  const b = await signedIn(fixture.emailB, fixture.password);
+  await must(
+    b.from("study_tasks").update({ done: false, done_at: null }).eq("id", fixture.taskId),
+    "cancel a 0008-backfilled task before 0039",
+  );
+  assert.equal(await ledgerTotal(b), -5, "the old state machine exposes the unearned legacy negative debt");
+  assert.equal((await profile(b, fixture.bId)).points, 0, "the pre-0039 Profile projection clamps that debt to zero");
+  await writeFile(fixturePath, JSON.stringify({ ...fixture, legacyNegativeTaskCreated: true }), { mode: 0o600 });
+  process.stdout.write("Legacy negative transition created on the 0038 schema.\n");
+}
+
 async function assertUpgradeFixture() {
   const fixture = JSON.parse(await readFile(fixturePath, "utf8"));
+  assert.equal(fixture.legacyNegativeTaskCreated, true, "fixture must exercise the 0038 negative-debt boundary");
   const a = await signedIn(fixture.emailA, fixture.password);
   const b = await signedIn(fixture.emailB, fixture.password);
 
@@ -174,16 +188,38 @@ async function assertUpgradeFixture() {
 
   const task = await must(admin.from("study_tasks").select("points_business_key").eq("id", fixture.taskId).single(), "read migrated task key");
   const expectedStates = [originalKey, repostKey, likeKey, commentKey, task.points_business_key];
-  const states = await must(admin.from("point_event_states").select("business_key,is_active,transition_no").in("business_key", expectedStates), "read backfilled event states");
+  const states = await must(admin.from("point_event_states").select("business_key,is_active,source_active,awarded_amount,decision_rule_version,transition_no").in("business_key", expectedStates), "read backfilled event states");
   assert.equal(states.length, expectedStates.length);
-  assert(states.every((state) => state.is_active && state.transition_no === 0), "legacy active states must be backfilled without duplicate rewards");
+  for (const state of states) {
+    expectGrandfatherState(state, state.business_key === task.points_business_key);
+  }
+  const claims = await must(admin.from("point_daily_award_claims").select("business_key,rule_version,daily_window_id,daily_limit,awarded_amount,suppressed_reason").in("business_key", expectedStates), "read grandfather claims");
+  assert.equal(claims.length, expectedStates.length);
+  assert(claims.every((claim) => (
+    claim.rule_version === "grandfather-v1"
+    && claim.daily_window_id === null
+    && claim.daily_limit === null
+    && claim.awarded_amount === 0
+    && claim.suppressed_reason === null
+  )), "grandfather claims must freeze the provable historical award amount at zero");
+  const taskCorrections = await must(admin.from("point_entries")
+    .select("amount,rule_version,transition_no,reversal_of")
+    .eq("business_key", task.points_business_key)
+    .eq("rule_version", "grandfather-zero-reset-v1"), "read grandfather debt correction");
+  assert.equal(taskCorrections.length, 1);
+  assert.deepEqual({
+    amount: taskCorrections[0].amount,
+    transition_no: taskCorrections[0].transition_no,
+  }, { amount: 5, transition_no: 2 });
+  assert(taskCorrections[0].reversal_of, "the correction must link to the historical negative transition");
 
-  // Each duplicate relation shares one claim: only deleting the last row reverses,
-  // and recreating it restores the same net amount.
+  // Each duplicate relation shares one claim. These 0008 placeholders never had
+  // an individual positive ledger entry, so deleting/restoring them remains a
+  // zero-value idempotent transition instead of manufacturing a negative award.
   await must(b.from("post_likes").delete().eq("post_id", fixture.postIds[0]), "delete first legacy like");
   assert.equal(await ledgerTotal(b), 0);
   await must(b.from("post_likes").delete().eq("post_id", fixture.postIds[1]), "delete last legacy like");
-  assert.equal(await ledgerTotal(b), -1);
+  assert.equal(await ledgerTotal(b), 0);
   assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("post_likes").insert({ post_id: fixture.postIds[1] }), "restore legacy like claim");
   assert.equal(await ledgerTotal(b), 0);
@@ -191,7 +227,7 @@ async function assertUpgradeFixture() {
   await must(b.from("comments").delete().eq("id", fixture.commentIds[0]), "delete first legacy comment");
   assert.equal(await ledgerTotal(b), 0);
   await must(b.from("comments").delete().eq("id", fixture.commentIds[1]), "delete last legacy comment");
-  assert.equal(await ledgerTotal(b), -2);
+  assert.equal(await ledgerTotal(b), 0);
   assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("comments").insert({ post_id: fixture.postIds[1], body: "restored legacy comment" }), "restore legacy comment claim");
   assert.equal(await ledgerTotal(b), 0);
@@ -199,13 +235,13 @@ async function assertUpgradeFixture() {
   await must(b.from("posts").delete().eq("id", fixture.repostIds[0]), "delete first legacy repost");
   assert.equal(await ledgerTotal(b), 0);
   await must(b.from("posts").delete().eq("id", fixture.repostIds[1]), "delete last legacy repost");
-  assert.equal(await ledgerTotal(b), -3);
+  assert.equal(await ledgerTotal(b), 0);
   assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("posts").insert({ repost_of: fixture.postIds[1], kind: "experience", tags: [] }), "restore legacy repost claim");
   assert.equal(await ledgerTotal(b), 0);
 
   await must(b.from("study_tasks").update({ done: false, done_at: null }).eq("id", fixture.taskId), "undo legacy task");
-  assert.equal(await ledgerTotal(b), -5);
+  assert.equal(await ledgerTotal(b), 0);
   assert.equal((await profile(b, fixture.bId)).points, 0);
   await must(b.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", fixture.taskId), "redo legacy task");
   const afterTaskRedo = await profile(b, fixture.bId);
@@ -219,15 +255,26 @@ async function assertUpgradeFixture() {
   const deletedA = await admin.auth.admin.deleteUser(fixture.aId);
   const deletedB = await admin.auth.admin.deleteUser(fixture.bId);
   if (deletedA.error || deletedB.error) throw deletedA.error || deletedB.error;
-  const [entryRemnants, stateRemnants] = await Promise.all([
+  const [entryRemnants, stateRemnants, claimRemnants] = await Promise.all([
     must(admin.from("point_entries").select("id").in("user_id", [fixture.aId, fixture.bId]), "check ledger cleanup"),
     must(admin.from("point_event_states").select("business_key").in("user_id", [fixture.aId, fixture.bId]), "check state cleanup"),
+    must(admin.from("point_daily_award_claims").select("business_key").in("user_id", [fixture.aId, fixture.bId]), "check claim cleanup"),
   ]);
   assert.equal(entryRemnants.length, 0, "Auth deletion must cascade upgraded ledger rows");
   assert.equal(stateRemnants.length, 0, "Auth deletion must cascade upgraded event state rows");
+  assert.equal(claimRemnants.length, 0, "Auth deletion must cascade upgraded award claims");
   await unlink(fixturePath);
-  process.stdout.write("0007 -> 0009 points upgrade fixture passed.\n");
+  process.stdout.write("0007 -> latest points upgrade fixture passed.\n");
+}
+
+function expectGrandfatherState(state, wasInactiveBefore0039) {
+  assert.equal(state.is_active, false);
+  assert.equal(state.source_active, !wasInactiveBefore0039);
+  assert.equal(state.awarded_amount, 0);
+  assert.equal(state.decision_rule_version, "grandfather-v1");
+  assert.equal(state.transition_no, wasInactiveBefore0039 ? 2 : 0);
 }
 
 if (phase === "seed") await seedLegacyFixture();
+else if (phase === "mutate") await mutateLegacyFixture();
 else await assertUpgradeFixture();

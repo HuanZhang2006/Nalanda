@@ -18,6 +18,8 @@
 8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
 9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在待激活 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分和翻译评判幂等。0037 起还必须以 Azure 合成“苹果”中文 WAV 调用真实 Fish Audio STT，验证 owner/revision/word 绑定和中文 transcript 后才激活 Web release。
 
+0039–0040 候选进一步要求：生产先用独立 secret 启动无宿主机端口的 Redis，验证认证 PING、AOF `everysec`、`noeviction` 和 private network；候选 API readiness 必须同时返回 `deps.supabase=ok`、`deps.redis=ok`，并验证标准限流 headers 与未认证 points admin 401。Redis/nginx 可在应用回退后继续运行；它们不能代替数据库恢复点或 provider gates。
+
 0037–0038 的历史发布 plan 只出现 `20260804000037_learning_translation_voice_input.sql` 与 `20260804000038_verify_learning_translation_voice_input.sql`。恢复点之后 apply 扩展 `learning_speech_usage.kind` 并增加 service-role-only reservation RPC；应用回滚仍可忽略新增 kind/RPC，数据库只 forward-fix。发布已确认普通 `authenticated` 不能执行 RPC/读取 usage、待激活 API 的 STT 真实 gate 通过且公网 health `deps.supabase=ok`；后续发布仍不得把本地 fake Playwright 当真实供应商证据。
 
 已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。迁移文件或数据库发布控制 workflow/脚本发生变化，都会把普通 main push 保持在“只验证、不部署”状态，避免发布工具修复绕过尚未完成的数据库 release。普通 push 永不直接修改生产数据库；`plan_database_migrations` 只读且不部署应用，只有单独选中 `apply_database_migrations` 才创建恢复点并执行数据库发布，两者同时选中会失败。
@@ -109,7 +111,7 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 | `VITE_SUPABASE_URL` | 仅用来确认 Ref 与当前 Web 生产项目一致 |
 | `DB_BACKUP_ENCRYPTION_KEY` | AES-256/PBKDF2 加密发布恢复点；必须离线另存恢复副本 |
 
-应用 environment 的 SSH/Web secrets 见[环境变量矩阵](../guides/ENVIRONMENT_VARIABLES.md)。Actions 中只保留加密的数据库 artifact 14 天；artifact 权限不替代密码学加密，也不替代异地长期备份。
+应用 environment 的 SSH/Web secrets 见[环境变量矩阵](../guides/ENVIRONMENT_VARIABLES.md)。0039 第一阶段还必须有彼此独立的 64 位 hex `REDIS_PASSWORD` 和 `RATE_LIMIT_HMAC_SECRET`；workflow 只通过 SSH 标准输入安装，前者只进入服务器 `.redis.env`/API Redis URL，后者只进入 API `.env`。Actions 中只保留加密的数据库 artifact 14 天；artifact 权限不替代密码学加密，也不替代异地长期备份。
 
 ## 6. 发布前门禁
 
@@ -118,6 +120,9 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 - [x] 2026-07-22 Courses 发布：RLS、Storage policy、function EXECUTE、trigger 幂等有双用户测试。
 - [x] 0008/0009 首次生产发布审计：2026-07-21 只读聚合确认 1 个 Profile，points=11、credits=0、streak=0、无 VIP；owner 决定 points 归零，0009 以 append-only reversal 实施，credits/VIP/streak 不改。
 - [ ] 估算表规模、锁、statement timeout 和 backfill 时间。
+- [ ] 0039 第一阶段确认 PR/plan 只包含 0039–0040；仓库和远端均不得出现 0041–0042。
+- [ ] Redis/HMAC secrets 已安装；compose/nginx config、真实 Redis Lua、PING/AOF/no-port、429 JSON/headers 与 fail-open/closed 已验证。
+- [ ] 记录 0039 应用激活 UTC 时间、上一兼容 release、24 小时观察 owner/截止时间与 contract go/no-go 条件。
 - [x] 2026-07-22 Courses 发布：[ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
 - [x] 2026-07-22 Courses 发布：owner 核对 Ref、Git SHA、0001–0013 history 和只读 dry-run；人工 plan/apply 分开执行。
 - [x] 2026-07-22 Courses 发布：新的加密恢复点创建、验证并保留；解密 key 仍由 Actions 外受控保管。
@@ -178,6 +183,18 @@ supabase stop --no-backup
 Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分享/市场只能经 API、publication 快照更新被拒、四阶段会话恢复、两次不同本地日期熟练、Schedule 不生成 `study_tasks`、同词集合只出现一条 +20 分录、课程删除保留分录/徽章历史，以及 `learning_speech_usage` 不含音频或参考文本。
 
 0015–0016 还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到旧 release 仍能运行。当前应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、未经 VAD/静音裁剪的固定 WAV 评分与最终 `deps.supabase=ok`。
+
+### 0039–0042 两阶段发布专用门禁（候选，尚无生产证据）
+
+第一阶段只允许 0039–0040 和兼容应用：
+
+1. PR/CI 必须通过 0007→0040、空库、lint、精确 column/table/function grants、双用户 RLS、真实 Redis Lua、nginx/compose、jsdom/Playwright/build；fake provider 仍不得描述为真实 Azure/OpenRouter/Fish 证据。
+2. 独立 plan 必须证明生产停在 0038且唯一待办为 0039–0040。创建恢复点后 apply，检查 posts/Feedback/Schedule trigger、历史 claim grandfather、ledger/Profile projection 和客户端/service-role 负向权限；grandfather 实际金额必须能由该 business key 的 transition 1 正向分录证明，0008/0009 零金额占位不得因删除、restore 或审核产生负分。若 plan/apply 前数据中已有这类占位负 transition，0039 只能以 `grandfather-zero-reset-v1` append-only 补偿，发布核对其总额、行数、`reversal_of` 和最终业务键净额，不能删除历史分录。
+3. 先安装 Redis/HMAC，再启动 Redis；确认 password PING、AOF、noeviction、持久 volume、无 host port。安装 nginx rate zones 并 `nginx -t`；nginx 429 必须是标准 JSON/headers。
+4. 候选 API 本机先验证 `deps.supabase=ok/deps.redis=ok`、匿名 `/api/me` 与 points admin 401、注册限流 headers、Redis 停止时 private read fail-open 和 protected path fail-closed；随后继续既有三类真实供应商 gates，才可原子切换 Web/API。
+5. 从激活 UTC 起至少 24 小时观察：Redis error/restart/AOF/memory、`rate_limit_degraded`、合法请求误 429/503、cap claim/ledger/Profile 差异、signal 只待审，以及任何旧客户端仍提交 `posts.updated_at`/`study_tasks.done_at` 的证据。任一异常均 no-go，应用恢复上一兼容 release，数据库/Redis/nginx保持并 forward-fix。
+
+第二阶段只有上述记录通过后才能在新的 PR 中创建 0041–0042：0041 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0042 断言最终精确 grant。再次执行独立 plan、恢复点、apply、RLS/权限和公网 smoke。不能把预先创建但“暂不 apply”的 0041–0042 合入第一阶段，因为 CI 空库和迁移 job 会提前执行 contract，破坏观察窗口。
 
 ### 8.1 2026-07-21 安全与积分发布记录
 

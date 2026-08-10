@@ -30,6 +30,7 @@
 | 资产 | 发布 archive | 还需要什么 |
 |---|---|---|
 | `public` schema、函数、RLS、业务行 | 是 | 数据一致性、grants、trigger 验证 |
+| Points 日窗口/永久 claim/审核 action/协同 signal/API 滥用桶 | 是 | ledger/Profile 投影、claim 不可变、审核链和 30 天审计保留专项对账 |
 | Courses 内容/会话/attempt/progress/日程/分享/出版/举报/徽章/语音用量/音频队列 metadata | 是 | append-only attempt/points、revision/幂等响应、熟练日期、publication 不可变性、queue lease 与 service-only RPC 专项对账 |
 | Auth 用户 UUID/metadata | data dump 覆盖 | Provider、SMTP、URL、签名配置；密码/会话恢复能力需演练 |
 | Storage bucket/object metadata | data dump 覆盖 | **对象文件字节的异地复制和 manifest** |
@@ -38,8 +39,9 @@
 | GitHub/服务器 secrets | 否 | 独立 secret manager；备份包禁止包含明文 secret |
 | Web/API | Git SHA image + release 目录 | 异地镜像/artifact 保留和服务器重建演练 |
 | nginx/TLS/DNS/compose | 仓库有参考配置 | 生产实际配置、证书和 DNS 切换记录 |
+| Redis AOF/滑动窗口/scanner lock | 否（本机 volume） | Redis 只承载可重建的短期保护状态；password/HMAC 由 secret 管理恢复，不能用 AOF 恢复 points 事实 |
 
-数据库 dump 不能恢复 Storage 文件，应用 artifact 不能恢复数据库，Supabase daily backup 也不能替代服务器和 secret 备份。
+数据库 dump 不能恢复 Storage 文件，应用 artifact 不能恢复数据库，Supabase daily backup 也不能替代服务器和 secret 备份。Redis volume 当前没有异地副本；丢失会清空短期限流窗口和 scanner lock，但 daily claim、审核、signal 与 API 审计仍在 PostgreSQL，绝不能从 Redis 反推或改写。
 
 ## 3. RPO/RTO 目标
 
@@ -168,6 +170,7 @@ bash scripts/restore-db-release.sh restore-isolated
 - 关键行数、FK orphan、unique/NULL 约束正常；
 - posts 冗余计数与关系聚合一致；
 - points/credits/VIP/streak 没有因恢复 trigger 改变；
+- 0039+ 的每个 `point_event_states.business_key` 都有唯一 claim；cap=0 只对应 `daily_cap`，moderation transition 总和与 append-only action 一致，Profile points/level 等于 ledger projection；
 - function owner/search_path/EXECUTE grants 正确。
 - learning course/unit/word owner 链无 orphan；active session 只在 `(user_id,resume_key)` 意图内唯一，同一课程允许不同单元/模式的未完成会话；revision 非负且与新增 attempt 时钟一致，非空 attempt UUID 在 user/session 内唯一且响应快照可重放，attempt 仍为追加事实；progress 若由正常复习熟练，则三组日期各至少两个，若由考试熟练，则存在已完成且 `examPassed=true` 的对应 exam session，不能错误地要求考试路径伪造复习日期；
 - `learning_audio_assets` 无客户端 grant、无过期 processing 永久卡住；ready metadata 对应 private Storage bytes，缺失项回到 pending 后可重建，相同缓存键不重复生成；
@@ -182,9 +185,11 @@ Auth/Storage：
 - 文件字节从独立副本恢复，随机样本 checksum 一致；
 - 私有资料只能由 owner 签名读取。
 
-应用：
+Redis/应用：
 
-- `/api/health`、登录、`/api/me`；
+- 以新的独立 32-byte password/HMAC secret 启动 private Redis，确认无宿主机端口、PING、AOF `everysec`、`noeviction` 和持久 volume；不要把旧 HMAC actor 与新值强行关联；
+- `/api/health` 同时为 `deps.supabase=ok`、`deps.redis=ok`，再验证登录、`/api/me`；
+- 验证注册/IP/email、认证 user、Courses write/public read 的 429 headers，以及 Redis 停止时 private read fail-open、注册/写入/成本路径 fail-closed；
 - owner-only 课程/资料/任务/反馈；
 - Courses 列表/恢复会话/复习日程/Profile 聚合；分享撤销、市场免费克隆和客户端伪造 progress/points 失败；
 - 社区读写、计数、通知和幂等积分；
@@ -200,6 +205,7 @@ Auth/Storage：
 5. 对 Storage bytes、Supabase 配置和 secrets 分别恢复；
 6. 制定差异重放/对账方案，双人复核；
 7. 准备新 URL/keys、Web 重建、API `.env`、DNS/反代和回退窗口；
+   Redis 若从空状态启动，先限制公网写入并观察一个最长保护窗口，避免灾难切换瞬间把“所有窗口清空”误当作正常容量；数据库 points cap 不受此影响。
 8. 经事故负责人和数据库 owner 批准后切换；
 9. 监控 Auth、5xx、RLS、关键写入、对象读取和用户反馈；
 10. 保留旧环境只读证据至合规窗口结束，完成事故报告。
@@ -214,5 +220,6 @@ Auth/Storage：
 - 定期自动创建隔离项目并执行完整 RLS/应用恢复演练；
 - 不可变镜像/artifact 的异地 registry 与保留策略；
 - 恢复演练面板，记录最近成功时间和实际 RPO/RTO；
-- points/credits/支付事件账本和可重放 webhook。
+- credits/支付事件账本和可重放 webhook；points 已有账本/claim，但仍需自动化审核对账与跨恢复点差异报告。
+- Redis AOF 恢复演练、空窗口启动的受控流量方案和 volume 容量/损坏告警；AOF 不升级为业务事实备份。
 - Courses 数据/成长事实/revision/attempt snapshot 恢复对账脚本，以及 `vocabulary-audio` metadata/object 不一致、过期租约、缓存清空与持久队列重建演练。

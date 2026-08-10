@@ -8,9 +8,9 @@
 
 当前已有信号：
 
-- `GET /api/health`：API 进程存活，并真实探测 Supabase JWKS 与 PostgREST profiles 空查询；Redis/AI 仍只报告 `configured/unset`；
+- `GET /api/health`：生产 0038 真实探测 Supabase；0039 候选还校验 HMAC 配置并执行真实 Redis PING，Supabase/Redis 任一失败 readiness 都是 503；AI 仍只报告 `configured/unset`；
 - `GET /health`：AI 进程存活和 Anthropic key 是否存在；AI 当前未部署在生产编排中；
-- deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase`，并检查公网 Web root；失败会回退上一 Web/API release；
+- deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase/deps.redis`，并检查公网 Web root；失败会回退上一 Web/API release；
 - API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
 - nginx access/error log、systemd、Docker 与主机资源命令；
 - GitHub Actions deploy 运行结果；
@@ -19,12 +19,13 @@
 - 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
 - 翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。0027 后应分别监控 `quota_counted=true` 的实际 provider 请求、分钟/滚动 24 小时 429 和 `retryAfterSeconds`，不能把 exact/replay/仅领取租约计入用量。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。这些事件都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
 - 0037 STT 输出 `learning_translation_voice_transcribed`，只含 provider/model/language、音频秒数、provider/API duration 与 usage/cost 数字；不得写 base64/WAV、transcript、word、课程翻译、用户 ID 或 key。数据库以 `learning_speech_usage.kind=translation_stt` 提供分钟/本地日/月预算事实；Web 另应统计录音启动/权限拒绝、空结果、迟到 transcript 丢弃和回填后实际提交率，但不能采集识别文本。
+- 0039 候选输出 `rate_limited`、`rate_limit_degraded`、`rate_limit_audit_failed`、`redis_error`、`point_abuse_scan_completed/failed`；只含 route group/rule、HMAC actor、可选内部 user UUID、retry 秒数或聚合计数，不含原始 IP/email/正文。协同 signal 和 API abuse bucket 持久在 PostgreSQL，首版明确只有结构化日志，不接 webhook/pager。
 
 当前缺失：
 
 - 外部持续探测、SLO 仪表盘、集中日志、结构化 request log、trace、metrics endpoint；
 - error tracking、pager/值班表、告警路由和告警演练；
-- `/api/health` 尚不检查 Storage、注册写入、完整 RLS、Redis 或 AI 的连通性；
+- `/api/health` 尚不检查 Storage、注册写入、完整 RLS、Redis 内存/AOF 磁盘状态或 AI 连通性；0039 候选只增加真实 Redis PING；
 - Web 前端异常和浏览器直连 Supabase 失败没有服务端集中信号；
 - 日常备份新鲜度、RLS/数据完整性、TLS 到期、成本、AI 质量和支付对账告警；迁移前加密恢复点已有 CI 门禁，但没有持续告警。
 - Courses route/阶段/恢复成功率、浏览器 outbox 深度、陈旧 active session、复习日程积压、课程 points/徽章异常、举报队列以及 Azure/OpenRouter latency/error/cost 尚无集中指标；结构化事件只是原始信号，`/api/health` 也不探测 learning schema、音频队列/Storage 或任一供应商。
@@ -46,7 +47,7 @@
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
 | OpenRouter 翻译前测 / Fish Audio STT | 两者均已生产启用至 0038 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
-| Redis/BullMQ | 未接入当前业务 | hybrid compose 有目标配置 | 无队列/worker 指标 |
+| Redis 请求保护（0039 候选） | 仓库 compose/API/CI 已实现，生产仍待第一阶段发布；不使用 BullMQ | PING readiness、`rate_*`/`redis_error` 日志、真实 CI Lua 测试 | 无集中 memory/AOF/eviction/window 命中率告警；Redis 不是 points 事实库 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
 | 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
 
@@ -71,6 +72,8 @@
 | 朗读评分 | 有效 WAV provider 成功率 | ≥97% / 1 小时；供应商失败不写错误次数 |
 | 翻译语义前测 | 有效请求 provider 成功率、结构化输出率、用户重试率 | provider 成功率 ≥97% / 1 小时、schema 有效率 100%；p95 <3 秒为观测目标；供应商失败不得写错误次数 |
 | 复习日程 | 到期 pending 项进入/完成成功率 | ≥99%；不允许误建 `study_tasks` 或 +5 |
+| 请求保护 | rate-limit decision latency、429/503、Redis availability/memory | Redis PING ≥99.9%；合法流量 429 误判需接近 0；noeviction/AOF 配置漂移为发布阻断 |
+| Points 完整性 | ledger/Profile projection、cap/审核 transition | projection 差异必须为 0；同 business key 只有一项首次 decision；协同 signal 只改变待审队列 |
 
 避免合成监控污染真实指标：使用专用账号/课程/文件前缀，测试后清理，并防止触发积分、通知和社区公开内容。生产合成写测试在具备幂等清理前不得自动开启。
 
@@ -88,6 +91,8 @@
 - 外部站点 `/` 与 `/api/health` 每分钟探测，失败从两个网络位置复核；
 - API container restart count 增加或 10 分钟内重启 ≥ 3 次：P2；
 - nginx 5xx > 2% 持续 10 分钟：P2，>20% 持续 5 分钟：P1；
+- `deps.redis=unavailable` 连续 3 次、Redis 重启循环、AOF 写失败或 `noeviction` 漂移：P2；因此造成注册/写入 503 >5 分钟按用户影响升级。内存 ≥80% P3、≥90% P2，不允许临时切成 eviction；
+- `rate_limit_degraded` 在正常运行出现、合法账号 429 比例异常、单 HMAC actor 的拒绝里程碑突增：P2/P3 调查；不得在告警中反解或记录原始 IP/email；
 - 主机可用内存 < 100 MiB 持续 10 分钟：P2；磁盘 > 80% P3，> 90% P2；
 - TLS 剩余 < 21 天 P3，< 7 天 P2，< 48 小时 P1；
 - Supabase 数据库容量/连接/CPU 达平台警戒阈值：P2；阈值需按实际套餐配置；
@@ -101,6 +106,7 @@
 - `learning_audio_assets` 最旧 pending 超过 15 分钟、processing lease 过期持续 5 分钟、generation failure >10% 或 ready metadata 对象 miss >1%：P2；minute/month quota 暂停按预算阈值分级，不通过提高并发绕过；
 - `learning_attempt_revision_conflict` 突增、同 session outbox 最旧项 >5 分钟或 replay 比例异常升高：P2/P3；先查网络/API/多设备，不手工推进 cursor；
 - 同一课程完成指纹出现多条正向 +20、复习 schedule 产生 task +5、badge 重复 PK/事实不一致：P1/P2 按经济影响；
+- Profile points/level 与 ledger projection 任一差异、同 business key 多项 claim、cap 数量越界或 suppress 产生超出历史实得金额的负分：P1；pending 协同 signal 数量/年龄突增为人工审核信息，不能自动处罚；
 - Course 举报达到 `COURSE_REPORT_ALERT_THRESHOLD`：信息/审核队列；24 小时无人处理升级 P3。数量本身不自动下架。
 
 所有阈值先观察两周基线再调优，保留变更记录。告警必须指向本页具体 runbook，且需要定期发送测试告警验证路由。
@@ -114,7 +120,7 @@ curl -fsS --max-time 10 https://nalanda.online/api/health
 curl -fsSI --max-time 10 https://nalanda.online/
 ```
 
-API health 中 `deps.supabase = ok` 表示 JWKS 与 PostgREST 空查询在超时内成功；`redis/ai = configured` 仍只表示变量非空。不能把该 endpoint 当作 Storage、RLS、登录或 AI 完整 readiness。
+API health 中 `deps.supabase=ok` 表示 JWKS 与 PostgREST 空查询在超时内成功；0039 应用的 `deps.redis=ok` 表示 HMAC 配置有效且真实 PING 成功；`ai=configured` 仍只表示变量非空。不能把该 endpoint 当作 Storage、RLS、登录、Redis AOF/容量或 AI 完整 readiness。
 
 TLS 检查：
 
@@ -128,7 +134,9 @@ echo | openssl s_client -servername nalanda.online -connect nalanda.online:443 2
 ```bash
 cd /opt/nalanda
 docker compose --env-file .deploy.env ps
-docker compose --env-file .deploy.env logs --since=30m --tail=300 api
+docker compose --env-file .deploy.env logs --since=30m --tail=300 api redis
+docker compose --env-file .deploy.env exec -T redis sh -ec \
+  'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping; REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli INFO memory | sed -n "1,12p"'
 curl -fsS --max-time 5 http://127.0.0.1:8411/api/health
 docker stats --no-stream
 df -h
@@ -152,6 +160,7 @@ tail -n 200 /var/log/nginx/error.log
 | 外部 `/` 和 `/api/health` 都失败；服务器不可 SSH | 主机/网络/DNS | 主机供应商、DNS、端口和资源状态 |
 | 外部失败；本机 `127.0.0.1:8411` 正常 | nginx/TLS/DNS | `nginx -t`、error log、证书、server_name/反代 |
 | 外部和本机 API 都失败 | container/API | compose ps/logs、restart count、内存、镜像/`.env` |
+| health 仅 `deps.redis=unavailable`；私有 GET 仍可用而注册/写入 503 | Redis/password/HMAC/AOF/网络 | Redis health/log/volume/内存、API `REDIS_URL` 与 `.redis.env`；不得切为 fail-open 写入 |
 | API health 200，但注册失败 | Supabase Auth、service-role、DNS | API logs、变量是否为同一项目、Supabase Auth 日志 |
 | API health 200，但登录/业务查询失败 | 浏览器→Supabase、JWT、RLS、迁移 | Supabase logs、项目 URL、JWKS、RLS/表结构、前端 console |
 | 只上传/预览失败 | Storage policy/对象/签名 URL | bucket、路径首段、对象 policy、过期时间、浏览器错误 |
@@ -194,7 +203,7 @@ tail -n 200 /var/log/nginx/error.log
 1. `docker stats --no-stream`、`free -m`、`df -h` 定位内存/磁盘。
 2. 检查日志、上传 artifact、Docker layers 占用；保留事故证据后再清理。
 3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
-4. 当前生产只有 API 容器，Redis/AI 不应被误判为当前生产资源来源。
+4. 生产 0038 只有 API 容器；0039 第一阶段后另有 128 MiB Redis 容器和持久 volume，AI 仍未部署。先核对当前 release/compose，不要按过时拓扑判断。
 
 ### 6.5 Courses / Azure / Course Market
 
@@ -205,6 +214,15 @@ tail -n 200 /var/log/nginx/error.log
 5. 举报只触发人工核查。紧急隐藏必须由配置管理员走 API，填写原因并确认 moderation action；恢复同样留痕。
 6. answer 同步异常按 `sessionId + revision + attemptId` 对账 append-only fact/response snapshot；重复 UUID 不应增加 wrong_count，409 后客户端只能用最新 snapshot 重放仍匹配题目。不得直接改 session state。
 7. 修复后依次验证 owner、会话 snapshot、outbox 重放、音频 manifest/Storage hit、日程、points 幂等、撤销分享和市场克隆；记录 flags 变更、影响窗口和补偿决定。
+
+### 6.6 Redis、限流与 Points 审核
+
+1. 先区分 nginx 429、Nest 429、`RATE_LIMIT_UNAVAILABLE` 和 `/api/health` Redis 503；保存 route group/rule/时间桶，不收集原始邮箱、IP 或正文。
+2. 检查 Redis container health、PING、AOF error、内存和 `noeviction`。密码/HMAC 不得出现在命令输出；凭据不一致按[密钥轮换](./SECRET_ROTATION.md)处理。
+3. Redis 故障时保持写/注册/成本路径 fail-closed；只允许代码已分类的私有纯读取 fail-open。不能临时关闭 interceptor、扩大 trust proxy 或把 service-role 放到客户端。
+4. points 异常按 business key 对账 claim → state → entries → Profile projection；禁止改 Profile、claim 或历史 entry。需要处置时只走管理 API，reason/case reference 必填。
+5. 协同 scanner 失败只影响新信号，不应冻结用户或冲正。恢复锁/数据库后重跑；pending signal 由人工 review，阈值命中不是违规结论。
+6. 恢复后验证标准 429 headers、相同用户并发窗口、private read 降级、scanner 单锁、ledger projection，并记录误限流和受影响窗口。
 
 ## 7. 日志规范（目标）
 
@@ -217,7 +235,8 @@ API/AI 后续应输出单行结构化 JSON：
 | `method`, `route_template`, `status_code`, `duration_ms` | HTTP 指标来源，route 使用模板避免高基数 |
 | `user_id_hash` | 必要时用不可逆/按环境盐化标识，不记录邮箱 |
 | `error_code`, `exception_type` | 稳定错误分类，不直接记录输入正文 |
-| `dependency`, `dependency_status`, `retry_count` | Supabase/AI/Redis/Stripe（未来） |
+| `dependency`, `dependency_status`, `retry_count` | Supabase/AI/Redis/Stripe |
+| `route_group`, `rule`, `actor_hmac`, `retry_after_seconds` | 限流聚合；actor 只能是独立 secret 生成的 HMAC，禁止原始 IP/email |
 
 禁止记录：password、Authorization/cookie、Supabase access/refresh token、service-role/JWT secret、Anthropic/Stripe key、数据库连接串、签名 URL、完整课件/笔记/反馈正文、支付卡数据。对 email、文件名、IP 和 user agent 设定用途、采样与保留期。
 
@@ -234,9 +253,10 @@ Courses 另禁止记录：分享明文 token/token hash、完整词表/翻译、
 5. **Courses**：创建/保存、snapshot p50/p95、attempt commit p50/p95、revision conflict/replay、浏览器 outbox 年龄、候补轮次、复习/熟练/错误、+20 指纹与徽章；避免 term 高基数标签。
 6. **Speech/Market**：queue depth/oldest wait/lease retry、Azure generation p95、Storage/browser cache hit、ready-object miss、429/熔断、字符/估算/实际账单差异、评分 p95；publication/clone/report/action 与处理年龄。
 7. **数据保护**：备份年龄/大小/校验、恢复演练、RLS 安全测试、异常函数权限。
-8. **发布**：Git SHA、deploy 时间、失败、变更前后错误率。
-9. **AI（启用后）**：队列深度/等待、任务成功/重试/超时、token/费用、模型/提示词版本、schema 合格率与质量评测。
-10. **支付（启用后）**：webhook 延迟/失败/重放、订单与 Stripe 对账差异、退款、账本不平。
+8. **请求保护/Points**：Redis health/memory/AOF、decision latency、429/503/degraded、审计桶、pending signal 年龄、cap claim 与 ledger/Profile projection 差异。
+9. **发布**：Git SHA、deploy 时间、失败、变更前后错误率。
+10. **AI（启用后）**：队列深度/等待、任务成功/重试/超时、token/费用、模型/提示词版本、schema 合格率与质量评测。
+11. **支付（启用后）**：webhook 延迟/失败/重放、订单与 Stripe 对账差异、退款、账本不平。
 
 ## 9. 值班与升级路径
 
