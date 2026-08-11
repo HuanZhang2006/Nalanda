@@ -45,10 +45,11 @@ describe("资料错误处理", () => {
 
     click(root.querySelector('[data-mat="delete"][data-id="m1"]'));
     click(document.querySelector('[data-delete-choice="keep"]'));
-    await flush(12);
+    await vi.waitFor(() => {
+      expect(toast).toHaveBeenCalledWith(expect.stringContaining("temporarily unavailable"));
+    });
     expect(supabase.tables.materials.some((material) => material.id === "m1")).toBe(true);
     expect(supabase.operations.some((operation) => operation.table === "materials" && operation.action === "delete")).toBe(false);
-    expect(toast).toHaveBeenCalledWith(expect.stringContaining("temporarily unavailable"));
   });
 
   it("shows only test generation as available, validates consent, and persists a queued job", async () => {
