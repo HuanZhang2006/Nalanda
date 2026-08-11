@@ -3,8 +3,8 @@
 > **本文内容：**汇总 Nalanda 的 AI 契约、质量、安全、评测、成本和发布治理文档。  
 > **作用：**把模型能力从原型演示提升为可衡量、可回归、可控成本的产品能力，并避免把配置或桩误报为真实 AI。  
 > **何时更新：**新增 AI 文档、模型/解析/评测/供应商/成本体系变化，或索引路径变化时。  
-> **状态基线：**2026-08-10；0041–0043 已实现 Materials 试卷生成与主观题评分候选，FastAPI/BullMQ/OpenRouter 链路尚待真实门禁与受保护生产发布。Courses 文件 AI 导入仍未实现。Azure Speech adapter 是独立非生成式能力，已在生产启用。
+> **状态基线：**2026-08-11；生产 0041–0043 已启用 Materials 试卷生成与主观题评分，FastAPI/BullMQ/OpenRouter 链路已通过真实门禁与受保护发布。Courses 文件 AI 导入仍未实现。Azure Speech adapter 是独立非生成式能力，已在生产启用。
 
-- [AI 评测与成本治理](EVALUATION_AND_COST.md)：Materials 试卷候选、Courses 后续文件导入、Azure Speech 边界、离线/在线质量、安全隐私、usage/cost、预算与发布门禁。
+- [AI 评测与成本治理](EVALUATION_AND_COST.md)：生产 Materials 试卷、Courses 后续文件导入、Azure Speech 边界、离线/在线质量、安全隐私、usage/cost、预算与发布门禁。
 
 任何真实 AI 上线还必须同时满足经济计费、隐私删除、内容审核、安全和第三方许可证要求。

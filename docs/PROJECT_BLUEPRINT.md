@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-08-11。生产已受保护发布到 0040；0039–0040 安全第一阶段正在兼容观察。0041–0043 Materials AI 是待发布候选；时间列撤权 contract 顺延为未来 0044–0045，必须在至少观察至 `2026-08-11T09:35:34Z` 并通过 go/no-go 后另行追加。
+最后核对：2026-08-11。生产已受保护发布到 0043；0039–0040 安全第一阶段仍在兼容观察，0041–0043 Materials AI 第一阶段已上线。时间列撤权 contract 顺延为未来 0044–0045，必须在至少观察至 `2026-08-11T09:35:34Z` 并通过 go/no-go 后另行追加。
 
 ---
 
@@ -24,9 +24,9 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ## 2. 当前基线（不是最终完成状态）
 
-截至 2026-08-10，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses + 私有 Redis 请求保护”：
+截至 2026-08-11，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses + Materials AI 最小闭环 + 私有 Redis 请求保护/任务投递”：
 
-- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API 生产部署；生产 migration history 已到 0040。
+- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API/AI 生产部署；生产 migration history 已到 0043。
 - 已上线：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech；生产 flags 已开启，fake 未进入生产。
 - 已上线增量：0015–0016 把普通答题改成客户端一帧内预测反馈、`attemptId + expectedRevision` 幂等串行 outbox、单 RPC session snapshot，并用 Supabase Storage 持久队列与浏览器 Cache Storage 预取/下载单元音频；服务端仍唯一决定进度与成长事实。
 - 已上线增量：0017–0018 让当前词和未来四词不论 ready/pending 都立即缓存或提升生成优先级，持续轮询 manifest 并在 ready 后替换浏览器朗读；active session 改为按首次学习、临时复习或日程复习的精确意图恢复，暂停学习不会再劫持另一单元复习。
@@ -36,10 +36,10 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 已上线增量：0025–0026 为 active 学习/复习增加显式取消事务；0027–0028 增加拼写轮末错题清单与手动确认、默认 90% 可调阈值的单元考试，以及仅对真实 OpenRouter 请求计数的每用户 20 次/分钟、滚动 500 次/24 小时配额。
 - 已上线增量：0037–0038 为拼写前翻译输入增加默认中文的 Fish Audio STT 和所有用户录音入口的实时波形。识别只回填可编辑文本、不自动提交；同一服务端 OpenRouter key 由 NestJS 复用，数据库在调用前验证 owner/session/revision/current word 并预留独立配额。2026-08-04 已通过受保护数据库发布、真实 Fish Audio gate 和不可变生产激活。
 - 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
-- 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
-- 已实现待发布：Materials AI 第一阶段只开放 Generate test paper。NestJS 已接 Postgres durable job、BullMQ/Redis、隔离 FastAPI、OpenRouter ZDR、安全解析、私有 Notes 与在线考试；Knowledge list、Quiz、Knowledge graph 仍为 Coming soon。fake 与本地测试不证明真实模型或线上启用。
-- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；pgvector/RAG、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。生产 Redis 当前用于 API 限流、审计聚合和协同扫描锁；0041–0043 Materials AI 候选增加 BullMQ，但尚未发布生产。
-- 安全基线进展：生产已应用 0008–0040，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 私有写入/RPC/传播、幂等 attempt、service-only 音频/翻译评判/STT/拼写与考试事实、按意图恢复和取消边界均通过双用户 RLS 与发布断言。
+- 仍为 mock/未实现：Home 聚合、独立 AI Create、知识清单/独立 Quiz/知识图谱、Note Market；My Notes 历史硬数据保留在 Demo 分组，Materials 生成的真实试卷和在线考试已持久化上线。
+- 已上线：Materials AI 第一阶段只开放 Generate test paper。NestJS 已接 Postgres durable job、BullMQ/Redis、隔离 FastAPI、OpenRouter ZDR、安全解析、私有 Notes 与在线考试；Knowledge list、Quiz、Knowledge graph 仍为 Coming soon。fake 自动化与真实生产门禁在测试记录中分别标注。
+- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；pgvector/RAG、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。生产 Redis 同时用于 API 限流、审计聚合、协同扫描锁和 BullMQ UUID 投递。
+- 安全基线进展：生产已应用 0008–0043，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 与 Materials AI 私有写入/RPC/传播、幂等 operation、配额和结果事实均通过双用户 RLS 与发布断言。
 - 已上线待观察：0039–0040 与兼容应用于 `2026-08-10T09:35:34Z` 激活；未来 0044–0045 在 24 小时观察和 go/no-go 完成前不得撤销兼容时间列 grant。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
@@ -70,7 +70,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ### 3.3 Courses 学习课程
 
-首版英语单词学习已经上线：文本逐单元/整份多单元粘贴、精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习事实、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；Courses 功能迁移已发布到 0038，生产总 migration history 已到 0040，并开启对应 flags。0025–0028 进一步上线显式取消、拼写轮末错词复盘/确认、默认 90% 可调阈值的单元考试，以及只对真实 OpenRouter 请求计数的滚动 500 次/24 小时配额。
+首版英语单词学习已经上线：文本逐单元/整份多单元粘贴、精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习事实、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；Courses 功能迁移已发布到 0038，生产总 migration history 已到 0043，并开启对应 flags。0025–0028 进一步上线显式取消、拼写轮末错词复盘/确认、默认 90% 可调阈值的单元考试，以及只对真实 OpenRouter 请求计数的滚动 500 次/24 小时配额。
 
 0029–0034 已于 2026-08-03 受保护发布，在不改变积分/支付边界的前提下增加读音考试、单元内任意选词复习/考试、失败考试补练完成后自动结束、考试历史详情、编辑器逐词学习属性，以及“同一词必须同时通过拼写考试和发音考试才标为已学习”的唯一掌握规则；跨日期复习只保留练习日期/次数，不再形成掌握。
 
@@ -88,9 +88,9 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ### 3.4 AI 创作与个人笔记（最高优先级）
 
-0041–0043 第一阶段候选已经实现 Materials 文件生成试卷：所有用户默认 Free，以 Profile IANA 时区的本地日期分别享有 10 次成功生成和 10 次成功主观题评分；reservation 只在成功时消费，拒绝、失败、取消会释放，不读取 credits。真实试卷出现在对应 Materials `courses.id` 下，历史 My Notes 硬编码数据保留在独立 Demo 分组，删除来源可选择移入 Unfiled 或同时删除结果。在线考试支持绝对 deadline、500ms/失焦保存、IndexedDB 弱网草稿、无限重考、客观题确定性判分和整卷一次主观题 AI 评分。
+生产 0041–0043 已实现 Materials 文件生成试卷：所有用户默认 Free，以 Profile IANA 时区的本地日期分别享有 10 次成功生成和 10 次成功主观题评分；reservation 只在成功时消费，拒绝、失败、取消会释放，不读取 credits。真实试卷出现在对应 Materials `courses.id` 下，历史 My Notes 硬编码数据保留在独立 Demo 分组，删除来源可选择移入 Unfiled 或同时删除结果。在线考试支持绝对 deadline、500ms/失焦保存、IndexedDB 弱网草稿、无限重考、客观题确定性判分和整卷一次主观题 AI 评分。
 
-该候选尚未完成真实 OpenRouter、2G canary、CI 和生产发布门禁，因此不能写成已上线。第一阶段明确不开放知识清单、独立 Quiz、知识图谱、Notes 编辑/PDF 导出、销售 credits 或支付。
+该阶段已于 2026-08-11 完成真实 OpenRouter/ZDR、2G canary、完整 CI、加密恢复点、登录用户生产 smoke 和不可变发布。第一阶段明确不开放知识清单、独立 Quiz、知识图谱、Notes 编辑/PDF 导出、销售 credits 或支付。
 
 一份生成任务可选择一种或多种产物：
 
@@ -238,13 +238,13 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - 已开启私有 Courses，并验证跨账号、会话恢复、复习跨日与 points 指纹；真实 Japan East Azure 合成/评分 smoke 成功。
 - 分享和免费 Course Market 已开放。后续继续观察错误率、举报阈值、语音配额/成本与数据库增长；回退只关 flags/恢复应用 release，数据库向前修复。
 
-验收结果：Courses 功能迁移发布到 0038，当前生产总 history 已到 0040；Courses 私有路径、幂等弱网答题、音频队列/Storage 去重、历史冷音频 ready 后缓存替换、按意图独立续学与显式取消、限时拼写、翻译前测、中文翻译语音输入/共享波形、轮末错题复盘、拼写/读音考试、任意选词、考试历史、双考试精确掌握投影、Unicode 拼写归一化、仅标点差异容错、未裁剪 WAV 的真实 Azure/OpenRouter/Fish Audio smoke、分享/市场、评分候补池和公网 readiness 均有发布记录；文件导入仍保持禁用。
+验收结果：Courses 功能迁移发布到 0038，当前生产总 history 已到 0043；Courses 私有路径、幂等弱网答题、音频队列/Storage 去重、历史冷音频 ready 后缓存替换、按意图独立续学与显式取消、限时拼写、翻译前测、中文翻译语音输入/共享波形、轮末错题复盘、拼写/读音考试、任意选词、考试历史、双考试精确掌握投影、Unicode 拼写归一化、仅标点差异容错、未裁剪 WAV 的真实 Azure/OpenRouter/Fish Audio smoke、分享/市场、评分候补池和公网 readiness 均有发布记录；Courses 文件导入仍保持禁用。
 
-### 阶段 B：Materials AI 最小闭环（已实现待发布）
+### 阶段 B：Materials AI 最小闭环（2026-08-11 已上线）
 
-目标：一份真实 Materials 资料可以生成可引用、可持久化的试卷并在线考试。0041–0043 候选已经实现统一契约、任务/Notes/引用/答卷表、多格式解析、持久队列、DeepSeek/MiMo ZDR、结果校验、队列 UI、真实 My Notes 和 Free quota；不接 credits。
+目标：一份真实 Materials 资料可以生成可引用、可持久化的试卷并在线考试。生产 0041–0043 已实现统一契约、任务/Notes/引用/答卷表、多格式解析、持久队列、DeepSeek/MiMo ZDR、结果校验、队列 UI、真实 My Notes 和 Free quota；不接 credits。
 
-剩余发布验收：完整 CI；真实固定 provider suite；2G 资源 canary；只读 plan/恢复点/apply；flag关闭 readiness；公网登录用户完整链路；同一幂等键/operation不重复额度/结果，所有引用有效，失败释放 reservation和临时目录。
+验收结果：PR/main 完整 CI、真实固定 provider suite、220 页近上限资源 canary、只读 plan/加密恢复点/远端验证、flag 关闭 readiness、登录生产用户完整链路和独立公网复核均通过；同一幂等键/operation 不重复额度/结果，失败释放 reservation，任务前后临时目录清理。持续质量、成本、真实复杂文件和 prompt injection 误报率仍需监控。
 
 ### 阶段 C：四类产物与学习闭环
 
@@ -289,10 +289,10 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | LEARN-04 | Azure TTS/朗读评分适配层 | 已上线 | A+ | fake 自动化 + Japan East 真实供应商 gate |
 | LEARN-05 | 限时拼写与语义翻译前测 | 已上线 | A+ | 0019–0020、OpenRouter structured output、真实 provider/生产 gate |
 | LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
-| AI-01 | 试卷统一生成契约、任务/额度/Notes/答卷 | 已实现 | B | 0041–0043 候选；生产门禁待完成 |
-| AI-02 | Materials 确定性解析、视觉恢复和引用 | 已实现 | B | FastAPI DocumentIR/DeepSeek/MiMo；embedding/pgvector 不在首版 |
+| AI-01 | 试卷统一生成契约、任务/额度/Notes/答卷 | 已上线 | B | 0041–0043；真实 provider/canary/生产门禁已完成 |
+| AI-02 | Materials 确定性解析、视觉恢复和引用 | 已上线 | B | FastAPI DocumentIR/DeepSeek/MiMo；embedding/pgvector 不在首版 |
 | AI-03 | 知识清单真实生成 | mock | B | AI-01/02 |
-| AI-04 | 测验、图谱、试卷 | 部分 | C | 试卷候选已实现；独立 Quiz/Graph 与持续评测待完成 |
+| AI-04 | 测验、图谱、试卷 | 部分 | C | 试卷已上线；独立 Quiz/Graph 与持续评测待完成 |
 | NOTE-01 | Notes CRUD、编辑、版本和导出 | 部分 | B/C | 私有试卷查看/删除/考试已实现；编辑/版本/PDF导出待完成 |
 | HOME-01 | 首页真实聚合 | mock | C | Notes/Tasks/Usage |
 | PLAN-01 | 到期提醒与薄弱点排程 | 部分 | C/E | Realtime/cron |

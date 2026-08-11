@@ -6,11 +6,10 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至生产 `20260810000040_verify_security_integrity_rate_limit_points_abuse.sql` 的最终叠加结果整理，并单列 0041–0043 Materials AI 候选。迁移 SQL 是仓库结构权威；生产 migration history 已确认到 0040。时间列撤权 contract 顺延为未来 0044–0045，尚未创建。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至生产 `20260811000043_verify_materials_ai_exam.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 已确认到 0043。时间列撤权 contract 顺延为未来 0044–0045，尚未创建。
 
-- **生产结构**：生产 0040 为 39 张 `public` 业务/配置表，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
-- **候选结构**：0041–0043 新增 Materials AI/Notes/考试实体、事务与验证；尚未发布生产。
-- **未实现目标**：Courses AI 文件导入、除试卷外的 AI 笔记产物、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。Materials AI 试卷候选实体见本文 0041–0043；尚未发布生产。
+- **生产结构**：生产 0043 包含 0039–0040 安全/限流与 0041–0043 Materials AI/Notes/考试实体、事务和验证，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
+- **未实现目标**：Courses AI 文件导入、除试卷外的 AI 笔记产物、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。Materials AI 试卷实体见本文 0041–0043。
 
 ## 2. 当前 ERD
 
@@ -497,7 +496,7 @@ erDiagram
 
 `learned_at` 的唯一双考试投影条件、不会写入的事件、编辑撤销矩阵和代码/测试位置统一由 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节维护；ERD 只记录最终结构语义，不能把 `initial_*_passed`、复习日期、单项考试或前端正确状态解释为已学习。
 
-### 3.8 Materials AI、Notes 与在线考试（0041–0043 候选）
+### 3.8 Materials AI、Notes 与在线考试（生产 0041–0043）
 
 | 表 | 关键列 | 约束、关系与事实边界 |
 |---|---|---|
@@ -684,7 +683,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 最终产品至少还需要通过新迁移明确设计以下领域，不能根据蓝图假设已经存在：
 
-- 结构化知识清单、独立 Quiz、知识图谱及通用版本；首版 `notes/generation_jobs/模拟试卷` 已在 0041–0043 候选实现；
+- 结构化知识清单、独立 Quiz、知识图谱及通用版本；首版 `notes/generation_jobs/模拟试卷` 已在生产 0041–0043 实现；
 - 通用笔记市场商品、credits 授权/购买关系、创作者分成；Courses 免费分享/市场快照已存在；
 - credits 钱包账本、余额投影和经过审批的管理员调整；points 账本已存在，但仍需反滥用上限、对账与运营工具；
 - VIP entitlement/订阅、订单、支付 intent、webhook 幂等记录、退款；

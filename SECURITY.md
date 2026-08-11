@@ -3,7 +3,7 @@
 > **本文内容：**说明 Nalanda 的漏洞报告方式、当前安全边界、已知风险、开发与发布安全基线，以及安全事件响应要求。  
 > **作用：**为研究者、贡献者和运维人员提供唯一的安全协作入口，避免把密钥、漏洞细节或用户数据暴露在公开渠道。  
 > **何时更新：**认证/授权、RLS、上传、AI、支付、部署拓扑或第三方处理者变化时；发现或修复高风险问题时；至少每季度复核一次。  
-> **状态基线：**2026-08-11。生产受保护发布证据已到 0040；字段收口、points 上限/审核/协同信号和 Redis 限流已上线。0041–0043 Materials AI 为待发布候选；时间列最终撤权 contract 顺延为未来 0044–0045，仍须等待兼容应用至少 24 小时并通过 go/no-go。本文明确区分代码、测试与上线状态。
+> **状态基线：**2026-08-11。生产受保护发布证据已到 0043；字段收口、points 上限/审核/协同信号、Redis 限流和 Materials AI 第一阶段均已上线。时间列最终撤权 contract 顺延为未来 0044–0045，仍须等待兼容应用至少 24 小时并通过 go/no-go。本文明确区分代码、测试与上线状态。
 
 ## 1. 支持范围
 
@@ -38,13 +38,13 @@
 | 社区 | 帖子/评论对已认证用户公共可读；生产 0039 把帖子写面限制为内容列并用 trigger 维护 owner/快照/计数/时间；社区媒体 bucket 当前为 public | 公共媒体 URL 不具有撤回、鉴权或防爬保证 |
 | Feedback / Schedule | 生产 0039 使 Feedback 仅 owner 新增/读取，并对 goal/task 的 course/material/goal owner 及 `done_at` 做 trigger 校验 | 完整账号删除/Storage 编排仍不存在 |
 | Profile / points | 0008 用列级授权保护经济/等级/streak；生产 0039 增加冻结日窗口、永久 claim、审核冲正与只标记协同检测 | 不等于 credits/VIP/支付商业账本或自动内容质量判断 |
-| Courses API | NestJS bearer + owner 校验，写入经 service-role 专用事务 RPC；客户端只读私有行，传播公开读取经 API 脱敏；生产总 history 已到 0040 | service-role、feature flag 或 API 缺陷仍可绕过 RLS；provisional UI/倒计时不能作为成长事实 |
+| Courses API | NestJS bearer + owner 校验，写入经 service-role 专用事务 RPC；客户端只读私有行，传播公开读取经 API 脱敏；生产总 history 已到 0043 | service-role、feature flag 或 API 缺陷仍可绕过 RLS；provisional UI/倒计时不能作为成长事实 |
 | Redis 请求保护 | 生产 0039 为 private/password/AOF/noeviction，Lua 窗口键只用 user UUID 或 HMAC IP/email；Redis 不存 points 事实 | PING 不证明 AOF/容量，HMAC 轮换会重置 actor 窗口，Redis 不能替代 PostgreSQL 审计 |
 | 分享/课程市场 | token 只存 SHA-256，publication 快照不可变，免费克隆独立且不能再传播，举报/管理员动作留事实 | 持链接者即可预览；当前只有最小治理，无申诉/通用审核台；Course Market 不代表 Note Market 已真实 |
 | Azure Speech | key 仅 API；reference 从 owner word/session 推导；WAV≤2 MB/8秒且格式校验；录音不存储；生产 Japan East 基础 gate 与 0015–0016 队列/重复词/裁剪评分 gate 已通过 | PR/Playwright 自动测试仍为 fake；一次发布 gate 不是持续可用率证明，TTS cache 不是用户录音 |
 | OpenRouter 翻译前测 | API 从 owner session/word 推导参考翻译；同 UUID/revision 租约与幂等；用户答案只存 hash；新表/RPC service-role-only；生产真实 gate 已通过 | fake/单次真实 smoke 都不是持续语义质量证明，模型输出不能直接改成长事实 |
-| API 其它能力 | health、register、me；旧业务多数直连 Supabase | AI 文件导入、支付、钱包和通用管理后台安全控制尚不存在 |
-| Materials AI | 0041–0043 候选为 owner-only Nest API、service-role 事务、Postgres durable job、BullMQ UUID 投递和内网 token FastAPI；OpenRouter 固定 ZDR 模型与 strict schema | 尚未生产；注入分类、ZDR 或结构化输出都不能提供数学上的绝对安全保证 |
+| API 其它能力 | health、register、me；旧业务多数直连 Supabase | Courses AI 文件导入、支付、钱包和通用管理后台安全控制尚不存在 |
+| Materials AI | 生产 0041–0043 为 owner-only Nest API、service-role 事务、Postgres durable job、BullMQ UUID 投递和内网 token FastAPI；OpenRouter 固定 ZDR 模型与 strict schema | 注入分类、ZDR、结构化输出或单次真实门禁都不能提供数学上的绝对安全保证 |
 | 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
 
 ## 4. 已修复控制与开放风险
@@ -114,7 +114,7 @@
 6. 生产变更先在隔离环境验证，支付使用 Stripe test mode；
 7. 高风险已知问题关闭后，才能启用相应功能 flag。
 
-当前候选 workflow 还执行 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI RLS 与 fake-provider Playwright。生产迁移仍先只读 plan，再受保护 apply/加密恢复点/远端验证；启用 Materials AI 前另需固定 PDF/DOCX/PPTX/chart/injection/grading 的真实 DeepSeek/MiMo ZDR gate和2G资源 canary。这些单次门禁不替代持续质量、供应商条款、监控或人工评审。
+当前 workflow 执行 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI RLS 与 fake-provider Playwright。生产迁移仍先只读 plan，再受保护 apply/加密恢复点/远端验证；Materials AI 每次关键 provider/parser/prompt 变更仍需固定 PDF/DOCX/PPTX/chart/injection/grading 的真实 DeepSeek/MiMo ZDR gate和2G资源 canary。这些单次门禁不替代持续质量、供应商条款、监控或人工评审。
 
 ## 8. 安全事件响应
 

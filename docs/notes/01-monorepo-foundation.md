@@ -20,7 +20,7 @@ nalanda/
 ├─ apps/
 │  ├─ web/      React + Vite（生产前端，已落地）
 │  ├─ api/      NestJS 核心后端（已落地：health/me/auth）
-│  ├─ ai/       Python FastAPI Materials AI worker（0041–0043 候选）
+│  ├─ ai/       Python FastAPI Materials AI worker（生产 0041–0043）
 │  ├─ desktop/  Electron（目标；目录尚不存在）
 │  └─ mobile/   React Native（目标；目录尚不存在）
 ├─ packages/

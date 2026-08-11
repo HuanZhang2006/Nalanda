@@ -3,15 +3,33 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-10。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-08-11。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
 ## [Unreleased]
 
-- 0041–0043 Materials AI 为待发布候选；时间列撤权 contract 顺延为未来 0044–0045，只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后才能创建。
+- 时间列撤权 contract 顺延为未来 0044–0045，只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后才能创建。
+
+## [0.11.1] - 2026-08-11
+
+### Fixed
+
 - Materials AI 固定 OpenRouter 路由增加网络错误与 408/429/502/503/504 的共享 wall-clock 预算内指数退避，遵守数值型 `Retry-After`；不提供跨模型 fallback，并让同一固定模型按吞吐量优先、只在满足 ZDR、拒绝数据收集与参数支持过滤器的 provider endpoint 间故障转移。固定关闭可选 reasoning，避免 completion 预算耗尽后 `message.content=null`；401/402/403、ZDR/参数错误立即失败，真实门禁失败只输出稳定 worker/provider purpose/error code，不回显响应正文。
-- 0041–0043 已安全应用到生产数据库，但应用候选在公开切流前因真实 DeepSeek 路由 `OPENROUTER_RATE_LIMIT` 回滚；2G 近上限 canary、数据库历史/lint/dry-run 与回滚后公网健康均通过。该失败候选不算 Materials AI 已部署，功能继续关闭，等待本修复通过真实 provider gate。
+- 修复受保护部署远端 heredoc 被 `docker compose exec -T` 继承 stdin 后提前吃掉后续脚本、却以零状态退出的假绿缺陷；所有远端 compose exec 统一显式读取 `/dev/null`，发布工具测试会拒绝重新引入裸调用。
+
+### Testing
+
+- PR [#56](https://github.com/1590703336/Nalanda/pull/56) run [`31462982923`](https://github.com/1590703336/Nalanda/actions/runs/31462982923) 与 PR [#57](https://github.com/1590703336/Nalanda/pull/57) run [`31465041901`](https://github.com/1590703336/Nalanda/actions/runs/31465041901) 均通过 docs/lint/typecheck、104 个 API、105 个 Web/jsdom、25 个 Python AI 测试、AI/API/Web build、真实 Redis、0007→0043、空库重建/lint、双用户 RLS/Storage 和 fake-provider Chromium Playwright。fake Playwright 不构成真实模型证明。
+- main 验证 run [`31465776658`](https://github.com/1590703336/Nalanda/actions/runs/31465776658) 通过；独立只读 plan [`31465816321`](https://github.com/1590703336/Nalanda/actions/runs/31465816321) 确认本地/远端均到 0043、dry-run 为空且未执行写库或部署。
+
+### Release
+
+- 最终受保护 run [`31467153739`](https://github.com/1590703336/Nalanda/actions/runs/31467153739) 创建并上传 14 天加密恢复 artifact [`9092230348`](https://github.com/1590703336/Nalanda/actions/runs/31467153739/artifacts/9092230348)（824,125 bytes，artifact zip SHA-256 `6939309024094791bb639112eaf73a1429d588a4800c42703e579185a0aa817f`），确认 0041–0043 history、空 dry-run 和远端 database lint。
+- 近上限 Office canary 处理 220 页/366,412 字符，主进程峰值约 101.8 MiB、子进程约 211.9 MiB，无 OOM 或邻站故障。真实 OpenRouter gate 使用固定 DeepSeek/MiMo 完成 PDF/DOCX/PPTX/chart、局部视觉恢复、注入拒绝、安全教材放行和主观题评分；真实 Japan East Azure、Gemma 翻译、队列/private Storage/重复词复用/评分也全部通过。
+- 登录生产 smoke 完成 `queued → succeeded` 生成、异步评分、Free 双额度各消费一次、5 条 provider usage、来源与结果清理，并返回 `deps.supabase=ok/deps.ai=ok`；任务前后临时目录清理门禁通过。
+- 不可变 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 于 `2026-08-11T07:20:02Z` 健康激活，API/AI image 与 Web symlink 均指向该 commit，`FEATURE_MATERIAL_AI=true`。独立公网复核：首页 200，`/api/health` 为 `deps.supabase=ok/deps.redis=ok`，`/api/health/ai` 为 worker/queue ok，匿名 `/api/me` 和 `/api/profile/ai-quota` 均为 401。
+- 更早的 main run [`31463661987`](https://github.com/1590703336/Nalanda/actions/runs/31463661987) 虽显示绿色，独立检查发现生产仍是旧 image/Web、flag=false 且 AI endpoint 404；根因正是首个远端 `compose exec` 消耗 heredoc stdin。该 run 没有被计作上线，修复并重新走完整受保护门禁后才发布。
 
 ## [0.11.0] - 2026-08-10
 

@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 0039–0040 API 要求 Redis 才能通过 readiness，并用它执行限流和 points 扫描锁；0041–0043 Materials AI 候选还用 BullMQ 传递 durable Postgres job UUID。生产数据库当前到 0040，只有完成真实 OpenRouter/ZDR、资源 canary 与受保护发布后才可称 Materials AI 已上线。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
+当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库与应用当前到 0043，Materials AI 已通过真实 OpenRouter/ZDR、资源 canary 与受保护发布上线。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
 
 ## 2. 前置条件
 
@@ -346,7 +346,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移 0043，而不是停在旧 migration history；生产有证据到 0040，任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新迁移 0043，而不是停在旧 migration history；生产有证据到 0043，任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
 
 ### Materials AI 一直 queued、readiness 失败或返回安全错误
 
@@ -386,7 +386,7 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前候选**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0043 RLS 与真实 OpenRouter/2G canary 发布门；生产通过前仍不能称为线上能力。仍缺 ESLint/统一格式化和近生产规模 staging。
+- **当前生产链路**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0043 RLS 与真实 OpenRouter/2G canary 发布门；这些门禁已用于 2026-08-11 发布。仍缺 ESLint/统一格式化、近生产规模 staging 和持续真实模型质量监控。
 - **目标**：开放 Knowledge list/Quiz/Knowledge graph、Notes 编辑/导出，并建立持续真实质量评测。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 
