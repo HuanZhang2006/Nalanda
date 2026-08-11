@@ -68,8 +68,10 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await expect(page.getByText("A supported model answer.")).toBeHidden();
   await page.locator(".material-ai-question").first().getByRole("radio").first().check();
   const shortAnswer = page.locator(".material-ai-question").filter({ hasText: "Short answer" });
+  const autosaved = page.waitForResponse((response) => response.request().method() === "PATCH"
+    && response.url().includes("/api/exam-attempts/") && response.url().endsWith("/answers") && response.ok());
   await shortAnswer.getByPlaceholder("Type your answer…").fill("The membrane controls movement.");
-  await expect(page.getByText("Saving…")).toBeVisible();
+  await autosaved;
   await expect(page.getByText("Saving…")).toBeHidden();
   await page.getByRole("button", { name: "Submit paper" }).click();
   await expect(page.getByText("Grading completed.")).toBeVisible({ timeout: 60_000 });
