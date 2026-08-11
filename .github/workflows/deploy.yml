@@ -857,6 +857,15 @@ jobs:
             return 1
           }
 
+          # Every compose exec runs inside an SSH heredoc. Leaving stdin
+          # attached lets the container consume the rest of this activation
+          # script, after which the remote shell can exit successfully before
+          # API/Web cutover. Keep the redirect in one helper so future exec
+          # checks cannot accidentally reintroduce a false-green deployment.
+          compose_exec_no_stdin() {
+            docker compose --env-file "$next_env" -f "$next_compose" exec -T "$@" </dev/null
+          }
+
           current_container="$(
             docker ps -aq \
               --filter label=com.docker.compose.project=nalanda \
@@ -999,9 +1008,8 @@ jobs:
             exit 1
           }
           [[ -z "$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$redis_container" | grep -o 'HostPort' || true)" ]]
-          if ! docker compose --env-file "$next_env" -f "$next_compose" exec -T redis sh -ec \
-            'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -qx PONG; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET appendonly | tail -n1)" = yes; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory | tail -n1)" = 50331648; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory-policy | tail -n1)" = noeviction' \
-            </dev/null; then
+          if ! compose_exec_no_stdin redis sh -ec \
+            'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -qx PONG; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET appendonly | tail -n1)" = yes; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory | tail -n1)" = 50331648; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory-policy | tail -n1)" = noeviction'; then
             rollback_application "Redis persistence or memory-policy verification failed" || true
             exit 1
           fi
@@ -1097,7 +1105,7 @@ jobs:
             rollback_application "real Materials AI provider gate failed" || true
             exit 1
           fi
-          if docker compose --env-file "$next_env" -f "$next_compose" exec -T ai \
+          if compose_exec_no_stdin ai \
             sh -ec 'find /tmp/nalanda-material-ai -mindepth 1 -maxdepth 1 -type d -name "job-*" -print -quit | grep -q .'; then
             rollback_application "Materials AI temporary job directory was not cleaned" || true
             exit 1
@@ -1140,7 +1148,7 @@ jobs:
             rollback_application "local API health check failed" || true
             exit 1
           fi
-          if [[ "$(docker compose --env-file "$next_env" -f "$next_compose" exec -T api printenv FEATURE_MATERIAL_AI)" != "false" ]]; then
+          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI)" != "false" ]]; then
             rollback_application "Materials AI candidate did not start behind its closed feature flag" || true
             exit 1
           fi
@@ -1178,7 +1186,7 @@ jobs:
             rollback_application "API was unhealthy after Materials AI activation" || true
             exit 1
           fi
-          if [[ "$(docker compose --env-file "$next_env" -f "$next_compose" exec -T api printenv FEATURE_MATERIAL_AI)" != "true" ]]; then
+          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI)" != "true" ]]; then
             rollback_application "Materials AI feature flag was not active" || true
             exit 1
           fi
@@ -1204,7 +1212,7 @@ jobs:
             rollback_application "authenticated Materials AI queue/Notes/exam gate failed" || true
             exit 1
           fi
-          if docker compose --env-file "$next_env" -f "$next_compose" exec -T ai \
+          if compose_exec_no_stdin ai \
             sh -ec 'find /tmp/nalanda-material-ai -mindepth 1 -maxdepth 1 -type d -name "job-*" -print -quit | grep -q .'; then
             rollback_application "Materials AI full-chain temporary files were not cleaned" || true
             exit 1
