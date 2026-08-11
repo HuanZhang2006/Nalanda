@@ -52,7 +52,7 @@
 
 ## 6. 数据形状对齐（接真后端的红利）
 
-原型、`packages/types` 和 Python schema **目前不一致**。Knowledge、Quiz、Graph、Exam 的字段名与层级均有差异，图谱渲染还依赖目标 schema 没有的 `x/y/cls`；TS 使用 `materialId`，Python 使用 `material_id`。接 AI 前需要统一规范、生成类型并增加契约测试，不能直接“换数据即可”。
+0041 试卷链已经统一 `GeneratedExamV1`、job/quota/Notes/attempt 的 Web/Nest camelCase 契约与 FastAPI strict Pydantic；数据库 snake_case 只在 API adapter 内转换。考试 session 显式剔除答案/rubric。Knowledge、独立 Quiz、Graph 的历史原型仍与未来 schema 不一致，图谱还依赖 `x/y/cls`；它们保持 Demo/Coming soon，不能直接“换数据即可”。
 
 ## 7. 踩坑
 
@@ -69,4 +69,8 @@
 
 ## 9. 后续 TODO（迁移方向）
 
-逐模块把「innerHTML 视图」重构为类型安全 React 组件。legacy 生命周期、跨账号清理、登录 loading 和主要 Supabase `{ error }` 检查已补齐；当前优先级是：**统一 AI 契约（前端暂保留 mock）→ 接通真实 Create + Notes → Home 真数据 → Market/credits/支付**。Materials、Community、Schedule 等已接 Supabase 的模块也要逐步 React 化，但不再把“接真后端”列为未完成。迁移期允许新旧模块共存。
+0041–0043 候选在不扩大 React 收敛范围的前提下增加 Materials “Use AI” 菜单/设置/任务面板，以及 React `NotesView` 的真实试卷/在线考试。它们复用现有 locale、class、token、焦点与响应式规则；历史 My Notes 数据保留为明确 Demo 分组。默认英文，中文模式完整翻译；账号变化会清理用户级 consent、job polling 和 IndexedDB 草稿。
+
+这不是全站 React 迁移：Home、Create、Note Market 等 legacy/mock 边界仍存在。不得因为 Notes 局部真实化就删除其它原型数据或改变原设计。
+
+逐模块把「innerHTML 视图」重构为类型安全 React 组件。legacy 生命周期、跨账号清理、登录 loading 和主要 Supabase `{ error }` 检查已补齐；当前优先级是：**完成 Materials 试卷发布 → 开放其它 AI 产物/Notes 编辑 → Home 真数据 → Market/credits/支付**。更大的 React 收敛仍不是本功能范围。

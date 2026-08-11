@@ -9,11 +9,16 @@
 
 ## [Unreleased]
 
-- 0041–0042 contract 迁移仍未创建；只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后，才能撤销两个兼容时间列 grant。
+- 0041–0043 Materials AI 为待发布候选；时间列撤权 contract 顺延为未来 0044–0045，只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后才能创建。
 
 ## [0.11.0] - 2026-08-10
 
 ### Added
+
+- 新增 0041–0043 Materials AI 发布候选：Free plan、按 Profile 时区重置的生成/评分双额度、持久 generation job/events、私有解析缓存、真实 Notes/来源快照、在线答卷/幂等草稿/评分事实、脱敏 provider usage 及完整结构/RLS/RPC 断言。
+- Materials 每个文件增加复用现有视觉与双语 locale 的 “Use AI” 菜单；仅 “Generate test paper” 开放，其余三项显示 Coming soon。My Notes 将真实 Materials 课程/试卷与历史 Demo 分组；Profile 显示 Free plan 双额度。
+- NestJS 增加 owner-only AI/Notes/Exam API、成功后消费的 reservation 事务、Postgres durable job、BullMQ UUID 调度/reconciler/延迟交卷和内部回调；FastAPI 增加 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片解析、选择性 MiMo 视觉恢复、两次注入审查、DeepSeek 严格试卷生成与批量主观题评分。
+- 新增受保护部署的 AI image、私有 Redis/worker readiness、真实模型固定样本 gate、2G 资源 canary、临时目录孤儿清理与失败自动回滚。
 
 - 新增并发布第一阶段 0039–0040：冻结用户时区的 points 日窗口、稳定 business-key 奖励 decision、owner-only reward receipt、每日上限通知、append-only 审核冲正和四类只待审协同信号。
 - NestJS 增加同机私有 Redis 原子 Lua 滑动窗口、注册 IP+邮箱双限流、认证/Courses/公开市场分层限流、HMAC 滥用聚合、真实 Redis readiness 和 points 管理 API；协同扫描使用分布式锁且不自动处罚。
@@ -26,6 +31,10 @@
 
 ### Security
 
+- Materials AI 固定使用服务端 OpenRouter key、`deepseek/deepseek-v4-flash-0731` 和 `xiaomi/mimo-v2.5`，请求要求 ZDR、拒绝数据收集、禁止工具/Web 与 provider 参数降级；恶意或不确定 prompt injection 均拒绝并释放额度。
+- AI 事务 RPC 全部撤销 `public/anon/authenticated` EXECUTE；用户只能读取自身任务/额度/Notes/答卷，不能写缓存、provider usage、结果、分数或配额。每任务 0700 临时目录在成功、失败、取消、超时的 `finally` 清理。
+- Materials AI 删除含已评分答卷的 Note/科目时不再因 provider usage 外键置空而回滚；job/attempt UUID 作为不可变成本审计引用保留，内容删除不能抹掉月度预算事实，Auth owner 删除仍级联清理。
+
 - 新内部 points/audit 表对客户端完全隐藏；service-role 也只有 SELECT，所有奖励、signal review、moderation 和审计变更均经固定 `search_path` 的受控函数执行。新增函数默认撤销 `public/anon/authenticated` EXECUTE。
 - 历史 points grandfather 只把存在 transition 1 正向分录的业务键视为实际获奖；0008/0009 零金额占位永久不可冲正/补领，既有无来源负 transition 通过 append-only `grandfather-zero-reset-v1` 等额归零，避免吞掉未来合法积分。
 - 普通奖励与人工审核分别取得共享/独占 advisory gate，并统一 Profile→状态行锁序；重复审核留下 0 变化审计，不再与“目标不存在”混淆。
@@ -33,15 +42,18 @@
 
 ### Testing
 
+- 增加 Python 解析/安全/视觉范围/清理/schema 测试、Nest 配额/幂等/队列/revision/期限/评分测试、Web 队列/Demo/真实 Notes/草稿/计时/账号隔离 jsdom、双用户 AI RLS、fake-provider Playwright、真实 provider smoke 和近上限 Office 资源 canary。fake 自动化不构成真实模型或生产证据。
+
 - 增加帖子/Feedback/Schedule 双用户负向 RLS、points 并发上限/时区/删除重建/suppress-restore/协同信号、Redis Lua/路由分类、Web 上限通知与 429 回退、nginx/secret 安装脚本回归。真实 Redis、一次性 Supabase、nginx 容器和 Playwright 仍须由 PR/main CI 形成证据，本地跳过不算通过。
 
 ### Release
 
+- 0041–0043 尚未进入生产；只有完整 CI、只读迁移计划、加密恢复点、真实 OpenRouter/ZDR 固定样本、2G canary、`deps.supabase=ok`/Redis/AI readiness、公网登录用户 smoke 全部通过后才可开启 `FEATURE_MATERIAL_AI`。
 - PR [#51](https://github.com/1590703336/Nalanda/pull/51) 与修复远端 SSH heredoc stdin 的 PR [#52](https://github.com/1590703336/Nalanda/pull/52) 已合入 main；PR/main CI 均通过 quality、真实 Redis、0007→0040、空库/lint、双用户 RLS/Storage 与 Chromium Playwright。
 - [只读 plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端都到 0040 且 dry-run 为空；[受保护 run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 保留加密恢复 artifact `9057062920`（800,819 bytes，zip SHA-256 `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并验证远端 history、database lint 与空 dry-run。
 - 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 激活。Redis PING/AOF/private-port/noeviction 与 nginx 配置通过；真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8，真实 OpenRouter Gemma 返回 253/27/280 tokens，候选 API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`transcriptionMatched=true`。公网复核确认 `deps.supabase=ok/deps.redis=ok`、匿名 me/admin 401、注册 `RateLimit-*`、Web 与 Course Market 200。
 - 首个 apply run 虽已安全应用 0039–0040，但 Redis `docker compose exec` 消耗远端 heredoc stdin，导致 workflow 错报部署成功而应用未切换；PR #52 加入 stdin 分离和回归测试后修复。随后 OpenRouter free route 的一次超时和三次瞬时 429 均在切流前阻断；同凭据额度正常且本机/生产主机真实诊断恢复 200 后，第五次尝试完整通过。没有把失败候选计作上线。
-- 0039–0040 现已进入生产兼容观察；最早在 `2026-08-11T09:35:34Z` 且 go/no-go 通过后，才允许另行创建 0041–0042 撤销兼容时间列 grant。
+- 0039–0040 现已进入生产兼容观察；最早在 `2026-08-11T09:35:34Z` 且 go/no-go 通过后，才允许另行创建 0044–0045 撤销兼容时间列 grant。0041–0043 是纯新增 Materials AI，不执行撤权。
 
 ## [0.10.2] - 2026-08-04
 

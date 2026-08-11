@@ -5,7 +5,7 @@
 > **作用：** 固定实时流量控制与长期业务审计的职责边界，避免把 Redis 当事实库、把客户端反馈当奖励权威，或让 service-role 绕过审核流程。
 > **何时更新：** Redis 拓扑/算法/故障策略、路由分组、points 上限/账本、管理员授权、协同检测、审计保留或两阶段发布方式变化时。
 
-- **状态：** Accepted / Stage A deployed；0039–0040 与兼容应用已于 `2026-08-10T09:35:34Z` 受保护生产发布，正在至少 24 小时观察；0041–0042 contract 尚未创建。
+- **状态：** Accepted / Stage A deployed；0039–0040 与兼容应用已于 `2026-08-10T09:35:34Z` 受保护生产发布，正在至少 24 小时观察；Materials AI 已占用 0041–0043，因此最终撤权 contract 顺延为未来 0044–0045，尚未创建。
 - **日期：** 2026-08-10
 - **决策者：** Nalanda owner
 
@@ -23,7 +23,7 @@
 4. PostgreSQL 以冻结的 `point_daily_windows` 和永久 `point_daily_award_claims` 保存首次奖励决定；Redis 不参与 points 正确性。原创/转发/评论/点赞/任务每日数量为 3/10/10/20/10，课程完成继续使用永久词集合指纹且不设日上限。
 5. 审核只经 allowlist 管理 API 和 service-only RPC；`point_moderation_actions` 追加留痕。service-role 对 window/claim/action/signal/API audit 表只有 SELECT，不能通过 PostgREST 改写事实。普通奖励取得共享 moderation gate，审核取得独占 gate 并先锁 Profile、再锁状态；restore 不补发 cap=0 claim，不恢复已删除来源，重复动作记录为 0 变化审计。
 6. 协同 scanner 只生成去重的 pending signal，不自动冻结、冲正、隐藏或处罚。管理员的 signal review 同样经窄 RPC 写数据库时间与 reviewer。
-7. 帖子/Feedback/Schedule 使用列级 grant、RLS 与防御 trigger。0039–0040 为 expand：旧 Web 可继续提交 `posts.updated_at`/`study_tasks.done_at`，但值被数据库覆盖；兼容应用生产观察至少 24 小时后才另增 0041–0042 撤销这两个列 grant。
+7. 帖子/Feedback/Schedule 使用列级 grant、RLS 与防御 trigger。0039–0040 为 expand：旧 Web 可继续提交 `posts.updated_at`/`study_tasks.done_at`，但值被数据库覆盖；兼容应用生产观察至少 24 小时后才另增未来 0044–0045 撤销这两个列 grant。0041–0043 Materials AI 与该 contract 无关。
 
 ## 结果与取舍
 
@@ -38,4 +38,4 @@
 
 - CI 使用真实 Redis service 验证 Lua 并发/过期/lock，使用一次性 Supabase 验证精确 grants、双用户负向路径、cap 并发、时区/重建、root suppress/restore 和 pending signal；浏览器供应商仍为 fake。
 - 第一阶段已完成：只读 migration plan → 加密恢复点 → apply 0039–0040 → Redis PING/AOF/private network → 新 API readiness/auth/限流/admin 拒绝 → 真实既有供应商 gate → 激活兼容应用；证据见部署记录 run `31372888441`。
-- 从 `2026-08-10T09:35:34Z` 起至少观察 24 小时 Redis 错误、误限流、points projection 和旧客户端时间字段依赖。通过后才编写、验证和发布 0041–0042；数据库始终 forward-fix，应用可回退上一兼容 release。
+- 从 `2026-08-10T09:35:34Z` 起至少观察 24 小时 Redis 错误、误限流、points projection 和旧客户端时间字段依赖。通过后才编写、验证和发布未来 0044–0045；数据库始终 forward-fix，应用可回退上一兼容 release。

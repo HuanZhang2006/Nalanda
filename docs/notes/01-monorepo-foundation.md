@@ -20,7 +20,7 @@ nalanda/
 ├─ apps/
 │  ├─ web/      React + Vite（生产前端，已落地）
 │  ├─ api/      NestJS 核心后端（已落地：health/me/auth）
-│  ├─ ai/       Python FastAPI AI 微服务（骨架 + 桩）
+│  ├─ ai/       Python FastAPI Materials AI worker（0041–0043 候选）
 │  ├─ desktop/  Electron（目标；目录尚不存在）
 │  └─ mobile/   React Native（目标；目录尚不存在）
 ├─ packages/
@@ -45,7 +45,7 @@ nalanda/
 ## 4. 共享包
 
 ### packages/types
-纯类型，无运行时，定义目标 AI 产物：`KnowledgePoint / QuizQuestion / KnowledgeGraph / MockExam / Language / MaterialType` 等。它当前未被 Web/API 引用，且与原型短字段并不一致：例如 `title/definition` 对 `t/d`、`question/options` 对 `q/opts`、图节点缺少前端所需 `x/y/cls`。接 AI 前必须统一契约或提供显式适配层。
+纯类型，无运行时。Courses 与 0041 Materials AI 已由 Web/API 共用 camelCase 契约；`GeneratedExamV1`、job/quota/Notes/Exam attempt 不复用历史原型短字段，Nest 显式处理数据库 snake_case，FastAPI Pydantic 以 strict camelCase JSON 对齐。Knowledge list/Quiz/Graph 仍是未来契约，不能从试卷实现推断已接通。
 
 ### packages/ui
 设计系统的「样式底座」：
@@ -62,6 +62,8 @@ pnpm build                   # turbo：运行各 workspace 中存在的 build �
   ├─ @nalanda/api:   tsc → dist/main.js（NestJS）
   └─ @nalanda/web:   vite build → dist/（静态产物）
 ```
+
+Python worker不由 Turborepo 编译；CI 另执行 `ruff check`、`pytest` 和 `docker build -f apps/ai/Dockerfile apps/ai`。这三项都通过仍不等于真实 OpenRouter 或生产启用。
 
 要点：
 - **Vite 用 esbuild 转译，不做类型检查**——所以 `vite build` 不会替代独立的 `typecheck`。目前 9 个 legacy TS 文件使用 `// @ts-nocheck`，即使 typecheck 通过也不能证明 legacy 内部类型安全。

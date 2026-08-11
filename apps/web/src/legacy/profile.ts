@@ -3,11 +3,12 @@
 import { ICON } from "./icons";
 import { DB } from "./data";
 import { apiJson } from "../lib/api";
+import { getLocale, localize } from "../i18n";
 
 let sb = null, USER = null, toastFn = () => {};
 let rootEl = null;
 const EMPTY_LEARNING = { courses: 0, learnedWords: 0, reviewDays: 0, badges: [] };
-const state = { loading: true, error: "", learningError: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 }, learning: { ...EMPTY_LEARNING } };
+const state = { loading: true, error: "", learningError: "", quotaError: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 }, learning: { ...EMPTY_LEARNING }, quota: null };
 let sessionVersion = 0;
 
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
@@ -15,17 +16,18 @@ const initialsOf = (s) => String(s || "?").trim().slice(0, 2).toUpperCase();
 const TIER_BG = ["", "linear-gradient(135deg,#c9925f,#a97142)", "linear-gradient(135deg,#cdd2d8,#9aa1ab)", "linear-gradient(135deg,#ecc961,#c9a233)"];
 const TIER_NAME = ["", "铜", "银", "金"];
 const tierOf = (v, th) => th.reduce((t, x) => t + (v >= x ? 1 : 0), 0);
+const l = (en, zh) => localize(en, zh, getLocale());
 
 export function initProfile(supabase, user, toast) {
   sessionVersion++;
   sb = supabase; USER = user; toastFn = toast || (() => {});
   rootEl = null;
-  Object.assign(state, { loading: true, error: "", learningError: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 }, learning: { ...EMPTY_LEARNING } });
+  Object.assign(state, { loading: true, error: "", learningError: "", quotaError: "", profile: null, counts: { posts: 0, materials: 0, courses: 0, feedback: 0 }, learning: { ...EMPTY_LEARNING }, quota: null });
 }
 export function mountProfile(el) { rootEl = el; if (!rootEl) return; render(); load(); }
 
 async function fetchProfile() {
-  const [p, pc, mc, cc, fc, learning] = await Promise.all([
+  const [p, pc, mc, cc, fc, learning, quota] = await Promise.all([
     sb.from("profiles").select("*").eq("id", USER.id).single(),
     sb.from("posts").select("id", { count: "exact", head: true }).eq("user_id", USER.id).is("repost_of", null),
     sb.from("materials").select("id", { count: "exact", head: true }),
@@ -34,18 +36,23 @@ async function fetchProfile() {
     apiJson("/api/profile/learning-summary", {}, true, false)
       .then((data) => ({ data, error: "" }))
       .catch((error) => ({ data: { ...EMPTY_LEARNING }, error: error?.message || "课程学习统计加载失败" })),
+    apiJson("/api/profile/ai-quota", {}, true, false)
+      .then((data) => data && data.generation && data.grading
+        ? ({ data, error: "" })
+        : ({ data: null, error: l("AI allowance could not be loaded", "AI 额度加载失败") }))
+      .catch((error) => ({ data: null, error: error?.message || l("AI allowance could not be loaded", "AI 额度加载失败") })),
   ]);
   const failed = [p, pc, mc, cc, fc].find((result) => result.error);
   if (failed) throw failed.error;
   return { profile: p.data, counts: { posts: pc.count || 0, materials: mc.count || 0, courses: cc.count || 0, feedback: fc.count || 0 },
-    learning: learning.data, learningError: learning.error };
+    learning: learning.data, learningError: learning.error, quota: quota.data, quotaError: quota.error };
 }
 
 async function load() {
   const currentVersion = sessionVersion;
   if (!sb) { state.loading = false; state.error = "未配置 Supabase"; render(); return; }
   state.loading = true; render();
-  try { const r = await fetchProfile(); if (currentVersion !== sessionVersion) return; state.profile = r.profile; state.counts = r.counts; state.learning = r.learning; state.learningError = r.learningError; state.error = ""; }
+  try { const r = await fetchProfile(); if (currentVersion !== sessionVersion) return; state.profile = r.profile; state.counts = r.counts; state.learning = r.learning; state.learningError = r.learningError; state.quota = r.quota; state.quotaError = r.quotaError; state.error = ""; }
   catch (e) { if (currentVersion !== sessionVersion) return; state.error = e.message || "加载失败"; }
   if (currentVersion !== sessionVersion) return;
   state.loading = false; render();
@@ -105,6 +112,15 @@ function render() {
           </div>
         </div>
       </div>
+    </div>
+
+    <div class="card card-pad" style="margin-bottom:24px">
+      <div class="row between wrap-flex gap-12"><div><div class="eyebrow">${l("AI plan", "AI 方案")}</div><h2 class="serif" style="font-size:18px">${l("Free Plan", "免费方案")}</h2></div>
+        ${state.quota ? `<span class="chip chip-accent">${esc(state.quota.timezone)}</span>` : ""}</div>
+      ${state.quotaError ? `<div class="course-feedback wrong" role="alert">${esc(state.quotaError)}</div>` : state.quota ? `<div class="grid g-2 mt-16">
+        <div class="stat"><div class="stat-n" style="font-size:24px">${state.quota.generation.remaining}/${state.quota.generation.limit}</div><div class="stat-l">${l("Test paper generations remaining today", "今日剩余试卷生成次数")}</div><div class="faint" style="font-size:11px">${l("Used", "已用")} ${state.quota.generation.consumed} · ${l("Reserved", "已预留")} ${state.quota.generation.reserved}</div></div>
+        <div class="stat"><div class="stat-n" style="font-size:24px">${state.quota.grading.remaining}/${state.quota.grading.limit}</div><div class="stat-l">${l("Subjective grading runs remaining today", "今日剩余主观题评分次数")}</div><div class="faint" style="font-size:11px">${l("Used", "已用")} ${state.quota.grading.consumed} · ${l("Reserved", "已预留")} ${state.quota.grading.reserved}</div></div>
+      </div><p class="faint" style="font-size:11.5px;margin-top:10px">${l("Resets at", "重置时间")} ${new Date(state.quota.resetsAt).toLocaleString()} · ${l("Only successful generations or grading runs consume allowance. Credits are not used.", "仅成功的生成或评分会消耗额度，不使用 credits。")}</p>` : `<p class="muted">${l("AI allowance is loading…", "AI 额度加载中…")}</p>`}
     </div>
 
     <div class="grid" style="grid-template-columns:1fr 1fr;align-items:start;gap:24px">
