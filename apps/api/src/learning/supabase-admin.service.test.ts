@@ -37,4 +37,22 @@ describe("SupabaseAdminService Storage cache", () => {
     await expect(service().storageGet("vocabulary-audio", "word.mp3"))
       .rejects.toMatchObject({ response: { code: "UPSTREAM_UNREACHABLE" } });
   });
+
+  it("resolves a raw signed object path against the Storage API base", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      signedURL: "/object/sign/materials/user/source.txt?token=private",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(service().storageCreateSignedUrl("materials", "user/source.txt", 1_200))
+      .resolves.toBe("https://example.supabase.co/storage/v1/object/sign/materials/user/source.txt?token=private");
+  });
+
+  it("preserves a fully-qualified signed Storage URL", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      signedUrl: "http://127.0.0.1:54321/storage/v1/object/sign/materials/source.txt?token=private",
+    }), { status: 200, headers: { "Content-Type": "application/json" } })));
+
+    await expect(service().storageCreateSignedUrl("materials", "source.txt"))
+      .resolves.toBe("http://127.0.0.1:54321/storage/v1/object/sign/materials/source.txt?token=private");
+  });
 });
