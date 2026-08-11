@@ -3,12 +3,15 @@ import { expect, test, type Page } from "@playwright/test";
 test.skip(process.env.RUN_MATERIAL_AI_PLAYWRIGHT !== "1", "Materials AI worker is not part of this Playwright run");
 
 async function signUp(page: Page, email: string, password: string) {
+  // Authentication is still the existing Chinese production shell. Keep the
+  // Materials AI fixture in English after sign-in without widening this change
+  // into an unrelated auth-page migration.
   await page.addInitScript(() => localStorage.setItem("nalanda-locale", "en"));
   await page.goto("/");
-  await page.getByRole("button", { name: "Register", exact: true }).click();
+  await page.getByRole("button", { name: "注册", exact: true }).click();
   await page.getByPlaceholder("you@school.edu").fill(email);
-  await page.getByPlaceholder("At least 6 characters").fill(password);
-  await page.getByRole("button", { name: "Register and enter" }).click();
+  await page.getByPlaceholder("至少 6 位").fill(password);
+  await page.getByRole("button", { name: "注册并进入" }).click();
   await expect(page.locator(".brand-name")).toHaveText("Nalanda");
 }
 
