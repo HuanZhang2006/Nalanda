@@ -480,7 +480,7 @@ FastAPI 的请求/响应 Pydantic 模型 `extra=forbid`；内部 token 常量时
 
 ### 5.2 处理与 provider 规则
 
-确定性解析器保留页/幻灯片/块/表格/公式/图片关系及诊断；DeepSeek 首次审查后，只把解析器失败范围与模型指出的失败范围并集送给 MiMo，拼回完整 IR 后再次安全审查。`malicious` 或 `uncertain` 均返回 `PROMPT_INJECTION_REJECTED`，`benign_educational` 可继续。所有 OpenRouter 请求固定模型、严格 JSON schema、禁用工具/Web，并设置 `provider.zdr=true`、`data_collection="deny"`、`require_parameters=true`、`allow_fallbacks=false`。
+确定性解析器保留页/幻灯片/块/表格/公式/图片关系及诊断；DeepSeek 首次审查后，只把解析器失败范围与模型指出的失败范围并集送给 MiMo，拼回完整 IR 后再次安全审查。`malicious` 或 `uncertain` 均由内部 worker 以 HTTP 422 + `PROMPT_INJECTION_REJECTED` 拒绝，`benign_educational` 可继续。所有 OpenRouter 请求固定单一模型、严格 JSON schema、禁用 reasoning/工具/Web，并设置 `provider.zdr=true`、`data_collection="deny"`、`require_parameters=true`、`sort="throughput"`、`allow_fallbacks=true`；最后两项按吞吐量优先、只允许同模型的合规 provider endpoint 故障转移，请求不提供跨模型 `models` 列表。
 
 Postgres `generation_jobs` 是 durable 事实，BullMQ 只保存 UUID；reconciler 重投缺失项目。月度默认总预算 US$20，单生成/评分上限 US$0.50/US$0.05。provider usage 只保存模型、token、micro-USD、延迟、request ID、用途和 ZDR 标志，不保存 prompt、文件正文、回答或原始模型响应。
 

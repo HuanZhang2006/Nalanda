@@ -32,6 +32,9 @@ test("Materials AI installer separates worker secrets and starts the public feat
   assert.match(worker, new RegExp(`^OPENROUTER_API_KEY=${key}$`, "m"));
   assert.match(worker, new RegExp(`^AI_INTERNAL_TOKEN=${token}$`, "m"));
   assert.match(worker, /^SUPABASE_URL=https:\/\/fixture\.supabase\.co$/m);
+  assert.match(worker, /^MATERIAL_AI_PROVIDER_MAX_ATTEMPTS=4$/m);
+  assert.match(worker, /^MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS=2$/m);
+  assert.match(worker, /^MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS=60$/m);
   assert.doesNotMatch(worker, /SUPABASE_SERVICE_ROLE_KEY|AZURE_SPEECH_KEY|REDIS_URL/);
   assert.equal((await stat(join(root, ".env"))).mode & 0o777, 0o600);
   assert.equal((await stat(join(root, ".ai.env"))).mode & 0o777, 0o600);

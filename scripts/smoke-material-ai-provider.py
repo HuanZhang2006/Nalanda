@@ -34,6 +34,39 @@ def require(condition: bool, message: str) -> None:
         raise RuntimeError(message)
 
 
+def safe_worker_failure(response: httpx.Response) -> str:
+    """Return only stable, non-content error metadata from the internal worker."""
+
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError):
+        payload = {}
+    code = payload.get("code") if isinstance(payload.get("code"), str) else "UNKNOWN"
+    usage = payload.get("usageEvents") if isinstance(payload.get("usageEvents"), list) else []
+    provider_codes = sorted(
+        {
+            item.get("errorCode")
+            for item in usage
+            if isinstance(item, dict) and isinstance(item.get("errorCode"), str)
+        }
+    )
+    provider_purposes = sorted(
+        {
+            item.get("purpose")
+            for item in usage
+            if isinstance(item, dict)
+            and item.get("status") == "failed"
+            and isinstance(item.get("purpose"), str)
+        }
+    )
+    provider_summary = ",".join(provider_codes) if provider_codes else "none"
+    purpose_summary = ",".join(provider_purposes) if provider_purposes else "none"
+    return (
+        f"HTTP {response.status_code}; code={code}; "
+        f"providerErrorCodes={provider_summary}; providerPurposes={purpose_summary}"
+    )
+
+
 class CallbackHandler(BaseHTTPRequestHandler):
     def do_POST(self):
         length = min(int(self.headers.get("content-length", "0")), 100_000)
@@ -188,12 +221,33 @@ def assert_usage(result: dict, expect_vision: bool) -> None:
     models = {item.get("model") for item in usage}
     require(TEXT_MODEL in models, "the fixed DeepSeek model was not used")
     require((VISION_MODEL in models) == expect_vision, "visual recovery model usage did not match failed ranges")
+    purposes: dict[str, list[dict]] = {}
     for event in usage:
         require(event.get("zdrEnforced") is True, "a provider call was not ZDR constrained")
-        require(event.get("status") == "succeeded", "provider call failed")
-        require(isinstance(event.get("requestId"), str) and event["requestId"], "provider request ID is missing")
-        require(isinstance(event.get("totalTokens"), int), "provider token usage is missing")
-        require(isinstance(event.get("costMicroUsd"), int), "provider cost is missing")
+        require(event.get("status") in {"succeeded", "failed"}, "provider status is invalid")
+        purpose = event.get("purpose")
+        require(isinstance(purpose, str) and purpose, "provider purpose is missing")
+        purposes.setdefault(purpose, []).append(event)
+        if event.get("status") == "succeeded":
+            require(
+                isinstance(event.get("requestId"), str) and event["requestId"],
+                "successful provider request ID is missing",
+            )
+            require(isinstance(event.get("totalTokens"), int), "successful provider token usage is missing")
+            require(isinstance(event.get("costMicroUsd"), int), "successful provider cost is missing")
+        else:
+            require(isinstance(event.get("errorCode"), str) and event["errorCode"], "provider error code is missing")
+            require(
+                event.get("costMicroUsd") is None or isinstance(event.get("costMicroUsd"), int),
+                "failed provider cost is invalid",
+            )
+    for events in purposes.values():
+        require(any(event.get("status") == "succeeded" for event in events), "provider purpose never succeeded")
+
+
+def provider_failure_count(result: dict) -> int:
+    usage = result.get("usageEvents")
+    return sum(1 for event in usage if isinstance(event, dict) and event.get("status") == "failed")
 
 
 def process_fixture(label: str, path: Path, expect_vision: bool = False) -> dict:
@@ -204,7 +258,7 @@ def process_fixture(label: str, path: Path, expect_vision: bool = False) -> dict
             headers={"X-AI-Internal-Token": INTERNAL_TOKEN},
             json=request_payload(path, signed_url),
         )
-    require(response.is_success, f"{label} pipeline failed: HTTP {response.status_code}")
+    require(response.is_success, f"{label} pipeline failed: {safe_worker_failure(response)}")
     result = response.json()
     exam = result.get("exam", {})
     questions = [question for section in exam.get("sections", []) for question in section.get("questions", [])]
@@ -229,7 +283,7 @@ def reject_injection(path: Path) -> None:
             headers={"X-AI-Internal-Token": INTERNAL_TOKEN},
             json=request_payload(path, signed_url),
         )
-    require(response.status_code == 400, f"malicious fixture returned HTTP {response.status_code}")
+    require(response.status_code == 422, f"malicious fixture failed: {safe_worker_failure(response)}")
     require(response.json().get("code") == "PROMPT_INJECTION_REJECTED", "malicious fixture was not safely rejected")
 
 
@@ -252,7 +306,7 @@ def grade_subjective() -> dict:
             headers={"X-AI-Internal-Token": INTERNAL_TOKEN},
             json=payload,
         )
-    require(response.is_success, f"real grading failed: HTTP {response.status_code}")
+    require(response.is_success, f"real grading failed: {safe_worker_failure(response)}")
     result = response.json()
     require(len(result.get("results", [])) == 1, "real grading returned an incomplete result")
     assert_usage(result, False)
@@ -274,9 +328,17 @@ def main() -> None:
             summaries = {}
             for label in ("pdf", "docx", "pptx"):
                 result = process_fixture(label, fixtures[label])
-                summaries[label] = {"blocks": result["blockCount"], "visual": result["visualRegionCount"]}
+                summaries[label] = {
+                    "blocks": result["blockCount"],
+                    "visual": result["visualRegionCount"],
+                    "providerFailures": provider_failure_count(result),
+                }
             chart = process_fixture("chart", fixtures["chart"], expect_vision=True)
-            summaries["chart"] = {"blocks": chart["blockCount"], "visual": chart["visualRegionCount"]}
+            summaries["chart"] = {
+                "blocks": chart["blockCount"],
+                "visual": chart["visualRegionCount"],
+                "providerFailures": provider_failure_count(chart),
+            }
             process_fixture("educational", fixtures["educational"])
             reject_injection(fixtures["malicious"])
             grading = grade_subjective()
