@@ -1078,8 +1078,14 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await rpc<any[]>("ai_claim_exam_grading", {
       p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_lease_seconds: 300,
     }))[0]).toMatchObject({ id: gradingAttempt.id, status: "grading" });
+    const gradingUsage = {
+      purpose: "exam_grading", model: "deepseek/deepseek-v4-flash-0731",
+      requestId: "rls-delete-audit", promptTokens: 10, completionTokens: 5,
+      totalTokens: 15, costMicroUsd: 7, durationMs: 12,
+      zdrEnforced: true, status: "failed", errorCode: "SAFE_TEST_FAILURE",
+    };
     await rpc("ai_fail_exam_grading", {
-      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_usage_events: [],
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_usage_events: [gradingUsage],
     });
     expect((await admin.from("exam_attempts").select("status,grading_quota_reserved")
       .eq("id", gradingAttempt.id).single()).data)
@@ -1111,6 +1117,18 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       .toEqual({ course_id: null });
     expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
       .toMatchObject({ consumed: 1, reserved: 0, remaining: 9 });
+
+    // Provider cost events are immutable budget/audit facts. Deleting the
+    // generated Note must remove its attempts without nulling or deleting the
+    // historical attempt UUID (which previously rolled the transaction back).
+    expect((await admin.from("ai_provider_usage_events").select("attempt_id,cost_micro_usd")
+      .eq("attempt_id", gradingAttempt.id).single()).data)
+      .toEqual({ attempt_id: gradingAttempt.id, cost_micro_usd: 7 });
+    await rpc("ai_delete_note", { p_user_id: aId, p_note_id: noteId });
+    expect((await admin.from("exam_attempts").select("id").eq("note_id", noteId)).data).toEqual([]);
+    expect((await admin.from("ai_provider_usage_events").select("attempt_id,cost_micro_usd")
+      .eq("attempt_id", gradingAttempt.id).single()).data)
+      .toEqual({ attempt_id: gradingAttempt.id, cost_micro_usd: 7 });
     expect((await rpc<string[]>("ai_delete_material_course", {
       p_user_id: aId, p_course_id: course.data!.id, p_delete_results: true,
     }))).toEqual([]);

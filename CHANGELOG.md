@@ -33,6 +33,7 @@
 
 - Materials AI 固定使用服务端 OpenRouter key、`deepseek/deepseek-v4-flash-0731` 和 `xiaomi/mimo-v2.5`，请求要求 ZDR、拒绝数据收集、禁止工具/Web 与 provider 参数降级；恶意或不确定 prompt injection 均拒绝并释放额度。
 - AI 事务 RPC 全部撤销 `public/anon/authenticated` EXECUTE；用户只能读取自身任务/额度/Notes/答卷，不能写缓存、provider usage、结果、分数或配额。每任务 0700 临时目录在成功、失败、取消、超时的 `finally` 清理。
+- Materials AI 删除含已评分答卷的 Note/科目时不再因 provider usage 外键置空而回滚；job/attempt UUID 作为不可变成本审计引用保留，内容删除不能抹掉月度预算事实，Auth owner 删除仍级联清理。
 
 - 新内部 points/audit 表对客户端完全隐藏；service-role 也只有 SELECT，所有奖励、signal review、moderation 和审计变更均经固定 `search_path` 的受控函数执行。新增函数默认撤销 `public/anon/authenticated` EXECUTE。
 - 历史 points grandfather 只把存在 transition 1 正向分录的业务键视为实际获奖；0008/0009 零金额占位永久不可冲正/补领，既有无来源负 transition 通过 append-only `grandfather-zero-reset-v1` 等额归零，避免吞掉未来合法积分。

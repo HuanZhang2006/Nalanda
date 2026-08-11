@@ -513,7 +513,7 @@ erDiagram
 | `exam_attempts` | owner/note/number/status/revision/deadline/scores/grading reservation+lease/timestamps | `(user,note,attempt_number)` 唯一；note/user CASCADE；绝对期限、无限重考、主观评分可延期 |
 | `exam_attempt_answers` | `attempt_id,question_id,answer,awarded_marks,correct,feedback,updated_at` | PK `(attempt,question)`；attempt CASCADE；只由事务 RPC 写 |
 | `exam_attempt_operations` | `attempt_id,operation_id,operation_kind,response_payload,created_at` | PK 保证保存/提交/评分相同 UUID 重放返回第一次响应 |
-| `ai_provider_usage_events` | owner、job XOR attempt、purpose/provider/model/request ID/tokens/cost/duration/ZDR/status/error | 只存计量元数据；不得保存 prompt、正文、答案或原始响应 |
+| `ai_provider_usage_events` | owner、不可变 job XOR attempt 审计 ID、purpose/provider/model/request ID/tokens/cost/duration/ZDR/status/error | 只存计量元数据；job/attempt ID 故意不设内容生命周期 FK，使删除 Note/答卷不能抹掉成本或破坏预算；Auth owner 删除仍 CASCADE；不得保存 prompt、正文、答案或原始响应 |
 
 Postgres 是额度、任务、Notes、答卷和成绩的唯一事实源；BullMQ 只持有 UUID，不形成第二套状态。客户端不能直接写任何上述表，也不能执行工作流 RPC。
 

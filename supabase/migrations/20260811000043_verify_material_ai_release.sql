@@ -33,6 +33,25 @@ begin
     raise exception 'Materials deletion must remain service mediated';
   end if;
 
+  -- Cost/budget facts outlive user-selected Notes and attempts. Their subject
+  -- UUIDs must therefore remain immutable audit identifiers, not FKs that are
+  -- nulled (breaking XOR) or cascaded (allowing cost history to disappear).
+  if exists (
+    select 1 from pg_catalog.pg_constraint c
+    where c.conrelid = 'public.ai_provider_usage_events'::regclass
+      and c.contype = 'f'
+      and pg_catalog.pg_get_constraintdef(c.oid) ~ 'FOREIGN KEY \((job_id|attempt_id)\)'
+  ) then
+    raise exception 'Provider usage subject identifiers must not follow content deletion';
+  end if;
+  if not exists (
+    select 1 from pg_catalog.pg_constraint c
+    where c.conrelid = 'public.ai_provider_usage_events'::regclass
+      and c.conname = 'ai_provider_usage_event_subject_check'
+  ) then
+    raise exception 'Provider usage exact-one-subject constraint is missing';
+  end if;
+
   foreach v_function in array array[
     'public._ai_create_user_plan()'::regprocedure,
     'public._ai_user_timezone(uuid)'::regprocedure,
