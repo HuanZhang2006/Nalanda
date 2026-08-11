@@ -1,9 +1,22 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { setLocale } from "../i18n";
 import { click, createSupabaseMock, flush } from "../test/supabase-mock";
 import { initMaterials, mountMaterials } from "./materials";
 
 describe("资料错误处理", () => {
-  afterEach(() => { initMaterials(null, null, null); localStorage.clear(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    localStorage.clear();
+    setLocale("en", { persist: false });
+  });
+  afterEach(() => {
+    initMaterials(null, null, null);
+    document.body.innerHTML = "";
+    localStorage.clear();
+    setLocale("en", { persist: false });
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
   it("Storage 删除/签名失败时不伪造数据库成功", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
