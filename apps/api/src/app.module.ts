@@ -21,17 +21,25 @@ import { PointsAdminService } from "./points/points-admin.service";
 import { RateLimitInterceptor } from "./rate-limit/rate-limit.interceptor";
 import { RateLimitService } from "./rate-limit/rate-limit.service";
 import { RedisService } from "./rate-limit/redis.service";
+import { AiController, AiInternalController } from "./ai/ai.controller";
+import { AiInternalClientService } from "./ai/ai-internal-client.service";
+import { AiProcessorService } from "./ai/ai-processor.service";
+import { AiQueueService } from "./ai/ai-queue.service";
+import { AiRepository } from "./ai/ai.repository";
+import { AiService } from "./ai/ai.service";
+import { AiHealthController } from "./ai/ai-health.controller";
 
 @Module({
   controllers: [
     HealthController, MeController, AuthController, LearningController,
     PublicLearningController, PronunciationController, OpenRouterTranscriptionController,
-    PointsAdminController,
+    PointsAdminController, AiController, AiInternalController, AiHealthController,
   ],
   providers: [
     SupabaseAdminService, IpaService, LearningService, LearningAudioService, PronunciationService,
     OpenRouterTranslationService, OpenRouterTranscriptionService, FeatureFlagsService,
     RedisService, RateLimitService, PointsAdminService, PointAbuseScannerService,
+    AiInternalClientService, AiRepository, AiProcessorService, AiQueueService, AiService,
     { provide: APP_INTERCEPTOR, useClass: RateLimitInterceptor },
     { provide: APP_FILTER, useClass: ApiErrorFilter },
   ],

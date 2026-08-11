@@ -16,25 +16,25 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | 模块 | 当前实现 |
 |---|---|
 | 注册 / 登录 / 退出 | ✅ Supabase Auth；注册经 NestJS service-role 接口创建已确认账号 |
-| Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除 |
+| Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除。0041–0043 候选为每个受支持文件增加服务端 “Generate test paper”、持久队列与安全解析，生产 flag 尚未开启 |
 | Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；生产 0039–0040 已收紧帖子可信列并启用 points 日上限、人工审核冲正与只标记协同检测 |
 | Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；生产 0039–0040 已启用关联 owner trigger、数据库维护 `done_at` 和任务奖励日上限；“智能填充”为规则式生成 |
 | Courses / Course Market | ✅ 生产已上线英语词表文本导入、编辑、四阶段学习、复习、Schedule/Profile、免费分享/市场、徽章与积分、即时反馈、幂等弱网答题、持久音频预热、浏览器离线音频、按意图独立续学、显式取消、可选限时拼写、OpenRouter 语义翻译前测、中文翻译语音输入、统一录音波形、轮末错题复盘、默认 90% 可调阈值的拼写/读音考试、复习/考试任意选词、失败考试补练自动结束、考试历史详情和编辑器学习属性；生产迁移已到 0040。词汇只有拼写考试和发音考试均通过才算已学习，`learned_at` 由数据库 trigger 精确派生为两个考试通过时间的较晚值；首次学习、复习、单项考试或手工赋值都不能形成掌握。发音录音已移除本地 VAD/静音裁剪，只保留 Azure 要求的 PCM 格式转换。 |
 | Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；生产 0039–0040 已把 Feedback 收敛为用户只读/新增，并启用奖励日上限、回执/通知与审核审计；通知当前是查询刷新，不是 Realtime |
 | Home | 🟡 高保真 mock，统计/课程/活动不是真实聚合 |
-| Notes / AI Create | 🟡 高保真 mock；FastAPI 只是桩，未形成解析/生成/落库链路 |
+| Notes / AI Create | 🟡 My Notes 的历史演示卡片继续保留为 Demo；0041–0043 候选已接入 Materials 课程下的私有生成试卷、在线考试与主观题异步评分，尚待真实供应商和受保护生产门禁；独立 AI Create 仍为 mock |
 | Note Market / credits / VIP / 支付 | 🟡 Note Market 仍为 Demo，Course Market 只支持免费克隆；无 credits 账本、订单或 Stripe |
 | Courses 文件导入 / 其他类别 | ⬜ PDF/Word/JSON/Markdown/HTML/图片仅有禁用入口；AI 解析、知识点/阅读理解/题库训练未实现 |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-08-10 经独立只读 plan、加密恢复点、0039–0040 apply、远端验证和不可变应用发布完成安全第一阶段；私有 Redis 已成为限流/readiness 依赖。兼容 release 于 `2026-08-10T09:35:34Z` 激活，第二阶段 0041–0042 只能在至少观察至 `2026-08-11T09:35:34Z`、确认无旧时间列依赖后另行追加。限时拼写、翻译前测、中文翻译语音输入和 Courses 现有业务均继续由服务端决定事实。文件 AI 导入仍是禁用入口；完整离线 PWA、credits/VIP 商业账本未实现。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
+旧模块大多由浏览器直连 Supabase；Courses 的所有业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-08-10 经独立只读 plan、加密恢复点、0039–0040 apply、远端验证和不可变应用发布完成安全第一阶段；私有 Redis 已成为限流/readiness 依赖。兼容 release 于 `2026-08-10T09:35:34Z` 激活，时间列撤权第二阶段只能在至少观察至 `2026-08-11T09:35:34Z`、确认无旧依赖后另行追加为未来 0044–0045。仓库的 0041–0043 Materials AI 候选不读取 credits：所有用户 Free，每个 Profile 本地日期分别有 10 次成功生成和 10 次成功主观题评分；只有成功才消耗，拒绝/失败/取消释放预留。候选代码、fake 自动化或本地构建都不能当作线上启用证据。完整离线 PWA、销售 credits/VIP 商业账本仍未实现。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
 
 ## 当前技术结构
 
 - Web：React 18 + Vite 鉴权壳，内部挂载 legacy DOM 应用。
 - 数据/Auth/Storage：Supabase PostgreSQL、Auth、Storage、RLS。
 - API：NestJS，提供 health/auth/me、Courses、语音/AI 适配和 points 管理接口；生产已启用 ioredis 原子限流、协同扫描器和真实 Redis readiness。
-- AI：FastAPI 骨架和固定桩输出，未接入生产。
+- AI：0041–0043 候选使用内网 FastAPI、确定性解析器、固定 OpenRouter ZDR 模型和严格 schema；NestJS 以 Postgres 任务事实 + BullMQ/Redis 调度。生产仍未启用该链路。
 - 共享：pnpm + Turborepo；`packages/ui` 是 CSS 包，Courses 的 camelCase 契约由 `packages/types` 在 Web/API 共用。
 - 生产：GitHub Actions 构建，宿主 nginx 托管 Web，Docker 运行 API 与仅容器内网可达、密码认证、AOF everysec 的 Redis；Supabase 继续使用云服务。
 
@@ -42,9 +42,9 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 
 - `apps/web`：生产 Web。
 - `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
-- `apps/ai`：AI 桩。
+- `apps/ai`：Materials AI 隔离 worker 候选；解析 PDF/Office/文本/图片并只恢复失败视觉范围，内部 token 认证，不是公网服务。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：仓库当前 40 个追加式迁移；0039 为已上线的第一阶段安全/points/审计扩展，0040 为失败关闭的结构与权限断言。生产 migration history 已到 0040；0041–0042 contract 尚未创建。
+- `supabase/migrations`：追加式迁移；生产 migration history 已到 0040。0041–0043 候选建立 Materials AI/Notes/考试事实、服务端事务与失败关闭断言，必须完成 plan/恢复点/apply 后才可改写为已上线；时间列撤权 contract 顺延为未来 0044–0045。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/BullMQ 接入时的通用部署模板；当前生产 Redis 配置在 `infra/deploy`，两者不可混称。
 
@@ -96,7 +96,7 @@ python3 -m http.server 8000
 
 ## 规划中的核心能力
 
-下一阶段会覆盖 Courses 文件 AI 解析与其余三类学习资产、个人笔记、真实 Home、笔记市场/credits/Stripe、完整内容治理、Realtime、管理端、双语、Electron 和 React Native。它们的依赖、顺序和验收标准只以 [PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md) 为准。
+当前候选先交付 Materials 文件生成试卷与在线考试；Knowledge list、Quiz、Knowledge graph 仍显示 Coming soon。后续会覆盖 Courses 文件 AI 解析、其它 AI 产物、真实 Home、笔记市场/credits/Stripe、完整内容治理、Realtime、管理端、双语、Electron 和 React Native。依赖、顺序和验收标准只以 [PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md) 为准。
 
 ## 许可证状态
 

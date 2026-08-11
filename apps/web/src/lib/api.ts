@@ -72,6 +72,22 @@ const API_ERROR_TEXT: Record<string, readonly [string, string]> = {
   TRANSLATION_STT_PROVIDER_ERROR: ["Voice recognition is temporarily unavailable. Nothing was submitted.", "语音识别服务暂不可用，未提交任何答案"],
   TRANSLATION_STT_PROVIDER_INVALID: ["Voice recognition returned an invalid result. Please try again.", "语音识别结果无效，请重试"],
   TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED: ["Voice input is temporarily unavailable. You can continue by typing.", "语音输入暂不可用，可继续使用键盘输入"],
+  MATERIAL_AI_DISABLED: ["Materials AI is not enabled yet.", "Materials AI 尚未开放"],
+  MATERIAL_AI_UNAVAILABLE: ["Materials AI is temporarily unavailable.", "Materials AI 暂不可用"],
+  AI_FILE_TYPE_UNSUPPORTED: ["This file type is not supported for AI processing.", "AI 处理不支持此文件类型"],
+  AI_FILE_SIZE_UNSUPPORTED: ["This file exceeds the AI processing size limit.", "文件超过 AI 处理大小限制"],
+  AI_PROCESSING_CONSENT_REQUIRED: ["Confirm AI processing consent to continue.", "请确认 AI 处理同意后继续"],
+  AI_GENERATION_DAILY_LIMIT: ["Today's 10 free test paper generations have been used.", "今日 10 次免费试卷生成额度已用完"],
+  AI_GRADING_DAILY_LIMIT: ["Today's 10 free subjective grading runs have been used.", "今日 10 次免费主观题评分额度已用完"],
+  AI_JOB_ACTIVE: ["Finish or cancel your active AI job first.", "请先完成或取消当前 AI 任务"],
+  IDEMPOTENCY_CONFLICT: ["This request key was already used for different settings.", "此请求标识已用于其他设置"],
+  PROMPT_INJECTION_REJECTED: ["The file contains unsafe embedded instructions and was not processed.", "文件含有不安全的嵌入指令，已拒绝处理"],
+  AI_TEMP_DISK_PRESSURE: ["AI processing is paused because server disk space is low.", "服务器磁盘空间不足，AI 处理已暂停"],
+  AI_MONTHLY_BUDGET_REACHED: ["AI processing is paused at the monthly budget limit.", "AI 处理已达到月度预算上限"],
+  AI_EXAM_VALIDATION_FAILED: ["The generated paper did not pass validation; your allowance was returned.", "生成试卷未通过验证，额度已返还"],
+  EXAM_REVISION_CONFLICT: ["This exam changed on another device. The latest version will be restored.", "答卷已在其他设备修改，将恢复最新版本"],
+  EXAM_ATTEMPT_EXPIRED: ["The exam time has ended and the paper is being submitted.", "考试时间已结束，正在自动交卷"],
+  EXAM_ATTEMPT_CLOSED: ["This exam attempt is already closed.", "本次答卷已结束"],
 };
 
 function localizedApiError(code: string, source?: unknown) {

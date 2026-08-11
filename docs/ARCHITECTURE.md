@@ -6,13 +6,13 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-10。生产数据库与兼容应用已受保护发布到 0040：帖子/Feedback/Schedule 完整性、points 日上限/审核/协同信号、Redis 限流和滥用审计均已启用；0041–0042 尚未创建，必须等兼容应用从 `2026-08-10T09:35:34Z` 起在线观察至少 24 小时并通过 go/no-go。文件 AI 导入、完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-11。生产数据库与兼容应用已受保护发布到 0040：帖子/Feedback/Schedule 完整性、points 日上限/审核/协同信号、Redis 限流和滥用审计均已启用。仓库的 0041–0043 Materials AI 候选尚待完整 CI、真实供应商及受保护发布；时间列撤权 contract 顺延为未来 0044–0045，必须等兼容应用从 `2026-08-10T09:35:34Z` 起在线观察至少 24 小时并通过 go/no-go。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
 ## 1. 当前系统结论
 
-Nalanda 当前是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳、legacy DOM 模块和 React Courses 功能组成；认证与旧业务 CRUD 直接使用 Supabase；NestJS 提供注册、JWT、健康检查以及 Courses/学习/语音/传播接口；FastAPI AI 服务仍是未接入的桩。
+Nalanda 是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳、legacy DOM 模块和 React Courses 功能组成；认证与旧业务 CRUD 直接使用 Supabase；NestJS 提供注册、JWT、健康检查以及 Courses/学习/语音/传播接口。0041–0043 候选把 Materials AI 接到 NestJS、BullMQ/Redis 和隔离 FastAPI，但在受保护发布前不属于生产运行时。
 
 “真后端”在旧模块中主要表示“真实写入 Supabase 并由 RLS 保护”；Courses 的内容与学习事实写入必须经 NestJS + service-role 专用事务 RPC。当前两条路径均已部署，但这仍不把 Home/Notes/AI Create 等 mock 变成真实能力。
 
@@ -33,7 +33,7 @@ Nalanda 当前是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳�
 
 NestJS → private Docker network → Redis（滑动窗口、审计聚合、扫描器分布式锁）
 
-FastAPI AI：有独立代码和通用 Docker 模板，但当前生产未部署，NestJS 也未调用。
+候选 Materials AI：NestJS → Postgres durable job → BullMQ/Redis（只存 UUID）→ 内网 FastAPI → OpenRouter ZDR；当前生产未部署。
 ```
 
 Supabase Cloud 当前承担：
@@ -43,7 +43,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-08-10 同步到 0040：0039 增加直接 PostgREST 写入的防御 trigger/列 grant、冻结奖励窗口与 claim、审核和协同/滥用审计表；0040 逐项断言 trigger、列权限、RLS 与 RPC grant。独立 plan、加密恢复 artifact `9057062920`、远端 history/lint/空 dry-run、真实 Redis/Azure/OpenRouter/Fish/Courses gates、API readiness 和公网 smoke 均有记录。0041–0042 contract 不属于当前生产或仓库状态。
+生产 migration history 已于 2026-08-10 同步到 0040：0039 增加直接 PostgREST 写入的防御 trigger/列 grant、冻结奖励窗口与 claim、审核和协同/滥用审计表；0040 逐项断言 trigger、列权限、RLS 与 RPC grant。独立 plan、加密恢复 artifact `9057062920`、远端 history/lint/空 dry-run、真实 Redis/Azure/OpenRouter/Fish/Courses gates、API readiness 和公网 smoke 均有记录。0041–0043 是未发布的 additive Materials AI 候选；时间列撤权 contract 顺延为未来 0044–0045。
 
 第一阶段应用把同机 Redis 纳入生产依赖：Redis 只连接默认 compose 私网、无宿主端口、密码认证、AOF `everysec`、`noeviction`；API 使用原子 Lua 滑动窗口和 HMAC(IP/email)键，不保存原始 IP/email。写入/注册/克隆/举报/成本接口在 Redis 故障时 fail-closed，私有只读 fail-open 并输出 `rate_limit_degraded`；readiness 只有 Supabase 与 Redis PING 均成功才为 200。协同扫描器每五分钟以 Redis token lock 单实例执行，只写待审 signal，不自动冻结或冲正。
 
@@ -56,7 +56,7 @@ Nalanda/
 ├─ apps/
 │  ├─ web/                 React/Vite 鉴权壳 + legacy 应用
 │  ├─ api/                 NestJS Auth/health + Courses/语音/市场 API
-│  └─ ai/                  FastAPI 桩；不在 pnpm workspace 任务中
+│  └─ ai/                  隔离的 Materials 解析/生成/评分 worker（Python）
 ├─ packages/
 │  ├─ ui/                  CSS，不是 React 组件库
 │  └─ types/               Courses 共享 camelCase 契约 + 尚未接通的 AI 目标类型
@@ -141,30 +141,33 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 
 ## 6. FastAPI AI 服务
 
-当前路由：
+0041–0043 候选已替换原固定桩：FastAPI 只接受 `X-AI-Internal-Token` 的内网请求，并在 0700 独立临时目录中执行确定性解析、两次安全审查、失败范围视觉恢复、严格结构化试卷生成和批量主观题评分。固定模型为 DeepSeek V4 Flash 0731 与 MiMo V2.5；provider 请求强制 ZDR、拒绝数据收集、参数支持和关闭 fallback/tool/Web。所有任务路径在 `finally` 清理，启动/定时清理一小时以上孤儿目录，磁盘水位与每任务 1GB 上限均失败关闭。
 
-| 路径 | 当前行为 |
-|---|---|
-| `GET /health` | 报告服务和 Anthropic key 是否配置 |
-| `POST /parse` | 返回空文本与空 blocks |
-| `POST /generate/knowledge-list` | 返回固定示例概念 |
-| `POST /generate/quiz` | 返回固定占位题 |
-| `POST /generate/graph` | 返回固定 Root → A |
-| `POST /generate/exam` | 返回固定试卷 |
+完整生成链路是：
 
-解析依赖和 Anthropic SDK 已列入 requirements，但尚未在实现中使用。没有 `/embed`、推荐接口、pgvector、队列、结果落库、重试、成本控制或内部认证。
+```text
+用户 Materials 文件
+  → NestJS owner/格式/额度/同意校验
+  → Postgres 原子 reservation + generation_job
+  → BullMQ 仅调度 job UUID；reconciler 补投
+  → FastAPI DocumentIR 确定性解析
+  → DeepSeek 文本完整性/注入审查
+  → 只把诊断与审查失败范围交给 MiMo
+  → 拼接完整 DocumentIR 并再次安全审查
+  → DeepSeek 按版本化 prompt 生成 GeneratedExamV1
+  → schema/题数/总分/答案/来源验证（最多一次修复）
+  → 单事务保存 Notes 并 consume；失败/cancel 则 release
+```
 
-### 6.1 当前契约不一致
+Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责投递。worker 崩溃或 Redis 丢项不会丢任务，租约超过三次才稳定失败并返还额度。用户浏览器不能选择模型、提供 key、调用内部回调或决定成绩。
 
-文档早期所称“三方一致”不成立：
+候选 worker 路由只有 `GET /health`、`POST /internal/materials/exam` 和 `POST /internal/exams/grade`。后两者需要常量时间比较的内部 token；FastAPI 默认 422 处理器不会回显包含 Storage signed URL 或 callback token 的请求正文。旧 `/parse` 与四个固定生成桩已删除。
 
-- Knowledge：前端 mock 为 `t/d/tags`，目标类型为 `title/definition/tags/order`。
-- Quiz：mock 为 `q/opts/ans/why`，目标类型为 `question/options/answerIndex/explanation`。
-- Graph：当前渲染要求 `x/y/cls`，Python/TS 只有 `level`。
-- Exam：mock 为 `qs: string[]`，目标类型为 `questions: {prompt, marks}[]`。
-- TS 请求是 `materialId`，Python 请求是 `material_id`。
+### 6.1 契约边界
 
-`@nalanda/types` 当前没有被 Web 或 API 导入。接 AI 前必须选定规范、增加适配层并做契约测试。
+公开 Web/Nest 契约统一来自 `@nalanda/types` 的 camelCase `GeneratedExamV1`；Nest 显式转换数据库 snake_case，Python Pydantic 使用同一 camelCase JSON 与 `extra="forbid"`。考试 session 会删除答案、解析、rubric 和 accepted answer，只给作答所需字段；生成者自己的 Notes detail 仍可查看完整答案，这是自学产品而不是防作弊考试系统。
+
+Knowledge list、Quiz 和 Knowledge graph 的历史 Demo 形状没有冒充真实契约；对应入口为 Coming soon。当前候选不含 embeddings、pgvector、编辑、导出、credits 或支付。
 
 ## 7. 数据库与 Storage
 
@@ -183,6 +186,10 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 | 复习 | `learning_review_schedules` |
 | 分享市场 | `learning_course_shares`, `learning_course_publications`, `learning_course_reports`, `learning_course_moderation_actions` |
 | 课程徽章/语音配额 | `badge_definitions`, `user_badge_awards`, `learning_speech_usage` |
+| Materials AI 计划/额度 | `ai_plans`, `ai_user_plans`, `ai_daily_usage` |
+| Materials AI 任务/缓存 | `generation_jobs`, `generation_job_events`, `ai_material_parse_cache`, `ai_provider_usage_events` |
+| 私有 Notes/来源 | `notes`, `note_materials`, `note_artifacts` |
+| 在线考试 | `exam_attempts`, `exam_attempt_answers`, `exam_attempt_operations` |
 
 完整关系、字段和策略见 [ERD](guides/ERD.md)。
 
@@ -198,6 +205,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 - `point_entries` 只允许用户读取自己的条目；客户端不能直接写，`point_event_states` 及 0039 新增的 claim/moderation/signal/audit 表对客户端完全隐藏。service-role 只经受控函数形成奖励和审核转换。
 - `learning_*` 私有表只允许 owner 读，客户端不能写内容、会话、尝试、progress、日程、徽章或奖励；评判事实表甚至不授予 owner SELECT。写入经 API 调用撤销了 `public/anon/authenticated` 权限的 service-role RPC。
 - 分享/出版物/举报/审核表不向匿名 PostgREST 开放。匿名分享和市场读取只能经过 API 返回转义、脱敏快照；出版快照由 trigger 保持不可变。
+- 0041–0043 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage 与 operation 幂等表无客户端访问。所有 reservation、任务推进、结果、成绩和删除编排仅允许 service-role RPC，且迁移 0043 失败关闭验证 grant/RLS/删除语义。provider usage 的 job/attempt UUID 是不可变审计引用而非内容生命周期 FK：删除 Note/答卷保留成本事实，删除 Auth owner 才随 `user_id` CASCADE。
 
 ### 7.3 已关闭项与剩余数据完整性边界
 
@@ -256,7 +264,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 
 ## 10. 当前优先风险
 
-1. 持续观察已上线 0039–0040 的 Redis 错误、误限流、points projection 和旧时间列依赖；最早于 `2026-08-11T09:35:34Z` 通过 go/no-go 后再追加 0041–0042 撤销兼容权限。
+1. 持续观察已上线 0039–0040 的 Redis 错误、误限流、points projection 和旧时间列依赖；最早于 `2026-08-11T09:35:34Z` 通过 go/no-go 后再追加未来 0044–0045 撤销兼容权限。0041–0043 Materials AI 不执行该撤权。
 2. 在第一阶段生产观察中核对 points cap/审核/协同信号的误报、投影差异和 Redis 降级；再补完整审核 UI/申诉与内容质量检测。credits/VIP 另建商业账本。
 3. 实现 Courses 文件 AI 导入前先统一模型契约、人工确认、评测集、成本和隐私留存；当前禁用入口不能算能力。
 4. 为已上线 Courses/Azure/市场建立持续指标、成本对账和审核工作台；执行数据库/Storage/TTS 缓存恢复与告警演练。

@@ -68,4 +68,23 @@ export class FeatureFlagsService {
       });
     }
   }
+
+  materialAi() {
+    if (process.env.NODE_ENV === "production" && process.env.MATERIAL_AI_FAKE_PROVIDER === "true") {
+      throw new ServiceUnavailableException({
+        code: "MATERIAL_AI_UNAVAILABLE",
+        message: "Production cannot use the fake Materials AI provider",
+      });
+    }
+    if (!enabled("FEATURE_MATERIAL_AI", false)) {
+      throw new ServiceUnavailableException({ code: "MATERIAL_AI_DISABLED", message: "Materials AI is not enabled" });
+    }
+    if (!process.env.REDIS_URL || !process.env.AI_SERVICE_URL || !process.env.AI_INTERNAL_TOKEN) {
+      throw new ServiceUnavailableException({ code: "MATERIAL_AI_UNAVAILABLE", message: "Materials AI dependencies are not configured" });
+    }
+  }
+
+  materialAiEnabled() {
+    try { this.materialAi(); return true; } catch { return false; }
+  }
 }

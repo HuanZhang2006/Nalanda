@@ -4,7 +4,7 @@
 > - **内容**：记录当前 Supabase/Postgres、RLS 范式、迁移清单和迁移工具局限。
 > - **作用**：作为数据层实现入门；完整关系看 ERD，正式发布/回滚看 operations 手册。
 > - **何时更新**：新增迁移、RLS 模式、迁移工具或数据库发布流程变化时。
-> - **状态基线**：2026-08-10。生产 migration history 为 0040；0039–0040 第一阶段完整性/points 扩展与验证已上线，0041–0042 尚未创建且必须等候至少 24 小时生产观察。
+> - **状态基线**：2026-08-11。生产 migration history 为 0040；0039–0040 第一阶段完整性/points 扩展与验证已上线。0041–0043 是 additive Materials AI 候选；最终时间列撤权顺延为未来 0044–0045，且必须等候至少 24 小时生产观察。
 
 > 目标：数据存哪、怎么保证「每个人只能动自己的数据」（RLS），以及改表结构的工作流（迁移 + 一条命令自动应用）。鉴权相关的 profiles 表见 [02 用户系统与认证](02-auth-and-user-system.md)。
 
@@ -128,5 +128,5 @@ Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/
 - 0037–0038 已于 2026-08-04 通过 PR #49 run `30904901828`、只读 plan `30906629924` 和受保护 apply/deploy `30907716733` 发布。apply 前保留恢复 artifact `8892006761`；远端 history、0038 自验证、database lint 与空 dry-run 均通过，生产已到 0038。
 - 0039–0040 已于 2026-08-10 通过 PR #51/#52、只读 plans `31368447660`/`31372198037` 和受保护 runs `31369657292`/`31372888441` 发布。首个 artifact `9055783205` 位于 apply 前，最终 artifact `9057062920` 用于修复后复核；远端 history、自验证、database lint、空 dry-run、真实 Redis 与公网 readiness 均通过，生产已到 0040。
 - 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE。生产 0039–0040 已收口 `feedback.status`、帖子 owner/作者快照/计数/业务键/时间及 Schedule 关联归属。通知服务端字段和其它直接 PostgREST 表仍需持续逐表审计。
-- 0041–0042 contract 不在当前仓库：只有兼容应用与 0039–0040 生产运行至少 24 小时、确认无客户端提交 `posts.updated_at`/`study_tasks.done_at` 依赖后，才能另建迁移撤销这两列的兼容 UPDATE grant。
+- 未来 0044–0045 contract 不在当前仓库：只有兼容应用与 0039–0040 生产运行至少 24 小时、确认无客户端提交 `posts.updated_at`/`study_tasks.done_at` 依赖后，才能另建迁移撤销这两列的兼容 UPDATE grant。0041–0043 只新增 Materials AI。
 - 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。

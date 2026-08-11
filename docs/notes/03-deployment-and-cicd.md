@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-10。生产数据库/应用证据已到 0040；私有 Redis 与 nginx 分层限流已上线，0041–0042 尚待 24 小时观察后另行发布。
+> - **状态基线**：2026-08-11。生产数据库/应用证据已到 0040；私有 Redis 与 nginx 分层限流已上线。0041–0043 Materials AI 与 AI worker 是尚待完整 CI/plan/apply/真实 provider/canary 的候选；时间列撤权顺延为未来 0044–0045。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -25,13 +25,14 @@
   /opt/nalanda/
     ├─ docker compose: api 容器（127.0.0.1:8411 → 容器:3000，mem_limit 256m）
     ├─ Redis（仅 compose 私网、密码、AOF everysec、noeviction、无宿主端口）
+    ├─ 候选: FastAPI AI（内网、640m RAM/896m memswap、0.75 CPU、128 pids）
     ├─ web/   前端静态产物（宿主机 nginx 直接托管）
     └─ .env   后端密钥（仅服务器持有）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
-外部：Azure Speech（生产）、OpenRouter 翻译前测（生产）、Stripe/Claude（规划）
+外部：Azure Speech（生产）、OpenRouter Courses（生产）及 Materials DeepSeek/MiMo（候选）、Stripe（规划）
 ```
 
-> 生产 0040 使用「web 静态 + api + 私有 Redis」。Redis 是注册/写入限流、滥用聚合和扫描锁依赖；AI 容器仍不部署，供应商由 NestJS 直连。
+> 生产 0040 使用「web 静态 + api + 私有 Redis」。Redis 是注册/写入限流、滥用聚合和扫描锁依赖；0041–0043 候选让同一私有 Redis 承担只含 durable Postgres job UUID 的 BullMQ 投递，并把 Materials AI 放进独立 env/资源 cgroup 的 FastAPI。生产当前尚未部署 AI 容器。
 
 ## 3. nginx 接入（隔离的关键）
 
@@ -62,13 +63,13 @@ server {
 文件：`.github/workflows/deploy.yml`。PR 到 `main` 只跑无生产 secrets 的质量/本地 Supabase 门禁；push `main` 在无新 migration 时发布应用，若含新 migration 则验证后停止。数据库 owner 必须在对应 `main` commit 上先手动运行只读 `plan_database_migrations`，复核 history/dry-run 后再单独运行 `apply_database_migrations`；成功发布数据库后才继续应用发布。两个开关不能同时选择；都不选时只重发应用。纯文档变更由 docs workflow 处理。
 
 步骤逻辑：
-1. **质量门**：docs check、lint/typecheck、默认 Vitest（Web jsdom + API/Courses unit）、真实 CI Redis Lua 原子/过期/锁测试、全部 workspace build。
-2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 历史升级，随后销毁 fixture 栈并从全新空卷启动 latest/lint；Auth/PostgREST 有界 readiness 通过后运行双用户 RLS/Storage/points/Courses E2E、nginx 容器配置验证，并以 Azure/OpenRouter/Fish fake 跑 Playwright。
+1. **质量门**：docs、lint/typecheck、Web/API Vitest、真实 Redis Lua/BullMQ、Python ruff/pytest、workspace build 和 AI Docker build。
+2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 与空库 latest/lint；运行双用户 RLS/Storage/points/Courses/Materials AI E2E、nginx/compose，并以 fake providers 跑 Courses 与 Materials→Notes→Exam Playwright。
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
-4. **构建**：Web 注入公开 Supabase 配置；API image 标为 `nalanda-api:<git-sha>`。
+4. **构建**：Web 注入公开 Supabase 配置；API/AI image 都标为同一 `<git-sha>`，服务器不构建。
 5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
-6. **真实供应商 gate**：生产主机从 mode-600 `.env` 向新 image 注入 Azure/OpenRouter keys。Azure gate 验证 MP3/PCM TTS、scripted assessment、队列/private Storage/重复词复用和裁剪评分；0019+ 另验证 OpenRouter structured 同义 true/无关 false，以及真实 Courses API 的同 UUID replay 和权威 spelling attempt。任一失败时尚未切换 Web。
-7. **激活**：第一阶段先安装独立 Redis/HMAC secrets、启动并验证 Redis PING/AOF/私网；API 本地 health 的 Supabase JWKS/PostgREST 与 Redis PING/HMAC 全部通过后原子切换 Web symlink，再从公网验证 Web/API/RateLimit headers。
+6. **真实供应商/资源 gate**：既有 Azure/Courses OpenRouter gate之外，0041 候选用固定 PDF/DOCX/PPTX/chart/injection/safe-course/grading 调真实 DeepSeek/MiMo，验证 ZDR/引用/费用/只恢复失败范围；近上限 Office canary 验证 RSS/swap/temp disk/邻站。任一失败触发 rollback、flag 保持 false。
+7. **激活**：安装 Redis/HMAC/internal token与隔离 `.ai.env`，验证 Redis PING/AOF/私网、FastAPI/OpenRouter/LibreOffice/temp disk/internal auth、API Supabase/Redis/AI readiness；门禁后才开启 flag并切 Web，再做公网登录用户完整链路。
 8. **应用回退**：任一激活后 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；新 release 始终要求 Supabase 双探针为 `ok`，回退验证只要求旧 API 进程契约可用且 `/api/me` 未认证返回 401，以兼容尚未提供依赖级 health 的旧 image；数据库不自动逆向。
 
 Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
@@ -80,6 +81,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
 - **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与供应商 key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音、音频预热和翻译前测 flags 已开启，Azure/OpenRouter fake=false；受保护步骤只更新 OpenRouter 域变量。TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
 - **第一阶段 security secrets**：`production` environment 的 `REDIS_PASSWORD` 与 `RATE_LIMIT_HMAC_SECRET` 必须独立随机生成，经 stdin 原子安装到 mode-600 `.redis.env` 与 API `.env`；Redis 容器只拿密码，不拿 Supabase/provider/HMAC。
+- **Materials AI secrets**：`OPENROUTER_API_KEY` 与独立 32-byte `AI_INTERNAL_TOKEN` 经 stdin 原子写入 API/AI env；AI env 不含 service-role、Redis、Azure 或 Web key。候选总开关安装后默认 false。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
@@ -107,7 +109,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 **修复**：把 `renewal/uofa.ink.conf` 的 `account` 改成当前有效的 v2 账户（与 nalanda/lobe 同一个），`certbot renew --force-renewal` 成功；只动它自己的配置。
 
 ### (c) 内存红线
-服务器空闲内存极少，故所有重构建放 CI；容器设 `mem_limit 256m` 防止 api 失控波及邻居；并建议保留 swap。
+服务器空闲内存极少，故所有构建放 CI。API 为 256m；候选 AI 640m/896m memswap、0.75 CPU、128 pids且单并发，Redis 96m/48m maxmemory noeviction。近上限 canary 出现 kernel OOM、邻站失败或持续不可接受换页即不开放 Materials AI。
 
 ## 7. 历史上线验证
 
@@ -225,7 +227,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 修复合入后，[只读 plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端均到 0040且 dry-run 为空。最终 [受保护 run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 再保留 artifact `9057062920`（800,819 bytes，zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并通过远端 history、lint 与空 dry-run。
 - 切流前 Redis PING/AOF/private-port/noeviction、nginx `-t`、真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter Gemma（5,524 ms、253/27/280 tokens）和真实 Courses API/Storage/Fish gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`transcriptionMatched=true`）全部通过。此前一次 12 秒超时和三次 429 均在切流前阻断；同密钥额度正常且生产主机恢复 HTTP 200 后才重跑成功，未改用 fake 或绕过门禁。
 - 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 激活。公网复核确认 Web/Course Market 200、匿名 `/api/me` 与 points admin 401、注册 400 且带 `RateLimit-Limit: 5`，health 为 `deps.supabase=ok/deps.redis=ok`；主机复核确认 Web 软链与 API image 指向该 release，Redis healthy 且无宿主端口。
-- 24 小时兼容观察从激活时刻计算，最早 contract 资格时间为 `2026-08-11T09:35:34Z`。在 Redis 错误/误限流、points projection、协同 signal 和旧时间列依赖完成 go/no-go 前，不创建 0041–0042。
+- 24 小时兼容观察从激活时刻计算，最早 contract 资格时间为 `2026-08-11T09:35:34Z`。在 Redis 错误/误限流、points projection、协同 signal 和旧时间列依赖完成 go/no-go 前，不创建未来 0044–0045。0041–0043 是独立 additive Materials AI 候选，仍须自己的完整 CI、plan、恢复点、真实 provider/canary 与公网登录 smoke。
 
 ## 8. 运维速查
 
@@ -242,5 +244,5 @@ readlink -f web
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 完成 0039–0040 的 24 小时观测与 go/no-go，再单独发布 0041–0042 contract；AI/BullMQ 队列和 Stripe Webhook 仍属于后续能力。
+- 完成 0039–0040 的 24 小时观测与 go/no-go，再单独发布未来 0044–0045 时间列撤权 contract；0041–0043 Materials AI/BullMQ 仍须独立受保护发布，Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。

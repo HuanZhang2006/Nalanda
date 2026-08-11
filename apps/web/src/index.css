@@ -2,3 +2,22 @@
 #root {
   min-height: 100vh;
 }
+/* Materials AI reuses Nalanda primitives; these rules only define the new
+   note/exam layouts and never introduce a second visual theme. */
+.material-ai-note-button{padding:0;text-align:left;color:inherit;font:inherit;border:1px solid var(--border);width:100%}
+.material-ai-demo-chip{background:rgba(255,255,255,.22);color:#fff;backdrop-filter:blur(4px)}
+.material-ai-note-layout{grid-template-columns:minmax(0,1fr) 280px;align-items:start;gap:22px}
+.material-ai-exam-layout{grid-template-columns:minmax(0,1fr) 280px;align-items:start;gap:22px}
+.material-ai-sticky{position:sticky;top:8px}
+.material-ai-history{width:100%;border:0;background:transparent;color:inherit;text-align:left;cursor:pointer}
+.material-ai-question h3{font-size:16px;margin:10px 0 14px}
+.material-ai-question .opt{cursor:pointer}
+.material-ai-question .opt:has(input:disabled){cursor:default}
+.material-ai-selected{border-color:var(--accent)!important;background:var(--accent-tint)!important}
+.material-ai-answer{display:block;width:100%;min-height:110px;background:var(--card-2);margin-top:12px;resize:vertical}
+.material-ai-question details{margin-top:8px}
+.material-ai-question summary{cursor:pointer;font-weight:650}
+@media(max-width:800px){
+  .material-ai-note-layout,.material-ai-exam-layout{grid-template-columns:1fr}
+  .material-ai-sticky{position:static}
+}

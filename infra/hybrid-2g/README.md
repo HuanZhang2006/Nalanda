@@ -5,7 +5,7 @@
 > - **作用**：用于未来接入 AI/队列或独立新环境；它不是当前 `nalanda.online` 的生产拓扑。
 > - **何时更新**：compose、镜像、内存预算、服务依赖、端口、环境变量或安全基线变化时。
 
-目标拓扑与开发阶段见 [项目蓝图](../../docs/PROJECT_BLUEPRINT.md)。**数据底座（数据库 / 登录 / 存储 / 实时）用 Supabase 云；2G 服务器只用 Docker 跑项目自己的代码**：Caddy + NestJS + Python AI + Redis。Stripe、Claude 走外部联网调用。
+目标拓扑与开发阶段见 [项目蓝图](../../docs/PROJECT_BLUEPRINT.md)。**数据底座（数据库 / 登录 / 存储 / 实时）用 Supabase 云；2G 服务器只用 Docker 跑项目自己的代码**：Caddy + NestJS + Python AI + Redis。Materials AI 候选通过 OpenRouter 调用固定 DeepSeek/MiMo 模型；Stripe 仍是未实现的未来外部依赖。
 
 ```
 你的服务器（2G · Docker Compose）
@@ -16,10 +16,10 @@
     └─ Redis         redis:6379 （内网）
         │ 联网
         ▼
-  Supabase 云  ·  Stripe  ·  Claude API
+  Supabase 云  ·  OpenRouter API  ·  未来 Stripe
 ```
 
-> ⚠️ 这是**部署模板**：`apps/api`、`apps/ai`、`apps/web` 已存在且可构建，但 API 尚未调用 AI/Redis，AI 仍为固定桩。四容器能启动不等于核心业务链已实现。
+> ⚠️ 这是**参考模板**，不是 `nalanda.online` 的实际发布入口。0041–0043 已实现 API→BullMQ→FastAPI 候选，但只有通过真实 ZDR、资源 canary、受保护迁移和公网 smoke 后才可启用。四容器能启动不等于核心业务链可发布。
 
 ---
 
@@ -41,7 +41,7 @@
 1. 一台 2G 内存的 Linux 服务器（推荐受支持的 Ubuntu LTS 或 Debian stable）。
 2. 一个域名，A 记录解析到服务器公网 IP；放行 80 / 443 端口。
 3. 一个 Supabase 云项目（免费档）。
-4. Claude（Anthropic）与 Stripe 的密钥。
+4. 启用 Materials AI 时需要 OpenRouter key 与独立内部服务 token；首版不需要 Stripe。
 
 ---
 
@@ -62,10 +62,10 @@ echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 **3) 填环境变量**
 ```bash
 cp .env.example .env
-# 编辑 .env，填 DOMAIN / ACME_EMAIL / Supabase / Claude / Stripe
+# 编辑 .env，填 DOMAIN / ACME_EMAIL / Supabase / Redis / OpenRouter / 内部 token
 ```
 
-模板 `.env.example` 中的 `SUPABASE_ANON_KEY` 不能直接供 Vite 构建使用；构建 Web 时必须提供 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`。同时不要让 Caddy 读取 service-role、Anthropic、Stripe 等无关秘密，正式部署应按服务拆分 env 文件。
+模板 `.env.example` 中的 `SUPABASE_ANON_KEY` 不能直接供 Vite 构建使用；构建 Web 时必须提供 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`。同时不要让 Caddy 读取 service-role、OpenRouter 等无关秘密；API、AI、Redis 必须使用各自的最小权限 env 文件。
 
 **4) 放入前端产物**（在本地或 CI 构建，别在 2G 机器上构建 Vite）
 ```bash
@@ -96,16 +96,16 @@ docker compose logs -f api
 
 ## 2G 必守约束
 
-- AI 全部走 Claude API（含向量化），**不要在本机跑本地大模型 / 向量模型**。
-- 解析超大 PDF/PPT 内存会瞬时飙高 → 限制上传大小、把解析也放队列**串行**处理。
+- 生成模型走 OpenRouter，**不要在本机跑本地大模型 / 向量模型**；AI 容器只执行确定性解析、LibreOffice 渲染与 provider adapter。
+- 解析 PDF/DOCX/PPTX 可能出现内存峰值：严格执行 25MB/250 页/40 万字符限制、单并发、640MB 内存/896MB 含 swap、0.75 CPU、128 pids、硬超时和磁盘水位熔断。
 - 仅适合早期 / 小流量。流量上来：升 4–8G，或把数据库也自托管（变体 C），或迁回全托管（变体 A）。
 
 ---
 
 ## 备份与安全
 
-- **数据库**：由 Supabase 托管（含自动备份），本机无需操心。
-- **本机**：备份 `.env`；`redis_data` 仅队列状态，可选备份。
+- **数据库**：由 Supabase 托管；仍须按项目恢复手册验证可恢复性，不能只依赖“有备份”。
+- **本机**：备份加密 secret；Redis 不是任务事实源，Postgres reconciler 可重投。AI 临时目录不得备份并应在 `finally`/孤儿清理器中删除。
 - **端口**：只有 Caddy 对外（80/443）；api / ai / redis 全在内网，不发布端口。
 - **密钥**：`.env` 与 `web-dist/` 已在 `.gitignore`，不会进仓库。
-- **最小权限**：当前 compose 让 Caddy/API/AI 共享同一个 `.env`，且容器默认 root；用于正式环境前必须拆分秘密、增加非 root 用户、healthcheck 和内部服务认证。
+- **最小权限**：正式环境必须拆分 API/AI/Redis secrets；AI 不得获得 service-role/Redis/Azure，Redis 不得获得 Supabase/provider key，FastAPI 必须验证 `X-AI-Internal-Token`。
