@@ -10,6 +10,8 @@
 ## [Unreleased]
 
 - 0041–0043 Materials AI 为待发布候选；时间列撤权 contract 顺延为未来 0044–0045，只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后才能创建。
+- Materials AI 固定 OpenRouter 路由增加网络错误与 408/429/502/503/504 的共享 wall-clock 预算内指数退避，遵守数值型 `Retry-After`；不提供跨模型 fallback，并让同一固定模型按吞吐量优先、只在满足 ZDR、拒绝数据收集与参数支持过滤器的 provider endpoint 间故障转移。固定关闭可选 reasoning，避免 completion 预算耗尽后 `message.content=null`；401/402/403、ZDR/参数错误立即失败，真实门禁失败只输出稳定 worker/provider purpose/error code，不回显响应正文。
+- 0041–0043 已安全应用到生产数据库，但应用候选在公开切流前因真实 DeepSeek 路由 `OPENROUTER_RATE_LIMIT` 回滚；2G 近上限 canary、数据库历史/lint/dry-run 与回滚后公网健康均通过。该失败候选不算 Materials AI 已部署，功能继续关闭，等待本修复通过真实 provider gate。
 
 ## [0.11.0] - 2026-08-10
 

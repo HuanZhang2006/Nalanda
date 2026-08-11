@@ -141,7 +141,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 
 ## 6. FastAPI AI 服务
 
-0041–0043 候选已替换原固定桩：FastAPI 只接受 `X-AI-Internal-Token` 的内网请求，并在 0700 独立临时目录中执行确定性解析、两次安全审查、失败范围视觉恢复、严格结构化试卷生成和批量主观题评分。固定模型为 DeepSeek V4 Flash 0731 与 MiMo V2.5；provider 请求强制 ZDR、拒绝数据收集、参数支持和关闭 fallback/tool/Web。所有任务路径在 `finally` 清理，启动/定时清理一小时以上孤儿目录，磁盘水位与每任务 1GB 上限均失败关闭。
+0041–0043 候选已替换原固定桩：FastAPI 只接受 `X-AI-Internal-Token` 的内网请求，并在 0700 独立临时目录中执行确定性解析、两次安全审查、失败范围视觉恢复、严格结构化试卷生成和批量主观题评分。固定模型为 DeepSeek V4 Flash 0731 与 MiMo V2.5；provider 请求强制 ZDR、拒绝数据收集、参数支持并禁用 reasoning/tool/Web/跨模型 fallback，避免推理 token 吞掉 strict JSON completion。同一固定模型按吞吐量优先在仍满足全部隐私/参数过滤器的 provider endpoint 间故障转移。所有任务路径在 `finally` 清理，启动/定时清理一小时以上孤儿目录，磁盘水位与每任务 1GB 上限均失败关闭。
 
 完整生成链路是：
 

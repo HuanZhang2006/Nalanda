@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -22,11 +23,21 @@ def fake_enabled() -> bool:
     return os.getenv("MATERIAL_AI_FAKE_PROVIDER", "false").lower() == "true"
 
 
+class StructuredOutputError(Exception):
+    def __init__(self, code: str, safe_message: str):
+        super().__init__(safe_message)
+        self.code = code
+        self.safe_message = safe_message
+
+
 class OpenRouterClient:
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
         self.timeout = float(os.getenv("MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS", "180"))
+        self.max_attempts = self._bounded_int("MATERIAL_AI_PROVIDER_MAX_ATTEMPTS", 4, 1, 10)
+        self.retry_base_seconds = self._bounded_float("MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS", 2.0, 0.0, 60.0)
+        self.retry_max_seconds = self._bounded_float("MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS", 60.0, 0.0, 300.0)
 
     def configured(self) -> bool:
         return bool(self.api_key) or fake_enabled()
@@ -42,22 +53,24 @@ class OpenRouterClient:
         user_content: str | list[dict[str, Any]],
         max_tokens: int,
         fake_value: dict[str, Any] | None = None,
-    ) -> tuple[T, UsageEvent]:
+    ) -> tuple[T, list[UsageEvent]]:
         if fake_enabled():
             if fake_value is None:
                 raise PipelineError("FAKE_FIXTURE_MISSING", "The fake provider fixture is incomplete", 500)
-            return result_type.model_validate(fake_value), UsageEvent(
-                purpose=purpose,
-                model=model,
-                requestId="fake",
-                promptTokens=0,
-                completionTokens=0,
-                totalTokens=0,
-                costMicroUsd=0,
-                durationMs=1,
-                zdrEnforced=True,
-                status="succeeded",
-            )
+            return result_type.model_validate(fake_value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=model,
+                    requestId="fake",
+                    promptTokens=0,
+                    completionTokens=0,
+                    totalTokens=0,
+                    costMicroUsd=0,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
         if not self.api_key:
             raise PipelineError("OPENROUTER_NOT_CONFIGURED", "OpenRouter is not configured", 503)
 
@@ -70,6 +83,11 @@ class OpenRouterClient:
             ],
             "temperature": 0,
             "max_tokens": max_tokens,
+            # This pipeline needs the strict schema result, not a hidden or
+            # returned chain of thought. The pinned models expose optional
+            # reasoning and otherwise default it on, which can consume the
+            # completion budget and leave message.content null.
+            "reasoning": {"enabled": False},
             "tool_choice": "none",
             "response_format": {
                 "type": "json_schema",
@@ -79,50 +97,197 @@ class OpenRouterClient:
                 "zdr": True,
                 "data_collection": "deny",
                 "require_parameters": True,
-                # Fail closed when the fixed model has no compliant ZDR endpoint.
-                # A fallback could silently change retention, capabilities, or cost.
-                "allow_fallbacks": False,
+                "sort": "throughput",
+                # The top-level `model` remains fixed and no alternate-model
+                # list is supplied. Provider failover may therefore only move
+                # this same model to another endpoint that still satisfies
+                # ZDR, data-collection and parameter filters.
+                "allow_fallbacks": True,
             },
         }
-        started = time.monotonic()
+        started = self._now()
+        deadline = started + self.timeout
         response: httpx.Response | None = None
-        try:
-            async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
-                response = await client.post(
-                    f"{self.base_url}/chat/completions",
-                    headers={
-                        "Authorization": f"Bearer {self.api_key}",
-                        "Content-Type": "application/json",
-                        "HTTP-Referer": os.getenv("PUBLIC_APP_URL", "https://nalanda.app"),
-                        "X-Title": "Nalanda Materials AI",
-                    },
-                    json=payload,
+        failed_events: list[UsageEvent] = []
+        async with httpx.AsyncClient(timeout=httpx.Timeout(self.timeout)) as client:
+            for attempt in range(self.max_attempts):
+                attempt_started = self._now()
+                remaining = deadline - attempt_started
+                if remaining <= 0:
+                    raise PipelineError(
+                        "OPENROUTER_UNREACHABLE",
+                        "The AI provider did not respond within the bounded request time",
+                        503,
+                        [item.model_dump() for item in failed_events],
+                    )
+                try:
+                    # HTTPX phase timeouts reset while response bytes continue
+                    # arriving. The outer deadline is therefore required to
+                    # enforce one wall-clock budget across every attempt.
+                    async with asyncio.timeout(remaining):
+                        response = await client.post(
+                            f"{self.base_url}/chat/completions",
+                            headers={
+                                "Authorization": f"Bearer {self.api_key}",
+                                "Content-Type": "application/json",
+                                "HTTP-Referer": os.getenv("PUBLIC_APP_URL", "https://nalanda.app"),
+                                "X-Title": "Nalanda Materials AI",
+                            },
+                            json=payload,
+                            timeout=httpx.Timeout(max(0.001, remaining)),
+                        )
+                except (TimeoutError, httpx.TimeoutException, httpx.NetworkError) as exc:
+                    event = self._usage(
+                        purpose, model, None, attempt_started, "failed", "OPENROUTER_UNREACHABLE"
+                    )
+                    failed_events.append(event)
+                    retry_delay = self._retry_delay(attempt, None)
+                    remaining = deadline - self._now()
+                    if attempt + 1 < self.max_attempts and retry_delay is not None and retry_delay < remaining:
+                        await asyncio.sleep(retry_delay)
+                        continue
+                    raise PipelineError(
+                        "OPENROUTER_UNREACHABLE",
+                        "The AI provider did not respond",
+                        503,
+                        [item.model_dump() for item in failed_events],
+                    ) from exc
+
+                if response.is_success:
+                    try:
+                        parsed = self._decode_structured(response, result_type)
+                    except StructuredOutputError as exc:
+                        failed_events.append(
+                            self._usage(purpose, model, response, attempt_started, "failed", exc.code)
+                        )
+                        retry_delay = self._retry_delay(attempt, None)
+                        remaining = deadline - self._now()
+                        if (
+                            attempt + 1 < self.max_attempts
+                            and retry_delay is not None
+                            and retry_delay < remaining
+                        ):
+                            await asyncio.sleep(retry_delay)
+                            continue
+                        raise PipelineError(
+                            exc.code,
+                            exc.safe_message,
+                            502,
+                            [item.model_dump() for item in failed_events],
+                        ) from exc
+                    succeeded = self._usage(purpose, model, response, started, "succeeded", None)
+                    return parsed, [*failed_events, succeeded]
+
+                code = self._provider_error_code(response.status_code)
+                event = self._usage(purpose, model, response, attempt_started, "failed", code)
+                failed_events.append(event)
+                retry_delay = self._retry_delay(attempt, response)
+                remaining = deadline - self._now()
+                if (
+                    self._retryable(response.status_code)
+                    and attempt + 1 < self.max_attempts
+                    and retry_delay is not None
+                    and retry_delay < remaining
+                ):
+                    await asyncio.sleep(retry_delay)
+                    continue
+                raise PipelineError(
+                    code,
+                    "No compliant AI provider endpoint was available",
+                    503,
+                    [item.model_dump() for item in failed_events],
                 )
-        except (httpx.TimeoutException, httpx.NetworkError) as exc:
-            event = self._usage(purpose, model, None, started, "failed", "OPENROUTER_UNREACHABLE")
-            raise PipelineError(
-                "OPENROUTER_UNREACHABLE", "The AI provider did not respond", 503, [event.model_dump()]
-            ) from exc
 
-        if not response.is_success:
-            code = (
-                "OPENROUTER_ZDR_UNAVAILABLE"
-                if response.status_code in (400, 404)
-                else ("OPENROUTER_RATE_LIMIT" if response.status_code == 429 else "OPENROUTER_FAILED")
-            )
-            event = self._usage(purpose, model, response, started, "failed", code)
-            raise PipelineError(code, "No compliant AI provider endpoint was available", 503, [event.model_dump()])
+        raise PipelineError(
+            "OPENROUTER_FAILED",
+            "No compliant AI provider endpoint was available",
+            503,
+            [item.model_dump() for item in failed_events],
+        )
 
+    @staticmethod
+    def _decode_structured(response: httpx.Response, result_type: type[T]) -> T:
         try:
             body = response.json()
-            content = body["choices"][0]["message"]["content"]
-            parsed = result_type.model_validate(json.loads(content))
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError, ValidationError) as exc:
-            event = self._usage(purpose, model, response, started, "failed", "AI_BAD_JSON")
-            raise PipelineError(
-                "AI_BAD_JSON", "The AI provider returned invalid structured output", 502, [event.model_dump()]
+            choice = body["choices"][0]
+            message = choice["message"]
+        except (KeyError, IndexError, TypeError, ValueError) as exc:
+            raise StructuredOutputError("AI_BAD_JSON", "The AI provider returned invalid JSON") from exc
+        if choice.get("finish_reason") == "length":
+            raise StructuredOutputError("AI_OUTPUT_TRUNCATED", "The AI provider truncated the structured output")
+        content = message.get("content")
+        if isinstance(content, list):
+            content = "".join(
+                item.get("text", "")
+                for item in content
+                if isinstance(item, dict) and isinstance(item.get("text"), str)
+            )
+        if not isinstance(content, str) or not content.strip():
+            raise StructuredOutputError("AI_EMPTY_CONTENT", "The AI provider returned no structured output")
+        try:
+            decoded = json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise StructuredOutputError("AI_BAD_JSON", "The AI provider returned invalid JSON") from exc
+        try:
+            return result_type.model_validate(decoded)
+        except ValidationError as exc:
+            raise StructuredOutputError(
+                "AI_SCHEMA_INVALID", "The AI provider output did not match the required schema"
             ) from exc
-        return parsed, self._usage(purpose, model, response, started, "succeeded", None)
+
+    def _retry_delay(self, attempt: int, response: httpx.Response | None) -> float | None:
+        delay = min(self.retry_max_seconds, self.retry_base_seconds * (2**attempt))
+        if response is None:
+            return delay
+        raw_retry_after = response.headers.get("Retry-After")
+        if raw_retry_after is None:
+            return delay
+        try:
+            retry_after = max(0.0, float(raw_retry_after))
+        except ValueError:
+            return delay
+        # Do not retry earlier than the provider requested. If the requested
+        # delay exceeds this call's bounded wait, fail closed and release the
+        # quota reservation. A later user retry keeps the same provider/model.
+        if retry_after > self.retry_max_seconds:
+            return None
+        return max(delay, retry_after)
+
+    @staticmethod
+    def _retryable(status_code: int) -> bool:
+        return status_code in (408, 429, 502, 503, 504)
+
+    @staticmethod
+    def _provider_error_code(status_code: int) -> str:
+        if status_code in (400, 404):
+            return "OPENROUTER_ZDR_UNAVAILABLE"
+        if status_code == 429:
+            return "OPENROUTER_RATE_LIMIT"
+        if status_code == 402:
+            return "OPENROUTER_INSUFFICIENT_CREDITS"
+        if status_code in (401, 403):
+            return "OPENROUTER_AUTH_FAILED"
+        return "OPENROUTER_FAILED"
+
+    @staticmethod
+    def _now() -> float:
+        return time.monotonic()
+
+    @staticmethod
+    def _bounded_int(name: str, default: int, minimum: int, maximum: int) -> int:
+        try:
+            value = int(os.getenv(name, str(default)))
+        except ValueError:
+            value = default
+        return min(maximum, max(minimum, value))
+
+    @staticmethod
+    def _bounded_float(name: str, default: float, minimum: float, maximum: float) -> float:
+        try:
+            value = float(os.getenv(name, str(default)))
+        except ValueError:
+            value = default
+        return min(maximum, max(minimum, value))
 
     @staticmethod
     def _usage(

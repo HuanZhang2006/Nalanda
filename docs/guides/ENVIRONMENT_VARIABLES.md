@@ -119,10 +119,13 @@
 | `MATERIAL_AI_JOB_TEMP_LIMIT_BYTES` | 1073741824 | 受限配置 | 单任务临时空间 1GiB 硬上限。 |
 | `MATERIAL_AI_MAX_CHARACTERS` | 400000 | 受限配置 | 规范化 DocumentIR 文本上限。 |
 | `MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS` | 120 | 受限配置 | DOCX/PPTX 全量低优先级渲染硬超时。 |
-| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 每次 OpenRouter 调用硬超时；完整 Nest 请求另有 20 分钟上限。 |
+| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 一次结构化 OpenRouter 操作（包括全部重试与退避）的共享总时间上限；每次 HTTP 尝试只能使用剩余预算，完整 Nest 请求另有 20 分钟上限。 |
+| `MATERIAL_AI_PROVIDER_MAX_ATTEMPTS` | 4 | 受限配置 | 同一固定模型请求的最大有界尝试次数，限制 1–10；仅网络错误及 408/429/502/503/504 可重试。 |
+| `MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS` | 2 | 受限配置 | 指数退避起点，限制 0–60 秒；不会改变 model、ZDR 或同模型 provider failover 策略。 |
+| `MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS` | 60 | 受限配置 | 单次退避上限，限制 0–300 秒；数值型 `Retry-After` 优先且不得提前请求，超过上限则该任务失败并释放额度。 |
 | `MATERIAL_AI_GENERATION_MAX_TOKENS` | 30000 | 成本配置 | 试卷生成/一次 repair 最大 completion tokens。 |
 
-模型 ID不是用户变量：代码固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，变更需 ADR、评测、成本和隐私复审。
+模型 ID不是用户变量：代码固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，变更需 ADR、评测、成本和隐私复审。有界重试始终复用完全相同的模型与严格 schema；请求不提供其它 `models`，所以不存在跨模型 fallback。`sort="throughput"` 与 `allow_fallbacks=true` 只让该模型按吞吐量优先在仍满足 ZDR、拒绝数据收集与参数支持过滤器的 provider endpoint 间故障转移；401/402/403、ZDR 不可用和坏请求不会由应用重试。重试上限耗尽后返回稳定供应商错误，生成/评分额度 reservation 释放，用户可稍后重新提交。
 
 ## 5. 数据库迁移运维变量
 
