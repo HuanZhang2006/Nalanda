@@ -138,7 +138,14 @@ export class SupabaseAdminService {
     const body = await response.json() as { signedURL?: string; signedUrl?: string };
     const signed = body.signedURL || body.signedUrl;
     if (!signed) throw new SupabaseRequestError("Storage did not return a signed URL", 502, body);
-    return new URL(signed, `${url}/storage/v1/`).toString();
+    // The raw Storage REST endpoint returns `/object/sign/...`, relative to
+    // the Storage API base (not the project origin). `new URL()` would treat
+    // that leading slash as origin-relative and silently drop `/storage/v1`,
+    // so the Materials AI worker would download a 404 page instead of the
+    // private source object. A full URL is also accepted for compatibility
+    // with hosted/local Storage versions that already expand the response.
+    if (/^https?:\/\//i.test(signed)) return signed;
+    return `${url}/storage/v1${signed.startsWith("/") ? signed : `/${signed}`}`;
   }
 
   async storageDelete(bucket: string, paths: string[]): Promise<void> {
