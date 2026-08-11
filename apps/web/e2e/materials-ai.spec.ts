@@ -22,7 +22,7 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await page.locator('#nav [data-go="materials"]').click();
   await expect(page.getByRole("heading", { name: "Materials", exact: true })).toBeVisible();
 
-  await page.getByRole("button", { name: "New course" }).click();
+  await page.getByRole("button", { name: "New course" }).first().click();
   await page.locator("#nc-code").fill("BIO AI");
   await page.locator("#nc-name").fill(`AI Biology ${nonce}`);
   await page.getByRole("button", { name: "Create", exact: true }).click();
