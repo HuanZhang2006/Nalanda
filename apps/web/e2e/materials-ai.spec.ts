@@ -61,7 +61,7 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await expect(queue).toContainText("Ready");
   await queue.getByRole("button", { name: "Open result" }).click();
 
-  await expect(page.getByRole("heading", { name: "Generated study test", exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { level: 1, name: "Generated study test", exact: true })).toBeVisible();
   await expect(page.getByText("AI-generated", { exact: false })).toBeVisible();
   await page.getByRole("button", { name: "Start timed attempt" }).click();
   await expect(page.getByText("Leaving this page does not pause the timer.")).toBeVisible();
