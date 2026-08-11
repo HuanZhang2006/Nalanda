@@ -76,6 +76,11 @@ jobs:
       - name: Install Materials AI test dependencies
         run: python -m pip install -r apps/ai/requirements-dev.txt
 
+      - name: Install Materials AI native test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress fonts-dejavu-core fonts-noto-cjk util-linux
+
       - name: Detect and protect migration changes
         id: migration_changes
         shell: bash
