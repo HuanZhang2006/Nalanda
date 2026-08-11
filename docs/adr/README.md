@@ -19,7 +19,7 @@
 | [0008](0008-independent-learning-courses-and-azure-speech.md) | 独立学习课程模型 + 服务端 Azure Speech 适配层 | Accepted | 0011–0018 与应用已于 2026-07-27 完成受保护发布 |
 | [0009](0009-server-side-semantic-spelling-translation-assessment.md) | 服务端语义翻译前测 + 会话级拼写设置 | Accepted | 0019–0020 与应用已于 2026-07-28 完成受保护发布 |
 | [0010](0010-ephemeral-translation-stt-and-shared-waveform.md) | 临时 Fish Audio 翻译 STT + 共享录音波形 | Accepted | 0037–0038 与应用已于 2026-08-04 完成受保护发布；真实口音评测仍待扩充 |
-| [0011](0011-private-redis-and-points-abuse-boundary.md) | 私有 Redis 请求保护 + 不可变 Points 决策/审核边界 | Accepted | 0039–0040 候选已实现；待发布与 24 小时观察，最终撤权顺延为未来 0044–0045 |
+| [0011](0011-private-redis-and-points-abuse-boundary.md) | 私有 Redis 请求保护 + 不可变 Points 决策/审核边界 | Accepted | 0039–0040 Stage A 已上线并进入 24 小时观察；最终撤权顺延为未来 0044–0045 |
 | [0012](0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) | Materials AI durable queue + OpenRouter ZDR + 2G Office 渲染 | Accepted | 0041–0043 候选已实现；待真实 provider/canary/受保护发布 |
 
 ## 状态定义

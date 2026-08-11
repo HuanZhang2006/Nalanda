@@ -9,6 +9,10 @@
 
 ## [Unreleased]
 
+- 0041–0043 Materials AI 为待发布候选；时间列撤权 contract 顺延为未来 0044–0045，只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后才能创建。
+
+## [0.11.0] - 2026-08-10
+
 ### Added
 
 - 新增 0041–0043 Materials AI 发布候选：Free plan、按 Profile 时区重置的生成/评分双额度、持久 generation job/events、私有解析缓存、真实 Notes/来源快照、在线答卷/幂等草稿/评分事实、脱敏 provider usage 及完整结构/RLS/RPC 断言。
@@ -16,9 +20,9 @@
 - NestJS 增加 owner-only AI/Notes/Exam API、成功后消费的 reservation 事务、Postgres durable job、BullMQ UUID 调度/reconciler/延迟交卷和内部回调；FastAPI 增加 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片解析、选择性 MiMo 视觉恢复、两次注入审查、DeepSeek 严格试卷生成与批量主观题评分。
 - 新增受保护部署的 AI image、私有 Redis/worker readiness、真实模型固定样本 gate、2G 资源 canary、临时目录孤儿清理与失败自动回滚。
 
-- 新增第一阶段 0039–0040 候选：冻结用户时区的 points 日窗口、稳定 business-key 奖励 decision、owner-only reward receipt、每日上限通知、append-only 审核冲正和四类只待审协同信号。
+- 新增并发布第一阶段 0039–0040：冻结用户时区的 points 日窗口、稳定 business-key 奖励 decision、owner-only reward receipt、每日上限通知、append-only 审核冲正和四类只待审协同信号。
 - NestJS 增加同机私有 Redis 原子 Lua 滑动窗口、注册 IP+邮箱双限流、认证/Courses/公开市场分层限流、HMAC 滥用聚合、真实 Redis readiness 和 points 管理 API；协同扫描使用分布式锁且不自动处罚。
-- 生产 compose 候选增加密码认证、AOF `everysec`、`noeviction`、私有网络 Redis，以及 secret 原子安装、nginx 标准 JSON 429、配置验证和两阶段发布脚本/门禁。
+- 生产 compose 增加密码认证、AOF `everysec`、`noeviction`、私有网络 Redis，以及 secret 原子安装、nginx 标准 JSON 429、配置验证和两阶段发布脚本/门禁。
 
 ### Changed
 
@@ -44,7 +48,11 @@
 ### Release
 
 - 0041–0043 尚未进入生产；只有完整 CI、只读迁移计划、加密恢复点、真实 OpenRouter/ZDR 固定样本、2G canary、`deps.supabase=ok`/Redis/AI readiness、公网登录用户 smoke 全部通过后才可开启 `FEATURE_MATERIAL_AI`。
-- 0039–0040 尚未进入生产。必须先完成完整 CI、只读 migration plan、加密恢复点、Redis/HMAC secrets 与 Redis PING/AOF/私网验证，再 apply 和激活应用；观察至少 24 小时后才允许另行创建未来 0044–0045 撤销兼容时间列 grant。0041–0043 是纯新增 Materials AI，不执行撤权。
+- PR [#51](https://github.com/1590703336/Nalanda/pull/51) 与修复远端 SSH heredoc stdin 的 PR [#52](https://github.com/1590703336/Nalanda/pull/52) 已合入 main；PR/main CI 均通过 quality、真实 Redis、0007→0040、空库/lint、双用户 RLS/Storage 与 Chromium Playwright。
+- [只读 plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端都到 0040 且 dry-run 为空；[受保护 run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 保留加密恢复 artifact `9057062920`（800,819 bytes，zip SHA-256 `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并验证远端 history、database lint 与空 dry-run。
+- 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 激活。Redis PING/AOF/private-port/noeviction 与 nginx 配置通过；真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8，真实 OpenRouter Gemma 返回 253/27/280 tokens，候选 API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`transcriptionMatched=true`。公网复核确认 `deps.supabase=ok/deps.redis=ok`、匿名 me/admin 401、注册 `RateLimit-*`、Web 与 Course Market 200。
+- 首个 apply run 虽已安全应用 0039–0040，但 Redis `docker compose exec` 消耗远端 heredoc stdin，导致 workflow 错报部署成功而应用未切换；PR #52 加入 stdin 分离和回归测试后修复。随后 OpenRouter free route 的一次超时和三次瞬时 429 均在切流前阻断；同凭据额度正常且本机/生产主机真实诊断恢复 200 后，第五次尝试完整通过。没有把失败候选计作上线。
+- 0039–0040 现已进入生产兼容观察；最早在 `2026-08-11T09:35:34Z` 且 go/no-go 通过后，才允许另行创建 0044–0045 撤销兼容时间列 grant。0041–0043 是纯新增 Materials AI，不执行撤权。
 
 ## [0.10.2] - 2026-08-04
 

@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-08-10。生产已验证 0008–0038；课程 +20、九级徽章和服务端权威学习事实已上线。仓库 0039–0040 是尚待受保护发布的 points v2 候选：冻结自然日奖励决策、每日数量上限、owner receipt、人工 suppress/restore 和只标记协同检测。发布前这些能力不得描述为生产事实。Course Market v1 继续只免费克隆，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
+> **状态基线：**2026-08-10。生产已验证 0008–0040；课程 +20、九级徽章、服务端权威学习事实，以及 points v2 的冻结自然日奖励决策、每日数量上限、owner receipt、人工 suppress/restore 和只标记协同检测均已上线。Course Market v1 继续只免费克隆，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
 
 ## 1. 规范用语和总原则
 
@@ -33,12 +33,12 @@
 - Create、Market、Home 中的余额、价格、25 credits、70% 分成和兑换 VIP 目前是假数据/原型交互。
 - 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
 - Course Market 的 publication/clone/report 表不是商业市场账本；卡片只显示“免费”，不会产生购买、销量分成、credits debit 或 creator payable。
-- 0039 候选增加 `point_daily_windows/point_daily_award_claims/point_moderation_actions/point_abuse_signals`，并扩展 event state；内部表不开放 PostgREST 写入，service-role 也只能通过受控 SECURITY DEFINER 工作流改变事实。普通用户只能通过 owner-only receipt 读取自己的单次奖励决策。
+- 生产 0039 增加 `point_daily_windows/point_daily_award_claims/point_moderation_actions/point_abuse_signals`，并扩展 event state；内部表不开放 PostgREST 写入，service-role 也只能通过受控 SECURITY DEFINER 工作流改变事实。普通用户只能通过 owner-only receipt 读取自己的单次奖励决策。
 - 0041–0043 Materials AI 候选不读取、冻结或消费 `profiles.credits`：所有用户默认 Free，按 Profile IANA 时区本地日分别有 10 次**成功**试卷生成和 10 次**成功**主观题评分。reservation 在成功时 consume，在注入拒绝/格式错误/取消/资源/模型/ZDR/坏 JSON/系统失败时 release；AI 试卷和考试不发 points、徽章或 VIP。
 
 ### 2.2 发布限制
 
-Profile/RPC/当前 points 重做路径的 P0 已由生产迁移 0008–0010 封堵并验证。日上限、审核冲正和协同检测已在 0039–0040 候选实现，但仍须完成真实 CI、只读 plan、恢复点、第一阶段发布和观察；credits/VIP/支付账本及商业测试仍未实现。因此：
+Profile/RPC/当前 points 重做路径的 P0 已由生产迁移 0008–0010 封堵并验证。日上限、审核冲正和协同检测已由生产 0039–0040 启用，当前只剩兼容时间列的 24 小时观察/contract；credits/VIP/支付账本及商业测试仍未实现。因此：
 
 - 不接入 live Stripe key，不接受真实付款；
 - 不把 `profiles.credits` 当可消费余额；
@@ -57,7 +57,7 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 ### 3.2 奖励事件与初始值
 
-为保持当前体验，迁移 0008 沿用以下数值并接入事件账本。业务键由数据库生成且不可由客户端改写；0039 候选按下表的每日“可获得奖励事件数量”执行上限，课程完成奖励不进入日上限：
+为保持当前体验，迁移 0008 沿用以下数值并接入事件账本。业务键由数据库生成且不可由客户端改写；生产 0039 按下表的每日“可获得奖励事件数量”执行上限，课程完成奖励不进入日上限：
 
 | 事件 | Points | 业务事件 ID | 撤销规则 | 初始防滥用上限 |
 |---|---:|---|---|---|
@@ -82,7 +82,7 @@ Points 只衡量平台内符合规则的学习/社区活动，无货币或储值
 
 ### 3.4 协同检测不是自动处罚
 
-候选扫描器每五分钟用 Redis 分布式锁确保单实例，检测四类线索：单 actor 对单 owner 24 小时 ≥8 且集中度 ≥70%；双方合计 ≥12 且双向各 ≥4；3–8 个账户七天内部互动 ≥30 且集中度 ≥70%；至少 8 个注册不足七天的账户在十分钟内集中到同一 root/owner。信号按类型、排序账户集合和对齐窗口去重，只能处于 `pending`、`reviewing`、`dismissed` 或 `escalated` 审核状态。
+生产扫描器每五分钟用 Redis 分布式锁确保单实例，检测四类线索：单 actor 对单 owner 24 小时 ≥8 且集中度 ≥70%；双方合计 ≥12 且双向各 ≥4；3–8 个账户七天内部互动 ≥30 且集中度 ≥70%；至少 8 个注册不足七天的账户在十分钟内集中到同一 root/owner。信号按类型、排序账户集合和对齐窗口去重，只能处于 `pending`、`reviewing`、`dismissed` 或 `escalated` 审核状态。
 
 命中阈值不自动扣分、冻结、隐藏、封禁或改变后续奖励。审核员应结合内容、关系和误报情形人工判断；确认信号后若要冲正，仍需单独提交带理由的 moderation action。首版没有管理 UI，也没有 webhook/pager，只有受控管理 API、数据库审计和脱敏结构化日志。
 

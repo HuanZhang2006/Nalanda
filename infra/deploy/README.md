@@ -4,7 +4,7 @@
 > - **内容**：记录当前生产服务器上的 Web/API/nginx 拓扑、部署依赖和维护入口。
 > - **作用**：帮助理解现网布局；正式发布、数据库变更、备份与恢复应按 operations 手册执行。
 > - **何时更新**：域名、服务器、CI、compose、nginx/TLS、部署账号或密钥位置变化时。
-> - **状态基线**：2026-08-10。生产仍运行 0038/Web+API 拓扑；本目录已包含 0039–0040 私有 Redis/安全候选及 0041–0043 Materials AI worker 候选，均尚待完整门禁与受保护发布。
+> - **状态基线**：2026-08-11。生产已运行 0040/Web+API+私有 Redis 拓扑；nginx 分层限流和独立 secret 已受保护发布。本目录另含 0041–0043 Materials AI worker 候选，尚待完整门禁与受保护发布；时间列撤权 contract 顺延为未来 0044–0045。
 
 服务器已运行多个项目（共用 nginx + uofa.ink）。Nalanda 以**隔离、可叠加**的方式接入，不影响既有服务。
 
@@ -52,7 +52,7 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 `production-database` environment 还需 `SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 和 `DB_BACKUP_ENCRYPTION_KEY`。该 environment 已创建并只允许 `main`；当前私有仓库套餐不支持 required reviewer，升级套餐前必须只通过人工发起的 `workflow_dispatch` 发布数据库，并按[数据库发布手册](../../docs/operations/DATABASE_RELEASE_ROLLBACK.md)保存 owner 复核记录。数据库 migration history 的首次 baseline 不能由 CI 猜测。
 
-0039–0040 要求 `production` environment 设置彼此独立的 `REDIS_PASSWORD`（32-byte hex）与 `RATE_LIMIT_HMAC_SECRET`（至少 32 bytes）。0041–0043 另要求 `AI_INTERNAL_TOKEN`（至少 32 bytes）和 `OPENROUTER_API_KEY`。workflow 通过 stdin 安装脚本原子写入 mode-600 API/AI/Redis env，不打印值；AI 不获得 service-role/Redis/Azure，Redis 不获得 Supabase/provider secrets。Materials AI 的 `OPENROUTER_API_KEY` 与既有 Courses OpenRouter 使用同一生产 secret，但只注入确有需要的 API/AI 消费者。
+0039–0040 第一阶段要求且生产已设置两个彼此独立的随机 secret：`REDIS_PASSWORD`（32-byte hex）与 `RATE_LIMIT_HMAC_SECRET`（至少 32 bytes）。0041–0043 另要求 `AI_INTERNAL_TOKEN`（至少 32 bytes）和 `OPENROUTER_API_KEY`。workflow 通过 stdin 安装脚本原子写入 mode-600 API/AI/Redis env，不打印值；AI 不获得 service-role/Redis/Azure，Redis 不获得 Supabase/provider secrets。Materials AI 的 `OPENROUTER_API_KEY` 与既有 Courses OpenRouter 使用同一生产 secret，但只注入确有需要的 API/AI 消费者。
 
 > **2026-07-21 Supabase 暂停事故与恢复：** 项目暂停期间，生产 Ref 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；恢复后 DNS、JWKS 和服务器 service-role PostgREST 探针恢复。0008–0010 随后发布，0011–0013 又于 2026-07-22 按受保护流程发布。不得因依赖暂停而降低 health 门禁。
 
@@ -64,7 +64,7 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
 
 手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求真实供应商 gates 成功、API JSON 的 `status/service/deps.supabase=ok/deps.redis=ok`、AI 专用 readiness 为 ok，并从公网检查注册/普通 API RateLimit headers、管理拒绝、Web/API root 与登录用户完整 Materials→Notes→考试链。Playwright fake、mock Redis、固定假 provider 或本地构建不能替代生产证据。
 
-仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。0039 候选由受限安装脚本在同一 Nalanda server block 叠加 API 20 r/s burst 40、注册 1 r/s burst 3，以及标准 JSON 429、`Retry-After`/RateLimit headers；只在 `nginx -t` 通过后 reload，不修改其它站点。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
+仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。生产 0039 由受限安装脚本在同一 Nalanda server block 叠加 API 20 r/s burst 40、注册 1 r/s burst 3，以及标准 JSON 429、`Retry-After`/RateLimit headers；只在 `nginx -t` 通过后 reload，不修改其它站点。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
 
 纯 Markdown 变更由 [docs workflow](../../.github/workflows/docs.yml) 校验文档定位字段和相对链接，不重新部署应用。
 

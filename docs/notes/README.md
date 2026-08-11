@@ -22,4 +22,4 @@
 | [10-学习计划](10-schedule.md) | 任务/目标、幂等完成奖励 + 连续学习、关联课程资料、智能填充 |
 | [11-Courses 英语单词学习](11-learning-courses.md) | 独立学习课程、文本解析/编辑、四阶段学习、复习熟练度、分享市场、Azure Speech |
 
-> 状态：生产已到 0038。0041–0043 候选新增 Materials 文件生成试卷、真实 My Notes 分组、在线考试和 Free quota，尚未取得生产证据；Home/Create/Note Market、其它三类 AI 产物、Courses 文件导入和支付仍是 mock/占位。fake Playwright、jsdom 或本地 pytest 不构成真实 provider/生产证明。
+> 状态：已接生产真数据 —— 注册/登录、**Materials、社区、学习计划、Courses、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API；生产迁移已到 0040，私有 Redis 限流/readiness、帖子/Feedback/Schedule 完整性和 points 日上限/审核/待审协同信号已启用。Courses/Azure/OpenRouter 翻译前测与中文语音回填/统一波形/限时拼写/Unicode 拼写归一化/仅标点差异容错/显式取消/轮末错题复盘/拼写与读音考试/任意选词/考试历史/双考试精确掌握投影/弱网答题/离线音频/按意图独立续学/分享/免费市场已启用。0041–0043 候选新增 Materials 文件生成试卷、真实 My Notes 分组、在线考试和 Free quota，尚未取得生产证据；Home/Create/Note Market、其它三类 AI 产物、Courses 文件导入和支付仍是 mock/占位。fake Playwright、jsdom 或本地 pytest 不构成真实 provider/生产证明。PR/main 使用升级/空库迁移/RLS/Playwright 门禁；数据库失败采用阻断/forward-fix/隔离恢复，应用 smoke 失败自动回退上一 release。
