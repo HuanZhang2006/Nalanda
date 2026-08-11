@@ -205,7 +205,7 @@ Knowledge list、Quiz 和 Knowledge graph 的历史 Demo 形状没有冒充真�
 - `point_entries` 只允许用户读取自己的条目；客户端不能直接写，`point_event_states` 及 0039 新增的 claim/moderation/signal/audit 表对客户端完全隐藏。service-role 只经受控函数形成奖励和审核转换。
 - `learning_*` 私有表只允许 owner 读，客户端不能写内容、会话、尝试、progress、日程、徽章或奖励；评判事实表甚至不授予 owner SELECT。写入经 API 调用撤销了 `public/anon/authenticated` 权限的 service-role RPC。
 - 分享/出版物/举报/审核表不向匿名 PostgREST 开放。匿名分享和市场读取只能经过 API 返回转义、脱敏快照；出版快照由 trigger 保持不可变。
-- 0041–0043 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage 与 operation 幂等表无客户端访问。所有 reservation、任务推进、结果、成绩和删除编排仅允许 service-role RPC，且迁移 0043 失败关闭验证 grant/RLS/FK。
+- 0041–0043 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage 与 operation 幂等表无客户端访问。所有 reservation、任务推进、结果、成绩和删除编排仅允许 service-role RPC，且迁移 0043 失败关闭验证 grant/RLS/删除语义。provider usage 的 job/attempt UUID 是不可变审计引用而非内容生命周期 FK：删除 Note/答卷保留成本事实，删除 Auth owner 才随 `user_id` CASCADE。
 
 ### 7.3 已关闭项与剩余数据完整性边界
 

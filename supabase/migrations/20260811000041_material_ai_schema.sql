@@ -231,8 +231,12 @@ create table public.exam_attempt_operations (
 create table public.ai_provider_usage_events (
   id bigint generated always as identity primary key,
   user_id uuid not null references auth.users (id) on delete cascade,
-  job_id uuid references public.generation_jobs (id) on delete set null,
-  attempt_id uuid references public.exam_attempts (id) on delete set null,
+  -- These are immutable audit references rather than live-content foreign
+  -- keys. Deleting a Note/attempt must not erase provider cost or make the
+  -- exact-one-subject constraint fail, while deleting the owning Auth user
+  -- still removes the complete event through user_id.
+  job_id uuid,
+  attempt_id uuid,
   purpose text not null check (purpose in ('parse_audit', 'visual_recovery',
     'safety_audit', 'exam_generation', 'exam_repair', 'exam_review', 'exam_grading')),
   provider text not null default 'openrouter',
@@ -247,10 +251,16 @@ create table public.ai_provider_usage_events (
   status text not null check (status in ('succeeded', 'failed')),
   error_code text,
   created_at timestamptz not null default now(),
-  check ((job_id is not null)::integer + (attempt_id is not null)::integer = 1)
+  constraint ai_provider_usage_event_subject_check
+    check ((job_id is not null)::integer + (attempt_id is not null)::integer = 1)
 );
 create index ai_provider_usage_month_idx
   on public.ai_provider_usage_events (created_at, status);
+
+comment on column public.ai_provider_usage_events.job_id is
+  'Immutable generation-job audit identifier; intentionally not a content-lifecycle foreign key.';
+comment on column public.ai_provider_usage_events.attempt_id is
+  'Immutable exam-attempt audit identifier; intentionally not a content-lifecycle foreign key.';
 
 alter table public.ai_plans enable row level security;
 alter table public.ai_user_plans enable row level security;

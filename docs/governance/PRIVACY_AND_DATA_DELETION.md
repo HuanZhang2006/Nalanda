@@ -38,7 +38,7 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | Materials AI 任务与额度（0041 候选） | `ai_user_plans/ai_daily_usage/generation_jobs/events` | 每账号同意、Free 双额度、持久任务/阶段 | Auth 删除 CASCADE；job 不保存正文/prompt/raw response；失败/取消释放 reservation |
 | Materials AI 解析/产物（0041 候选） | 私有 `ai_material_parse_cache`、`notes/note_materials/note_artifacts` | 同文件复用 DocumentIR；保存用户请求的完整试卷/答案/来源 | cache 随 material CASCADE；删除来源可保留到 Unfiled 或连结果删除；用户可删除 Notes |
 | 在线考试（0041 候选） | `exam_attempts/answers/operations`、浏览器 IndexedDB draft | deadline、草稿、成绩、AI feedback 和幂等重放 | note/Auth 删除 CASCADE；登出不让草稿跨账号提交；完整 DSAR/一键删除仍未实现 |
-| AI provider 计量（0041 候选） | `ai_provider_usage_events` | model/token/micro-USD/latency/request ID/ZDR/status | 不含 prompt/正文/答案/raw response；随用户删除 CASCADE |
+| AI provider 计量（0041 候选） | `ai_provider_usage_events` | model/token/micro-USD/latency/request ID/ZDR/status | 不含 prompt/正文/答案/raw response；删除 Note/答卷后保留不可变 subject UUID 与成本事实，防止通过删除内容绕过预算；随 Auth 用户删除 CASCADE |
 | 支付数据 | 当前无 Stripe/订单表 | 未实现 | 未来仅保存必要 Stripe ID/状态，不保存卡号/CVC |
 | 限流/滥用审计（生产 0039） | 私有 Redis、`api_abuse_events` | 短时滑动窗口、分布式扫描锁、路由组/规则/桶级聚合 | IP/规范化邮箱只保存独立 secret 派生 HMAC；不保存原 IP、邮箱、正文或课程数据；DB 聚合默认 30 天，Redis key/AOF 是可重建运行副本 |
 | 运维数据 | 主机/容器/GitHub/Supabase 日志 | 部署和排障 | 普通日志不得记录原 IP/邮箱/正文/secret；当前仍缺统一导出和删除编排 |
