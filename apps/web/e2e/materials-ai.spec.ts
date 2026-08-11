@@ -23,9 +23,10 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await expect(page.getByRole("heading", { name: "Materials", exact: true })).toBeVisible();
 
   await page.getByRole("button", { name: "New course" }).first().click();
-  await page.locator("#nc-code").fill("BIO AI");
-  await page.locator("#nc-name").fill(`AI Biology ${nonce}`);
-  await page.getByRole("button", { name: "Create", exact: true }).click();
+  const courseModal = page.locator(".modal");
+  await courseModal.locator("#nc-code").fill("BIO AI");
+  await courseModal.locator("#nc-name").fill(`AI Biology ${nonce}`);
+  await courseModal.getByRole("button", { name: "Create", exact: true }).click();
   await expect(page.getByText(`AI Biology ${nonce}`, { exact: true })).toBeVisible();
 
   const chooser = page.waitForEvent("filechooser");
