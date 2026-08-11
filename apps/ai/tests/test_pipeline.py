@@ -197,18 +197,20 @@ async def test_repaired_exam_must_pass_a_second_semantic_review():
                 value = {"valid": False, "issues": ["answer is not supported by the citation"]}
             else:
                 raise AssertionError(f"unexpected purpose: {purpose}")
-            return result_type.model_validate(value), UsageEvent(
-                purpose=purpose,
-                model=pipeline.TEXT_MODEL,
-                requestId=f"test-{purpose}-{self.review_calls}",
-                promptTokens=1,
-                completionTokens=1,
-                totalTokens=2,
-                costMicroUsd=1,
-                durationMs=1,
-                zdrEnforced=True,
-                status="succeeded",
-            )
+            return result_type.model_validate(value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=pipeline.TEXT_MODEL,
+                    requestId=f"test-{purpose}-{self.review_calls}",
+                    promptTokens=1,
+                    completionTokens=1,
+                    totalTokens=2,
+                    costMicroUsd=1,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
 
     client = SemanticFailureClient()
     usage = []

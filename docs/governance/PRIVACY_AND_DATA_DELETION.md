@@ -135,7 +135,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。OpenRouter 当前是窄范围翻译语义与中文翻译录音处理者；0041 候选把它扩为 Materials AI 处理者：完整规范化 DocumentIR 发送给 DeepSeek，只有失败范围图像 base64 发送给 MiMo；不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。2026-08-04 的真实发布 gate 已证明固定合成中文 WAV 经生产候选 API 可由 Fish Audio 识别，不代表真实用户口音质量。Materials AI 请求强制 ZDR/deny data collection/no fallback，但技术参数不替代对留存、训练、子处理者、跨境、删除、事件 SLA 和用户告知的正式审查。生产私有 Redis 不是新的外部数据处理者，只保存短时 HMAC 限流键、审计聚合和分布式锁；AOF 也不得写原始 IP、邮箱、正文、课程或供应商 secret。Anthropic 不再是该候选依赖；Stripe/邮件/监控仍是未来处理者。
+当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。OpenRouter 当前是窄范围翻译语义与中文翻译录音处理者；0041 候选把它扩为 Materials AI 处理者：完整规范化 DocumentIR 发送给 DeepSeek，只有失败范围图像 base64 发送给 MiMo；不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。2026-08-04 的真实发布 gate 已证明固定合成中文 WAV 经生产候选 API 可由 Fish Audio 识别，不代表真实用户口音质量。Materials AI 请求强制 ZDR/deny data collection/require parameters，不提供跨模型 fallback；同一固定模型的 provider failover 仍必须逐端点满足这些过滤条件。技术参数不替代对留存、训练、子处理者、跨境、删除、事件 SLA 和用户告知的正式审查。生产私有 Redis 不是新的外部数据处理者，只保存短时 HMAC 限流键、审计聚合和分布式锁；AOF 也不得写原始 IP、邮箱、正文、课程或供应商 secret。Anthropic 不再是该候选依赖；Stripe/邮件/监控仍是未来处理者。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
 
