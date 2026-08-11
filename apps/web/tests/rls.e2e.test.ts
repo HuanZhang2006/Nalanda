@@ -96,6 +96,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       const [
         entryRemnants, stateRemnants, claimRemnants, windowRemnants,
         courseRemnants, attemptRemnants, badgeRemnants, usageRemnants,
+        aiJobRemnants, noteRemnants, examRemnants, aiUsageRemnants,
       ] = await Promise.all([
         admin.from("point_entries").select("id").in("user_id", [aId, bId]),
         admin.from("point_event_states").select("business_key").in("user_id", [aId, bId]),
@@ -105,6 +106,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
         admin.from("learning_attempts").select("id").in("user_id", [aId, bId]),
         admin.from("user_badge_awards").select("badge_code").in("user_id", [aId, bId]),
         admin.from("learning_speech_usage").select("id").in("user_id", [aId, bId]),
+        admin.from("generation_jobs").select("id").in("user_id", [aId, bId]),
+        admin.from("notes").select("id").in("user_id", [aId, bId]),
+        admin.from("exam_attempts").select("id").in("user_id", [aId, bId]),
+        admin.from("ai_provider_usage_events").select("id").in("user_id", [aId, bId]),
       ]);
       if (entryRemnants.error) cleanupErrors.push(`Ledger cleanup check: ${entryRemnants.error.message}`);
       else if (entryRemnants.data.length) cleanupErrors.push(`Ledger cleanup check: ${entryRemnants.data.length} rows remain`);
@@ -115,6 +120,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       if (windowRemnants.error) cleanupErrors.push(`Point window cleanup check: ${windowRemnants.error.message}`);
       else if (windowRemnants.data.length) cleanupErrors.push(`Point window cleanup check: ${windowRemnants.data.length} rows remain`);
       for (const [label, result] of [["Learning courses", courseRemnants], ["Learning attempts", attemptRemnants], ["Badge awards", badgeRemnants], ["Speech user links", usageRemnants]] as const) {
+        if (result.error) cleanupErrors.push(`${label} cleanup check: ${result.error.message}`);
+        else if (result.data.length) cleanupErrors.push(`${label} cleanup check: ${result.data.length} rows remain`);
+      }
+      for (const [label, result] of [["AI jobs", aiJobRemnants], ["AI notes", noteRemnants], ["Exam attempts", examRemnants], ["AI provider usage", aiUsageRemnants]] as const) {
         if (result.error) cleanupErrors.push(`${label} cleanup check: ${result.error.message}`);
         else if (result.data.length) cleanupErrors.push(`${label} cleanup check: ${result.data.length} rows remain`);
       }
@@ -277,8 +286,12 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     // 验证正常的显式清理路径；afterAll 仍为测试中途失败提供兜底。
     expect((await a.storage.from("materials").remove([storagePath])).error).toBeNull();
-    expect((await a.from("materials").delete().eq("id", material.data!.id)).error).toBeNull();
-    expect((await a.from("courses").delete().eq("id", course.data!.id)).error).toBeNull();
+    expect((await a.from("materials").delete().eq("id", material.data!.id)).error).not.toBeNull();
+    expect((await a.from("courses").delete().eq("id", course.data!.id)).error).not.toBeNull();
+    const deletedCourse = await admin.rpc("ai_delete_material_course", {
+      p_user_id: aId, p_course_id: course.data!.id, p_delete_results: true,
+    });
+    expect(deletedCourse.error).toBeNull();
   }, 30_000);
 
   it("验证社区公共读、四类计数、作者防伪造、关注和作者权限", async () => {
@@ -871,6 +884,236 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     ]);
     expect(allEntries.error).toBeNull();
     expect(allEntries.data!.reduce((sum, entry) => sum + entry.amount, 0)).toBe(projectedProfile.data!.points);
+  }, 60_000);
+
+  it("验证 Materials AI 额度、任务幂等、私有结果和考试 revision", async () => {
+    const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
+      const result = await admin.rpc(name, args);
+      expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
+      return result.data as T;
+    };
+    const settings = {
+      language: "en", difficulty: "mixed", durationMinutes: 60, totalMarks: 20,
+      questionCounts: {
+        singleChoice: 5, multipleChoice: 0, trueFalse: 0,
+        fillBlank: 0, shortAnswer: 0, essay: 0,
+      },
+      answerDetail: "detailed", focus: "",
+    };
+    const course = await a.from("courses").insert({ code: "AI 101", name: "Materials AI RLS" }).select("id").single();
+    expect(course.error).toBeNull();
+    const material = await a.from("materials").insert({
+      course_id: course.data!.id,
+      name: "ai-security-fixture.txt",
+      type: "txt",
+      size_bytes: 128,
+      storage_path: `${aId}/ai-security-fixture.txt`,
+    }).select("id").single();
+    expect(material.error).toBeNull();
+
+    // Every existing and future user is assigned Free 10/10. Only the API's
+    // service-role RPC can materialize daily usage and reserve allowance.
+    expect((await a.from("ai_user_plans").select("plan_code,consent_version").eq("user_id", aId).single()).data)
+      .toEqual({ plan_code: "free", consent_version: 0 });
+    expect((await b.from("ai_user_plans").select("user_id").eq("user_id", aId)).data).toEqual([]);
+    expect((await a.rpc("ai_get_quota_summary", { p_user_id: aId })).error).not.toBeNull();
+    const initialQuota = await rpc<any>("ai_get_quota_summary", { p_user_id: aId });
+    expect(initialQuota).toMatchObject({
+      plan: "free",
+      generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+      grading: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+    });
+
+    for (const [table, payload] of [
+      ["generation_jobs", { user_id: aId, material_id: material.data!.id, material_name: "forged", settings }],
+      ["ai_daily_usage", { user_id: aId, local_date: initialQuota.localDate, kind: "generation", plan_code: "free", limit_count: 999, timezone: "UTC" }],
+      ["ai_material_parse_cache", { user_id: aId, material_id: material.data!.id, source_sha256: "a".repeat(64), parser_version: "forged", audit_version: "forged", vision_model: "forged", canonical_document: {}, block_count: 0 }],
+      ["notes", { user_id: aId, title: "forged", material_name: "forged" }],
+      ["exam_attempts", { user_id: aId, note_id: randomUUID(), deadline_at: new Date().toISOString(), total_marks: 100 }],
+      ["ai_provider_usage_events", { user_id: aId, job_id: randomUUID(), purpose: "exam_generation", model: "forged", duration_ms: 0, zdr_enforced: false, status: "succeeded" }],
+    ] as const) {
+      expect((await a.from(table).insert(payload as any)).error, `${table} must be service-only`).not.toBeNull();
+    }
+    expect((await a.from("ai_material_parse_cache").select("id").limit(1)).error).not.toBeNull();
+    expect((await a.from("ai_provider_usage_events").select("id").limit(1)).error).not.toBeNull();
+    expect((await a.from("exam_attempt_operations").select("operation_id").limit(1)).error).not.toBeNull();
+    expect((await a.rpc("ai_create_generation_job", {
+      p_user_id: aId, p_material_id: material.data!.id, p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "1".repeat(64), p_settings: settings, p_consent_version: 1,
+    })).error).not.toBeNull();
+
+    const idempotencyKey = randomUUID();
+    const createArgs = {
+      p_user_id: aId,
+      p_material_id: material.data!.id,
+      p_idempotency_key: idempotencyKey,
+      p_request_fingerprint: "2".repeat(64),
+      p_settings: settings,
+      p_consent_version: 1,
+    };
+    const concurrentCreates = await Promise.all([
+      admin.rpc("ai_create_generation_job", createArgs),
+      admin.rpc("ai_create_generation_job", createArgs),
+    ]);
+    expect(concurrentCreates.map((result) => result.error)).toEqual([null, null]);
+    const jobIds = concurrentCreates.map((result) => result.data![0].id);
+    expect(new Set(jobIds).size).toBe(1);
+    const firstJobId = jobIds[0];
+    expect((await a.from("generation_jobs").select("id,status").eq("id", firstJobId)).data)
+      .toEqual([{ id: firstJobId, status: "queued" }]);
+    expect((await b.from("generation_jobs").select("id").eq("id", firstJobId)).data).toEqual([]);
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
+      .toMatchObject({ consumed: 0, reserved: 1, remaining: 9 });
+    const activeConflict = await admin.rpc("ai_create_generation_job", {
+      ...createArgs, p_idempotency_key: randomUUID(), p_request_fingerprint: "3".repeat(64),
+    });
+    expect(activeConflict.error?.message).toContain("AI_JOB_ACTIVE");
+
+    await rpc("ai_fail_generation_job", {
+      p_job_id: firstJobId, p_lease_token: null, p_error_code: "SAFE_TEST_FAILURE",
+      p_error_message: "Fixture failure", p_usage_events: [],
+    });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
+      .toMatchObject({ consumed: 0, reserved: 0, remaining: 10 });
+
+    const completedJobRows = await rpc<any[]>("ai_create_generation_job", {
+      ...createArgs, p_idempotency_key: randomUUID(), p_request_fingerprint: "4".repeat(64),
+    });
+    const completedJobId = completedJobRows[0].id;
+    const generationLease = randomUUID();
+    expect((await rpc<any[]>("ai_claim_generation_job", {
+      p_job_id: completedJobId, p_lease_token: generationLease, p_lease_seconds: 900,
+    }))[0]).toMatchObject({ id: completedJobId, status: "processing" });
+    const exam = {
+      schemaVersion: "generated-exam.v1",
+      title: "AI Security Fixture Exam",
+      language: "en",
+      difficulty: "mixed",
+      durationMinutes: 60,
+      totalMarks: 20,
+      instructions: [],
+      sections: [{
+        id: "section-1", title: "Objective", instructions: "",
+        questions: [{
+          id: "q1", type: "single_choice", prompt: "Choose A.", marks: 20,
+          options: ["A", "B"], correctOptionIndexes: [0], acceptedAnswers: [],
+          modelAnswer: "A", explanation: "A is correct.", rubric: [],
+          sourceRefs: [{ blockId: "block-1", page: 1, slide: null, label: "Page 1" }],
+        }],
+      }],
+    };
+    const document = {
+      version: "document-ir.v1", title: "Fixture", sourceType: "txt", pageCount: 1,
+      slideCount: 0,
+      blocks: [{ id: "block-1", order: 1, kind: "paragraph", text: "A is correct.", page: 1, slide: null, label: "Page 1", source: "parser" }],
+      diagnostics: [],
+    };
+    const noteId = await rpc<string>("ai_complete_generation_job", {
+      p_job_id: completedJobId,
+      p_lease_token: generationLease,
+      p_source_sha256: "5".repeat(64),
+      p_parser_version: "parser-v1",
+      p_audit_version: "audit-v1",
+      p_canonical_document: document,
+      p_block_count: 1,
+      p_visual_region_count: 0,
+      p_title: exam.title,
+      p_exam: exam,
+      p_question_count: 1,
+      p_total_marks: 20,
+      p_usage_events: [],
+    });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
+      .toMatchObject({ consumed: 1, reserved: 0, remaining: 9 });
+    expect((await a.from("notes").select("id,course_id").eq("id", noteId)).data)
+      .toEqual([{ id: noteId, course_id: course.data!.id }]);
+    expect((await b.from("notes").select("id").eq("id", noteId)).data).toEqual([]);
+    expect((await b.from("note_artifacts").select("note_id").eq("note_id", noteId)).data).toEqual([]);
+
+    const firstAttempt = (await rpc<any[]>("ai_create_exam_attempt", {
+      p_user_id: aId, p_note_id: noteId,
+    }))[0];
+    expect((await b.from("exam_attempts").select("id").eq("id", firstAttempt.id)).data).toEqual([]);
+    expect((await a.from("exam_attempts").update({ total_score: 20, status: "completed" }).eq("id", firstAttempt.id)).error)
+      .not.toBeNull();
+    expect((await a.rpc("ai_save_exam_answers", {
+      p_user_id: aId, p_attempt_id: firstAttempt.id, p_operation_id: randomUUID(),
+      p_expected_revision: 0, p_answers: [{ questionId: "q1", value: 0 }],
+    })).error).not.toBeNull();
+    const saveOperation = randomUUID();
+    const saveArgs = {
+      p_user_id: aId, p_attempt_id: firstAttempt.id, p_operation_id: saveOperation,
+      p_expected_revision: 0, p_answers: [{ questionId: "q1", value: 0 }],
+    };
+    const concurrentSaves = await Promise.all([
+      admin.rpc("ai_save_exam_answers", saveArgs),
+      admin.rpc("ai_save_exam_answers", saveArgs),
+    ]);
+    expect(concurrentSaves.map((result) => result.error)).toEqual([null, null]);
+    expect(concurrentSaves.map((result) => result.data.revision)).toEqual([1, 1]);
+    expect((await admin.from("exam_attempt_answers").select("question_id")
+      .eq("attempt_id", firstAttempt.id)).data).toEqual([{ question_id: "q1" }]);
+    expect((await admin.from("exam_attempt_operations").select("operation_id")
+      .eq("attempt_id", firstAttempt.id).eq("operation_id", saveOperation)).data).toHaveLength(1);
+    const submitResult = await rpc<any>("ai_submit_exam_attempt", {
+      p_user_id: aId, p_attempt_id: firstAttempt.id, p_operation_id: randomUUID(),
+      p_expected_revision: 1,
+      p_results: [{ questionId: "q1", awardedMarks: 20, correct: true, feedback: "Correct" }],
+      p_objective_score: 20, p_objective_marks: 20, p_needs_grading: false,
+    });
+    expect(submitResult).toMatchObject({ revision: 2, status: "completed", gradingReserved: false });
+
+    const gradingAttempt = (await rpc<any[]>("ai_create_exam_attempt", {
+      p_user_id: aId, p_note_id: noteId,
+    }))[0];
+    const gradingSubmit = await rpc<any>("ai_submit_exam_attempt", {
+      p_user_id: aId, p_attempt_id: gradingAttempt.id, p_operation_id: randomUUID(),
+      p_expected_revision: 0, p_results: [], p_objective_score: 0,
+      p_objective_marks: 0, p_needs_grading: true,
+    });
+    expect(gradingSubmit).toMatchObject({ status: "grading", gradingReserved: true });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).grading)
+      .toMatchObject({ consumed: 0, reserved: 1, remaining: 9 });
+    const gradingLease = randomUUID();
+    expect((await rpc<any[]>("ai_claim_exam_grading", {
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_lease_seconds: 300,
+    }))[0]).toMatchObject({ id: gradingAttempt.id, status: "grading" });
+    await rpc("ai_fail_exam_grading", {
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_usage_events: [],
+    });
+    expect((await admin.from("exam_attempts").select("status,grading_quota_reserved")
+      .eq("id", gradingAttempt.id).single()).data)
+      .toEqual({ status: "submitted_ungraded", grading_quota_reserved: false });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).grading)
+      .toMatchObject({ consumed: 0, reserved: 0, remaining: 10 });
+
+    // AI exams are feedback only and never write the points or badge systems.
+    expect((await admin.from("point_entries").select("id").in("source_id", [completedJobId, firstAttempt.id, gradingAttempt.id])).data)
+      .toEqual([]);
+    expect((await admin.from("user_badge_awards").select("badge_code").eq("user_id", aId)
+      .ilike("badge_code", "%exam%")).data).toEqual([]);
+
+    // Deleting a source through the service transaction releases a queued
+    // reservation, removes parse cache, and preserves results as Unfiled.
+    const pendingJob = (await rpc<any[]>("ai_create_generation_job", {
+      ...createArgs, p_idempotency_key: randomUUID(), p_request_fingerprint: "6".repeat(64),
+    }))[0];
+    expect((await a.from("materials").delete().eq("id", material.data!.id)).error).not.toBeNull();
+    expect(await rpc<string>("ai_delete_material", {
+      p_user_id: aId, p_material_id: material.data!.id, p_delete_results: false,
+    })).toBe(`${aId}/ai-security-fixture.txt`);
+    expect((await admin.from("generation_jobs").select("status,quota_reserved")
+      .eq("id", pendingJob.id).single()).data).toEqual({ status: "cancelled", quota_reserved: false });
+    expect((await admin.from("ai_material_parse_cache").select("id").eq("material_id", material.data!.id)).data).toEqual([]);
+    expect((await a.from("note_materials").select("material_id").eq("note_id", noteId)).data)
+      .toEqual([{ material_id: null }]);
+    expect((await a.from("notes").select("course_id").eq("id", noteId).single()).data)
+      .toEqual({ course_id: null });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
+      .toMatchObject({ consumed: 1, reserved: 0, remaining: 9 });
+    expect((await rpc<string[]>("ai_delete_material_course", {
+      p_user_id: aId, p_course_id: course.data!.id, p_delete_results: true,
+    }))).toEqual([]);
   }, 60_000);
 
   it("验证学习课程隔离、候补池、跨日熟练、复习日程、徽章和 +20 指纹幂等", async () => {

@@ -32,14 +32,16 @@
 | `public` schema、函数、RLS、业务行 | 是 | 数据一致性、grants、trigger 验证 |
 | Points 日窗口/永久 claim/审核 action/协同 signal/API 滥用桶 | 是 | ledger/Profile 投影、claim 不可变、审核链和 30 天审计保留专项对账 |
 | Courses 内容/会话/attempt/progress/日程/分享/出版/举报/徽章/语音用量/音频队列 metadata | 是 | append-only attempt/points、revision/幂等响应、熟练日期、publication 不可变性、queue lease 与 service-only RPC 专项对账 |
+| Materials AI plan/quota/job/events/parse cache/Notes/exam/provider usage（0041–0043 候选） | 是 | reservation/consume、job lease、operation UUID/revision、source refs、ZDR/cost metadata 和 owner RLS 专项对账；不得把 dump 中正文复制进开发 |
 | Auth 用户 UUID/metadata | data dump 覆盖 | Provider、SMTP、URL、签名配置；密码/会话恢复能力需演练 |
 | Storage bucket/object metadata | data dump 覆盖 | **对象文件字节的异地复制和 manifest** |
 | migration history | 独立 schema/data dump | 与仓库 migration checksum 对账 |
 | Supabase 平台配置 | 否 | 控制台配置清单/基础设施记录 |
 | GitHub/服务器 secrets | 否 | 独立 secret manager；备份包禁止包含明文 secret |
-| Web/API | Git SHA image + release 目录 | 异地镜像/artifact 保留和服务器重建演练 |
+| Web/API/AI image | Git SHA image + release 目录 | 三者同一不可变 release；异地镜像/artifact 保留和服务器重建演练 |
 | nginx/TLS/DNS/compose | 仓库有参考配置 | 生产实际配置、证书和 DNS 切换记录 |
 | Redis AOF/滑动窗口/scanner lock | 否（本机 volume） | Redis 只承载可重建的短期保护状态；password/HMAC 由 secret 管理恢复，不能用 AOF 恢复 points 事实 |
+| BullMQ UUID 投递 | 否（Redis AOF） | `generation_jobs`/`exam_attempts` 是 durable 事实；恢复后 reconciler 从 PostgreSQL 重投，不从 Redis 推断额度/结果 |
 
 数据库 dump 不能恢复 Storage 文件，应用 artifact 不能恢复数据库，Supabase daily backup 也不能替代服务器和 secret 备份。Redis volume 当前没有异地副本；丢失会清空短期限流窗口和 scanner lock，但 daily claim、审核、signal 与 API 审计仍在 PostgreSQL，绝不能从 Redis 反推或改写。
 
@@ -54,6 +56,7 @@
 | 对象 | 私有资料、社区媒体 | ≤ 24 小时 | ≤ 24 小时 | S3/对象增量复制 + checksum manifest |
 | 学习 | 私有词表、进度、复习日程、徽章 | ≤ 24 小时 | ≤ 8 小时 | 每日 DB 备份 + 每次迁移恢复点；attempt/points 对账 |
 | 部署 | Web/API/config | 每次发布 | ≤ 2 小时 | Git SHA artifact + config-as-code + secret manager |
+| AI 学习结果 | Notes、试卷、答卷、私有解析 cache | ≤ 24 小时 | ≤ 8 小时 | DB backup + job/operation 对账；过程临时目录不恢复 |
 
 points/credits/VIP/支付上线前必须有不可变事件账本、对账和 webhook 重放；否则恢复点之后的经济事件无法可靠重放。
 
@@ -110,6 +113,8 @@ bucket,path,size,content_type,etag_or_sha256,version,backed_up_at
 `vocabulary-audio` 只含由规范化英文生成、可跨用户复用但仍保持 private 的 Azure TTS 缓存，可由 `learning_audio_assets.synthesis_text` 重新生成；它归类为**可丢失缓存**，不要求满足对象 RPO。若为了成本选择备份，也必须进入 manifest、保持 private 且不能混入用户录音。恢复时对 metadata=`ready` 但对象缺失的记录调用受控 requeue/懒生成，不能冒充完整；租约 token/过期 processing 状态可安全重领。用户朗读录音从不落库/Storage，因此不存在录音备份或恢复步骤。
 
 浏览器 IndexedDB answer outbox 与 Cache Storage 不属于服务端备份：outbox 在登出时按账号清除，尚未同步的 provisional 答案不能由数据库恢复；本地音频是可回收副本，用户可删除。灾难恢复后客户端通过 session revision/snapshot 解决冲突，服务器确认前不得补发完成、points 或徽章。
+
+Materials AI 的 `/tmp/nalanda-material-ai/job-*` 是必须清除的过程文件，**不得备份或恢复**。`ai_material_parse_cache` 是有 FK/版本的私有持久数据并包含规范化课件内容，随数据库 archive 受同级加密/访问/删除规则约束。恢复后将所有过期 processing leases 交给 reconciler；相同 idempotency/operation UUID 必须返回既有结果，不能重复消耗 Free quota或重复生成 Notes。
 
 ## 6. Supabase 平台恢复点
 

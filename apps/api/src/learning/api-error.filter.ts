@@ -16,7 +16,7 @@ export class ApiErrorFilter implements ExceptionFilter {
     if (
       status === HttpStatus.SERVICE_UNAVAILABLE
       && source.status === "error"
-      && source.service === "nalanda-api"
+      && (source.service === "nalanda-api" || source.service === "nalanda-materials-ai")
       && typeof source.deps === "object"
       && source.deps !== null
     ) {

@@ -34,6 +34,7 @@
 - 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
 - Course Market 的 publication/clone/report 表不是商业市场账本；卡片只显示“免费”，不会产生购买、销量分成、credits debit 或 creator payable。
 - 0039 候选增加 `point_daily_windows/point_daily_award_claims/point_moderation_actions/point_abuse_signals`，并扩展 event state；内部表不开放 PostgREST 写入，service-role 也只能通过受控 SECURITY DEFINER 工作流改变事实。普通用户只能通过 owner-only receipt 读取自己的单次奖励决策。
+- 0041–0043 Materials AI 候选不读取、冻结或消费 `profiles.credits`：所有用户默认 Free，按 Profile IANA 时区本地日分别有 10 次**成功**试卷生成和 10 次**成功**主观题评分。reservation 在成功时 consume，在注入拒绝/格式错误/取消/资源/模型/ZDR/坏 JSON/系统失败时 release；AI 试卷和考试不发 points、徽章或 VIP。
 
 ### 2.2 发布限制
 
@@ -46,6 +47,7 @@ Profile/RPC/当前 points 重做路径的 P0 已由生产迁移 0008–0010 封�
 - 不用客户端调用 `_add_points`/改 profile 进行客服补偿；
 - 原型中的价格/余额必须标注 demo，或在商业入口上线前移除。
 - Note Market 继续标注 Demo；Course Market 只能免费克隆。任何给课程加 credits/法币、销量或分成的改动都必须先走本文商业阶段和新 ADR。
+- Profile 的 “Free Plan” AI quota 卡不是钱包，也不代表拥有 20 credits；quota 不结转、不可转让、不可购买、不可兑换。销售 credits 暂不启用。
 
 ## 3. Points：成长信誉规则
 
@@ -142,6 +144,8 @@ Credits 用于 Nalanda 内的 AI 生成和笔记市场数字内容。它不是�
 消费顺序：最早到期 promotional → 其他 promotional → 最早创建 purchased/service recovery；精确分配记录到 `credit_allocations`。余额是未过期 lot 的 credits minus committed allocations；hold 影响 available，不改变 settled balance。
 
 ### 4.3 AI 计费
+
+本节是未来收费规则。0041–0043 Materials AI beta 只使用免费日额度和运营方全局美元预算，不创建 credit hold/commit/release 表，也不因模型成本变更扣用户余额。
 
 AI 请求在用户确认前展示 credits 价格/估算、产物、资料和可调整因素。请求流程必须是：
 

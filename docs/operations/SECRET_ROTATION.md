@@ -1,6 +1,6 @@
 # 密钥与凭据轮换
 
-> **本文内容：** 汇总 Nalanda 当前和目标中的 secrets，给出 Supabase、GitHub/SSH、数据库、Anthropic、Stripe、TLS 等凭据的计划轮换和紧急泄露处置步骤。  
+> **本文内容：** 汇总 Nalanda 当前和目标中的 secrets，给出 Supabase、GitHub/SSH、数据库、OpenRouter、内部服务、Stripe、TLS 等凭据的计划轮换和紧急泄露处置步骤。
 > **作用：** 在不中断或最小化中断的前提下更新凭据、缩短泄露窗口，并确保旧凭据真正撤销且所有消费者一致切换。  
 > **何时更新：** 新增/移除供应商或 secret、key 类型/消费者/存储位置改变、轮换周期或人员权限变化时；每次泄露、轮换失败或安全复盘后必须更新。
 
@@ -11,7 +11,7 @@
 - 轮换必须包含四步：**创建/启用新凭据 → 更新全部消费者 → 验证 → 撤销旧凭据**。
 - 若凭据已确认泄露，优先撤销和控制影响；不能为了“可回退”继续保留旧泄露 key。
 - 供应商控制台流程和 key 类型可能变化。操作前在当前控制台确认是否支持双 key/重叠期、对 session/webhook 的影响和审计记录。
-- 当前没有 secret manager、自动到期、轮换日历或凭据使用审计的仓库实现；`/opt/nalanda/.env` 是服务器本地文件。受保护 deploy 只会通过标准输入原子更新 OpenRouter 域变量，以及 Redis URL/HMAC 与隔离的 `.redis.env`，不会下载或重建整份文件。
+- 当前没有 secret manager、自动到期或轮换日历；受保护 deploy 通过标准输入原子更新 API `.env`、隔离 `.redis.env` 与 Materials AI `.ai.env` 的对应域，不下载或打印整份文件。
 
 ## 2. 凭据清单
 
@@ -28,9 +28,9 @@
 | `SERVER_SSH_KNOWN_HOSTS` | GitHub Actions Secret | 固定服务器 host identity | 公钥材料 | 当前使用，变更需线下核验 |
 | 服务器 SSH authorized key | 服务器 | 接受 CI/管理员连接 | 公钥 | 当前使用 |
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
-| `ANTHROPIC_API_KEY` | hybrid `.env` 目标 | AI health；未来模型调用 | 否 | 当前业务未使用 |
 | `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；Japan East 基础、持久队列、重复词复用与裁剪评分 gate 均已通过 |
-| `OPENROUTER_API_KEY` | API `.env` / GitHub `production` environment / 生产 `/opt/nalanda/.env` | Courses 拼写翻译语义评判；0037 起复用其调用 Fish Audio STT | 否 | 只轮换一个 secret；必须分别通过 structured 文本判分和中文 WAV→Fish Audio gates，fake 不得进入生产 |
+| `OPENROUTER_API_KEY` | GitHub `production` → API `.env` 与隔离 `.ai.env` | Courses 语义/STT；0041 候选 Materials DeepSeek/MiMo | 否 | 一个源 secret、两类服务端消费者；必须跑各自真实 gate，fake 不得进入生产 |
+| `AI_INTERNAL_TOKEN` | GitHub `production` → API `.env` 与隔离 `.ai.env` | NestJS↔FastAPI 内部认证/回调 | 否 | 0041 候选；独立 32-byte hex，两端必须原子切换 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `MODERATION_ADMIN_USER_IDS` | API `.env` | Points signal/reward 审核 allowlist | 否 | 敏感授权配置；0039 兼容期为空才回退 Course Market allowlist |
 | `REDIS_PASSWORD` | GitHub `production` secret → `/opt/nalanda/.redis.env`；API `.env` 只持含密码的 `REDIS_URL` | 私有 Redis 与 Nest ioredis | 否 | 0039 候选；独立 32-byte hex，Redis 容器不接收其它 API secrets |
@@ -174,17 +174,15 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 泄露时立即替换两个值中受影响者并审计 `api_abuse_events`、429/503、注册和 provider 用量。Redis AOF 不是 points 事实库；不得通过删除 claim/ledger 来“同步”新窗口。
 
-## 11. Anthropic key（目标）
+## 11. Materials AI 内部 token（0041–0043 候选）
 
-当前 Python 代码只用 key 是否存在来显示 health，生成函数仍为桩。真实接入前：
+`AI_INTERNAL_TOKEN` 是 API 与 FastAPI 双向内部调用的独立 32-byte hex；它不得等于 Redis password、HMAC、JWT、provider 或备份 key。GitHub `production` environment 保存输入，受保护安装脚本经 SSH stdin 同时原子写入 `/opt/nalanda/.env` 和隔离 `.ai.env`，两文件 mode 600，不打印值。
 
-1. 为环境分别创建 key，设置供应商侧额度/告警；
-2. 更新 AI 服务的 secret store/`infra/hybrid-2g/.env`；
-3. 重建 AI 容器，先验证 health，再用无敏感 fixture 做最小生成和成本记录；
-4. 确认新 key 有 usage 后撤销旧 key；
-5. 泄露时立即撤销、查 usage/费用并更换所有环境。
-
-禁止把 key 送入 Web 或记录模型请求中的原始课件正文。轮换不应改变模型/提示词版本；若同时改变，评测无法隔离原因。
+1. 保持 `FEATURE_MATERIAL_AI=false`，生成新 token 并更新 GitHub secret；
+2. 经受保护 installer 写入两个 env，在同一维护窗口 force-recreate `ai` 与 `api`，避免一半新一半旧；
+3. 验证 FastAPI health `internalAuth=ok`、`/api/health/ai`、错误 token 401、合法内部 progress 和完整无个人数据 fake/真实 smoke；
+4. 检查 Actions/容器日志、shell history、artifact 无 token；记录 UTC/负责人/新 secret 指纹而非值；
+5. 泄露时立即关闭 Materials AI、轮换、取消 active leases并由 reconciler 安全重投，核查异常 callback/job 状态。不得为恢复可用性移除内部认证。
 
 ## 12. Azure Speech key（生产当前使用）
 
@@ -205,19 +203,19 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 ## 13. OpenRouter key（生产当前使用）
 
-`OPENROUTER_API_KEY` 只由 NestJS 读取；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。语义判分和 0037 Fish Audio STT 复用该 key，但 model、timeout 和配额分别配置，不能为 STT 创建浏览器 key。生产同时在 GitHub `production` environment 和服务器 mode-600 `.env` 保存当前值：前者只用于受保护部署时经 SSH 标准输入安装，后者由 API 容器消费。仓库脚本拒绝不符合预期形状的输入，并保留其它 env 行。
+`OPENROUTER_API_KEY` 由 NestJS 的 Courses 能力和隔离 Materials AI worker 复用；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。生产在 GitHub `production` environment 保存源 secret，服务器 API `.env` 与 worker `.ai.env` 都为 mode 600；worker 不获得 service-role/Redis/Azure。仓库脚本拒绝非法形状并原子保留其它变量。
 
 计划轮换：
 
 1. 在 OpenRouter 控制台创建新 key，记录 key ID/指纹、额度和 UTC 时间，不复制完整值到 ticket。
-2. 暂时关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`；普通拼写、限时拼写和既有学习进度继续。
-3. 安全更新 GitHub `production` environment secret；在受控发布中通过标准输入运行 `scripts/install-production-openrouter-env.sh`，确认 `/opt/nalanda/.env` 为 mode 600、`OPENROUTER_FAKE=false`，并核对文本模型与 `OPENROUTER_STT_MODEL=fish-audio/transcribe-1`。不得把 key 放在 shell 命令参数或 Actions 日志。
+2. 暂时关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` 和 `FEATURE_MATERIAL_AI`；普通拼写、既有 Notes 与客观考试仍可用。
+3. 安全更新 GitHub `production` secret；经受控部署分别原子更新 API 与 Materials AI env，确认 `OPENROUTER_FAKE=false`、`MATERIAL_AI_FAKE_PROVIDER=false`。不得把 key 放在参数或日志。
 4. 用无个人数据 fixture 分别执行 structured 文本判分 gate 和“Azure 合成苹果 WAV → 待激活 Nalanda STT API”gate；只记录 model/耗时/usage/布尔断言，不打印输入、transcript 或响应正文。任一失败都不激活待发布 release。
 5. 在待激活 image 运行 `smoke-openrouter-translation.mjs`，用固定合成样本验证指定 model 的 structured JSON：语义近义回答为 true、无关回答为 false。再经真实 Courses API 验证同 UUID replay 不再次调用 provider、正确翻译后的权威 spelling attempt 与临时用户清理。
-6. 观察 provider error、latency/token/STT duration 事件和供应商 usage；重新启用 feature。
+6. 用固定 PDF/DOCX/PPTX/chart/injection/safe-course/grading suite 验证 DeepSeek/MiMo strict schema、ZDR、只发送失败范围、引用和成本，再观察 provider error/latency/token/STT/AI usage；逐个重新启用 feature。
 7. 撤销旧 key 并重复两类真实 smoke。若失败，保持功能关闭，不把 key 下发 Web 或改成客户端自行判分/识别。
 
-泄露时立即关闭翻译前测、撤销 key、核查 usage/账单、GitHub/服务器/Actions 访问与 API 日志。数据库没有用户答案正文，但要审计 provider 请求时间窗和异常评判量。模型或 base URL 变化不是普通 key 轮换，必须独立评测并更新 ADR/成本文档。
+泄露时立即关闭全部 OpenRouter feature、撤销 key、核查 usage/账单、GitHub/服务器/Actions 访问与 API/AI 日志。数据库没有 provider prompt/raw response，但私有 parse cache/Notes 仍按用户数据处理。模型或 base URL 变化不是普通 key 轮换，必须独立评测并更新 ADR/成本文档。
 
 ## 14. Stripe secret/webhook secret（尚未实现）
 
@@ -263,7 +261,8 @@ systemctl reload nginx
 | service-role/数据库高权限凭据 | 90 天 | 任何疑似泄露、人员离职、环境误用 |
 | CI SSH deploy key | 180 天 | 私钥泄露、runner/账号失陷、人员变化 |
 | Supabase Personal Access Token | 90 天或按任务短期 | 设备/日志泄露、权限变化 |
-| Anthropic/Stripe secret | 90 天 | usage 异常、泄露、供应商建议 |
+| AI internal token | 90 天 | 任一消费者泄露、服务器/镜像失陷、鉴权异常 |
+| Stripe secret（未来） | 90 天 | usage 异常、泄露、供应商建议 |
 | Azure Speech key | 90 天 | usage/账单异常、泄露、人员/环境变化 |
 | OpenRouter key | 90 天 | usage/账单异常、泄露、模型/供应商访问策略变化 |
 | Redis password / RateLimit HMAC | 90 天 | 任一值泄露、服务器/runner 失陷、actor 审计边界变更 |

@@ -37,7 +37,13 @@
 | `RATE_LIMIT_HMAC_SECRET` | 0039–0040 候选必需 | **最高机密** | Redis service/health | 至少 32 bytes；只对 IP/email 派生 HMAC，不得与 Redis、JWT、备份或供应商 secret 复用。 |
 | `POINT_ABUSE_SCANNER_ENABLED` | 可选，默认启用（除显式 `false`） | 受限配置 | points scanner | Redis 已配置时是否周期扫描协同信号；CI Playwright 显式 false 避免后台不确定性。 |
 | `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | 可选，默认 300，最小 60 | 公开运维配置 | points scanner | 扫描周期；当前 Redis lock TTL 为 240 秒。 |
-| `AI_SERVICE_URL` | 当前仅状态标记 | 内部配置 | health | 当前 API 不调用 AI，只在健康响应显示是否设置。目标值为 AI 内网地址。 |
+| `AI_SERVICE_URL` | 0041–0043 候选必需 | 内部配置 | AI internal client/health | FastAPI 内网基址，生产候选为 `http://ai:8000`；不可指向公网。 |
+| `AI_CALLBACK_BASE_URL` | 候选必需 | 内部配置 | generation processor | worker 阶段进度回调的 API 内网基址，生产为 `http://api:3000/api`。 |
+| `AI_INTERNAL_TOKEN` | 候选必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
+| `FEATURE_MATERIAL_AI` | production 默认 false | 公开配置 | Materials AI API/Web | 新候选总开关；部署安装后仍为 false，只在 readiness/canary/真实 gate 通过后开启。 |
+| `MATERIAL_AI_MONTHLY_BUDGET_USD` | 可选，20 | 受限配置 | AI processor | provider usage 成功费用达到全局月预算后停止新调用。 |
+| `MATERIAL_AI_GENERATION_MAX_COST_USD` | 可选，0.50 | 受限配置 | generation processor | 单次生成费用硬门；超限不保存结果并释放用户 quota reservation。 |
+| `MATERIAL_AI_GRADING_MAX_COST_USD` | 可选，0.05 | 受限配置 | grading processor | 单次主观题评分费用硬门。 |
 | `NODE_ENV` | 部署配置 | 公开配置 | Node/Nest、Courses flags | `production` 时未设置的 Courses/分享/市场 flag 默认关闭；非生产时前三者默认开，语音始终默认关。 |
 
 ### 3.1 Courses、市场、Azure Speech 与 OpenRouter
@@ -70,7 +76,7 @@
 | `LEARNING_AUDIO_PREWARM_INTERVAL_MS` | 可选，3,100 | 受限配置 | worker 启动两次 Azure TTS 的最小间隔；实现拒绝小于 3,100 ms，默认配合全局单租约。 |
 | `LEARNING_AUDIO_SYNTHESIS_VERSION` | 可选，`1` | 受限配置 | 进入全局 SHA-256 缓存键；更换 voice/SSML/后处理语义时递增以安全重建，不原地覆盖旧键。 |
 | `AZURE_SPEECH_FAKE` | **仅测试**，默认 false | 测试配置 | 生成固定 WAV/评分；任何共享、staging 供应商 smoke 或生产必须未设置/false，API 在 `NODE_ENV=production` 时显式拒绝 true。 |
-| `OPENROUTER_API_KEY` | 翻译前测或翻译语音输入启用时必需 | **最高机密** | 两项能力复用同一服务端 Bearer token；只存在于 NestJS/受保护发布环境，绝不能进入 Web bundle、数据库、日志或提交。 |
+| `OPENROUTER_API_KEY` | 翻译前测、语音输入或 Materials AI 启用时必需 | **最高机密** | 服务端能力复用同一 secret；Materials AI worker 在隔离 `.ai.env` 获得副本。绝不能进入 Web bundle、数据库、日志或提交。 |
 | `OPENROUTER_MODEL` | 可选，`google/gemma-4-26b-a4b-it:free` | 受限配置 | 语义评判模型；生产 gate 固定验证该模型，变更必须经过 ADR、评测与成本复核。 |
 | `OPENROUTER_BASE_URL` | 可选，`https://openrouter.ai/api/v1` | 公开配置 | OpenRouter API 基址；只允许 API 读取。 |
 | `OPENROUTER_TIMEOUT_MS` | 可选，12,000 | 公开配置 | 单次评判硬超时，实现限制 1,000–30,000 ms；超时释放数据库租约且不记学习错误。 |
@@ -94,15 +100,29 @@
 
 `OPENROUTER_ASSESSMENTS_PER_DAY=500` 是语义判分默认值；STT 独立使用 20/分钟、300/本地日和 5,000,000 micro-USD/月。修改本文或 `.env.example` 不会改写正在运行的服务器；0037–0038 已于 2026-08-04 通过受保护安装脚本原子写入 STT 非密钥配置并复用既有 secret。后续发布/轮换仍须单独核对容器内生效值且不得打印 key。
 
-## 4. FastAPI AI 运行时变量
+## 4. FastAPI Materials AI 运行时变量（0041–0043 候选）
 
-AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid-2g/.env.example`。
+来源模板：`apps/ai/.env.example`。本地使用进程私有环境；生产由受保护脚本生成 mode-600 `/opt/nalanda/.ai.env`。worker **不会**收到 service-role、Redis、Azure、JWT 或 Web key。
 
-| 变量 | 状态 | 敏感级别 | 消费者 | 用途与缺省行为 |
-|---|---|---|---|---|
-| `ANTHROPIC_API_KEY` | 当前仅状态标记 | **最高机密** | `apps/ai/app/main.py` health | 当前仅决定 `/health` 的 `claude` 是 `configured` 或 `unset`；生成仍是固定桩。目标用于真实 Claude 调用。 |
-| `PORT` | compose 中设置但应用命令未读取 | 公开配置 | `infra/hybrid-2g/docker-compose.yml` | AI Dockerfile 的 uvicorn 命令固定监听 `8000`；仅设置变量不会改变监听端口。 |
-| `REDIS_URL` | 目标占位 | 内部配置；若含密码则机密 | hybrid compose 注入 | 当前 Python 代码未读取。目标用于任务状态/队列协作。 |
+| 变量 | 状态/默认 | 敏感级别 | 用途 |
+|---|---|---|---|
+| `NODE_ENV` | production 必需 | 公开配置 | production 明确拒绝 fake provider readiness。 |
+| `AI_INTERNAL_TOKEN` | 必需 | **最高机密** | 与 API 相同的内部请求/回调认证 token。 |
+| `OPENROUTER_API_KEY` | 必需 | **最高机密** | DeepSeek/MiMo 服务端调用；不写数据库、日志、响应或 Web。 |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | 公开配置 | 固定 provider 基址。 |
+| `SUPABASE_URL` | 必需 | 公开配置 | 只用于把允许下载的 signed URL host 限制到本项目；worker没有 service-role。 |
+| `MATERIAL_AI_ALLOWED_STORAGE_HOSTS` | 可选补充 | 受限配置 | 逗号分隔额外允许 host；生产通常为空，禁止宽泛通配。 |
+| `PUBLIC_APP_URL` | `https://nalanda.online` | 公开配置 | OpenRouter `HTTP-Referer` 标识。 |
+| `MATERIAL_AI_FAKE_PROVIDER` | false | 测试配置 | pytest/Playwright 的确定性 adapter；production true 会使 readiness 失败。 |
+| `MATERIAL_AI_TEMP_ROOT` | `/tmp/nalanda-material-ai` | 受限路径 | 0700 job 临时目录根；启动/定时清除 >1h orphan。 |
+| `MATERIAL_AI_TEMP_MIN_FREE_BYTES` | 536870912 | 受限配置 | 创建和解析过程中低于 512MiB 失败关闭。 |
+| `MATERIAL_AI_JOB_TEMP_LIMIT_BYTES` | 1073741824 | 受限配置 | 单任务临时空间 1GiB 硬上限。 |
+| `MATERIAL_AI_MAX_CHARACTERS` | 400000 | 受限配置 | 规范化 DocumentIR 文本上限。 |
+| `MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS` | 120 | 受限配置 | DOCX/PPTX 全量低优先级渲染硬超时。 |
+| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 每次 OpenRouter 调用硬超时；完整 Nest 请求另有 20 分钟上限。 |
+| `MATERIAL_AI_GENERATION_MAX_TOKENS` | 30000 | 成本配置 | 试卷生成/一次 repair 最大 completion tokens。 |
+
+模型 ID不是用户变量：代码固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，变更需 ADR、评测、成本和隐私复审。
 
 ## 5. 数据库迁移运维变量
 
@@ -139,6 +159,7 @@ AI 没有独立 `.env.example`；通用目标部署变量集中在 `infra/hybrid
 | `SUPABASE_PROJECT_REF` | 有新迁移时必需 | 项目标识 | 与生产 Web URL 交叉确认。 |
 | `DB_BACKUP_ENCRYPTION_KEY` | 有新迁移时必需 | **最高机密** | 加密 14 天保留的 release recovery artifact；副本须离线保存。 |
 | `OPENROUTER_API_KEY` | 启用翻译前测时必需 | **最高机密** | GitHub `production` environment secret；部署 job 只经 SSH 标准输入交给服务器安装脚本，随后执行真实 provider gate。不得作为普通 repository variable。 |
+| `AI_INTERNAL_TOKEN` | 0041–0043 发布必需 | **最高机密** | 独立 32-byte hex；部署只经 SSH stdin 原子写入 API/AI 两个 mode-600 env，不回显。 |
 | `REDIS_PASSWORD` | 0039–0040 第一阶段发布必需 | **最高机密** | GitHub `production` environment secret；独立 32-byte hex，经 SSH stdin 写入服务器 mode-600 `.redis.env` 和 API `REDIS_URL`，不打印。 |
 | `RATE_LIMIT_HMAC_SECRET` | 0039–0040 第一阶段发布必需 | **最高机密** | GitHub `production` environment secret；独立 32-byte hex，经 SSH stdin 原子安装；不得等于 Redis password。 |
 | `PUBLIC_ORIGIN` | workflow 非秘密 env | 公开配置 | 公网 smoke 的规范 origin；API 分享 URL 仍从服务器 `.env` 读取，二者必须一致。 |
@@ -175,7 +196,7 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 | `SUPABASE_ANON_KEY` | 当前服务代码未读取 | 公开凭据 | 名称不带 `VITE_`，不会自动进入 Web 静态包；若 hybrid Web 需使用，仍须在构建阶段注入对应 `VITE_*`。 |
 | `SUPABASE_SERVICE_ROLE_KEY` | API 已使用 | **最高机密** | 同上。 |
 | `SUPABASE_JWT_SECRET` | API 可选读取 | **最高机密** | 同上。 |
-| `ANTHROPIC_API_KEY` | AI health 读取；业务未使用 | **最高机密** | 真实 AI 接入后才成为生成必需项。 |
+| `ANTHROPIC_API_KEY` | 历史变量；当前业务不读取 | **最高机密** | 不应再配置；迁移完成后删除旧 secret。 |
 | `STRIPE_SECRET_KEY` | 目标占位 | **最高机密** | 当前无支付模块、无消费者。 |
 | `STRIPE_WEBHOOK_SECRET` | 目标占位 | **最高机密** | 当前无 webhook endpoint、无消费者；Caddy 注释不是接口实现。 |
 | `REDIS_URL` | API 限流/health/scanner 已读取 | 内部配置 | hybrid 示例无密码且不满足生产基线；若复用必须补密码与独立 HMAC。BullMQ 仍未接入。 |
@@ -192,7 +213,7 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 |---|---|---|---|
 | 本地 | `apps/web/.env.local` | `apps/api/.env`；AI 进程环境 | 当前 shell/安全密码文件 |
 | GitHub Actions | Actions Secrets 注入 Web 构建 | API 运行密钥仍只在服务器；DB 发布密钥在 protected environment | `SERVER_SSH_KEY`、已核验 host key、Supabase CLI 密钥、备份加密 key |
-| 当前生产/第一阶段候选 | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env` + 隔离的 `/opt/nalanda/.redis.env`，均 `0600` | 仅维护窗口临时注入，不落日志 |
+| 当前生产/Materials AI 候选 | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env` + 隔离的 `.redis.env`、`.ai.env`，均 `0600`；AI env 无 service-role/Redis | 仅维护窗口临时注入，不落日志 |
 | hybrid 目标 | 构建 Web 时另行注入 `VITE_*` | `infra/hybrid-2g/.env` | 仅维护窗口临时注入 |
 
 ## 10. 新增变量检查清单

@@ -3,7 +3,7 @@
 > **本文内容：**列出 Nalanda 的架构决策记录、状态、编号约定和维护流程。  
 > **作用：**保存“为什么这样选”的上下文，使后续开发能区分已接受决策、待验证提案与已被替代方案。  
 > **何时更新：**新增、接受、否决、废弃或替代 ADR 时；ADR 状态或所有者变化时。  
-> **状态基线：**2026-08-04；ADR 记录决策，不证明目标能力已经在生产启用。
+> **状态基线：**2026-08-10；ADR 记录决策，不证明目标能力已经在生产启用。
 
 ## 决策索引
 
@@ -12,14 +12,15 @@
 | [0001](0001-monorepo-and-workspaces.md) | 使用 pnpm + Turborepo monorepo | Accepted | 当前已实现基础工作区 |
 | [0002](0002-supabase-auth-data-and-rls.md) | Supabase 承担 Auth/Postgres/Storage，RLS 为数据边界 | Accepted | 当前部分实现，仍有已知权限缺口 |
 | [0003](0003-client-direct-crud-and-api-boundary.md) | 普通 owner CRUD 可直连 Supabase，特权流程进入 NestJS | Accepted | 当前部分实现 |
-| [0004](0004-core-api-and-ai-service-split.md) | NestJS 核心服务与 FastAPI AI 服务分离 | Accepted | 仅骨架；AI 流水线未实现/未生产部署 |
+| [0004](0004-core-api-and-ai-service-split.md) | NestJS 核心服务与 FastAPI AI 服务分离 | Accepted | Materials 候选已实现；尚未生产部署 |
 | [0005](0005-economy-domain-separation.md) | points、credits、VIP 与法币/创作者应付分账 | Accepted | 产品规则已定，目标账本与 Stripe 未实现 |
 | [0006](0006-production-topology.md) | 当前生产采用 nginx + Web/API 容器 + Supabase Cloud | Accepted | 当前已实现；2G/完整 AI 拓扑仍是候选 |
 | [0007](0007-third-party-ai-reference-licensing.md) | 未获商业许可前不复制 NC 许可 AI 代码 | Accepted | 持续约束 |
 | [0008](0008-independent-learning-courses-and-azure-speech.md) | 独立学习课程模型 + 服务端 Azure Speech 适配层 | Accepted | 0011–0018 与应用已于 2026-07-27 完成受保护发布 |
 | [0009](0009-server-side-semantic-spelling-translation-assessment.md) | 服务端语义翻译前测 + 会话级拼写设置 | Accepted | 0019–0020 与应用已于 2026-07-28 完成受保护发布 |
 | [0010](0010-ephemeral-translation-stt-and-shared-waveform.md) | 临时 Fish Audio 翻译 STT + 共享录音波形 | Accepted | 0037–0038 与应用已于 2026-08-04 完成受保护发布；真实口音评测仍待扩充 |
-| [0011](0011-private-redis-and-points-abuse-boundary.md) | 私有 Redis 请求保护 + 不可变 Points 决策/审核边界 | Accepted | 0039–0040 候选已实现；待第一阶段发布与 24 小时观察，0041–0042 尚未创建 |
+| [0011](0011-private-redis-and-points-abuse-boundary.md) | 私有 Redis 请求保护 + 不可变 Points 决策/审核边界 | Accepted | 0039–0040 候选已实现；待发布与 24 小时观察，最终撤权顺延为未来 0044–0045 |
+| [0012](0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) | Materials AI durable queue + OpenRouter ZDR + 2G Office 渲染 | Accepted | 0041–0043 候选已实现；待真实 provider/canary/受保护发布 |
 
 ## 状态定义
 
