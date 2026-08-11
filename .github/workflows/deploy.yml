@@ -219,15 +219,43 @@ jobs:
             -e MATERIAL_AI_FAKE_PROVIDER=true \
             -e MATERIAL_AI_TEMP_MIN_FREE_BYTES=1 \
             "$image"
+          healthy=false
           for attempt in $(seq 1 45); do
             if payload="$(curl -fsS --max-time 5 http://127.0.0.1:18412/health)" \
               && python -c 'import json,sys; v=json.load(sys.stdin); assert v["status"] == "ok"; assert v["deps"]["libreoffice"] == "ok"; assert v["fakeProvider"] is True' <<< "$payload"; then
               docker exec "$container" python -c 'import app.main,app.pipeline,app.parsers,app.openrouter'
-              exit 0
+              healthy=true
+              break
             fi
             if [[ "$attempt" == "45" ]]; then docker logs "$container" >&2; exit 1; fi
             sleep 2
           done
+          [[ "$healthy" == true ]]
+
+          # Run the exact mounted-script import contract used by production,
+          # as well as the same cgroup-bounded near-limit Office render. A
+          # script executed from /tmp does not inherit /app on sys.path, so the
+          # image application root is explicit rather than host-dependent.
+          canary_output="$(docker run --rm \
+            --network none \
+            --memory 640m --memory-swap 896m --cpus 0.75 --pids-limit 128 \
+            -e PYTHONPATH=/app \
+            -e MATERIAL_AI_TEMP_MIN_FREE_BYTES=1 \
+            -e MATERIAL_AI_JOB_TEMP_LIMIT_BYTES=1073741824 \
+            -e MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS=180 \
+            --entrypoint python \
+            -v "$PWD/scripts/material-ai-resource-canary.py:/tmp/material-ai-resource-canary.py:ro" \
+            "$image" /tmp/material-ai-resource-canary.py)"
+          python3 -c '
+          import json, sys
+          value=json.load(sys.stdin)
+          assert value.get("ok") is True
+          assert value.get("pages", 0) >= 200
+          assert 300000 <= value.get("characters", 0) <= 400000
+          assert value.get("tempBytes", 0) < 1073741824
+          assert value.get("processPeakRssBytes", 0) < 640 * 1024 * 1024
+          assert value.get("childPeakRssBytes", 0) < 640 * 1024 * 1024
+          ' <<< "$canary_output"
 
       - name: Validate production compose and nginx rate-limit configuration
         shell: bash
@@ -988,6 +1016,7 @@ jobs:
           canary_output="$(docker run --rm \
             --network none \
             --memory 640m --memory-swap 896m --cpus 0.75 --pids-limit 128 \
+            -e PYTHONPATH=/app \
             -e MATERIAL_AI_TEMP_MIN_FREE_BYTES=1 \
             -e MATERIAL_AI_JOB_TEMP_LIMIT_BYTES=1073741824 \
             -e MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS=180 \
