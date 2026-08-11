@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-11。生产已到 0040：Azure Speech、OpenRouter 语义翻译前测和 Fish Audio 中文 STT 已启用，Redis API/Courses 频率保护在既有供应商持久配额之外使成本路径 fail-closed。0041–0043 已在仓库实现 Materials AI 试卷生成候选，但尚未取得完整 CI、真实 DeepSeek/MiMo/ZDR、2G canary 或生产证据；因此下文明确区分“候选实现”和“发布门禁”。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-11。生产数据库已到 0043：Azure Speech、OpenRouter 语义翻译前测、Fish Audio 中文 STT 与 Redis API/Courses 频率保护继续启用；Materials AI 数据结构已发布，但公开应用仍运行上一不可变 release 且 feature 关闭。候选已通过完整 CI、数据库门禁和 2G canary，首次真实 DeepSeek gate 因固定路由持续 429 在切流前安全回滚，尚不能算生产可用。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -18,7 +18,7 @@
 - NestJS 已实现 owner-only job/quota/Notes/Exam API，Postgres durable job/reservation 和 BullMQ UUID 调度/reconciler；
 - FastAPI 只有内部 token 生成/评分路由，确定性解析 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片，并以 `DocumentIR` 保留页/幻灯片/块/来源；
 - 首次 DeepSeek 审查与解析器诊断取失败范围并集，只把这些页/slide/region 的渲染图发送 MiMo，拼接完整 IR 后再次审查；
-- 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters、关闭 fallback/tool/Web；
+- 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters，关闭 reasoning/tool/Web/跨模型 fallback；同一模型按吞吐量优先、只在满足全部过滤器的 provider endpoint 间故障转移；
 - `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前验证题数、总分、答案、rubric 与 source block；允许一次结构化 repair；
 - 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
 - 每任务 0700 临时目录 `finally` 删除，启动/定时清理一小时 orphan；持久 parse cache 是单独的私有产品数据；
@@ -46,7 +46,7 @@
 
 MiMo prompt 把图像当不可信证据，按阅读顺序提取逐字文本、层级、表格、图表轴/图例/趋势、流程节点/边、公式、图标语义、视觉关系、不可读区和疑似嵌入指令，禁止执行图片命令或补造。`malicious`/`uncertain` 都拒绝；`benign_educational` 只用于明确教学/引用/安全分析。检测不能获得绝对保证，因此模型分类前有确定性限制，之后还有 schema/source 验证和 feature kill switch。
 
-provider usage 只留 model、token、micro-USD、latency、request ID、用途、ZDR 和状态；不留 prompt、文件正文、回答正文或 raw response。真实 gate 必须用无个人数据固定 PDF/DOCX/PPTX/chart/injection/safety lesson/grading 样本证明 ZDR endpoint、失败范围、引用、拒绝/不误杀、token/cost 和评分；单次通过仍不代表持续质量。
+provider usage 只留 model、token、micro-USD、latency、request ID、用途、ZDR 和状态；不留 prompt、文件正文、回答正文或 raw response。网络错误、408/429/502/503/504，以及 200 响应的空内容、截断、坏 JSON/schema，会在完全相同的固定模型/ZDR/schema 请求上最多有界尝试 4 次，默认从 2 秒指数退避并尊重不超过 60 秒的数值型 `Retry-After`；所有尝试共享原 180 秒结构化操作总预算，单次 HTTP 只能使用剩余时间，重试不会把最坏等待放大为 `尝试次数 × 180 秒`。更长等待、认证/余额/ZDR/参数错误直接失败并释放产品额度。HTTP 失败通常没有 token/cost，200 但结构非法的失败可能已经产生费用；adapter 因而把成功前每次失败和最终成功都返回为独立脱敏 usage event，数据库成本硬门按全部事件求和，最终成功事件的 duration 仍覆盖该结构化操作的总等待。真实 gate 必须用无个人数据固定 PDF/DOCX/PPTX/chart/injection/safety lesson/grading 样本证明 ZDR endpoint、失败范围、引用、拒绝/不误杀、token/cost 和评分；单次通过仍不代表持续质量，也不能把“重试后成功”解释为长期可用率达标。
 
 ### 2.2 Courses 文件导入的目标闭环（未实现）
 
