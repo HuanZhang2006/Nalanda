@@ -8,8 +8,8 @@
 
 当前已有信号：
 
-- `GET /api/health`：生产 0038 真实探测 Supabase；0039 候选还校验 HMAC 配置并执行真实 Redis PING，Supabase/Redis 任一失败 readiness 都是 503；AI 仍只报告 `configured/unset`；
-- `GET /health`：AI 进程存活和 Anthropic key 是否存在；AI 当前未部署在生产编排中；
+- `GET /api/health`：生产 0038 真实探测 Supabase；候选还真实 Redis PING。`GET /api/health/ai` 在 0041–0043 候选检查 worker、队列和依赖，不以变量存在冒充 readiness；
+- FastAPI `GET /health`：实际检查 OpenRouter 配置、LibreOffice、临时磁盘和内部认证；production fake 明确失败。AI 当前尚未生产启用；
 - deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase/deps.redis`，并检查公网 Web root；失败会回退上一 Web/API release；
 - API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
 - nginx access/error log、systemd、Docker 与主机资源命令；
@@ -20,6 +20,7 @@
 - 翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。0027 后应分别监控 `quota_counted=true` 的实际 provider 请求、分钟/滚动 24 小时 429 和 `retryAfterSeconds`，不能把 exact/replay/仅领取租约计入用量。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。这些事件都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
 - 0037 STT 输出 `learning_translation_voice_transcribed`，只含 provider/model/language、音频秒数、provider/API duration 与 usage/cost 数字；不得写 base64/WAV、transcript、word、课程翻译、用户 ID 或 key。数据库以 `learning_speech_usage.kind=translation_stt` 提供分钟/本地日/月预算事实；Web 另应统计录音启动/权限拒绝、空结果、迟到 transcript 丢弃和回填后实际提交率，但不能采集识别文本。
 - 0039 候选输出 `rate_limited`、`rate_limit_degraded`、`rate_limit_audit_failed`、`redis_error`、`point_abuse_scan_completed/failed`；只含 route group/rule、HMAC actor、可选内部 user UUID、retry 秒数或聚合计数，不含原始 IP/email/正文。协同 signal 和 API abuse bucket 持久在 PostgreSQL，首版明确只有结构化日志，不接 webhook/pager。
+- 0041 候选以 DB events/provider usage 提供 queue age、stage duration、lease retries、parse/visual recovery、schema repair、DeepSeek/MiMo duration/token/cost/ZDR、Notes save、grading 和 temp cleanup 信号；日志只能写 job/attempt UUID、文件类型/大小、范围计数和稳定错误，不写 signed URL、文件名之外正文、prompt、答案或 raw response。
 
 当前缺失：
 
@@ -42,12 +43,12 @@
 | Supabase Auth | 是 | API health 的 JWKS 探针、平台日志、注册错误 | 登录由浏览器直连；health 不执行真实登录 |
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
-| FastAPI AI | 仅桩；生产未启用 | `/health`、uvicorn log | 真实模型、质量、成本均未接入 |
+| FastAPI Materials AI | 0041–0043 仓库候选；生产未启用 | 真实依赖 `/health`、stage callback、provider usage、uvicorn log | 无持续真实质量/成本仪表盘；不得记录正文 |
 | Courses API | 生产已启用至 0038 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
 | OpenRouter 翻译前测 / Fish Audio STT | 两者均已生产启用至 0038 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
-| Redis 请求保护（0039 候选） | 仓库 compose/API/CI 已实现，生产仍待第一阶段发布；不使用 BullMQ | PING readiness、`rate_*`/`redis_error` 日志、真实 CI Lua 测试 | 无集中 memory/AOF/eviction/window 命中率告警；Redis 不是 points 事实库 |
+| Redis 请求保护/BullMQ（0039–0043 候选） | 仓库 compose/API/CI 已实现，生产待发布 | PING readiness、`rate_*`、BullMQ execution/reconcile、真实 CI Redis 测试 | 无集中 memory/AOF/eviction/queue depth 告警；Redis 不是 points/job/额度事实库 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
 | 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
 
@@ -74,6 +75,8 @@
 | 复习日程 | 到期 pending 项进入/完成成功率 | ≥99%；不允许误建 `study_tasks` 或 +5 |
 | 请求保护 | rate-limit decision latency、429/503、Redis availability/memory | Redis PING ≥99.9%；合法流量 429 误判需接近 0；noeviction/AOF 配置漂移为发布阻断 |
 | Points 完整性 | ledger/Profile projection、cap/审核 transition | projection 差异必须为 0；同 business key 只有一项首次 decision；协同 signal 只改变待审队列 |
+| Materials AI 生成 | 成功率、queue wait/stage/provider/总时延、引用/schema、成本 | 合法任务成功率 ≥95%；最旧 queued <5 分钟；schema/source 100%；单次预算硬门不得突破 |
+| 在线考试 | draft revision、deadline submit、grading queue/额度 | 已确认保存 p95<1秒；过期最终必提交；相同 operation UUID 副作用为 0 |
 
 避免合成监控污染真实指标：使用专用账号/课程/文件前缀，测试后清理，并防止触发积分、通知和社区公开内容。生产合成写测试在具备幂等清理前不得自动开启。
 
@@ -103,6 +106,8 @@
 - Azure 估算月预算 ≥80%：P3，≥95%：P2 并评估熔断，超预算/持续 429：P2；provider 5xx/timeout >10% 持续 10 分钟：P2 并打开语音 circuit，文本学习保持；
 - OpenRouter provider 5xx/timeout/invalid-structure 合计 >10% 持续 10 分钟或 token/请求量异常超过 2 倍基线：P2，关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`，普通/限时拼写保持；语义错误率突然偏离固定 eval baseline：P2/P3，先停 feature 而不是放宽模型判定。429 若来自产品用户配额按信息/滥用调查，若来自供应商账户额度按 P2；
 - Fish Audio STT timeout/5xx/invalid/空 transcript >10% 持续 10 分钟、p95 >8 秒或月预算 ≥80%：P2/P3；先关闭依赖该能力的翻译语音入口并保留键盘输入，不得绕过 owner/revision 校验、改为浏览器直连或把识别文本自动提交。真实用户 CER/关键含义保留率低于评测基线时暂停入口并复核模型/语言提示。
+- Materials AI 最旧 queued >5 分钟、lease 连续三次恢复、worker restart ≥3/10min、temp orphan >1h、临时磁盘低于 512MiB、RSS/swap/cgroup OOM、provider/ZDR/schema/injection false-positive 异常：P2；跨用户/正文日志/ZDR 绕过或 quota/结果重复为 P1。先关闭 `FEATURE_MATERIAL_AI`，既有 Notes/考试保持只读，不通过放宽 ZDR、fallback、资源上限或直接改 job/quota 恢复。
+- AI 月成本 ≥80% US$20 为 P3、≥95% P2；单次生成 >US$0.50 或评分 >US$0.05 必须由硬门阻断并释放用户 reservation。token/cost 账单差异和 unknown request ID 触发调查。
 - `learning_audio_assets` 最旧 pending 超过 15 分钟、processing lease 过期持续 5 分钟、generation failure >10% 或 ready metadata 对象 miss >1%：P2；minute/month quota 暂停按预算阈值分级，不通过提高并发绕过；
 - `learning_attempt_revision_conflict` 突增、同 session outbox 最旧项 >5 分钟或 replay 比例异常升高：P2/P3；先查网络/API/多设备，不手工推进 cursor；
 - 同一课程完成指纹出现多条正向 +20、复习 schedule 产生 task +5、badge 重复 PK/事实不一致：P1/P2 按经济影响；
@@ -134,7 +139,7 @@ echo | openssl s_client -servername nalanda.online -connect nalanda.online:443 2
 ```bash
 cd /opt/nalanda
 docker compose --env-file .deploy.env ps
-docker compose --env-file .deploy.env logs --since=30m --tail=300 api redis
+docker compose --env-file .deploy.env logs --since=30m --tail=300 api ai redis
 docker compose --env-file .deploy.env exec -T redis sh -ec \
   'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping; REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli INFO memory | sed -n "1,12p"'
 curl -fsS --max-time 5 http://127.0.0.1:8411/api/health
@@ -203,7 +208,15 @@ tail -n 200 /var/log/nginx/error.log
 1. `docker stats --no-stream`、`free -m`、`df -h` 定位内存/磁盘。
 2. 检查日志、上传 artifact、Docker layers 占用；保留事故证据后再清理。
 3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
-4. 生产 0038 只有 API 容器；0039 第一阶段后另有 128 MiB Redis 容器和持久 volume，AI 仍未部署。先核对当前 release/compose，不要按过时拓扑判断。
+4. 生产 0038 只有 API 容器；0041 候选加入 96MiB Redis 与 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时保持 Materials AI flag 关闭。
+
+### 6.7 Materials AI / 在线考试
+
+1. 先检查 `/api/health` 的 Supabase/Redis 与 `/api/health/ai`，再看 `generation_jobs` 的 queued/stage/lease/attempt/error 和 BullMQ/reconciler；Postgres job 才是事实，不手工在 Redis 补状态。
+2. provider 问题按 purpose/model/request ID/duration/token/cost/ZDR 分层；不得读取或复制文件正文、prompt、答案、signed URL。ZDR unavailable、坏 schema 或安全 uncertain 均保持失败关闭并释放 reservation。
+3. 磁盘/Office 问题检查容器 RSS/swap、cgroup OOM、`/tmp/nalanda-material-ai` orphan 和水位；关闭 flag 后只清理确认超过一小时且不属于 active job 的目录。
+4. 考试问题按 attempt/revision/operation UUID/deadline 对账；Redis 延迟任务丢失时下一次 API 请求必须强制到期提交。评分额度用完保留 `submitted_ungraded`，不能伪造 completed。
+5. 修复后使用无个人数据 fixture 验证一个完整生成、Notes、客观/主观评分、删除与临时目录清理；真实 provider smoke 与 fake Playwright 分开记录。
 
 ### 6.5 Courses / Azure / Course Market
 
@@ -238,7 +251,7 @@ API/AI 后续应输出单行结构化 JSON：
 | `dependency`, `dependency_status`, `retry_count` | Supabase/AI/Redis/Stripe |
 | `route_group`, `rule`, `actor_hmac`, `retry_after_seconds` | 限流聚合；actor 只能是独立 secret 生成的 HMAC，禁止原始 IP/email |
 
-禁止记录：password、Authorization/cookie、Supabase access/refresh token、service-role/JWT secret、Anthropic/Stripe key、数据库连接串、签名 URL、完整课件/笔记/反馈正文、支付卡数据。对 email、文件名、IP 和 user agent 设定用途、采样与保留期。
+禁止记录：password、Authorization/cookie、Supabase access/refresh token、service-role/JWT/OpenRouter/internal token、数据库连接串、签名 URL、完整课件/prompt/模型原始响应/答案/笔记/反馈正文、支付卡数据。对 email、文件名、IP 和 user agent 设定用途、采样与保留期。
 
 Courses 另禁止记录：分享明文 token/token hash、完整词表/翻译、用户 WAV、Azure 原始识别 payload。可记录 route template、稳定 error code、哈希用户、course/session UUID、stage、字节/时长、provider latency、聚合 score 和估算 micro-USD；音素内容只有用户请求内返回和受限学习事实需要时才保存。
 

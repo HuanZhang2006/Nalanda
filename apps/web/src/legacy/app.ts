@@ -9,6 +9,7 @@ import { initCommunity, mountCommunity, mountPost } from "./community";
 import { initSchedule, mountSchedule } from "./schedule";
 import { mountCourses } from "../features/courses/mount";
 import { mountCourseMarket } from "../features/courses/CourseMarket";
+import { mountAiNotes } from "../features/material-ai/mount";
 import { localize, toggleLocale } from "../i18n";
 
 const VIEWS: any = {};
@@ -148,8 +149,13 @@ function go(route, params){
   const c = document.getElementById("content");
   c.scrollTop = 0;
   c.innerHTML = `<div class="view-enter">${VIEWS[route] ? VIEWS[route]() : VIEWS.home()}</div>`;
+  if(route==="notes" || (route==="note" && isUuid(S.noteId))){ requestAnimationFrame(()=>{ const el=document.getElementById("notes-ai-root"); if(el) _islandCleanup=mountAiNotes(el,{
+    userId:_opts.user?.id||"", initialNoteId:route==="note"?S.noteId:undefined, toast,
+    onOpenReal:(id)=>go("note",{noteId:id}), onOpenDemo:(id)=>go("note",{noteId:id}),
+    onBack:()=>go("notes"), onMaterials:()=>go("materials"),
+  }); }); }
   if(route==="note" || route==="create"){ requestAnimationFrame(drawEdges); }
-  if(route==="materials"){ requestAnimationFrame(()=>{ const el=document.getElementById("mat-root"); if(el) mountMaterials(el); }); }
+  if(route==="materials"){ requestAnimationFrame(()=>{ const el=document.getElementById("mat-root"); if(el) _islandCleanup=mountMaterials(el); }); }
   if(route==="feedback"){ requestAnimationFrame(()=>{ const el=document.getElementById("fb-root"); if(el) mountFeedback(el); }); }
   if(route==="profile"){ requestAnimationFrame(()=>{ const el=document.getElementById("profile-root"); if(el) mountProfile(el); }); }
   if(route==="community"){ requestAnimationFrame(()=>{ const el=document.getElementById("comm-root"); if(el) mountCommunity(el); }); }
@@ -250,6 +256,7 @@ function toast(msg, icon){
 
 /* ---------- helpers ---------- */
 function fmt(n){ return n.toLocaleString("en-US"); }
+function isUuid(value){ return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(String(value||"")); }
 function courseById(id){ return DB.courses.find(c=>c.id===id); }
 function av(initials, color, size){ return `<div class="av" style="background:${color};width:${size}px;height:${size}px;font-size:${Math.round(size*0.4)}px">${initials}</div>`; }
 
@@ -297,7 +304,7 @@ export function mountNalanda(container, opts){
     DB.user.levelName = "Novice";
     DB.user.vip = false;
   }
-  initMaterials(_opts.supabase, _opts.user, toast);
+  initMaterials(_opts.supabase, _opts.user, toast, (noteId)=>go("note",{noteId}));
   initNotifications(_opts.supabase, _opts.user, toast);
   initFeedback(_opts.supabase, _opts.user, toast);
   initProfile(_opts.supabase, _opts.user, toast);
@@ -1021,6 +1028,9 @@ VIEWS.feedback = function(){
 };
 
 VIEWS.materials = () => '<div id="mat-root"></div>';
+const legacyNoteView = VIEWS.note;
+VIEWS.notes = () => '<div id="notes-ai-root"></div>';
+VIEWS.note = () => isUuid(S.noteId) ? '<div id="notes-ai-root"></div>' : legacyNoteView();
 VIEWS.courses = () => '<div id="courses-root"></div>';
 VIEWS.feedback = () => '<div id="fb-root"></div>';
 VIEWS.profile = () => '<div id="profile-root"></div>';

@@ -10,7 +10,7 @@
 
 - **生产结构**：生产 0038 为 33 张 `public` 业务/配置表，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
 - **候选结构**：0039 新增 6 张 service-only 表并扩展 `point_event_states`；应用后为 39 张 `public` 表。0040 仅验证，不新增表。
-- **未实现目标**：AI 笔记产物/文件导入、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。points 信号/审核审计是窄治理能力，不等于通用审核台。
+- **未实现目标**：Courses AI 文件导入、除试卷外的 AI 笔记产物、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。Materials AI 试卷候选实体见本文 0041–0043；尚未发布生产。
 
 ## 2. 当前 ERD
 
@@ -497,13 +497,34 @@ erDiagram
 
 `learned_at` 的唯一双考试投影条件、不会写入的事件、编辑撤销矩阵和代码/测试位置统一由 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节维护；ERD 只记录最终结构语义，不能把 `initial_*_passed`、复习日期、单项考试或前端正确状态解释为已学习。
 
+### 3.8 Materials AI、Notes 与在线考试（0041–0043 候选）
+
+| 表 | 关键列 | 约束、关系与事实边界 |
+|---|---|---|
+| `ai_plans` | `code,generation_daily_limit,grading_daily_limit,active,timestamps` | 当前只种子 `free=10/10`；产品计划定义，不是 credits |
+| `ai_user_plans` | `user_id PK→auth.users CASCADE,plan_code,consent_version,consented_at,timestamps` | 现有/新用户都回填 Free；同意按用户和版本持久化 |
+| `ai_daily_usage` | `user_id,local_date,kind,plan_code,limit_count,reserved_count,consumed_count,timezone` | PK `(user_id,local_date,kind)`；`reserved+consumed<=limit`；本地日/时区在 reservation 时冻结 |
+| `generation_jobs` | owner/material/course/name/kind/status/stage/progress/settings/idempotency/fingerprint/consent/quota/lease/models/note/error/timestamps | `(user_id,idempotency_key)` 唯一；每用户至多一个 active；来源删除 SET NULL 但名称保留；lease/reconciler 支持崩溃重投 |
+| `generation_job_events` | `id,job_id,stage,progress,event_code,created_at` | job CASCADE；只保存阶段事实，不保存文件正文或 prompt |
+| `ai_material_parse_cache` | owner/material/source hash/parser/audit/vision versions/`canonical_document`/counts | material CASCADE；同文件+所有策略版本唯一；这是私有持久缓存，不是临时目录 |
+| `notes` | owner/course/job/title/kind/material_name/timestamps | course/job 删除 SET NULL；用户删除 CASCADE；当前 kind 仅 `ai_exam` |
+| `note_materials` | note/material/name/source hash | note CASCADE、material SET NULL；来源删除后仍保留快照名/hash |
+| `note_artifacts` | `note_id PK,schema_version,content,question_count,total_marks,timestamps` | note CASCADE；当前 schema 仅 `generated-exam.v1`；content 含完整答案/rubric，owner 可见 |
+| `exam_attempts` | owner/note/number/status/revision/deadline/scores/grading reservation+lease/timestamps | `(user,note,attempt_number)` 唯一；note/user CASCADE；绝对期限、无限重考、主观评分可延期 |
+| `exam_attempt_answers` | `attempt_id,question_id,answer,awarded_marks,correct,feedback,updated_at` | PK `(attempt,question)`；attempt CASCADE；只由事务 RPC 写 |
+| `exam_attempt_operations` | `attempt_id,operation_id,operation_kind,response_payload,created_at` | PK 保证保存/提交/评分相同 UUID 重放返回第一次响应 |
+| `ai_provider_usage_events` | owner、job XOR attempt、purpose/provider/model/request ID/tokens/cost/duration/ZDR/status/error | 只存计量元数据；不得保存 prompt、正文、答案或原始响应 |
+
+Postgres 是额度、任务、Notes、答卷和成绩的唯一事实源；BullMQ 只持有 UUID，不形成第二套状态。客户端不能直接写任何上述表，也不能执行工作流 RPC。
+
 ## 4. 删除与生命周期规则
 
 | 父实体删除 | 当前结果 |
 |---|---|
 | `auth.users` | 级联删除 profile、资料课程、私有学习课程/会话/尝试/progress/日程/分享、拼写翻译评判事实、本人出版物/举报、badge awards、points 分录/状态/日窗口/claim。speech usage/Courses moderation actor 改为 NULL；points moderation action 保留管理员 UUID，signal owner/reviewer FK 置 NULL 但账户 UUID 数组保留用于安全审计。Storage 文件是否删除不由 FK 保证。 |
-| `courses` | 资料 CASCADE；目标/任务的 `course_id` SET NULL。 |
-| `materials` | 任务的 `material_id` SET NULL；Storage 对象不会由表 FK 自动删除。 |
+| `courses` | 资料 CASCADE；目标/任务和 AI Notes 的 `course_id` SET NULL。0041 应用删除入口先取消 job/清 cache，并按选择将 Notes 移入 Unfiled 或级联删结果。 |
+| `materials` | 任务与 generation job 的 `material_id` SET NULL，解析缓存 CASCADE，note source SET NULL；0041 应用先按 keep/delete 选择编排。Storage 对象不会由 FK 自动删除。 |
+| `notes` | 来源快照、artifact、答卷、答案和 operation CASCADE；generation job 的 note FK SET NULL。 |
 | `study_goals` | 任务的 `goal_id` SET NULL。 |
 | `posts` | 评论/点赞/收藏 CASCADE；引用它的转发帖也 CASCADE；相关 active points 事件会按 trigger 冲正。媒体对象不会自动删除。 |
 | `learning_courses` | 单元、词、会话、尝试、progress、复习日程和源课分享级联；publication 的 source SET NULL，克隆课的 `origin_share_id` 随被删分享 SET NULL。已发 points 分录没有 source FK，不删除；用户徽章也不因删课程回退。 |
@@ -545,8 +566,12 @@ erDiagram
 | `learning_speech_usage`, `learning_course_moderation_actions` | 无客户端读取 | 无 | 无 | 无 |
 | `badge_definitions` | 所有 authenticated | 无 | 无 | 无 |
 | `user_badge_awards` | 本人 | 无 | 无 | 无 |
+| `ai_plans`, `ai_user_plans`, `ai_daily_usage` | active plan / 本人 | 无 | 无 | 无 |
+| `generation_jobs`, `generation_job_events` | 本人（event 经 job） | 无 | 无 | 无 |
+| `ai_material_parse_cache`, `ai_provider_usage_events`, `exam_attempt_operations` | 无客户端读取 | 无 | 无 | 无 |
+| `notes`, `note_materials`, `note_artifacts`, `exam_attempts`, `exam_attempt_answers` | 本人（子表经 owner parent） | 无 | 无 | 无 |
 
-迁移 0008 已修复 Profile 整行更新缺口。0039 候选进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。第一阶段仍保留 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE grant，但值由 trigger 覆盖；观察至少 24 小时后的 0041–0042 才最终撤权。
+迁移 0008 已修复 Profile 整行更新缺口。0039 候选进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。兼容期仍保留 `posts.updated_at` 和 `study_tasks.done_at` 的 UPDATE grant，但值由 trigger 覆盖；观察至少 24 小时后的未来 0044–0045 才最终撤权。0041–0043 只新增 Materials AI。
 
 ## 6. Storage 模型
 
@@ -608,6 +633,11 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `learning_claim_audio_asset`, `learning_finish_audio_asset`, `learning_requeue_audio_asset`, `learning_reserve_tts_quota` | 服务端 worker RPC | 数据库 advisory lock + 单活动租约保证全局单并发，最小 3.1 秒启动间隔、失败退避、Storage 丢失重建和每分钟/月字符/预算 reservation |
 | `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPC | token hash 生命周期和撤销竞态内的事务克隆 |
 | `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPC | 不可变发布版本、免费独立克隆、限频举报与受审计隐藏/恢复 |
+| `_ai_create_user_plan` | Auth user AFTER INSERT | 为新用户幂等建立 Free plan；普通角色无 EXECUTE |
+| `ai_get_quota_summary`, `ai_create/claim/update/complete/fail/cancel_generation_job` | Materials AI service-only RPC | 原子 reservation、lease、stage/event、结果/缓存/usage、consume/release；崩溃租约三次后失败并退款 |
+| `ai_create_exam_attempt`, `ai_save_exam_answers`, `ai_submit_exam_attempt` | Exam service-only RPC | owner/deadline/revision/operation UUID 校验，服务端确定性客观判分与强制到期交卷 |
+| `ai_request/claim/complete/fail_exam_grading` | Grading service-only RPC | 主观题每日 reservation、lease、幂等评分、成功消费/失败释放；三次崩溃恢复为 `submitted_ungraded` |
+| `ai_delete_note`, `ai_delete_material`, `ai_delete_material_course` | 删除编排 service-only RPC | owner 校验、取消任务、清 cache，并按 keep/delete 保留到 Unfiled 或删 AI 结果 |
 
 迁移 0008 已显式撤销内部 helper 的客户端执行权。0039–0040 候选延续 default-deny，只把 owner receipt 授予 authenticated；`review_point_abuse_signal`、`moderate_point_rewards`、扫描和 API 审计 RPC 只授予 service-role，而 service-role 对相应内部事实表只有 SELECT，不能通过 PostgREST 绕过 workflow。它仍不包含内容质量自动判定、自动处罚、申诉 UI 或通用 RBAC。
 
@@ -645,14 +675,16 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `learning_course_shares_one_active_idx(course_id) WHERE active`
 - `learning_course_publications_market_idx(status, created_at DESC)`、`learning_course_publications_author_idx(author_id, created_at DESC)`、author/source/version 条件唯一索引
 - `learning_course_reports_target_idx(publication_id, share_id, status, created_at DESC)`
+- `generation_jobs_user_created_idx(user_id,created_at DESC)`、单用户 active 条件唯一、`generation_jobs_dispatch_idx(status,created_at)`；`generation_job_events_job_idx(job_id,id)`
+- `notes_user_updated_idx(user_id,updated_at DESC)`、`notes_course_idx(course_id,updated_at DESC)`
+- `exam_attempts_user_idx(user_id,created_at DESC)`、未完成 deadline 条件索引；`ai_provider_usage_month_idx(created_at,status)`
 - 主键/唯一约束自动提供的索引：所有单列主键及 likes、favorites、follows、tags 的复合主键。
 
 ## 9. 目标模型（尚不存在）
 
 最终产品至少还需要通过新迁移明确设计以下领域，不能根据蓝图假设已经存在：
 
-- `notes`、结构化知识点、题库、知识图谱、模拟考试与版本；
-- `generation_jobs`、解析结果、AI 模型/提示词版本、失败与重试状态；
+- 结构化知识清单、独立 Quiz、知识图谱及通用版本；首版 `notes/generation_jobs/模拟试卷` 已在 0041–0043 候选实现；
 - 通用笔记市场商品、credits 授权/购买关系、创作者分成；Courses 免费分享/市场快照已存在；
 - credits 钱包账本、余额投影和经过审批的管理员调整；points 账本已存在，但仍需反滥用上限、对账与运营工具；
 - VIP entitlement/订阅、订单、支付 intent、webhook 幂等记录、退款；

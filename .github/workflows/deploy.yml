@@ -65,7 +65,16 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/ai/requirements*.txt
+
       - run: pnpm install --frozen-lockfile
+
+      - name: Install Materials AI test dependencies
+        run: python -m pip install -r apps/ai/requirements-dev.txt
 
       - name: Detect and protect migration changes
         id: migration_changes
@@ -150,6 +159,11 @@ jobs:
           RATE_LIMIT_HMAC_SECRET: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           RUN_REDIS_E2E: "true"
 
+      - name: Materials AI Python lint and tests
+        run: |
+          python -m ruff check apps/ai/app apps/ai/tests
+          python -m pytest apps/ai/tests
+
       - name: Build all workspaces
         run: pnpm build
 
@@ -186,6 +200,30 @@ jobs:
             sleep 1
           done
 
+      - name: Build and boot Materials AI image
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          image=nalanda-ai:ci
+          container=nalanda-ai-ci
+          cleanup() { docker rm -f "$container" >/dev/null 2>&1 || true; }
+          trap cleanup EXIT
+          docker build -f apps/ai/Dockerfile -t "$image" apps/ai
+          docker run -d --name "$container" -p 127.0.0.1:18412:8000 \
+            -e AI_INTERNAL_TOKEN=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+            -e MATERIAL_AI_FAKE_PROVIDER=true \
+            -e MATERIAL_AI_TEMP_MIN_FREE_BYTES=1 \
+            "$image"
+          for attempt in $(seq 1 45); do
+            if payload="$(curl -fsS --max-time 5 http://127.0.0.1:18412/health)" \
+              && python -c 'import json,sys; v=json.load(sys.stdin); assert v["status"] == "ok"; assert v["deps"]["libreoffice"] == "ok"; assert v["fakeProvider"] is True' <<< "$payload"; then
+              docker exec "$container" python -c 'import app.main,app.pipeline,app.parsers,app.openrouter'
+              exit 0
+            fi
+            if [[ "$attempt" == "45" ]]; then docker logs "$container" >&2; exit 1; fi
+            sleep 2
+          done
+
       - name: Validate production compose and nginx rate-limit configuration
         shell: bash
         run: |
@@ -193,11 +231,19 @@ jobs:
           fixture="$RUNNER_TEMP/nalanda-compose"
           mkdir -p "$fixture"
           cp infra/deploy/docker-compose.yml "$fixture/docker-compose.yml"
-          printf 'NALANDA_API_IMAGE=nalanda-api:ci\n' > "$fixture/.deploy.env"
+          printf 'NALANDA_API_IMAGE=nalanda-api:ci\nNALANDA_AI_IMAGE=nalanda-ai:ci\n' > "$fixture/.deploy.env"
           printf 'REDIS_PASSWORD=%064d\n' 0 > "$fixture/.redis.env"
+          {
+            printf 'AI_INTERNAL_TOKEN=%064d\n' 2
+            printf 'OPENROUTER_API_KEY=sk-or-v1-%064d\n' 3
+            printf 'SUPABASE_URL=https://fixture.supabase.co\n'
+            printf 'MATERIAL_AI_FAKE_PROVIDER=false\n'
+          } > "$fixture/.ai.env"
           {
             printf 'REDIS_URL=redis://:%064d@redis:6379/0\n' 0
             printf 'RATE_LIMIT_HMAC_SECRET=%064d\n' 1
+            printf 'AI_SERVICE_URL=http://ai:8000\n'
+            printf 'AI_INTERNAL_TOKEN=%064d\n' 2
           } > "$fixture/.env"
           docker compose --env-file "$fixture/.deploy.env" -f "$fixture/docker-compose.yml" config >/dev/null
           docker run --rm \
@@ -232,7 +278,19 @@ jobs:
           node-version: 20
           cache: pnpm
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/ai/requirements*.txt
+
       - run: pnpm install --frozen-lockfile
+
+      - name: Install Materials AI browser-test runtime
+        run: |
+          python -m pip install -r apps/ai/requirements-dev.txt
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress fonts-dejavu-core fonts-noto-cjk
 
       - uses: supabase/setup-cli@v2
         with:
@@ -395,8 +453,15 @@ jobs:
           FEATURE_PRONUNCIATION_ENABLED=true \
           FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
           FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
+          FEATURE_MATERIAL_AI=true \
           AZURE_SPEECH_FAKE=true \
           OPENROUTER_FAKE=true \
+          MATERIAL_AI_FAKE_PROVIDER=true \
+          MATERIAL_AI_TEMP_MIN_FREE_BYTES=1 \
+          AI_SERVICE_URL=http://127.0.0.1:8000 \
+          AI_CALLBACK_BASE_URL=http://127.0.0.1:3000/api \
+          AI_INTERNAL_TOKEN=cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc \
+          RUN_MATERIAL_AI_PLAYWRIGHT=1 \
           REDIS_URL=redis://127.0.0.1:6379/14 \
           RATE_LIMIT_HMAC_SECRET=bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb \
           POINT_ABUSE_SCANNER_ENABLED=false \
@@ -517,7 +582,10 @@ jobs:
         )
       )
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # The protected Materials AI gate runs several real-model fixtures and a
+    # constrained Office-rendering canary. Keep the job bounded, but do not
+    # terminate a healthy release halfway through those sequential checks.
+    timeout-minutes: 90
     environment:
       name: production
       url: https://nalanda.online
@@ -544,12 +612,17 @@ jobs:
       - name: Build immutable API image
         run: docker build -f infra/hybrid-2g/api.Dockerfile -t "nalanda-api:${GITHUB_SHA}" .
 
+      - name: Build immutable Materials AI image
+        run: docker build -f apps/ai/Dockerfile -t "nalanda-ai:${GITHUB_SHA}" apps/ai
+
       - name: Package artifacts
         run: |
           set -Eeuo pipefail
           docker save "nalanda-api:${GITHUB_SHA}" | gzip > nalanda-api.tar.gz
+          docker save "nalanda-ai:${GITHUB_SHA}" | gzip > nalanda-ai.tar.gz
           tar -C apps/web/dist -czf web.tgz .
           gzip -t nalanda-api.tar.gz
+          gzip -t nalanda-ai.tar.gz
           tar -tzf web.tgz >/dev/null
 
       - name: Validate and install SSH trust
@@ -581,13 +654,17 @@ jobs:
           ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
             "$SERVER_USER@$SERVER_HOST" "install -d -m 700 /opt/nalanda/incoming/${GITHUB_SHA}"
           scp -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
-            nalanda-api.tar.gz web.tgz infra/deploy/docker-compose.yml \
+            nalanda-api.tar.gz nalanda-ai.tar.gz web.tgz infra/deploy/docker-compose.yml \
             infra/deploy/nginx-rate-limit.conf \
             scripts/smoke-azure-speech.mjs scripts/smoke-learning-audio-production.mjs \
             scripts/learning-audio-smoke-lib.mjs \
             scripts/smoke-openrouter-translation.mjs \
             scripts/openrouter-translation-smoke-lib.mjs \
+            scripts/smoke-material-ai-provider.py \
+            scripts/smoke-material-ai-production.mjs \
+            scripts/material-ai-resource-canary.py \
             scripts/install-production-openrouter-env.sh \
+            scripts/install-production-material-ai-env.sh \
             scripts/install-production-security-env.sh \
             scripts/install-production-nginx-rate-limits.sh \
             "$SERVER_USER@$SERVER_HOST:/opt/nalanda/incoming/${GITHUB_SHA}/"
@@ -607,6 +684,21 @@ jobs:
             ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
               "$SERVER_USER@$SERVER_HOST" \
               "bash /opt/nalanda/incoming/${GITHUB_SHA}/install-production-openrouter-env.sh /opt/nalanda"
+
+      - name: Install the isolated Materials AI runtime configuration
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+          AI_INTERNAL_TOKEN: ${{ secrets.AI_INTERNAL_TOKEN }}
+        run: |
+          set -Eeuo pipefail
+          [[ -n "$OPENROUTER_API_KEY" ]] || { echo "Missing protected input: OPENROUTER_API_KEY" >&2; exit 2; }
+          [[ "$AI_INTERNAL_TOKEN" =~ ^[0-9a-fA-F]{64}$ ]] || { echo "Missing or invalid protected input: AI_INTERNAL_TOKEN" >&2; exit 2; }
+          printf '%s\n%s\n' "$OPENROUTER_API_KEY" "$AI_INTERNAL_TOKEN" |
+            ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+              "$SERVER_USER@$SERVER_HOST" \
+              "bash /opt/nalanda/incoming/${GITHUB_SHA}/install-production-material-ai-env.sh /opt/nalanda"
 
       - name: Install protected Redis and rate-limit runtime secrets
         env:
@@ -636,7 +728,7 @@ jobs:
           RELEASE_ID: ${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
         run: |
           set -Eeuo pipefail
-          ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+          ssh -o BatchMode=yes -o ConnectTimeout=15 -o ServerAliveInterval=30 -o ServerAliveCountMax=6 -i ~/.ssh/id_ed25519 \
             "$SERVER_USER@$SERVER_HOST" bash -se -- "$GITHUB_SHA" "$RELEASE_ID" "$PUBLIC_ORIGIN" <<'REMOTE'
           set -Eeuo pipefail
 
@@ -649,6 +741,7 @@ jobs:
           next_compose="$root/docker-compose.yml.next-$release_id"
           next_env="$root/.deploy.env.next-$release_id"
           previous_compose="$incoming/docker-compose.previous.yml"
+          previous_deploy_env="$incoming/deploy.previous.env"
 
           assert_api_health() {
             local endpoint="$1"
@@ -676,6 +769,20 @@ jobs:
           value = json.load(sys.stdin)
           assert value.get("status") == "ok"
           assert value.get("service") == "nalanda-api"
+          ' <<< "$payload"
+          }
+
+          assert_ai_health() {
+            local endpoint="$1"
+            local payload
+            payload="$(curl -fsS --max-time 10 "$endpoint")" || return 1
+            python3 -c '
+          import json, sys
+          value = json.load(sys.stdin)
+          assert value.get("status") == "ok"
+          assert value.get("service") == "nalanda-materials-ai"
+          assert value.get("deps", {}).get("worker") == "ok"
+          assert value.get("deps", {}).get("queue") == "configured"
           ' <<< "$payload"
           }
 
@@ -727,9 +834,22 @@ jobs:
           if [[ -n "$current_container" ]]; then
             previous_image="$(docker inspect --format '{{.Config.Image}}' "$current_container")"
           fi
+          current_ai_container="$(
+            docker ps -aq \
+              --filter label=com.docker.compose.project=nalanda \
+              --filter label=com.docker.compose.service=ai \
+              | head -n 1
+          )"
+          previous_ai_image=""
+          if [[ -n "$current_ai_container" ]]; then
+            previous_ai_image="$(docker inspect --format '{{.Config.Image}}' "$current_ai_container")"
+          fi
 
           if [[ -f "$root/docker-compose.yml" ]]; then
             cp "$root/docker-compose.yml" "$previous_compose"
+          fi
+          if [[ -f "$root/.deploy.env" ]]; then
+            cp "$root/.deploy.env" "$previous_deploy_env"
           fi
           previous_web=""
           if [[ -L "$root/web" ]]; then
@@ -746,6 +866,17 @@ jobs:
             local reason="$1"
             echo "Application release failed: $reason" >&2
 
+            # Never leave a failed candidate publicly enabled. Older releases
+            # ignore this flag; newer previous releases resume only after a
+            # fresh protected activation.
+            if [[ -f "$root/.env" ]]; then
+              rollback_api_env="$(mktemp "$root/.env.rollback.XXXXXX")"
+              awk '!/^FEATURE_MATERIAL_AI=/' "$root/.env" > "$rollback_api_env"
+              printf 'FEATURE_MATERIAL_AI=false\n' >> "$rollback_api_env"
+              chmod 600 "$rollback_api_env"
+              mv "$rollback_api_env" "$root/.env"
+            fi
+
             if [[ -n "$previous_web" && -d "$previous_web" ]]; then
               rm -f "$root/web.rollback"
               ln -s "$previous_web" "$root/web.rollback"
@@ -753,12 +884,21 @@ jobs:
             fi
 
             if [[ -n "$previous_image" && -f "$previous_compose" ]]; then
-              printf 'NALANDA_API_IMAGE=%s\n' "$previous_image" > "$root/.deploy.env.rollback"
+              if [[ -f "$previous_deploy_env" ]]; then
+                cp "$previous_deploy_env" "$root/.deploy.env.rollback"
+              else
+                printf 'NALANDA_API_IMAGE=%s\nNALANDA_AI_IMAGE=%s\n' \
+                  "$previous_image" "${previous_ai_image:-nalanda-ai:$sha}" > "$root/.deploy.env.rollback"
+              fi
               cp "$previous_compose" "$root/docker-compose.yml.rollback"
-              docker compose \
-                --env-file "$root/.deploy.env.rollback" \
-                -f "$root/docker-compose.yml.rollback" \
-                up -d --force-recreate api
+              if docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" config --services | grep -qx ai; then
+                docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" \
+                  up -d --force-recreate redis ai api
+              else
+                docker compose --env-file "$next_env" -f "$next_compose" stop ai >/dev/null 2>&1 || true
+                docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" \
+                  up -d --force-recreate redis api
+              fi
               mv "$root/docker-compose.yml.rollback" "$root/docker-compose.yml"
               mv "$root/.deploy.env.rollback" "$root/.deploy.env"
               wait_for_api http://127.0.0.1:8411/api/health assert_api_process_health || {
@@ -769,7 +909,7 @@ jobs:
                 echo "Previous API failed auth guard verification; manual intervention required." >&2
                 return 1
               }
-              echo "Previous Web/API release restored."
+              echo "Previous Web/API release restored; Materials AI remains closed pending a new protected gate."
               return 0
             fi
 
@@ -778,6 +918,7 @@ jobs:
           }
 
           [[ -s "$incoming/nalanda-api.tar.gz" ]]
+          [[ -s "$incoming/nalanda-ai.tar.gz" ]]
           [[ -s "$incoming/web.tgz" ]]
           [[ -s "$incoming/docker-compose.yml" ]]
           [[ -s "$incoming/nginx-rate-limit.conf" ]]
@@ -786,17 +927,23 @@ jobs:
           [[ -s "$incoming/learning-audio-smoke-lib.mjs" ]]
           [[ -s "$incoming/smoke-openrouter-translation.mjs" ]]
           [[ -s "$incoming/openrouter-translation-smoke-lib.mjs" ]]
+          [[ -s "$incoming/smoke-material-ai-provider.py" ]]
+          [[ -s "$incoming/smoke-material-ai-production.mjs" ]]
+          [[ -s "$incoming/material-ai-resource-canary.py" ]]
           [[ -s "$incoming/install-production-openrouter-env.sh" ]]
+          [[ -s "$incoming/install-production-material-ai-env.sh" ]]
           [[ -s "$incoming/install-production-security-env.sh" ]]
           [[ -s "$incoming/install-production-nginx-rate-limits.sh" ]]
           gzip -t "$incoming/nalanda-api.tar.gz"
+          gzip -t "$incoming/nalanda-ai.tar.gz"
           tar -tzf "$incoming/web.tgz" >/dev/null
 
           mkdir -p "$release/web"
           tar -C "$release/web" -xzf "$incoming/web.tgz"
           cp "$incoming/docker-compose.yml" "$next_compose"
-          printf 'NALANDA_API_IMAGE=nalanda-api:%s\n' "$sha" > "$next_env"
+          printf 'NALANDA_API_IMAGE=nalanda-api:%s\nNALANDA_AI_IMAGE=nalanda-ai:%s\n' "$sha" "$sha" > "$next_env"
           gunzip -c "$incoming/nalanda-api.tar.gz" | docker load
+          gunzip -c "$incoming/nalanda-ai.tar.gz" | docker load
 
           # Redis starts before the new API and remains available across an
           # application rollback. It has no published host port, requires a
@@ -815,14 +962,112 @@ jobs:
           done
           [[ "$redis_healthy" == true ]] || {
             docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 redis || true
-            echo "Redis failed protected startup" >&2
+            rollback_application "Redis failed protected startup" || true
             exit 1
           }
           [[ -z "$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$redis_container" | grep -o 'HostPort' || true)" ]]
-          docker compose --env-file "$next_env" -f "$next_compose" exec -T redis sh -ec \
-            'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -qx PONG; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET appendonly | tail -n1)" = yes; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory-policy | tail -n1)" = noeviction' \
-            </dev/null
-          echo "Redis protected startup verified (PING, AOF, private port, noeviction)."
+          if ! docker compose --env-file "$next_env" -f "$next_compose" exec -T redis sh -ec \
+            'REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli ping | grep -qx PONG; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET appendonly | tail -n1)" = yes; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory | tail -n1)" = 50331648; test "$(REDISCLI_AUTH="$REDIS_PASSWORD" redis-cli CONFIG GET maxmemory-policy | tail -n1)" = noeviction' \
+            </dev/null; then
+            rollback_application "Redis persistence or memory-policy verification failed" || true
+            exit 1
+          fi
+          echo "Redis protected startup verified (PING, AOF, 48 MB/noeviction, private port)."
+
+          # A deterministic near-limit DOCX render runs in a one-off container
+          # with the same production cgroup ceilings and no network/provider.
+          # Kernel OOM, excessive swap growth, temp overflow, or an unhealthy
+          # neighboring public service leaves the feature closed.
+          assert_api_process_health "$public_origin/api/health"
+          swap_before="$(free -b | awk '/^Swap:/ {print $3}')"
+          canary_output="$(docker run --rm \
+            --network none \
+            --memory 640m --memory-swap 896m --cpus 0.75 --pids-limit 128 \
+            -e MATERIAL_AI_TEMP_MIN_FREE_BYTES=1 \
+            -e MATERIAL_AI_JOB_TEMP_LIMIT_BYTES=1073741824 \
+            -e MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS=180 \
+            --entrypoint python \
+            -v "$incoming/material-ai-resource-canary.py:/tmp/material-ai-resource-canary.py:ro" \
+            "nalanda-ai:$sha" /tmp/material-ai-resource-canary.py)" || {
+              rollback_application "near-limit Materials AI resource canary failed" || true
+              exit 1
+            }
+          python3 -c '
+          import json, sys
+          value=json.load(sys.stdin)
+          assert value.get("ok") is True
+          assert value.get("pages", 0) >= 200
+          assert 300000 <= value.get("characters", 0) <= 400000
+          assert value.get("tempBytes", 0) < 1073741824
+          assert value.get("processPeakRssBytes", 0) < 640 * 1024 * 1024
+          assert value.get("childPeakRssBytes", 0) < 640 * 1024 * 1024
+          ' <<< "$canary_output" || {
+              rollback_application "Materials AI resource canary metrics exceeded limits" || true
+              exit 1
+            }
+          swap_after="$(free -b | awk '/^Swap:/ {print $3}')"
+          if (( swap_after > swap_before + 268435456 )); then
+            rollback_application "Materials AI canary increased host swap by more than 256 MB" || true
+            exit 1
+          fi
+          assert_api_process_health "$public_origin/api/health" || {
+            rollback_application "neighboring production API failed after Materials AI resource canary" || true
+            exit 1
+          }
+          echo "Materials AI resource canary: $canary_output"
+
+          # Start the internal worker while FEATURE_MATERIAL_AI remains false.
+          # It has no published port and receives only its least-privilege env.
+          if ! docker compose --env-file "$next_env" -f "$next_compose" up -d --force-recreate ai; then
+            rollback_application "Materials AI worker startup failed" || true
+            exit 1
+          fi
+          ai_healthy=false
+          for attempt in $(seq 1 30); do
+            ai_container="$(docker compose --env-file "$next_env" -f "$next_compose" ps -q ai)"
+            if [[ -n "$ai_container" ]] \
+              && [[ "$(docker inspect --format '{{.State.Health.Status}}' "$ai_container")" == "healthy" ]]; then
+              ai_healthy=true
+              break
+            fi
+            sleep 3
+          done
+          [[ "$ai_healthy" == true ]] || {
+            docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 ai || true
+            rollback_application "Materials AI worker readiness failed" || true
+            exit 1
+          }
+          [[ -z "$(docker inspect --format '{{json .NetworkSettings.Ports}}' "$ai_container" | grep -o 'HostPort' || true)" ]]
+          python3 - "$ai_container" <<'PY'
+          import json, subprocess, sys
+          value=json.loads(subprocess.check_output(["docker", "inspect", sys.argv[1]]))[0]["HostConfig"]
+          assert value["Memory"] == 640 * 1024 * 1024
+          assert value["MemorySwap"] == 896 * 1024 * 1024
+          assert value["NanoCpus"] == 750000000
+          assert value["PidsLimit"] == 128
+          PY
+
+          # Fixed real-provider fixtures prove text parsing, full Office
+          # rendering, single-range MiMo recovery, strict DeepSeek output,
+          # injection refusal, educational-security allowance, and grading.
+          docker rm -f nalanda-material-ai-smoke >/dev/null 2>&1 || true
+          if ! docker run --rm --name nalanda-material-ai-smoke \
+            --network nalanda_default \
+            --env-file "$root/.env" \
+            --env-file "$root/.ai.env" \
+            -e MATERIAL_AI_WORKER_URL=http://ai:8000 \
+            -e MATERIAL_AI_SMOKE_CALLBACK_HOST=nalanda-material-ai-smoke \
+            --entrypoint python \
+            -v "$incoming/smoke-material-ai-provider.py:/tmp/smoke-material-ai-provider.py:ro" \
+            "nalanda-ai:$sha" /tmp/smoke-material-ai-provider.py; then
+            rollback_application "real Materials AI provider gate failed" || true
+            exit 1
+          fi
+          if docker compose --env-file "$next_env" -f "$next_compose" exec -T ai \
+            sh -ec 'find /tmp/nalanda-material-ai -mindepth 1 -maxdepth 1 -type d -name "job-*" -print -quit | grep -q .'; then
+            rollback_application "Materials AI temporary job directory was not cleaned" || true
+            exit 1
+          fi
 
           bash "$incoming/install-production-nginx-rate-limits.sh" \
             "$incoming/nginx-rate-limit.conf" /etc/nginx/sites-available/nalanda
@@ -835,7 +1080,7 @@ jobs:
             --entrypoint node \
             -v "$incoming/smoke-azure-speech.mjs:/tmp/smoke-azure-speech.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-azure-speech.mjs; then
-            echo "Real Azure Speech smoke failed; the new release was not activated." >&2
+            rollback_application "real Azure Speech smoke failed" || true
             exit 1
           fi
 
@@ -848,7 +1093,7 @@ jobs:
             -v "$incoming/smoke-openrouter-translation.mjs:/tmp/smoke-openrouter-translation.mjs:ro" \
             -v "$incoming/openrouter-translation-smoke-lib.mjs:/tmp/openrouter-translation-smoke-lib.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-openrouter-translation.mjs; then
-            echo "Real OpenRouter translation smoke failed; the new release was not activated." >&2
+            rollback_application "real OpenRouter translation smoke failed" || true
             exit 1
           fi
 
@@ -859,6 +1104,15 @@ jobs:
           if ! wait_for_api http://127.0.0.1:8411/api/health; then
             docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 api || true
             rollback_application "local API health check failed" || true
+            exit 1
+          fi
+          if [[ "$(docker compose --env-file "$next_env" -f "$next_compose" exec -T api printenv FEATURE_MATERIAL_AI)" != "false" ]]; then
+            rollback_application "Materials AI candidate did not start behind its closed feature flag" || true
+            exit 1
+          fi
+          if ! assert_ai_health http://127.0.0.1:8411/api/health/ai; then
+            docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 ai api || true
+            rollback_application "API-to-worker readiness failed" || true
             exit 1
           fi
           if ! assert_auth_guard http://127.0.0.1:8411/api/me; then
@@ -873,6 +1127,27 @@ jobs:
             rollback_application "local rate-limit header smoke check failed" || true
             exit 1
           fi
+
+          # All private gates passed. Flip only the reviewed feature flag and
+          # recreate the API so no request observes a half-updated process.
+          enabled_env="$(mktemp "$root/.env.material-ai-enabled.XXXXXX")"
+          awk '!/^FEATURE_MATERIAL_AI=/' "$root/.env" > "$enabled_env"
+          printf 'FEATURE_MATERIAL_AI=true\n' >> "$enabled_env"
+          chmod 600 "$enabled_env"
+          mv "$enabled_env" "$root/.env"
+          if ! docker compose --env-file "$next_env" -f "$next_compose" up -d --force-recreate api; then
+            rollback_application "Materials AI feature activation failed" || true
+            exit 1
+          fi
+          if ! wait_for_api http://127.0.0.1:8411/api/health \
+            || ! assert_ai_health http://127.0.0.1:8411/api/health/ai; then
+            rollback_application "API was unhealthy after Materials AI activation" || true
+            exit 1
+          fi
+          if [[ "$(docker compose --env-file "$next_env" -f "$next_compose" exec -T api printenv FEATURE_MATERIAL_AI)" != "true" ]]; then
+            rollback_application "Materials AI feature flag was not active" || true
+            exit 1
+          fi
           if ! docker run --rm \
             --network host \
             --env-file "$root/.env" \
@@ -882,6 +1157,22 @@ jobs:
             -v "$incoming/learning-audio-smoke-lib.mjs:/tmp/learning-audio-smoke-lib.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-learning-audio-production.mjs; then
             rollback_application "real queued audio/Storage/assessment gate failed" || true
+            exit 1
+          fi
+          if ! docker run --rm \
+            --network host \
+            --env-file "$root/.env" \
+            --env-file "$root/.ai.env" \
+            -e SMOKE_API_ORIGIN=http://127.0.0.1:8411/api \
+            --entrypoint node \
+            -v "$incoming/smoke-material-ai-production.mjs:/tmp/smoke-material-ai-production.mjs:ro" \
+            "nalanda-api:$sha" /tmp/smoke-material-ai-production.mjs; then
+            rollback_application "authenticated Materials AI queue/Notes/exam gate failed" || true
+            exit 1
+          fi
+          if docker compose --env-file "$next_env" -f "$next_compose" exec -T ai \
+            sh -ec 'find /tmp/nalanda-material-ai -mindepth 1 -maxdepth 1 -type d -name "job-*" -print -quit | grep -q .'; then
+            rollback_application "Materials AI full-chain temporary files were not cleaned" || true
             exit 1
           fi
 
@@ -900,6 +1191,7 @@ jobs:
           for attempt in $(seq 1 15); do
             web_payload="$(curl -fsS --max-time 10 "$public_origin/" || true)"
             if assert_api_health "$public_origin/api/health" \
+              && assert_ai_health "$public_origin/api/health/ai" \
               && assert_auth_guard "$public_origin/api/me" \
               && assert_auth_guard "$public_origin/api/admin/points/abuse-signals" \
               && grep -q '<div id="root"></div>' <<< "$web_payload"; then

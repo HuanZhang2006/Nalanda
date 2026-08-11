@@ -20,7 +20,7 @@
 | 模块 | 状态 | 说明 / 接真后端要补 |
 |---|---|---|
 | **Home 首页** | 🟡 mock | 仪表盘（欢迎语/统计卡/课程进度/最近笔记/动态）；可接真实「今日任务 + 积分 + 最近活动」 |
-| **Notes 笔记库 + 详情** | 🟡 mock | 4 Tab（知识清单/测验/图谱/试卷）；依赖 **AI 生成**：notes/generated_note/knowledge_point/quiz… 表 + AI 微服务 |
+| **Notes 笔记库 + 详情** | 🟡 混合 | 0041 候选已有 Materials 真实试卷、在线考试和历史；旧硬数据保留为 Demo。知识清单/独立测验/图谱仍 mock |
 | **Create 创作流** | 🟡 mock | 选资料 → 勾产物 → 生成；接 Materials 资料 → AI 微服务异步生成 → 落库 |
 | **Market / Note Market** | 🟡 mock | 笔记卡片/购买弹窗；未来依赖上架/购买、credits 账本和创作者分成 |
 | **Market / Course Market** | ✅ 生产真后端 | 英语词表不可变版本、举报、免费克隆；不接 credits/支付，见 [11](11-learning-courses.md) |
@@ -31,7 +31,7 @@
 | Profile / 通知 / 反馈 | ✅ 真后端 | 见 [08](08-notifications-feedback-profile.md) |
 
 ## 3. 数据形状已为接入铺路
-Courses 契约已由 `packages/types` 在 Web/API 共用；但 `legacy/data.ts` 的 **AI 生成 mock** 与 Python/共享 AI 类型仍未对齐。接 Notes/Create 前仍需解决图谱布局和 `materialId/material_id` 等差异。
+Courses 与 `GeneratedExamV1`/job/quota/Notes/Exam 契约已由 `packages/types` 在 Web/API 共用，并与 FastAPI strict camelCase 对齐。`legacy/data.ts` 的 Knowledge/Quiz/Graph mock 仍是独立 Demo 短字段；接真时必须另定契约和布局，不能复用试卷结果冒充完成。
 
 ## 4. 升级范式（照 Materials 做）
 每个模块从 mock → 真后端走同一套路（详见 [06](06-materials.md) 与 [04](04-frontend-and-prototype-port.md)）：
@@ -42,6 +42,6 @@ Courses 契约已由 `packages/types` 在 Web/API 共用；但 `legacy/data.ts` 
 5. push → 自动部署。
 
 ## 5. 剩余优先级
-1. **AI 笔记生成**（Create + Notes）：核心，接 AI 微服务产出知识清单/测验/图谱/试卷（先处理上游 [ExamPass-Assistant](https://github.com/WUBING2023/ExamPass-Assistant) 的 CC BY-NC 授权）。
+1. **完成 Materials 试卷候选发布与质量观察**；随后开放知识清单/Quiz/知识图谱和 Notes 编辑/导出。当前实现为干净自研，不复制 CC BY-NC 参考代码。
 2. **Home 首页**接真数据（今日任务 / 积分 / 最近活动），把各模块串到首屏。
 3. **笔记市场 + 钱包/支付**（依赖 Stripe，放最后）。

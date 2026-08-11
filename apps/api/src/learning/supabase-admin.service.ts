@@ -122,4 +122,33 @@ export class SupabaseAdminService {
     }).catch(() => null);
     if (!response?.ok) throw new SupabaseRequestError("Storage upload failed", response?.status || 503, null);
   }
+
+  async storageCreateSignedUrl(bucket: string, path: string, expiresIn = 900): Promise<string> {
+    const { url, key } = this.config();
+    const response = await fetch(`${url}/storage/v1/object/sign/${bucket}/${path}`, {
+      method: "POST",
+      headers: {
+        apikey: key,
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ expiresIn }),
+    }).catch(() => null);
+    if (!response?.ok) throw new SupabaseRequestError("Storage signing failed", response?.status || 503, null);
+    const body = await response.json() as { signedURL?: string; signedUrl?: string };
+    const signed = body.signedURL || body.signedUrl;
+    if (!signed) throw new SupabaseRequestError("Storage did not return a signed URL", 502, body);
+    return new URL(signed, `${url}/storage/v1/`).toString();
+  }
+
+  async storageDelete(bucket: string, paths: string[]): Promise<void> {
+    if (!paths.length) return;
+    const { url, key } = this.config();
+    const response = await fetch(`${url}/storage/v1/object/${bucket}`, {
+      method: "DELETE",
+      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ prefixes: paths }),
+    }).catch(() => null);
+    if (!response?.ok) throw new SupabaseRequestError("Storage delete failed", response?.status || 503, null);
+  }
 }

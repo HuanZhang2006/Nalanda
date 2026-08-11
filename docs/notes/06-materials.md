@@ -82,5 +82,12 @@ and exists (select 1 from public.courses c
 
 ## 8. 扩展点
 - 列表分页 / 搜索 / 排序；更稳定的 PDF.js / Office 服务端转图。
-- 作为 **AI 笔记生成**的输入（下一个大模块）：拿 `storage_path` 让 AI 微服务读取解析。
 - 上传大小限制、类型白名单、进度条。
+
+### 8.1 Materials AI 试卷候选（0041–0043）
+
+每行新增 “Use AI” 二级菜单；Generate test paper 可配置语言、难度、15–240 分钟、20–200 分、六类题型、答案详略和 focus，其余 Knowledge list/Quiz/Knowledge graph 显示 Coming soon。首次按用户记录第三方/ZDR/私有 parse cache 同意。
+
+API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/图片10MB，再创建短期 signed URL与 Postgres job/quota reservation；BullMQ 只投 UUID，FastAPI 解析并回调进度。页面每2秒轮询，后台退避到10秒，离开/刷新不取消。成功试卷落在同一 `courses.id` 的 My Notes；删除材料/科目可保留到 Unfiled 或同时删除 AI 结果，两者都取消任务、清 parse cache和过程文件。
+
+生产仍为 0038，必须等真实 provider/资源/发布门禁后才可称为上线。Storage 文件删除是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。

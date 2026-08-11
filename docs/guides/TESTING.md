@@ -19,8 +19,8 @@
 | Redis 集成 | 真实 Redis 7.4 验证 Lua 滑动窗口并发原子性、过期和 token lock；未显式开启时只跳过这两项，不得称为 Redis E2E | 本地/CI Redis | `RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 RATE_LIMIT_HMAC_SECRET=<32+ bytes> pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | OpenRouter 供应商 smoke | 文本脚本验证 structured 语义判分；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应 | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
-| FastAPI 自动测试 | 尚无 pytest/test client 套件 | — | 无 |
-| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest，对一次性 Supabase + Azure/OpenRouter fake 运行 Courses、弱网 outbox、Cache Storage、限时拼写、翻译前测、语音回填和实时波形流程 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
+| FastAPI 自动测试 | ruff + pytest 覆盖格式解析、DocumentIR、失败范围视觉恢复、注入、schema、清理和 internal auth | 否；provider fake | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
+| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest/FastAPI，对一次性 Supabase + 真 Redis + provider fake 运行 Courses 与 Materials→生成→Notes→考试→评分→删除 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
 重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；只有启用 `RUN_REDIS_E2E=true` 的两项测试会连接真实 Redis；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest、本地 Supabase 和真实 Redis，但 Azure/OpenRouter 都是 fake。真实 provider smoke 证明当前 key/model/endpoint/structured response，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
 
@@ -78,6 +78,9 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、9 个导航模块、Create、退出、resize listener 重挂与跨账号清理 |
 | `apps/web/src/legacy/account-modules.test.ts` | 通知未读/已读、错误处理、反馈提交、Profile 加载/编辑/壳同步 |
 | `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功 |
+| `apps/web/src/features/material-ai/NotesView.test.tsx` | Demo/真实 Notes 分组、Materials course 同步、考试 deadline、500ms 草稿、未同步阻止提交、到期 fallback、评分与删除 |
+| `apps/web/src/features/material-ai/examDraftStore.test.ts` | IndexedDB 草稿按 user/attempt 隔离与清理 |
+| `apps/web/src/features/material-ai/errorText.test.ts` | 稳定 AI/provider/security error code 的统一中英文显示 |
 | `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
 | `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
 | `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
@@ -208,7 +211,7 @@ git check-ignore .env.rls.local
 - 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；0009 根据 2026-07-21 产品/安全决定追加等额 reversal 归零。自动测试证明迁移与冲正语义，但生产发布仍须保存聚合审计和处置记录；
 - `community-media` public bucket 的写/删/对象清理；
 - 账号删除后的全部 Storage 孤儿与隐私删除流程；
-- 0039–0040 目前是仓库候选，尚未完成生产第一阶段发布和 24 小时观察；0041–0042 contract grant 撤销不得提前执行；
+- 0039–0040 目前是仓库候选，尚未完成生产发布和 24 小时观察；未来 0044–0045 contract grant 撤销不得提前执行，0041–0043 是独立的 additive Materials AI 候选；
 - 协同检测只覆盖已锁定的四类阈值并且只标记，不包含内容语义垃圾识别、自动处罚、完整审核后台或跨站设备图谱；跨午夜行为由数据库冻结窗口设计和迁移断言约束，仍需托管 staging 的可控时钟演练；
 - Redis 集成在本机未安装 Redis 时会明确 skip；只有 CI 中的真实 Redis service 能提供该层证据。普通 answer 的并发/超时重放已覆盖，但 recognition、旧模块写入、进程崩溃窗口和长时间 session 仍需持续扩展；
 - 真实 Azure 账号、音频供应商网络、浏览器麦克风权限与实际发音质量；自动测试只使用 adapter fake/固定 WAV。
@@ -343,24 +346,25 @@ curl -i http://localhost:3000/api/me
 
 第二条应返回 `401`，验证 endpoint 没有匿名放行。带真实开发用户 token 的 `/api/me` 验证见 [API 文档](./API.md)，token 不得写入日志/脚本。
 
-AI 语法和本地 smoke：
+Materials AI Python 门禁：
 
 ```bash
-python3 -m compileall -q apps/ai/app
+cd apps/ai
+.venv/bin/ruff check app tests
+.venv/bin/pytest -q
 ```
 
-启动 `uvicorn` 后：
+当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG、页/块引用、Office 全量渲染、只对失败 slide/region 做视觉补全、加密 PDF、损坏/zip bomb、字符/临时空间上限、外链图片不抓取、malicious/uncertain 拒绝、benign educational、schema/引用验证、finally 与 orphan 清理。它使用 fake OpenRouter，不证明真实模型质量。
+
+启动带开发配置的 `uvicorn` 后：
 
 ```bash
 curl -fsS http://localhost:8000/health
-curl -fsS http://localhost:8000/generate/quiz \
-  -H 'Content-Type: application/json' \
-  --data '{"material_id":"test","text":"fixture","lang":"zh"}'
 ```
 
-当前固定桩响应只能证明 schema/route 可调用，不证明解析、Claude、质量或成本。
+内部生成/评分路由需要 token、短期 Storage URL 和回调，不提供无认证 curl 示例，避免泄漏。真实固定 fixture gate 使用 `python3 scripts/smoke-material-ai-provider.py`，必须由受保护环境提供 OpenRouter 与临时 Supabase fixture；它不等于浏览器/RLS E2E。
 
-API 测试覆盖受保护路由缺 bearer 拒绝、HS256 issuer/audience、readiness、Courses public 脱敏/owner、单 snapshot 映射、attempt 幂等响应/409 envelope、音频队列 claim/生成/Storage 恢复、输入指纹、CMUdict、WAV 格式/2 MB/8 秒、Azure phoneme 映射和 provider timeout 不记 attempt。真实 JWKS 网络拉取与轮换仍由一次性 Supabase/线上登录 smoke 承担。该层使用 fake DB/fetch，不证明 Nest HTTP multipart、真实 PostgREST、数据库锁或 Azure endpoint。
+API 测试另覆盖 AI 鉴权/owner/格式、idempotency、quota reserve/consume/release、Redis 投递丢失后重投、预算/ZDR/坏响应、objective grading、deadline、revision/operation replay 和三次 lease 恢复。`RUN_REDIS_E2E=true` 时 `ai-queue.service.integration.test.ts` 用真实 BullMQ/Redis 验证 UUID execution/reconcile；默认 skip 不算真实 Redis 证据。fake DB/fetch 仍不证明真实 PostgREST 锁、RLS 或 provider。
 
 ## 8. 文档测试
 
@@ -387,6 +391,8 @@ pnpm typecheck
 RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 \
   RATE_LIMIT_HMAC_SECRET=<CI fixture secret> pnpm test
 pnpm build
+cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q
+docker build -f apps/ai/Dockerfile apps/ai
 supabase start
 # 先运行上文 0007→latest seed / migration up / assert
 supabase db reset --local --no-seed  # 再验证完整空库重建
@@ -399,11 +405,12 @@ pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + 真实 CI Redis 
 
 质量与数据库 job 都使用独立 Redis 7.4 service。质量 job 执行真实 Lua 集成；浏览器 job 把真实 Redis URL 注入候选 Nest API。compose/nginx 校验还会确认 Redis 无宿主机端口、密码/AOF/noeviction 配置可解析，并执行 `nginx -t`；实际 PING/AOF/私有网络检查属于受保护生产激活门禁。
 
-真实供应商 smoke 必须显式加载只含后端配置、已被 Git 忽略且权限为 600 的文件；脚本拒绝 `AZURE_SPEECH_FAKE=true`，不会打印 key 或完整供应商响应：
+真实供应商 smoke 必须显式加载只含后端配置、已被 Git 忽略且权限为 600 的文件；脚本拒绝 fake，不会打印 key、文件正文、prompt、答案或完整响应：
 
 ```bash
 node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
 node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
+python3 scripts/smoke-material-ai-provider.py
 ```
 
 `pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite 仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布先运行基础真实 Azure 和真实 OpenRouter structured smoke；新 API readiness/auth 通过后，再由 `scripts/smoke-learning-audio-production.mjs` 创建临时用户，验证首次队列生成、private Storage、第二用户重复词零新增 claim、未经 VAD/静音裁剪的固定 WAV 原字节评分，以及真实 Courses API 的规范化完全匹配、同 UUID 重放和权威拼写提交，清理成功后才切 Web symlink。非字面语义由前一个真实 OpenRouter smoke 单独验证；CI fake 不能代替该结果，真实 provider gate 也不能代替 RLS/Playwright。
@@ -435,7 +442,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Web/legacy UI | typecheck + 相关 jsdom + 全部 `pnpm test` + build |
 | Supabase query shape | jsdom + disposable project RLS E2E |
 | Migration/RLS/trigger/function | 空项目全迁移 + 相关旧版本→新版本升级夹具 + lint + RLS E2E + 发布前备份 |
-| 帖子/Feedback/Schedule/points 安全 | 0007→0039/0040 + 空库 + exact grants + 双用户 RLS/service-role 负向测试 + cap 并发/时区/重建 + root suppress/restore + pending scanner signal + ledger/Profile projection；0041/0042 另在 24 小时观察后执行 |
+| 帖子/Feedback/Schedule/points 安全 | 0007→0039/0040 + 空库 + exact grants + 双用户 RLS/service-role 负向测试 + cap 并发/时区/重建 + root suppress/restore + pending scanner signal + ledger/Profile projection；最终撤权 0044/0045 另在 24 小时观察后执行 |
 | NestJS auth/Courses API | typecheck/build + API unit + RLS E2E + Playwright；attempt 变更另测 UUID 重放/revision conflict/outbox；multipart/真实 Azure 与真实 OpenRouter 另做受控 smoke |
 | Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
 | Courses 音频/离线 | cache key/不裁剪录音 unit + API 原字节转发/queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
@@ -446,7 +453,8 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 | Courses 读音考试/任意选词/考试历史 | jsdom 验证逐题评分反馈、轮末分数、选择器和历史详情；API unit 验证 Azure target/owner/映射；真实 Supabase E2E 验证选词 scope、不可变快照、客户端 RPC 拒绝、失败补练不伪造通过；fake-provider Playwright 验证浏览器流程，发布前另跑真实 Japan East Azure gate |
 | Courses 双考试掌握 | 真实 Supabase E2E 验证跨日复习与单项考试均不 learned、两项考试任意顺序共同 learned、失败考试不写事实、term/translations/IPA 编辑精确撤销；0034 空库/升级断言字段、check constraint、review 无正向写入和 service-role-only 权限 |
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
-| AI schema/route | compileall + smoke；真实生成接入后补 pytest/契约/评测 |
+| 其它 AI 产物（未来） | 新 schema、parser/prompt/eval + API/RLS/jsdom/Playwright + 真实 provider gate；不得复用试卷 gate 推断质量 |
+| Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；发布前另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
 | nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 

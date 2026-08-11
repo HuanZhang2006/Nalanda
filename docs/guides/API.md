@@ -1,6 +1,6 @@
 # API 文档
 
-> **本文内容：** 记录当前 NestJS 公网 API、FastAPI 内部桩接口，以及浏览器直接使用的 Supabase Auth/PostgREST/Storage 数据面；同时指出尚未实现的目标 API。  
+> **本文内容：** 记录当前 NestJS 公网 API、0041–0043 候选 FastAPI 内部接口，以及浏览器直接使用的 Supabase Auth/PostgREST/Storage 数据面；同时指出尚未实现的目标 API。
 > **作用：** 为前后端联调、客户端开发、自动化测试、安全评审和接口演进提供明确契约，避免把架构蓝图中的接口误认为已经可用。  
 > **何时更新：** 新增/删除/变更路由、请求/响应/状态码、认证授权、数据 schema、Supabase 访问方式、错误码或 API 版本策略时，与实现同一提交更新。
 
@@ -10,15 +10,16 @@
 flowchart LR
     Browser["Web 浏览器"] -->|"/api/*"| Nest["NestJS API"]
     Browser -->|"Auth / PostgREST / Storage"| Supabase["Supabase Cloud"]
-    Nest -->|"sliding windows / scanner lock"| Redis["private Redis（0039 candidate）"]
+    Nest -->|"rate limits / locks / BullMQ job UUID"| Redis["private Redis（candidate）"]
     Nest -->|"Admin Auth / JWKS / Courses 事务 RPC"| Supabase
     Nest -->|"TTS / pronunciation assessment"| Azure["Azure Speech（可选）"]
-    Nest -. "尚未调用" .-> AI["FastAPI AI 桩"]
+    Nest -->|"X-AI-Internal-Token"| AI["private FastAPI AI worker（0041 candidate）"]
+    AI -->|"strict JSON + ZDR"| OpenRouter["OpenRouter DeepSeek / MiMo"]
 ```
 
 - 生产 Web/API 同源基址：`https://nalanda.online`；本文示例默认本地 `http://localhost:3000`。
 - NestJS 全局前缀：`/api`。
-- FastAPI 默认本地基址：`http://localhost:8000`，目标上只允许内网访问；当前没有 API→AI 调用代码。
+- FastAPI 默认本地基址：`http://localhost:8000`，只允许 compose 私网访问；0041 候选由 BullMQ consumer 通过内部 token 调用，生产 0038 尚未部署该链路。
 - 当前没有 OpenAPI 文件、API 版本号、请求 ID 或通用分页规范。Nest 全局错误已统一为 `{ code, message, fieldErrors?, currentRevision?, retryAfterSeconds? }`。0039–0040 候选应用增加全局 Redis 限流；生产 0038 在受保护发布前仍没有该通用层。
 - NestJS 跨域许可来自 `CORS_ALLOWED_ORIGINS`，未设置时复用 `PUBLIC_ORIGIN`；生产两者都缺失时不返回跨域许可，同源 nginx `/api` 不受影响，且当前不启用 credential cookie。
 
@@ -50,7 +51,7 @@ NestJS 全局错误格式：
 }
 ```
 
-`fieldErrors` 可选；未知 4xx 映射为 `INVALID_REQUEST`，413 为 `PAYLOAD_TOO_LARGE`，未知 5xx 为 `INTERNAL_ERROR`。常见状态：400 参数/契约，401 token，403 owner/管理员，404 不存在或功能隐藏，409 冲突，413 multipart 上限，429 配额，502 供应商，503 feature flag/依赖不可用。FastAPI 桩仍使用标准 `422 detail`，不属于这个 envelope。
+`fieldErrors` 可选；未知 4xx 映射为 `INVALID_REQUEST`，413 为 `PAYLOAD_TOO_LARGE`，未知 5xx 为 `INTERNAL_ERROR`。常见状态：400 参数/契约，401 token，403 owner/管理员，404 不存在或功能隐藏，409 冲突，413 multipart 上限，429 配额，502 供应商，503 feature flag/依赖不可用。内部 FastAPI 使用 Pydantic `422 detail` 和稳定 AI 错误码，由 NestJS 转换后才可返回浏览器。
 
 ### 2.3 0039–0040 候选：通用限流
 
@@ -442,9 +443,50 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 | OpenRouter 滚动 24 小时实际 provider 配额达到上限 | 429 `TRANSLATION_ASSESSMENT_DAILY_LIMIT` + `retryAfterSeconds` |
 | Courses 配额/成本变量不是有限正数 | 503 `SERVER_MISCONFIG` |
 
-## 5. FastAPI AI（当前桩接口）
+## 5. Materials AI、Notes 与在线考试（0041–0043 候选）
 
-实现入口：`apps/ai/app/main.py`；请求模型：`apps/ai/app/schemas.py`。当前所有路由无认证、无限流，所以部署时必须保持内网可达，不能直接暴露公网。
+以下接口已经在仓库实现但尚未通过受保护生产发布，全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。`FEATURE_MATERIAL_AI=false` 时不接受新生成任务。
+
+| 方法与路径 | 输入/行为 | 关键边界 |
+|---|---|---|
+| `POST /api/materials/:id/ai-jobs` | `CreateAiExamJobRequest`：UUID `idempotencyKey`、版本化同意和试卷设置 | owner、格式/25MB、每日 reservation、单用户 active job；同 key 重放不重复预留 |
+| `GET /api/ai-jobs?limit=50` | 最近任务及阶段/进度/稳定错误/结果引用 | owner-only；limit 被服务器夹紧 |
+| `GET /api/ai-jobs/:id` | 单任务 | owner-only |
+| `POST /api/ai-jobs/:id/cancel` | 取消尚未终止的任务 | 原子释放 reservation；worker 最迟在阶段边界停止 |
+| `GET /api/profile/ai-quota` | Free plan 两类 `used/reserved/remaining`、时区、`nextResetAt` | 以 Profile 合法 IANA 时区本地日计算；默认各 10 |
+| `GET /api/notes` / `GET /api/notes/:id` | 私有生成试卷列表/详情 | 列表按 Materials course 聚合；详情仅 owner 可见完整答案 |
+| `DELETE /api/notes/:id` | 删除试卷及答卷 | owner-only 事务 |
+| `DELETE /api/materials/:id?aiResults=keep|delete` | 删除来源且保留到 Unfiled，或同时删 AI 结果 | 取消未完成任务、删除解析缓存和 Storage 对象（对象删除为 best effort） |
+| `DELETE /api/material-courses/:id?aiResults=keep|delete` | 同上，作用于 Materials 科目 | 不作用于 `learning_courses` |
+| `POST /api/notes/:id/exam-attempts` | 开始一次新考试 | 无限重考；服务器写绝对 `deadlineAt` |
+| `PATCH /api/exam-attempts/:id/answers` | `{ operationId, expectedRevision, answers }` | operation UUID 幂等；revision 冲突为 409；答案 session 不含 answer key |
+| `POST /api/exam-attempts/:id/submit` | 同 revision/operation 契约并提交整卷 | 客观题服务端确定性判分；到期请求强制交卷 |
+| `POST /api/exam-attempts/:id/grade` | 额度重置后重试主观题评分 | 每日评分 reservation；同 attempt 不重复排队/扣费 |
+| `GET /api/exam-attempts/:id` / `GET /api/notes/:id/exam-attempts` | 当前答卷/历史 | owner-only；完成前不泄露答案/解析/rubric |
+
+创建设置约束：语言 `auto|en|zh`，难度四档，15–240 分钟，20–200 分，六类题型合计 5–100，每题至少 1 分，总分不小于题数，focus 最长 200 字。任务阶段为 `queued → validating → extracting → auditing → visualRecovery → generating → reviewing → saving → succeeded`。成功才消费 generation 额度；注入拒绝、坏文件、取消、provider/ZDR/预算失败均释放。
+
+`GeneratedExamV1` 的每题包含稳定 ID、题型、分值、答案/解析/rubric 和至少一个 `sourceRefs.blockId`；服务端验证题数、总分、选择题索引、答案和来源引用。短答/论述只在整卷提交后用一次 DeepSeek 严格 schema 批量评分；其余题型不调用模型。
+
+### 5.1 内部 FastAPI（不得公网暴露）
+
+| 路径 | 认证 | 行为 |
+|---|---|---|
+| `GET /health` | compose 私网访问 | 实际探测 OpenRouter 配置、LibreOffice、临时磁盘、内部 token，production fake 时失败 |
+| `POST /internal/materials/exam` | `X-AI-Internal-Token` | 下载短期 private signed URL，执行 DocumentIR/安全/视觉恢复/生成/验证，返回结果和脱敏 usage events |
+| `POST /internal/exams/grade` | 同上 | 对主观题按 rubric 批量评分 |
+
+FastAPI 的请求/响应 Pydantic 模型 `extra=forbid`；内部 token 常量时间比较。旧公开 `/parse`、`/generate/*` 固定桩已经删除。
+
+### 5.2 处理与 provider 规则
+
+确定性解析器保留页/幻灯片/块/表格/公式/图片关系及诊断；DeepSeek 首次审查后，只把解析器失败范围与模型指出的失败范围并集送给 MiMo，拼回完整 IR 后再次安全审查。`malicious` 或 `uncertain` 均返回 `PROMPT_INJECTION_REJECTED`，`benign_educational` 可继续。所有 OpenRouter 请求固定模型、严格 JSON schema、禁用工具/Web，并设置 `provider.zdr=true`、`data_collection="deny"`、`require_parameters=true`、`allow_fallbacks=false`。
+
+Postgres `generation_jobs` 是 durable 事实，BullMQ 只保存 UUID；reconciler 重投缺失项目。月度默认总预算 US$20，单生成/评分上限 US$0.50/US$0.05。provider usage 只保存模型、token、micro-USD、延迟、request ID、用途和 ZDR 标志，不保存 prompt、文件正文、回答或原始模型响应。
+
+## 5.3 历史 FastAPI 桩（已删除，不可调用）
+
+早期仓库曾提供无认证的 `/parse`、`/generate/knowledge-list|quiz|graph|exam` 固定输出；0041 候选已删除这些路由。下列旧示例只用于解释历史 mock，不是 API 契约。
 
 ### `GET /health`
 
@@ -594,7 +636,8 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 |---|---|---|---|
 | 个人资料 | `profiles` | 本人 select；只更新 username/university/major/year/language/timezone | 0008/0011 的列级 GRANT、IANA 校验与防御触发器保护 points/credits/level/VIP/streak |
 | Points | `point_entries` + `get_point_reward_receipt` | 本人只读账本；业务成功后按 event/source 取本人奖励回执 | state/window/claim/moderation/signal/audit 表对客户端完全隐藏；receipt 从 `auth.uid()` 推导 owner |
-| 资料库 | `courses`, `materials` | owner CRUD | materials 写入额外校验课程 owner |
+| 资料库 | `courses`, `materials` | owner CRUD；删除在 0041 候选改经 Nest 编排 | materials 写入额外校验课程 owner；AI 删除选择保证 cache/job/note 生命周期 |
+| Materials AI | `ai_*`, `generation_*`, `notes`, `note_*`, `exam_*` | owner 只读由 UI 主要经 Nest；无客户端写 | service-role-only 事务推进 reservation/job/result/score；缓存/usage/operation 对客户端隐藏 |
 | 通知 | `notifications` | owner select/insert/update | 用户可标已读；当前 policy 也允许改其它 own 字段 |
 | 反馈 | `feedback` | owner select/insert | 0039 候选仅允许插入 `category/summary/body`，无 UPDATE/DELETE；status/time/owner 由服务端维护 |
 | 社区 | `posts`, `comments` | 公共读取；作者写/删 | 0039 候选 posts 仅允许内容列写入，作者快照/计数/owner/业务键/时间由数据库维护 |
@@ -619,7 +662,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses `rpc()`。迁移 0008–0038 已收口既有内部 helper。0039 候选新增的审核、信号 review、扫描、滥用审计与时间窗口函数全部只授予 service-role，并且 service-role 对相应事实表只有 SELECT；唯一 authenticated RPC 是：
+前端没有直接调用 Courses 或 Materials AI `rpc()`。迁移 0008–0038 已收口既有内部 helper；0039–0043 候选新增的 points、AI reservation/job/result/exam/delete 函数全部只授予 service-role。0039 唯一新增 authenticated RPC 是：
 
 ```ts
 get_point_reward_receipt(eventType, sourceId) => {
@@ -639,8 +682,8 @@ get_point_reward_receipt(eventType, sourceId) => {
 
 以下能力属于最终产品路线，不是当前可调用接口：
 
-- 资料解析、AI 生成任务提交/排队/状态/取消/重试；
-- 笔记与四类生成产物的版本化 CRUD；
+- Knowledge list、独立 Quiz、Knowledge graph 生成；试卷生成已在 0041–0043 候选实现；
+- Notes 编辑、版本历史与 PDF 导出；私有试卷列表/查看/删除已在候选实现；
 - 笔记市场购买、credits 授权、搜索和创作者结算；Courses 只有免费发布/克隆，不提供购买或分成；
 - credits 不可变账本、余额、VIP entitlement；points 日上限/审核/待审信号已有候选窄实现，但完整规则版本管理、自动内容质量和审核 UI 未实现；
 - Stripe checkout/payment intent/webhook/refund；

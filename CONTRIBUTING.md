@@ -3,7 +3,7 @@
 > **本文内容：**规定开发环境、分支与提交、代码/数据库/文档变更流程、测试要求和完成定义。  
 > **作用：**让贡献者用可复现方式交付变更，并确保代码、迁移、测试、文档和运维说明同步。  
 > **何时更新：**工具链、目录、CI 门禁、分支策略、数据库流程或评审责任变化时；发现本文命令无法执行时应立即更新。  
-> **状态基线：**2026-08-10；生产数据库已受保护发布到 0038，0039–0040 安全/限流候选尚未发布。提交说明必须区分代码实现、本地或 fake 自动化、真实 Redis/Supabase/provider gate 与实际上线。
+> **状态基线：**2026-08-10；生产数据库已受保护发布到 0038，0039–0043 候选尚未发布。提交说明必须区分代码实现、本地或 fake 自动化、真实 Redis/Supabase/provider gate 与实际上线。
 
 ## 1. 开始之前
 
@@ -31,7 +31,7 @@ pnpm build
 | Web | `apps/web`、`packages/ui` | 覆盖桌面/窄屏、明暗主题、登录态与跨账户切换 |
 | API | `apps/api` | DTO 校验、鉴权/归属、错误契约、API 文档和集成测试 |
 | Courses | `apps/web/src/features/courses`、`apps/api/src/learning`、`packages/types`、0011+ | 解析/状态机/跨日复习、service-only RPC、Schedule/Profile、分享/市场、Speech 隐私和分层 E2E |
-| AI | `apps/ai`、`packages/types` | schema 契约、离线评测、成本/延迟预算、隐私与模型版本 |
+| Materials AI | `apps/ai`、`apps/api/src/ai`、`apps/web/src/features/material-ai`、`packages/types` | durable job/quota、strict schema、解析/安全/离线评测、成本/隐私、临时清理、资源门 |
 | 数据库 | `supabase/migrations` | 只新增迁移；RLS 双用户负向测试；发布/回滚说明 |
 | 部署 | `infra`、`.github/workflows` | 分阶段验证、健康检查、回滚、密钥/告警影响 |
 | 文档 | `README.md`、`docs`、根治理文件 | 每篇开头写内容/作用/何时更新；标注当前/目标和验证日期 |
@@ -68,6 +68,7 @@ PR 描述至少包含：
 - UI 写操作要有 loading、成功、空、错误、重试和重复点击保护；登出/换账号必须清空用户级缓存与订阅。
 - API 只返回稳定错误码，不把上游细节暴露给客户端；使用关联 ID 支持排障。
 - Python 输出必须通过 Pydantic schema；模型/prompt/parser 版本随结果记录，禁止用静态桩冒充真实生成。
+- Materials AI 文件/focus/答案均是不可信数据；固定 ZDR model、禁工具/Web/fallback、仅失败范围视觉恢复，任何安全/结构/provider失败都释放 Free reservation，不能由客户端降级或消费 credits。
 - 无障碍至少覆盖键盘操作、焦点、表单 label、状态提示、对比度和 reduced motion。
 - 用户可见文字默认考虑中英双语目标；当前未完成 i18n 时，不得声称已经支持双语界面。
 - Courses 文本 parser 和 API validator 都是边界：变更规则时同时更新精确错误位置、共享契约、数据库约束和测试；文件入口在真实隔离/OCR/人工确认完成前必须保持禁用。
@@ -110,6 +111,7 @@ pnpm build
 - Redis/限流：真实 Redis 验证 Lua 原子性、窗口过期、分层 fail-open/closed、429/`Retry-After`/RateLimit headers 与 HMAC 日志；mock 只用于纯分类单元测试；
 - nginx/部署：在与生产同 major 的容器中执行 `nginx -t`，并对 secret 安装脚本验证 mode 600、幂等替换和 stdout 不泄露；
 - AI：契约、固定夹具、离线评测、安全集和成本回归；
+- Materials AI 另需 Python ruff/pytest、真实 Redis BullMQ、RLS 双用户、fake-provider Playwright、AI Docker；合并后受保护真实 DeepSeek/MiMo和2G canary才是生产 gate。
 - Speech：固定 WAV/fake adapter 覆盖格式、大小、VAD 裁剪、超时、限流、队列租约、Storage miss 和不落录音；发布前另做真实 Azure 队列/缓存复用/评分 smoke，不能在 PR 使用个人录音；
 - 支付：只用 Stripe test mode/CLI 夹具，覆盖重复、乱序、退款和争议 Webhook。
 

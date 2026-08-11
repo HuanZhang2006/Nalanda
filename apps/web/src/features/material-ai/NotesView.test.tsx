@@ -1,0 +1,201 @@
+import { act } from "react";
+import { createRoot, type Root } from "react-dom/client";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { GeneratedExamAttempt, GeneratedNoteDetail, GeneratedNoteSummary } from "@nalanda/types";
+import "fake-indexeddb/auto";
+
+const harness = vi.hoisted(() => ({
+  courses: [{ id: "course-1", name: "Biology", code: "BIO" }],
+  notes: vi.fn(), note: vi.fn(), attempts: vi.fn(), createAttempt: vi.fn(), saveAnswers: vi.fn(),
+  submit: vi.fn(), attempt: vi.fn(), requestGrading: vi.fn(), deleteNote: vi.fn(),
+}));
+
+vi.mock("../../lib/supabase", () => ({
+  supabaseConfigured: true,
+  supabase: {
+    from: vi.fn(() => ({
+      select: vi.fn(() => ({
+        order: vi.fn(async () => ({ data: harness.courses, error: null })),
+      })),
+    })),
+  },
+}));
+
+vi.mock("./api", () => ({
+  materialsAiApi: {
+    notes: harness.notes,
+    note: harness.note,
+    attempts: harness.attempts,
+    createAttempt: harness.createAttempt,
+    saveAnswers: harness.saveAnswers,
+    submit: harness.submit,
+    attempt: harness.attempt,
+    requestGrading: harness.requestGrading,
+    deleteNote: harness.deleteNote,
+  },
+}));
+
+import { NotesView } from "./NotesView";
+
+const summary: GeneratedNoteSummary = {
+  id: "note-1", courseId: "course-1", courseName: "Biology", courseCode: "BIO", title: "Cells test paper",
+  kind: "ai_exam", materialName: "cells.pdf", sourceDeleted: false, questionCount: 1, totalMarks: 10,
+  createdAt: "2026-08-10T00:00:00Z", updatedAt: "2026-08-10T00:00:00Z",
+};
+
+const detail: GeneratedNoteDetail = {
+  ...summary,
+  exam: {
+    schemaVersion: "generated-exam.v1", title: "Cells test paper", language: "en", difficulty: "intermediate",
+    durationMinutes: 30, totalMarks: 10, instructions: ["Answer every question."],
+    sections: [{ id: "section-1", title: "Short answer", instructions: "", questions: [{
+      id: "question-1", type: "short_answer", prompt: "What does a cell membrane do?", marks: 10,
+      options: [], correctOptionIndexes: [], acceptedAnswers: ["controls movement"], modelAnswer: "It controls movement into and out of a cell.",
+      explanation: "The membrane is selectively permeable.", rubric: ["Mentions control of movement"],
+      sourceRefs: [{ blockId: "page-1:block-1", page: 1, slide: null, label: "Page 1" }],
+    }] }],
+  },
+};
+
+function attempt(status: GeneratedExamAttempt["status"] = "in_progress", revision = 0): GeneratedExamAttempt {
+  return {
+    id: "attempt-1", noteId: detail.id, status, revision,
+    deadlineAt: new Date(Date.now() + 30 * 60_000).toISOString(), submittedAt: null, completedAt: null,
+    objectiveScore: 0, objectiveMarks: 0, totalScore: null, totalMarks: 10, answers: [], results: [],
+    exam: {
+      schemaVersion: "generated-exam.v1", title: detail.exam.title, language: "en", difficulty: "intermediate",
+      durationMinutes: 30, totalMarks: 10, instructions: [], sections: [{ id: "section-1", title: "Short answer", instructions: "", questions: [{
+        id: "question-1", type: "short_answer", prompt: "What does a cell membrane do?", marks: 10, options: [], sourceRefs: [],
+      }] }],
+    },
+    serverNow: new Date().toISOString(),
+  };
+}
+
+async function settle(work?: () => void | Promise<void>) {
+  await act(async () => { await work?.(); await Promise.resolve(); await Promise.resolve(); });
+}
+
+function clickText(container: Element, text: string) {
+  const button = [...container.querySelectorAll("button")].find((entry) => entry.textContent?.includes(text));
+  if (!button) throw new Error(`button not found: ${text}`);
+  button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+}
+
+function setValue(element: HTMLTextAreaElement, value: string) {
+  Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(element, value);
+  element.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+describe("Materials AI My Notes and online exams", () => {
+  let root: Root;
+  let container: HTMLDivElement;
+
+  beforeEach(async () => {
+    await new Promise<void>((resolve) => {
+      const request = indexedDB.deleteDatabase("nalanda-material-ai");
+      request.onsuccess = () => resolve(); request.onerror = () => resolve(); request.onblocked = () => resolve();
+    });
+    container = document.createElement("div"); document.body.appendChild(container); root = createRoot(container);
+    harness.notes.mockResolvedValue([summary]); harness.note.mockResolvedValue(detail); harness.attempts.mockResolvedValue([]);
+    harness.createAttempt.mockResolvedValue(attempt()); harness.saveAnswers.mockImplementation(async (_id, request) => ({
+      ...attempt("in_progress", request.expectedRevision + 1), answers: request.answers,
+    }));
+    harness.submit.mockResolvedValue(attempt("grading", 2)); harness.attempt.mockResolvedValue(attempt("completed", 3));
+    harness.requestGrading.mockResolvedValue(attempt("grading", 3)); harness.deleteNote.mockResolvedValue({ deleted: true });
+    vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: () => "11111111-1111-4111-8111-111111111111" });
+  });
+
+  afterEach(async () => { await settle(() => root.unmount()); vi.unstubAllGlobals(); });
+
+  it("separates private generated papers from Demo data and filters by the real Materials course", async () => {
+    const openReal = vi.fn();
+    await settle(() => root.render(<NotesView userId="user-1" onOpenReal={openReal} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={vi.fn()} />));
+    expect(container.textContent).toContain("Your generated notes");
+    expect(container.textContent).toContain("Cells test paper");
+    expect(container.textContent).toContain("Sample data — not your files");
+    expect(container.textContent).toContain("BIO");
+    await settle(() => clickText(container, "Cells test paper"));
+    expect(openReal).toHaveBeenCalledWith("note-1");
+    await settle(() => clickText(container, "Demo"));
+    expect(container.textContent).not.toContain("Your generated notes");
+    expect(container.textContent).toContain("Sample data — not your files");
+  });
+
+  it("starts a timed attempt and auto-saves an account-isolated draft after 500 ms", async () => {
+    await settle(() => root.render(<NotesView userId="user-1" initialNoteId="note-1" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={vi.fn()} />));
+    await settle(() => clickText(container, "Start timed attempt"));
+    const answer = container.querySelector("textarea") as HTMLTextAreaElement;
+    await settle(() => setValue(answer, "Controls movement"));
+    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 560)); });
+    expect(harness.saveAnswers).toHaveBeenCalledWith("attempt-1", expect.objectContaining({
+      expectedRevision: 0,
+      answers: [{ questionId: "question-1", value: "Controls movement" }],
+    }));
+    expect(container.textContent).toContain("Leaving this page does not pause the timer");
+  });
+
+  it("waits for the pending save before leaving and supports another timed retake", async () => {
+    const exit = vi.fn();
+    let release!: (value: GeneratedExamAttempt) => void;
+    harness.saveAnswers.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
+    await settle(() => root.render(<NotesView userId="user-1" initialNoteId="note-1" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={exit} onMaterials={vi.fn()} toast={vi.fn()} />));
+    await settle(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    await settle(() => clickText(container, "Start timed attempt"));
+    await settle(() => setValue(container.querySelector("textarea") as HTMLTextAreaElement, "Draft"));
+    await settle(() => clickText(container, "Save and exit"));
+    expect(exit).not.toHaveBeenCalled();
+    await settle(() => release({ ...attempt("in_progress", 1), answers: [{ questionId: "question-1", value: "Draft" }] }));
+    await settle(() => new Promise((resolve) => setTimeout(resolve, 20)));
+    expect(exit).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Cells test paper");
+    await settle(() => clickText(container, "Start timed attempt"));
+    expect(harness.createAttempt).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not submit an exam while the newest device draft is unsynchronised", async () => {
+    const toast = vi.fn();
+    harness.saveAnswers.mockRejectedValue(new TypeError("offline"));
+    await settle(() => root.render(<NotesView userId="user-1" initialNoteId="note-1" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={toast} />));
+    await settle(() => clickText(container, "Start timed attempt"));
+    await settle(() => setValue(container.querySelector("textarea") as HTMLTextAreaElement, "Offline answer"));
+    await settle(() => clickText(container, "Submit paper"));
+    await settle(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    expect(harness.submit).not.toHaveBeenCalled();
+    expect(container.textContent).toContain("Saved on this device; waiting for the network");
+    expect(toast).toHaveBeenCalledWith("Your latest answers are still only on this device. Reconnect before submitting.");
+  });
+
+  it("asks the server to enforce the absolute deadline when the local countdown expires", async () => {
+    harness.createAttempt.mockResolvedValue({ ...attempt(), deadlineAt: new Date(Date.now() - 1).toISOString() });
+    harness.attempt.mockResolvedValue(attempt("completed", 1));
+    await settle(() => root.render(<NotesView userId="user-1" initialNoteId="note-1" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={vi.fn()} />));
+    await settle(() => clickText(container, "Start timed attempt"));
+    await settle(() => new Promise((resolve) => setTimeout(resolve, 10)));
+
+    expect(harness.attempt).toHaveBeenCalledWith("attempt-1");
+    expect(container.textContent).toContain("This attempt has been submitted");
+  });
+
+  it("discards an unsynchronised late draft when the server reports that the deadline closed", async () => {
+    const toast = vi.fn();
+    harness.saveAnswers.mockResolvedValue({
+      ...attempt("completed", 1),
+      answers: [{ questionId: "question-1", value: "Server answer before deadline" }],
+    });
+    harness.attempt.mockResolvedValue({
+      ...attempt("completed", 1),
+      answers: [{ questionId: "question-1", value: "Server answer before deadline" }],
+    });
+    await settle(() => root.render(<NotesView userId="user-1" initialNoteId="note-1" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={toast} />));
+    await settle(() => clickText(container, "Start timed attempt"));
+    await settle(() => setValue(container.querySelector("textarea") as HTMLTextAreaElement, "Late offline answer"));
+    await settle(() => clickText(container, "Submit paper"));
+    await settle(() => new Promise((resolve) => setTimeout(resolve, 20)));
+
+    expect(harness.submit).not.toHaveBeenCalled();
+    expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Server answer before deadline");
+    expect(toast).toHaveBeenCalledWith("The deadline passed. Only answers synchronized before the deadline were submitted.");
+  });
+});

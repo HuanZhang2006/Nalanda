@@ -3,7 +3,7 @@
 > **本文内容：**说明 Nalanda 的漏洞报告方式、当前安全边界、已知风险、开发与发布安全基线，以及安全事件响应要求。  
 > **作用：**为研究者、贡献者和运维人员提供唯一的安全协作入口，避免把密钥、漏洞细节或用户数据暴露在公开渠道。  
 > **何时更新：**认证/授权、RLS、上传、AI、支付、部署拓扑或第三方处理者变化时；发现或修复高风险问题时；至少每季度复核一次。  
-> **状态基线：**2026-08-10。生产受保护发布证据到 0038；0039–0040 的字段收口、points 上限/审核/协同信号和 Redis 限流已在仓库实现但尚未发布，0041–0042 contract 尚未创建。本文明确区分代码、测试与上线状态。
+> **状态基线：**2026-08-10。生产受保护发布证据到 0038；0039–0040 安全候选与 0041–0043 Materials AI 候选均尚未发布。时间列最终撤权 contract 顺延为未来 0044–0045，仍须等待兼容应用至少 24 小时。本文明确区分代码、测试与上线状态。
 
 ## 1. 支持范围
 
@@ -44,7 +44,7 @@
 | Azure Speech | key 仅 API；reference 从 owner word/session 推导；WAV≤2 MB/8秒且格式校验；录音不存储；生产 Japan East 基础 gate 与 0015–0016 队列/重复词/裁剪评分 gate 已通过 | PR/Playwright 自动测试仍为 fake；一次发布 gate 不是持续可用率证明，TTS cache 不是用户录音 |
 | OpenRouter 翻译前测 | API 从 owner session/word 推导参考翻译；同 UUID/revision 租约与幂等；用户答案只存 hash；新表/RPC service-role-only；生产真实 gate 已通过 | fake/单次真实 smoke 都不是持续语义质量证明，模型输出不能直接改成长事实 |
 | API 其它能力 | health、register、me；旧业务多数直连 Supabase | AI 文件导入、支付、钱包和通用管理后台安全控制尚不存在 |
-| AI | FastAPI 为固定桩；当前生产编排未部署 AI 服务 | 配置文件中的 Claude/Redis 变量不代表能力已启用 |
+| Materials AI | 0041–0043 候选为 owner-only Nest API、service-role 事务、Postgres durable job、BullMQ UUID 投递和内网 token FastAPI；OpenRouter 固定 ZDR 模型与 strict schema | 尚未生产；注入分类、ZDR 或结构化输出都不能提供数学上的绝对安全保证 |
 | 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
 
 ## 4. 已修复控制与开放风险
@@ -61,7 +61,7 @@
 
 1. 注册接口持有 service-role 并直接确认邮箱；0039 候选增加来源/邮箱限流和滥用审计，但生产尚未发布，且仍缺验证码、邮箱所有权证明和更完整反自动化。
 2. NestJS 已按 `CORS_ALLOWED_ORIGINS`/`PUBLIC_ORIGIN` 返回跨域许可；仍需在每次新增正式域名、preview 域名或 cookie 鉴权前复核 allowlist 与凭据策略。
-3. 帖子、Feedback、Schedule 和 points 的 0039–0040 修复尚处仓库候选；在受保护第一阶段发布和真实 RLS/权限证据完成前，生产仍按 0038 风险处理。0041–0042 必须等待兼容应用观察满 24 小时，不能提前合入。
+3. 帖子、Feedback、Schedule 和 points 的 0039–0040 修复尚处仓库候选；在受保护发布和真实 RLS/权限证据完成前，生产仍按 0038 风险处理。0041–0043 只新增 Materials AI，不撤销兼容列；未来 0044–0045 最终撤权仍必须等待兼容应用观察满 24 小时。
 4. 社区媒体为公开 bucket；删除帖子不会自动证明附件已删除，上传类型、大小、恶意文件和孤儿对象治理不完整。
 5. 迁移前 points 缓存无法证明来源；`legacy_opening=11` 已由 0009 append-only reversal 归零。0039 候选只承认存在首条正向业务 transition 的 grandfather 奖励；0008 回填占位造成的历史负账以单独 append-only 补偿归零，不能改写旧分录。协同阈值只按交互结构标记、不会自动处罚，也没有语义垃圾判断、完整审核后台或申诉；points 仍不是商业货币或抗作弊信誉凭证。
 6. `credits`/`vip_until` 已锁为服务端字段，却仍无订单、credit/VIP 账本或 Stripe 事实链，不能启用真实商业权益。
@@ -70,6 +70,8 @@
 9. 课程分享是 bearer-link 模型，持链接者可读取当前词表；作者必须能撤销/轮换。市场 v1 的管理员来自环境 UUID 列表，尚无通用 RBAC/申诉；变更必须审计。
 10. Azure 录音虽然不持久化，但会在请求内转发第三方；供应商条款、区域、DPA/留存与真实成本告警必须在 production flag 前确认。供应商失败不得累计用户错误。
 11. OpenRouter 翻译前测会在用户显式开启后转发当前英文、参考翻译与用户键入译文；仍须完成并持续复核其留存/训练/跨境/子处理者条款。模型误判是教学风险；供应商失败或非法结构化输出不得累计错误，语义基线失败应关闭最窄 flag。
+12. Materials AI 会将解析后的完整文件内容送 DeepSeek，并把失败页/区域图像送 MiMo；只有用户逐账号接受版本化第三方处理说明后才能创建任务。`malicious/uncertain` 注入必须拒绝，主题/文件/答案均作为不可信数据隔离；不能把模型分类当唯一防线或通过 fallback 路由绕过 ZDR。
+13. FastAPI 每任务 0700 临时目录和 `finally`/orphan 清理只处理过程文件；`ai_material_parse_cache` 与生成 Notes 是经告知的持久私有数据。Storage 对象删除是 best effort，失败必须告警/重试，不能只依赖数据库级联声明完全删除。
 
 ## 5. 数据与密钥分级
 
@@ -93,6 +95,7 @@
 - 上传同时校验扩展名、MIME、magic bytes、大小和页数；对象名由服务端生成；目标阶段增加恶意文件扫描与隔离区。
 - HTML/Markdown/AI 输出渲染必须净化；社区正文、文件名和模型文本一律视为不可信输入，防 XSS、公式/URL 注入和提示词注入。
 - AI 服务只接收完成授权的资料，服务间鉴权，不记录原始课件或完整 prompt；供应商训练/留存条款须经过审批。
+- Materials AI worker 只允许 project signed Storage host，禁止工具/Web，固定 provider/model/schema，限制 Office zip expansion/页数/字符/图像/CPU/内存/pids/临时磁盘；FastAPI 422 也不得回显含 signed URL/token 的 payload。
 - 语义翻译评判的 reference 只能从当前 owner session/word 推导；答案正文仅内存转发，数据库/日志只留 hash 与非正文计量；provider 输出必须过结构校验并经权威事务转换，不能直接信任。
 - Speech reference 只能由当前 owner 的 word/session 得到；限制 WAV magic/codec/采样率/声道/位深/大小/时长，录音仅内存转发且不得进入 DB、Storage、日志或备份。
 - 公开分享/市场只返回脱敏、转义快照；token 只存哈希；撤销/克隆在同一事务重查 active。举报数量不得自动下架，管理员处置必须写审计事实。
@@ -111,7 +114,7 @@
 6. 生产变更先在隔离环境验证，支付使用 Stripe test mode；
 7. 高风险已知问题关闭后，才能启用相应功能 flag。
 
-当前 PR/main workflow 执行 docs、typecheck、Web jsdom、API/Courses unit、真实 CI Redis Lua、build、compose/nginx 校验；在一次性 Supabase 自动验证 0007→全部 0008+ 升级、空库重建/lint、双用户 RLS/Storage/points/Courses E2E，并以真实 Redis + Azure/OpenRouter fake 跑 Playwright。生产迁移仍先只读 plan，再受保护 apply/加密恢复点/远端验证；这些门禁不替代真实供应商、托管 staging、监控或人工评审。
+当前候选 workflow 还执行 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI RLS 与 fake-provider Playwright。生产迁移仍先只读 plan，再受保护 apply/加密恢复点/远端验证；启用 Materials AI 前另需固定 PDF/DOCX/PPTX/chart/injection/grading 的真实 DeepSeek/MiMo ZDR gate和2G资源 canary。这些单次门禁不替代持续质量、供应商条款、监控或人工评审。
 
 ## 8. 安全事件响应
 

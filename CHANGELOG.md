@@ -11,6 +11,11 @@
 
 ### Added
 
+- 新增 0041–0043 Materials AI 发布候选：Free plan、按 Profile 时区重置的生成/评分双额度、持久 generation job/events、私有解析缓存、真实 Notes/来源快照、在线答卷/幂等草稿/评分事实、脱敏 provider usage 及完整结构/RLS/RPC 断言。
+- Materials 每个文件增加复用现有视觉与双语 locale 的 “Use AI” 菜单；仅 “Generate test paper” 开放，其余三项显示 Coming soon。My Notes 将真实 Materials 课程/试卷与历史 Demo 分组；Profile 显示 Free plan 双额度。
+- NestJS 增加 owner-only AI/Notes/Exam API、成功后消费的 reservation 事务、Postgres durable job、BullMQ UUID 调度/reconciler/延迟交卷和内部回调；FastAPI 增加 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片解析、选择性 MiMo 视觉恢复、两次注入审查、DeepSeek 严格试卷生成与批量主观题评分。
+- 新增受保护部署的 AI image、私有 Redis/worker readiness、真实模型固定样本 gate、2G 资源 canary、临时目录孤儿清理与失败自动回滚。
+
 - 新增第一阶段 0039–0040 候选：冻结用户时区的 points 日窗口、稳定 business-key 奖励 decision、owner-only reward receipt、每日上限通知、append-only 审核冲正和四类只待审协同信号。
 - NestJS 增加同机私有 Redis 原子 Lua 滑动窗口、注册 IP+邮箱双限流、认证/Courses/公开市场分层限流、HMAC 滥用聚合、真实 Redis readiness 和 points 管理 API；协同扫描使用分布式锁且不自动处罚。
 - 生产 compose 候选增加密码认证、AOF `everysec`、`noeviction`、私有网络 Redis，以及 secret 原子安装、nginx 标准 JSON 429、配置验证和两阶段发布脚本/门禁。
@@ -22,6 +27,9 @@
 
 ### Security
 
+- Materials AI 固定使用服务端 OpenRouter key、`deepseek/deepseek-v4-flash-0731` 和 `xiaomi/mimo-v2.5`，请求要求 ZDR、拒绝数据收集、禁止工具/Web 与 provider 参数降级；恶意或不确定 prompt injection 均拒绝并释放额度。
+- AI 事务 RPC 全部撤销 `public/anon/authenticated` EXECUTE；用户只能读取自身任务/额度/Notes/答卷，不能写缓存、provider usage、结果、分数或配额。每任务 0700 临时目录在成功、失败、取消、超时的 `finally` 清理。
+
 - 新内部 points/audit 表对客户端完全隐藏；service-role 也只有 SELECT，所有奖励、signal review、moderation 和审计变更均经固定 `search_path` 的受控函数执行。新增函数默认撤销 `public/anon/authenticated` EXECUTE。
 - 历史 points grandfather 只把存在 transition 1 正向分录的业务键视为实际获奖；0008/0009 零金额占位永久不可冲正/补领，既有无来源负 transition 通过 append-only `grandfather-zero-reset-v1` 等额归零，避免吞掉未来合法积分。
 - 普通奖励与人工审核分别取得共享/独占 advisory gate，并统一 Profile→状态行锁序；重复审核留下 0 变化审计，不再与“目标不存在”混淆。
@@ -29,11 +37,14 @@
 
 ### Testing
 
+- 增加 Python 解析/安全/视觉范围/清理/schema 测试、Nest 配额/幂等/队列/revision/期限/评分测试、Web 队列/Demo/真实 Notes/草稿/计时/账号隔离 jsdom、双用户 AI RLS、fake-provider Playwright、真实 provider smoke 和近上限 Office 资源 canary。fake 自动化不构成真实模型或生产证据。
+
 - 增加帖子/Feedback/Schedule 双用户负向 RLS、points 并发上限/时区/删除重建/suppress-restore/协同信号、Redis Lua/路由分类、Web 上限通知与 429 回退、nginx/secret 安装脚本回归。真实 Redis、一次性 Supabase、nginx 容器和 Playwright 仍须由 PR/main CI 形成证据，本地跳过不算通过。
 
 ### Release
 
-- 0039–0040 尚未进入生产。第一阶段必须先完成完整 CI、只读 migration plan、加密恢复点、Redis/HMAC secrets 与 Redis PING/AOF/私网验证，再 apply 和激活应用；观察至少 24 小时后才允许另行创建 0041–0042 撤销兼容时间列 grant。
+- 0041–0043 尚未进入生产；只有完整 CI、只读迁移计划、加密恢复点、真实 OpenRouter/ZDR 固定样本、2G canary、`deps.supabase=ok`/Redis/AI readiness、公网登录用户 smoke 全部通过后才可开启 `FEATURE_MATERIAL_AI`。
+- 0039–0040 尚未进入生产。必须先完成完整 CI、只读 migration plan、加密恢复点、Redis/HMAC secrets 与 Redis PING/AOF/私网验证，再 apply 和激活应用；观察至少 24 小时后才允许另行创建未来 0044–0045 撤销兼容时间列 grant。0041–0043 是纯新增 Materials AI，不执行撤权。
 
 ## [0.10.2] - 2026-08-04
 

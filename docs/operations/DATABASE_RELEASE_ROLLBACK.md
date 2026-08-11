@@ -120,7 +120,7 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 - [x] 2026-07-22 Courses 发布：RLS、Storage policy、function EXECUTE、trigger 幂等有双用户测试。
 - [x] 0008/0009 首次生产发布审计：2026-07-21 只读聚合确认 1 个 Profile，points=11、credits=0、streak=0、无 VIP；owner 决定 points 归零，0009 以 append-only reversal 实施，credits/VIP/streak 不改。
 - [ ] 估算表规模、锁、statement timeout 和 backfill 时间。
-- [ ] 0039 第一阶段确认 PR/plan 只包含 0039–0040；仓库和远端均不得出现 0041–0042。
+- [ ] 0039 安全发布确认 0039–0040 的兼容权限仍存在；0041–0043 若同批出现只能是 additive Materials AI，仓库和远端均不得出现未来 0044–0045 最终撤权。
 - [ ] Redis/HMAC secrets 已安装；compose/nginx config、真实 Redis Lua、PING/AOF/no-port、429 JSON/headers 与 fail-open/closed 已验证。
 - [ ] 记录 0039 应用激活 UTC 时间、上一兼容 release、24 小时观察 owner/截止时间与 contract go/no-go 条件。
 - [x] 2026-07-22 Courses 发布：[ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
@@ -184,17 +184,26 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 0015–0016 还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到旧 release 仍能运行。当前应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、未经 VAD/静音裁剪的固定 WAV 评分与最终 `deps.supabase=ok`。
 
-### 0039–0042 两阶段发布专用门禁（候选，尚无生产证据）
+### 0039–0040 安全候选、0041–0043 Materials AI 与未来撤权门禁
 
-第一阶段只允许 0039–0040 和兼容应用：
+兼容应用必须继续适配 0039–0040；0041–0043 可作为 additive Materials AI 同批候选，但不改变时间列 grant：
 
-1. PR/CI 必须通过 0007→0040、空库、lint、精确 column/table/function grants、双用户 RLS、真实 Redis Lua、nginx/compose、jsdom/Playwright/build；fake provider 仍不得描述为真实 Azure/OpenRouter/Fish 证据。
-2. 独立 plan 必须证明生产停在 0038且唯一待办为 0039–0040。创建恢复点后 apply，检查 posts/Feedback/Schedule trigger、历史 claim grandfather、ledger/Profile projection 和客户端/service-role 负向权限；grandfather 实际金额必须能由该 business key 的 transition 1 正向分录证明，0008/0009 零金额占位不得因删除、restore 或审核产生负分。若 plan/apply 前数据中已有这类占位负 transition，0039 只能以 `grandfather-zero-reset-v1` append-only 补偿，发布核对其总额、行数、`reversal_of` 和最终业务键净额，不能删除历史分录。
+1. PR/CI 必须通过 0007→0043、空库、lint、精确 grants、双用户 RLS、真实 Redis/BullMQ、Python、AI Docker、jsdom/Playwright/build；fake provider 仍不得描述为真实 Azure/OpenRouter/Fish/DeepSeek/MiMo 证据。
+2. 独立 plan 必须证明生产停在 0038且唯一待办为 0039–0043。创建恢复点后 apply，分别检查 points/完整性与 Materials AI 表/RPC/权限；grandfather 实际金额必须能由该 business key 的 transition 1 正向分录证明，0008/0009 零金额占位不得因删除、restore 或审核产生负分。
 3. 先安装 Redis/HMAC，再启动 Redis；确认 password PING、AOF、noeviction、持久 volume、无 host port。安装 nginx rate zones 并 `nginx -t`；nginx 429 必须是标准 JSON/headers。
 4. 候选 API 本机先验证 `deps.supabase=ok/deps.redis=ok`、匿名 `/api/me` 与 points admin 401、注册限流 headers、Redis 停止时 private read fail-open 和 protected path fail-closed；随后继续既有三类真实供应商 gates，才可原子切换 Web/API。
 5. 从激活 UTC 起至少 24 小时观察：Redis error/restart/AOF/memory、`rate_limit_degraded`、合法请求误 429/503、cap claim/ledger/Profile 差异、signal 只待审，以及任何旧客户端仍提交 `posts.updated_at`/`study_tasks.done_at` 的证据。任一异常均 no-go，应用恢复上一兼容 release，数据库/Redis/nginx保持并 forward-fix。
 
-第二阶段只有上述记录通过后才能在新的 PR 中创建 0041–0042：0041 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0042 断言最终精确 grant。再次执行独立 plan、恢复点、apply、RLS/权限和公网 smoke。不能把预先创建但“暂不 apply”的 0041–0042 合入第一阶段，因为 CI 空库和迁移 job 会提前执行 contract，破坏观察窗口。
+最终撤权只有上述兼容记录通过后才能在新的 PR 中创建未来 0044–0045：0044 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0045 断言最终精确 grant。再次执行独立 plan、恢复点、apply、RLS/权限和公网 smoke。不能预先创建这两个 contract 文件，因为 CI 空库和迁移 job 会提前执行，破坏观察窗口。
+
+#### 0041–0043 Materials AI 专项顺序
+
+1. plan 必须只列生产尚未应用的 0039–0043；0043 逐表/RLS/grant/RPC/FK 断言必须在空库与 0007 升级两条路径通过。
+2. 恢复点成功上传并离线保存后才能 apply；检查 Free plan 回填数量等于 Auth 用户数、`reserved+consumed<=limit`、单用户 active job 唯一和所有 AI RPC 无 authenticated EXECUTE。
+3. 部署不可变 API/AI/Web image，安装隔离 `.ai.env`，保持 `FEATURE_MATERIAL_AI=false`。验证 Redis password/AOF/noeviction/私网、FastAPI OpenRouter/LibreOffice/temp disk/internal auth 与 API `/api/health/ai`。
+4. 运行近上限 Office canary及固定真实 DeepSeek/MiMo suite；任一 ZDR、schema、引用、注入/安全教材、费用、OOM、swap 或邻站门失败，都调用应用 rollback 并保持 flag false。
+5. gate 通过后才原子开启 flag、重建 API，并用公网真实登录临时用户完成 upload→job progress→Notes→exam→主观评分→删除；确认 quota、provider usage、临时目录和测试用户/对象清理。
+6. 数据库失败只 forward-fix。应用回退不会删除 0041–0043 表；旧应用忽略新增表，rollback 显式关闭 flag。不得回滚到会把 job/额度重放成二次消费的构建。
 
 ### 8.1 2026-07-21 安全与积分发布记录
 

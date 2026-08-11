@@ -1,6 +1,6 @@
 # 从零开始本地开发
 
-> **本文内容：** 从空白开发机到运行 Web、NestJS API、FastAPI AI 桩服务和连接 Supabase 的完整步骤，并列出常见故障与最小验收方法。  
+> **本文内容：** 从空白开发机到运行 Web、NestJS API、FastAPI AI worker、Redis 和连接 Supabase 的完整步骤，并列出常见故障与最小验收方法。
 > **作用：** 让新贡献者不依赖口头信息即可建立可复现的开发环境。  
 > **何时更新：** 依赖版本、启动脚本、端口、数据库初始化方式、服务拓扑或新手必经步骤变化时；至少每个里程碑发布前复核一次。
 
@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS Auth/Courses API、FastAPI AI 桩服务。业务数据、认证与文件存储使用 Supabase；0039–0040 候选应用要求 Redis 才能通过 API readiness，并用它执行限流和 points 扫描锁。Courses 文件 AI 导入仍未实现；英语词表文本学习不需要 FastAPI、BullMQ、Stripe 或 Claude。
+当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；0039–0040 候选用 Redis 执行限流和 points 扫描锁，0041–0043 Materials AI 候选还用 BullMQ 传递 durable Postgres job UUID。生产仍停在 0038，只有完成真实 OpenRouter/ZDR、资源 canary 与受保护发布后才可称为上线。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
 
 ## 2. 前置条件
 
@@ -150,6 +150,13 @@ FEATURE_COURSE_MARKET_ENABLED=true
 FEATURE_PRONUNCIATION_ENABLED=false
 FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=false
 FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=false
+FEATURE_MATERIAL_AI=false
+AI_SERVICE_URL=http://localhost:8000
+AI_CALLBACK_BASE_URL=http://localhost:3000/api
+AI_INTERNAL_TOKEN=<same-local-32-byte-secret-as-worker>
+MATERIAL_AI_MONTHLY_BUDGET_USD=20
+MATERIAL_AI_GENERATION_MAX_COST_USD=0.50
+MATERIAL_AI_GRADING_MAX_COST_USD=0.05
 ```
 
 非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音和翻译前测始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
@@ -173,7 +180,7 @@ STT 必须通过 active translation-first spelling session 调用，不能直接
 
 ## 6. 启动服务
 
-建议分别打开 Redis、API、Web 三个终端；AI 桩按需再开。
+建议分别打开 Redis、FastAPI worker、API、Web 四个终端。仅开发非 AI 页面时可不启动 worker，并保持 `FEATURE_MATERIAL_AI=false`。
 
 ### 6.0 Redis（本地测试）
 
@@ -210,14 +217,18 @@ pnpm --filter @nalanda/web dev
 
 打开 `http://localhost:5173`。Vite 会把 `/api/*` 代理到 `http://localhost:3000`，因此注册请求不需要额外修改 URL。
 
-### 6.3 FastAPI AI 桩服务（端口 8000，可选）
+### 6.3 FastAPI Materials AI worker（端口 8000）
 
 ```bash
 cd apps/ai
 python3.12 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
+.venv/bin/pip install -r requirements.txt -r requirements-dev.txt
+cp .env.example .env
+chmod 600 .env
+.venv/bin/uvicorn app.main:app --env-file .env --reload --host 127.0.0.1 --port 8000
 ```
+
+在 `apps/ai/.env` 中填写与 API 相同的 `AI_INTERNAL_TOKEN`。普通自动化可设 `MATERIAL_AI_FAKE_PROVIDER=true`；手工真实测试才填开发用 `OPENROUTER_API_KEY`，并保持 false。机器还需 LibreOffice、Poppler 和系统字体；最接近生产的依赖由 `apps/ai/Dockerfile` 提供。
 
 验证：
 
@@ -225,7 +236,15 @@ python3.12 -m venv .venv
 curl -fsS http://localhost:8000/health
 ```
 
-当前生成接口只返回固定占位结构，`/parse` 也不会读取或解析文件。`ANTHROPIC_API_KEY` 只改变健康响应中的配置标记，并不会让桩逻辑变成真实生成。
+health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。生成/评分接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 开关打开后，从 Materials 上传无个人数据 fixture，用 “Use AI → Generate test paper” 验证持久队列。
+
+运行 Python 门禁：
+
+```bash
+cd apps/ai
+.venv/bin/ruff check app tests
+.venv/bin/pytest -q
+```
 
 ## 7. 最小功能验收
 
@@ -327,7 +346,15 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移 0038，而不是停在旧 migration history；生产也已到 0038，但任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新迁移 0043，而不是停在旧 migration history；生产有证据到 0038，任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+
+### Materials AI 一直 queued、readiness 失败或返回安全错误
+
+- 确认本地迁移已到 0043、Redis 在运行、API/worker 使用同一个 `AI_INTERNAL_TOKEN`，且 API 的 callback 为 `http://localhost:3000/api`。
+- `FEATURE_MATERIAL_AI=false` 是默认安全状态；只在 fake/真实 worker health 就绪后本地开启。`MATERIAL_AI_FAKE_PROVIDER=true` 只能用于非 production 自动化。
+- worker health 的 `openrouter/libreoffice/tempDisk/internalAuth` 会指出依赖；低于 512MiB 空间、单 job 超 1GiB、Office >120 秒都会失败并释放额度。
+- `PROMPT_INJECTION_REJECTED` 同时覆盖 malicious/uncertain；不要通过改 prompt 或前端忽略结果绕过。安全教材明确分类为 `benign_educational` 才继续。
+- Redis 丢消息时 Postgres job 仍在，reconciler 会补投；同一用户已有 active job 返回 `AI_JOB_ACTIVE`。不要手工改数据库状态或 quota。
 
 ### 翻译前测返回禁用、超时或配额错误
 
@@ -359,8 +386,8 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前**：CI 已强制 docs、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、0007→最新迁移升级、空库数据库 lint/reset、双用户 RLS/Storage/Courses E2E 和 Playwright Courses 主流程；浏览器流程覆盖文本导入、弱网 outbox、Cache Storage、限时拼写和翻译前测，Azure/OpenRouter 使用 fake。生产发布另有真实 Azure gates 与真实 OpenRouter 结构化判定 gate；真实供应商不在 PR 上消耗共享额度，仍缺 FastAPI contract 和 ESLint/格式化规则。
-- **目标**：接入 Redis/BullMQ、API→AI 内部调用、真实解析/Claude 生成。
+- **当前候选**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0043 RLS 与真实 OpenRouter/2G canary 发布门；生产通过前仍不能称为线上能力。仍缺 ESLint/统一格式化和近生产规模 staging。
+- **目标**：开放 Knowledge list/Quiz/Knowledge graph、Notes 编辑/导出，并建立持续真实质量评测。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 
 在这些能力落地前，以仓库实际脚本和本文“当前实现”描述为准。

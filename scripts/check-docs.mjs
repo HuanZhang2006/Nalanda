@@ -6,12 +6,12 @@ import path from "node:path";
 
 const root = process.cwd();
 const ignored = new Set([
-  "node_modules", ".git", "dist", ".turbo", ".venv", "__pycache__", ".agents", ".codex",
+  "node_modules", ".git", "dist", ".turbo", ".venv", ".pytest_cache", "__pycache__", ".agents", ".codex",
 ]);
 
 function walk(dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
-    if (ignored.has(entry.name)) return [];
+    if (ignored.has(entry.name) || entry.name.startsWith(".venv")) return [];
     const full = path.join(dir, entry.name);
     return entry.isDirectory() ? walk(full) : full.endsWith(".md") ? [full] : [];
   });

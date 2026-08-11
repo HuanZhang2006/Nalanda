@@ -51,6 +51,207 @@ export interface GenerateRequest {
   lang: Language;
 }
 
+// ── Materials AI / generated exams v1 ─────────────────────────────────────
+
+export type AiPlanCode = "free";
+export type AiQuotaKind = "generation" | "grading";
+export type AiGenerationStatus =
+  | "queued"
+  | "processing"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+export type AiGenerationStage =
+  | "queued"
+  | "validating"
+  | "extracting"
+  | "auditing"
+  | "visualRecovery"
+  | "generating"
+  | "reviewing"
+  | "saving"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+export type GeneratedExamQuestionType =
+  | "single_choice"
+  | "multiple_choice"
+  | "true_false"
+  | "fill_blank"
+  | "short_answer"
+  | "essay";
+
+export interface AiExamQuestionCounts {
+  singleChoice: number;
+  multipleChoice: number;
+  trueFalse: number;
+  fillBlank: number;
+  shortAnswer: number;
+  essay: number;
+}
+
+export interface AiExamGenerationSettings {
+  language: "auto" | "en" | "zh";
+  difficulty: "introductory" | "intermediate" | "advanced" | "mixed";
+  durationMinutes: number;
+  totalMarks: number;
+  questionCounts: AiExamQuestionCounts;
+  answerDetail: "concise" | "detailed";
+  focus: string;
+}
+
+export interface CreateAiExamJobRequest {
+  idempotencyKey: string;
+  kind: "exam";
+  consentVersion: number;
+  settings: AiExamGenerationSettings;
+}
+
+export interface AiQuotaBucket {
+  limit: number;
+  consumed: number;
+  reserved: number;
+  remaining: number;
+}
+
+export interface AiQuotaSummary {
+  plan: AiPlanCode;
+  localDate: string;
+  timezone: string;
+  resetsAt: string;
+  generation: AiQuotaBucket;
+  grading: AiQuotaBucket;
+}
+
+export interface AiGenerationJob {
+  id: string;
+  materialId: string | null;
+  materialName: string;
+  courseId: string | null;
+  kind: "exam";
+  status: AiGenerationStatus;
+  stage: AiGenerationStage;
+  progress: number;
+  queuePosition: number | null;
+  settings: AiExamGenerationSettings;
+  errorCode: string | null;
+  errorMessage: string | null;
+  noteId: string | null;
+  createdAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+}
+
+export interface GeneratedExamSourceRef {
+  blockId: string;
+  page: number | null;
+  slide: number | null;
+  label: string;
+}
+
+export interface GeneratedExamQuestionV1 {
+  id: string;
+  type: GeneratedExamQuestionType;
+  prompt: string;
+  marks: number;
+  options: string[];
+  correctOptionIndexes: number[];
+  acceptedAnswers: string[];
+  modelAnswer: string;
+  explanation: string;
+  rubric: string[];
+  sourceRefs: GeneratedExamSourceRef[];
+}
+
+export interface GeneratedExamSectionV1 {
+  id: string;
+  title: string;
+  instructions: string;
+  questions: GeneratedExamQuestionV1[];
+}
+
+export interface GeneratedExamV1 {
+  schemaVersion: "generated-exam.v1";
+  title: string;
+  language: "en" | "zh";
+  difficulty: AiExamGenerationSettings["difficulty"];
+  durationMinutes: number;
+  totalMarks: number;
+  instructions: string[];
+  sections: GeneratedExamSectionV1[];
+}
+
+export interface GeneratedNoteSummary {
+  id: string;
+  courseId: string | null;
+  courseName: string;
+  courseCode: string | null;
+  title: string;
+  kind: "ai_exam";
+  materialName: string;
+  sourceDeleted: boolean;
+  questionCount: number;
+  totalMarks: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface GeneratedNoteDetail extends GeneratedNoteSummary {
+  exam: GeneratedExamV1;
+}
+
+export type ExamAttemptStatus =
+  | "in_progress"
+  | "submitted_ungraded"
+  | "grading"
+  | "completed";
+
+export interface ExamAnswerInput {
+  questionId: string;
+  value: string | string[] | number | number[] | boolean | null;
+}
+
+export interface ExamAttemptAnswerResult {
+  questionId: string;
+  awardedMarks: number | null;
+  correct: boolean | null;
+  feedback: string | null;
+}
+
+export interface GeneratedExamAttempt {
+  id: string;
+  noteId: string;
+  status: ExamAttemptStatus;
+  revision: number;
+  deadlineAt: string;
+  submittedAt: string | null;
+  completedAt: string | null;
+  objectiveScore: number;
+  objectiveMarks: number;
+  totalScore: number | null;
+  totalMarks: number;
+  answers: ExamAnswerInput[];
+  results: ExamAttemptAnswerResult[];
+  exam: Omit<GeneratedExamV1, "sections"> & {
+    sections: Array<Omit<GeneratedExamSectionV1, "questions"> & {
+      questions: Array<Omit<GeneratedExamQuestionV1,
+        "correctOptionIndexes" | "acceptedAnswers" | "modelAnswer" | "explanation" | "rubric">>;
+    }>;
+  };
+  serverNow: string;
+}
+
+export interface SaveExamAnswersRequest {
+  operationId: string;
+  expectedRevision: number;
+  answers: ExamAnswerInput[];
+}
+
+export interface SubmitExamAttemptRequest {
+  operationId: string;
+  expectedRevision: number;
+}
+
 // ── Learning Courses v1 ────────────────────────────────────────────────────
 
 export type LearningCourseCategory =

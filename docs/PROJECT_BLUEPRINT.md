@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-08-10。生产仍为 0038；0039–0040 是已实现但待受保护发布的第一阶段候选，0041–0042 必须在生产观察至少 24 小时后另行追加。
+最后核对：2026-08-10。生产仍为 0038；0039–0040 与 0041–0043 都是仓库候选，尚无真实供应商或受保护生产证据。
 
 ---
 
@@ -37,8 +37,8 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 已上线增量：0037–0038 为拼写前翻译输入增加默认中文的 Fish Audio STT 和所有用户录音入口的实时波形。识别只回填可编辑文本、不自动提交；同一服务端 OpenRouter key 由 NestJS 复用，数据库在调用前验证 owner/session/revision/current word 并预留独立配额。2026-08-04 已通过受保护数据库发布、真实 Fish Audio gate 和不可变生产激活。
 - 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
 - 仍为 mock：Home 聚合、个人 Notes、AI Create、知识清单/测验/图谱/试卷的真实生成与持久化、Note Market。
-- 仅有骨架：FastAPI AI 服务；解析和生成均为占位结果，未被 NestJS 调用。
-- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；BullMQ 任务链、pgvector、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。Redis 已在 0039–0040 候选中用于 API 限流和协同扫描锁，但尚未承担 BullMQ。
+- 已实现待发布：Materials AI 第一阶段只开放 Generate test paper。NestJS 已接 Postgres durable job、BullMQ/Redis、隔离 FastAPI、OpenRouter ZDR、安全解析、私有 Notes 与在线考试；Knowledge list、Quiz、Knowledge graph 仍为 Coming soon。fake 与本地测试不证明真实模型或线上启用。
+- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；pgvector/RAG、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。Redis 已在 0039–0040 候选中用于限流和协同扫描锁，0041–0043 Materials AI 候选已用 BullMQ 只传 durable Postgres job UUID；两组候选都尚未发布生产。
 - 安全基线进展：生产已应用 0008–0038，Profile 敏感列与内部 `SECURITY DEFINER` RPC 已收口，当前 points 奖励使用可冲正幂等账本，旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零；Courses 私有写入/RPC/传播、幂等 attempt、service-only 音频/翻译评判/STT/拼写与考试事实、按意图恢复和取消边界均通过双用户 RLS 与发布断言。
 - 已完成待发布：0039–0040 收紧帖子可信字段、Feedback 状态和 Schedule 关联归属，增加 points 日上限、审核冲正、协同行为待审信号、Redis/HMAC 通用限流与滥用审计。生产证据和 24 小时观察完成前不得标为已上线。
 
@@ -88,6 +88,10 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 ### 3.4 AI 创作与个人笔记（最高优先级）
 
+0041–0043 第一阶段候选已经实现 Materials 文件生成试卷：所有用户默认 Free，以 Profile IANA 时区的本地日期分别享有 10 次成功生成和 10 次成功主观题评分；reservation 只在成功时消费，拒绝、失败、取消会释放，不读取 credits。真实试卷出现在对应 Materials `courses.id` 下，历史 My Notes 硬编码数据保留在独立 Demo 分组，删除来源可选择移入 Unfiled 或同时删除结果。在线考试支持绝对 deadline、500ms/失焦保存、IndexedDB 弱网草稿、无限重考、客观题确定性判分和整卷一次主观题 AI 评分。
+
+该候选尚未完成真实 OpenRouter、2G canary、CI 和生产发布门禁，因此不能写成已上线。第一阶段明确不开放知识清单、独立 Quiz、知识图谱、Notes 编辑/PDF 导出、销售 credits 或支付。
+
 一份生成任务可选择一种或多种产物：
 
 1. 知识清单：概念、定义、来源引用、依赖顺序。
@@ -101,8 +105,8 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 用户选择资料和生成配置
   → NestJS 鉴权、配额/credits 预留、创建 job
   → BullMQ 排队与限流
-  → FastAPI 下载私有资料、解析、分块、嵌入
-  → pgvector 检索 + Claude 结构化生成 + Reviewer 质量门
+  → FastAPI 下载私有资料、解析、分块；必要时调用视觉恢复
+  → provider adapter 结构化生成 + 引用/schema Reviewer 质量门
   → 契约校验、结果落库、credits 结算
   → Notification 持久化 + Realtime 推送
   → Notes 页面阅读、编辑、练习、重新生成与导出
@@ -169,7 +173,7 @@ Web / Electron / React Native
 NestJS API（业务边界、配额、订单、任务、管理）
         ├── Supabase Auth / Postgres / Storage / Realtime
         ├── Redis + BullMQ
-        ├── FastAPI AI Worker ── Claude / Embedding Provider
+        ├── FastAPI AI Worker ── OpenRouter / future provider adapters
         └── Stripe API / Webhook / Connect
 ```
 
@@ -221,7 +225,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - **已实现待发布：**0039–0040 修复帖子 UPDATE 可信字段、Feedback 状态、goal/task owner 关联与数据库时间字段；兼容期仍接受两个旧时间列但总由 trigger 覆盖。
 - **已上线：**0008–0010 已完成受保护生产发布；旧 opening 以追加式等额冲正归零，生产 history、发布断言和最终 dry-run 均通过。
 - **已实现待发布：**points 首次决策冻结、每日数量上限、owner 回执、审核 suppress/restore、协同行为待审信号、Redis 滑动窗口、HMAC 滥用审计和管理 API；自动处罚、完整审核 UI 与 webhook 告警不在本阶段。
-- **发布中止点：**第一阶段兼容应用与 0039–0040 发布后至少观察 24 小时；确认无旧客户端时间列依赖后，才创建/合并 0041–0042 撤销 `posts.updated_at` 与 `study_tasks.done_at` 的兼容 grant。
+- **发布中止点：**兼容应用与 0039–0040 发布后至少观察 24 小时；确认无旧客户端时间列依赖后，才创建/合并未来 0044–0045 撤销 `posts.updated_at` 与 `study_tasks.done_at` 的兼容 grant。0041–0043 已用于纯新增 Materials AI，不执行这项撤权。
 - 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、Courses 浏览器主流程、构建、加密恢复点与应用回退门禁；继续补全旧模块 API HTTP/浏览器 E2E 与 FastAPI 测试。
 - 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
 
@@ -236,17 +240,11 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 验收结果：生产 migration history 到 0038；Courses 私有路径、幂等弱网答题、音频队列/Storage 去重、历史冷音频 ready 后缓存替换、按意图独立续学与显式取消、限时拼写、翻译前测、中文翻译语音输入/共享波形、轮末错题复盘、拼写/读音考试、任意选词、考试历史、双考试精确掌握投影、Unicode 拼写归一化、仅标点差异容错、未裁剪 WAV 的真实 Azure/OpenRouter/Fish Audio smoke、分享/市场、评分候补池和公网 readiness 均有发布记录；文件导入仍保持禁用。
 
-### 阶段 B：AI 最小闭环
+### 阶段 B：Materials AI 最小闭环（已实现待发布）
 
-目标：一份真实资料可以生成一种可引用、可持久化的知识清单。
+目标：一份真实 Materials 资料可以生成可引用、可持久化的试卷并在线考试。0041–0043 候选已经实现统一契约、任务/Notes/引用/答卷表、多格式解析、持久队列、DeepSeek/MiMo ZDR、结果校验、队列 UI、真实 My Notes 和 Free quota；不接 credits。
 
-- 统一契约、建任务/笔记/引用表。
-- PDF/Markdown 解析、分块、受控模型调用和结果校验。
-- NestJS → 队列 → FastAPI → 数据库完整链路。
-- Create 使用真实 Materials；Notes 展示真实结果、状态和错误。
-- 建立质量/成本基线和失败退款。
-
-验收：同一幂等键不重复扣费；结果引用可追溯；超时/失败可重试；评测集达标。
+剩余发布验收：完整 CI；真实固定 provider suite；2G 资源 canary；只读 plan/恢复点/apply；flag关闭 readiness；公网登录用户完整链路；同一幂等键/operation不重复额度/结果，所有引用有效，失败释放 reservation和临时目录。
 
 ### 阶段 C：四类产物与学习闭环
 
@@ -281,8 +279,8 @@ NestJS API（业务边界、配额、订单、任务、管理）
 |---|---|---|---|---|
 | SEC-01 | Profile 敏感列与内部 RPC 收口 | 已上线 | A | 0008–0010、RLS E2E、2026-07-21 生产发布记录 |
 | SEC-02 | 注册限流、邮箱验证、找回密码 | 部分 | A/B | 0039–0040 候选实现 Redis IP+email 限流；邮箱验证/找回/CAPTCHA 仍未完成 |
-| SEC-03 | 帖子/Feedback/Schedule 完整性与 points 反滥用 | 已实现 | A | 0039–0040 候选、真实 Redis/双用户 RLS CI；生产与 0041–0042 contract 待完成 |
-| QA-01 | jsdom、API、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API unit + CI 本地 Supabase + Courses Playwright；staging、旧模块 API HTTP/浏览器与 FastAPI 待补 |
+| SEC-03 | 帖子/Feedback/Schedule 完整性与 points 反滥用 | 已实现 | A | 0039–0040 候选、真实 Redis/双用户 RLS CI；生产与未来 0044–0045 contract 待完成 |
+| QA-01 | jsdom、API、Python、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API/Python unit + CI 本地 Supabase + Courses/Materials AI Playwright；staging 与旧模块 API HTTP/浏览器待补 |
 | OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
 | FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
 | LEARN-01 | 英语词表文本创建/编辑、四阶段学习、显式取消、轮末复盘、拼写/读音考试、任意选词与历史 | 已上线 | A+ | React、NestJS、0011–0036；CI/生产已验证 |
@@ -291,11 +289,11 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | LEARN-04 | Azure TTS/朗读评分适配层 | 已上线 | A+ | fake 自动化 + Japan East 真实供应商 gate |
 | LEARN-05 | 限时拼写与语义翻译前测 | 已上线 | A+ | 0019–0020、OpenRouter structured output、真实 provider/生产 gate |
 | LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
-| AI-01 | 统一生成契约与任务模型 | 未完成 | B | OpenAPI、迁移 |
-| AI-02 | 解析、分块、引用、embedding | 桩 | B | FastAPI、pgvector |
+| AI-01 | 试卷统一生成契约、任务/额度/Notes/答卷 | 已实现 | B | 0041–0043 候选；生产门禁待完成 |
+| AI-02 | Materials 确定性解析、视觉恢复和引用 | 已实现 | B | FastAPI DocumentIR/DeepSeek/MiMo；embedding/pgvector 不在首版 |
 | AI-03 | 知识清单真实生成 | mock | B | AI-01/02 |
-| AI-04 | 测验、图谱、试卷 | mock | C | 评测集、渲染适配 |
-| NOTE-01 | Notes CRUD、编辑、版本和导出 | mock | B/C | AI 结果表 |
+| AI-04 | 测验、图谱、试卷 | 部分 | C | 试卷候选已实现；独立 Quiz/Graph 与持续评测待完成 |
+| NOTE-01 | Notes CRUD、编辑、版本和导出 | 部分 | B/C | 私有试卷查看/删除/考试已实现；编辑/版本/PDF导出待完成 |
 | HOME-01 | 首页真实聚合 | mock | C | Notes/Tasks/Usage |
 | PLAN-01 | 到期提醒与薄弱点排程 | 部分 | C/E | Realtime/cron |
 | COM-01 | 举报、审核、屏蔽、反垃圾 | 部分 | E | points 协同信号/审核 API 已实现待发布；内容举报、申诉、屏蔽和完整管理端仍未完成 |

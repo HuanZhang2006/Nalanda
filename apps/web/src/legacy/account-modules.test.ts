@@ -111,4 +111,23 @@ describe("通知、反馈与个人资料", () => {
     expect(root.textContent).toContain("Alice");
     expect(root.querySelector('[role="alert"]')?.textContent).toContain("课程统计服务暂不可用");
   });
+
+  it("displays the Free Plan generation and grading allowance without credits", async () => {
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => {
+      const body = String(input).includes("/api/profile/ai-quota") ? {
+        plan: "free", localDate: "2026-08-10", timezone: "Asia/Shanghai", resetsAt: "2026-08-10T16:00:00.000Z",
+        generation: { limit: 10, consumed: 3, reserved: 1, remaining: 6 },
+        grading: { limit: 10, consumed: 2, reserved: 0, remaining: 8 },
+      } : { courses: 2, learnedWords: 12, reviewDays: 3, badges: [] };
+      return Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { "Content-Type": "application/json" } }));
+    }));
+    const root = document.createElement("div"); document.body.appendChild(root);
+    initProfile(createSupabaseMock(), user, vi.fn()); mountProfile(root); await flush(24);
+
+    expect(root.textContent).toContain("Free Plan");
+    expect(root.textContent).toContain("Asia/Shanghai");
+    expect(root.textContent).toContain("6/10");
+    expect(root.textContent).toContain("8/10");
+    expect(root.textContent).toContain("Credits are not used");
+  });
 });
