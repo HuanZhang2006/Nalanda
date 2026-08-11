@@ -13,6 +13,8 @@ test("Materials AI real-provider gate covers fixed formats, ZDR evidence, inject
   assert.match(source, /zdrEnforced/);
   assert.match(source, /costMicroUsd/);
   assert.match(source, /totalTokens/);
+  assert.match(source, /SUPABASE_URL}\/storage\/v1\//);
+  assert.doesNotMatch(source, /SUPABASE_URL \+ value/);
   assert.match(source, /MATERIAL_AI_FAKE_PROVIDER.*!= "true"/);
   assert.match(source, /finally:[\s\S]*clean_storage\(\)/);
   assert.doesNotMatch(source, /print\([^\n]*(SERVICE_KEY|INTERNAL_TOKEN|OPENROUTER_API_KEY)/);
