@@ -4,20 +4,20 @@
 > - **内容**：记录通知面板、反馈和 Profile/Growth 的当前数据流与前端函数。
 > - **作用**：解释三个真实 Supabase 模块及其联动，并标明客户端字段与服务端字段的权限边界。
 > - **何时更新**：Profile 字段/权限、通知刷新方式、反馈状态机或徽章/等级规则变化时。
-> - **状态基线**：2026-08-10。生产仍为 0038；Feedback 只读/新增和 points 日上限回执/通知已在 0039–0040 候选实现，待受保护发布。
+> - **状态基线**：2026-08-10。生产已到 0040；Feedback 只读/新增和 points 日上限回执/通知已上线。
 
-> 文件：`...0004_notifications_feedback.sql`（表）、`...0006_*`（旧 points）、`...0007_*`（streak）、`...0008_security_points_ledger.sql`（敏感列与 points 账本）、`...0011_learning_courses.sql`（timezone 与课程徽章）、`...0039_security_integrity_rate_limit_points_abuse.sql`（候选 Feedback/points 收口）、`apps/web/src/legacy/{notifications,feedback,profile}.ts`、`apps/api/src/{learning,points}`。
+> 文件：`...0004_notifications_feedback.sql`（表）、`...0006_*`（旧 points）、`...0007_*`（streak）、`...0008_security_points_ledger.sql`（敏感列与 points 账本）、`...0011_learning_courses.sql`（timezone 与课程徽章）、`...0039_security_integrity_rate_limit_points_abuse.sql`（生产 Feedback/points 收口）、`apps/web/src/legacy/{notifications,feedback,profile}.ts`、`apps/api/src/{learning,points}`。
 
 ---
 
 ## 一、数据模型
 - `notifications(user_id, type, title, body, read bool, created_at)` — owner-only RLS。`type` 仅做图标/分类用途，前端目前不强依赖。
-- `feedback(user_id, category, summary, body, status default 'open', created_at)` — 生产 0038 为 owner `FOR ALL`；0039 候选拆成 owner SELECT/INSERT，authenticated 只获准插入 `category/summary/body`，不能 UPDATE/DELETE 或指定 status/owner/time。
+- `feedback(user_id, category, summary, body, status default 'open', created_at)` — 生产 0039 起拆成 owner SELECT/INSERT，authenticated 只获准插入 `category/summary/body`，不能 UPDATE/DELETE 或指定 status/owner/time。
 - `profiles` 相关列：`points`（活动积分，0008 起由 `point_entries` 重建）、`level/level_name`（由 points 阈值派生）、`streak/streak_date`（0007 增加、0008 锁为服务端维护）、`credits`（**预留给未来充值钱包，与 points 不同**）、`timezone`（0011 增加，必须是 PostgreSQL 可识别的 IANA 时区）。
 
 > 关键概念：**积分 points（做事赚）≠ 钱包 credits（充值/未来）**。Profile 展示 points；credits 暂不展示。
 
-> 当前边界：0008 已撤销 Profile 整表 UPDATE；0011 后 authenticated 只获准更新 `username/university/major/year/language/timezone`，防御触发器同时保护 points、credits、level、VIP 和 streak。points/notification/learning definer helpers 均已撤销客户端 EXECUTE。生产 0038 的 feedback `FOR ALL` 缺口由 0039 候选收口；apply 前 status 仍不能作为可信客服事实。
+> 当前边界：0008 已撤销 Profile 整表 UPDATE；0011 后 authenticated 只获准更新 `username/university/major/year/language/timezone`，防御触发器同时保护 points、credits、level、VIP 和 streak。points/notification/learning definer helpers 均已撤销客户端 EXECUTE。生产 0039 已收口 feedback `FOR ALL` 缺口，status 只由支持流程维护。
 
 ---
 
@@ -46,7 +46,7 @@ const { count } = await sb.from("notifications").select("id",{count:"exact",head
 
 > 设计：通知的「产生」分两类。①自己触发自己（提交反馈）走前端 `notify()`；②别人触发你（被赞/评论/关注、streak 里程碑）走 `security definer` 触发器，因为要给「别人」插通知，前端没那个 RLS 权限。
 
-0039 候选在奖励 business transaction 首次判定某种奖励/自然日超限时，同事务幂等写入一条 `points_daily_cap` 通知；owner-only `get_point_reward_receipt` 只读取该用户的奖励 decision。客户端断网、重复读取回执、删除重建或换时区都不会漏写或重复通知；前端只负责刷新铃铛和显示 toast，不能自行创建“已达上限”的权威事实。
+生产 0039 在奖励 business transaction 首次判定某种奖励/自然日超限时，同事务幂等写入一条 `points_daily_cap` 通知；owner-only `get_point_reward_receipt` 只读取该用户的奖励 decision。客户端断网、重复读取回执、删除重建或换时区都不会漏写或重复通知；前端只负责刷新铃铛和显示 toast，不能自行创建“已达上限”的权威事实。
 
 ---
 

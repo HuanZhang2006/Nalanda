@@ -3,7 +3,7 @@
 > **本文内容：**定义社区、笔记市场、公开资料和 AI 生成内容的允许/禁止边界，以及举报、分级、处置、申诉、版权和透明度流程。  
 > **作用：**统一产品、审核、客服、安全和工程对用户内容风险的处理方式，并为审核后台/数据模型提供需求。  
 > **何时更新：**新增内容类型/地区/市场功能、政策分类、审核工具、SLA、申诉或监管义务变化时；重大误判/滥用事件后。  
-> **状态基线：**2026-08-10。生产数据库仍为 0038：社区/Note Market 没有通用举报后台；Course Market 的最小举报、持久限额、阈值告警和受审计隐藏/恢复已启用。仓库中的 0039–0040 是尚待受保护发布的第一阶段候选，增加帖子可信列、points 日上限/人工冲正、只标记的协同检测和统一 Redis 限流；在 migration plan、恢复点、apply、应用激活及至少 24 小时观察完成前，不得把候选能力描述为生产事实。
+> **状态基线：**2026-08-11。生产数据库已到 0040：帖子可信列、points 日上限/人工冲正、只标记的协同检测和统一 Redis 限流已启用；社区/Note Market 仍没有通用举报后台，Course Market 的最小举报、持久限额、阈值告警和受审计隐藏/恢复已启用。时间列撤权 contract 顺延为未来 0044–0045，仍须等待至少 24 小时观察。
 
 ## 1. 适用范围与原则
 
@@ -17,8 +17,8 @@
 - 社区图片/音频位于 public bucket，持有 URL 的外部人员可能继续访问缓存副本。
 - 自由标签可由任意认证用户插入；暂无保留词、合并、滥用限制或管理员维护流程。
 - 通用社区/Note Market 无 `reports/cases/actions/appeals` 或可信 RBAC；Courses 已有专用 reports 和 moderation actions。
-- 无上传恶意文件/CSAM hash/垃圾/仇恨/骚扰内容检测。Course Market 已有持久发布/举报配额；生产 0038 尚无覆盖注册、普通社区与所有 Courses 路由的统一限流层，0039–0040 候选补充的是注册/Courses/公开分享与市场边界，不代表全站社区治理完成。
-- 删除帖子会级联数据库互动，但不保证媒体对象清理。社区计数由触发器维护，points 已是可冲正账本；生产 0038 的作者 UPDATE 仍可伪造部分快照、计数和时间，0039 候选以列级 grant 与防御触发器收口。
+- 无上传恶意文件/CSAM hash/垃圾/仇恨/骚扰内容检测。Course Market 已有持久发布/举报配额；生产统一限流覆盖注册、认证 API、Courses 写入、公开分享与市场，但不代表全站社区治理完成。
+- 删除帖子会级联数据库互动，但不保证媒体对象清理。社区计数由触发器维护，points 已是可冲正账本；生产 0039 已以列级 grant 与防御触发器收口作者快照、计数和时间。
 - Course Market v1 仅文本英语词表免费克隆：上架确认权利、HTML 转义、发布/举报日限额、阈值告警、不按数量自动下架，配置管理员可审计 hide/restore/withdraw；克隆内容不能再次传播。
 - `learning_audio_assets` 与 private `vocabulary-audio` 只保存从规范化英文合成的无 owner 音频和运行元数据，不是市场出版物、用户上传附件或公开读取面；IndexedDB 弱网 outbox 也不能绕过服务端审核、成长或 publication 事务。
 - Courses 最小治理仍缺举报工作台、正式值班/SLA、作者通知/申诉、证据快照、社区联动和强 RBAC；不能声称全站市场审核已完成。
@@ -72,7 +72,7 @@ Course v1 保存目标 ID、类别、≤1000 字说明、举报人和状态，�
 
 MiMo 视觉 prompt 只要求逐字文本、标题、表格、图表、流程、公式、图标含义、视觉关系、不可读区和疑似嵌入指令，禁止遵从图片命令或补造信息。prompt injection 检测不能保证绝对安全；误报进入安全/AI 质量复核，不能临时关闭分类、允许工具/Web、改用非 ZDR endpoint 或把原文件贴进工单。
 
-0039–0040 候选另建立 points 滥用审核边界。协同扫描每五分钟在 Redis 分布式锁下运行，仅生成 `point_abuse_signals(status=pending)`：同一 actor 对同一 owner 的高集中互动、双向互刷、3–8 人小团体和新账号集中突发均只是调查线索，不是违规结论。系统不自动冻结、扣分、隐藏或封禁；管理员在 `MODERATION_ADMIN_USER_IDS`（兼容期仅在为空时回退 Course Market allowlist）内，经受控 API 标记信号并提交带理由、可选 case reference 的 `suppress/restore`。原创帖 suppress 覆盖锚定同一 root 的原创、转发、评论与点赞奖励，所有变化以不可变冲正和审核 action 留痕；restore 不补发最初因每日上限为零的奖励。
+生产 0039–0040 另建立 points 滥用审核边界。协同扫描每五分钟在 Redis 分布式锁下运行，仅生成 `point_abuse_signals(status=pending)`：同一 actor 对同一 owner 的高集中互动、双向互刷、3–8 人小团体和新账号集中突发均只是调查线索，不是违规结论。系统不自动冻结、扣分、隐藏或封禁；管理员在 `MODERATION_ADMIN_USER_IDS`（兼容期仅在为空时回退 Course Market allowlist）内，经受控 API 标记信号并提交带理由、可选 case reference 的 `suppress/restore`。原创帖 suppress 覆盖锚定同一 root 的原创、转发、评论与点赞奖励，所有变化以不可变冲正和审核 action 留痕；restore 不补发最初因每日上限为零的奖励。
 
 若有效法律/政策请求要求移除某个合成发音，应按规范化 term、locale、voice、format 与 synthesis version 定位并删除对应 private Storage 对象、停止/重排队列并保留不含用户录音的最小审计。不得把共享合成对象错误归属给最先请求它的用户，也不得把普通课程删除当成全局音频下架。
 
@@ -114,7 +114,7 @@ VIP、付费、创作者或高 points 不获得政策豁免。资金冻结只限
 
 ## 10. 目标数据模型与权限
 
-Course v1 已存在 `learning_course_reports`（publication/share 二选一、类别/说明/状态）与 `learning_course_moderation_actions`（publication、actor、hide/restore/withdraw、reason/time），publication status 承担可见性。0039 候选还增加 service-only `point_moderation_actions` 与 `point_abuse_signals`；service-role 对这些 append-only 表只有读取权，审核转换只能经 SECURITY DEFINER 工作流执行，普通客户端不能读取或写入。当前仅有管理 API，没有审核 UI。其余全站目标模型仍包括：
+Course v1 已存在 `learning_course_reports`（publication/share 二选一、类别/说明/状态）与 `learning_course_moderation_actions`（publication、actor、hide/restore/withdraw、reason/time），publication status 承担可见性。生产 0039 还增加 service-only `point_moderation_actions` 与 `point_abuse_signals`；service-role 对这些 append-only 表只有读取权，审核转换只能经 SECURITY DEFINER 工作流执行，普通客户端不能读取或写入。当前仅有管理 API，没有审核 UI。其余全站目标模型仍包括：
 
 - `content_reports`：举报对象、类别、说明、举报人（可空）、状态、优先级；
 - `moderation_cases`：聚合报告、政策版本、负责人、严重度、状态/SLA；
@@ -129,7 +129,7 @@ Course v1 已存在 `learning_course_reports`（publication/share 二选一、�
 
 ## 11. 发布门禁与指标
 
-社区/Note Market 扩大前至少具备完整清单。Course Market 私有 beta 的最低门是：举报入口、发布/举报限频、独立 feature flag、已验证管理员和告警接收者、审计 action、紧急隐藏、无文件/HTML 执行、免费克隆/禁止再传播；扩大公开范围前仍须补队列、强角色、作者通知/申诉、政策版本和处理 SLA。points 审核候选发布还必须验证普通用户/直接 service-role 表写均被拒绝、管理 allowlist 拒绝非管理员、suppress/restore 账本投影一致、扫描只产生 pending 信号且无自动处罚。
+社区/Note Market 扩大前至少具备完整清单。Course Market 私有 beta 的最低门是：举报入口、发布/举报限频、独立 feature flag、已验证管理员和告警接收者、审计 action、紧急隐藏、无文件/HTML 执行、免费克隆/禁止再传播；扩大公开范围前仍须补队列、强角色、作者通知/申诉、政策版本和处理 SLA。points 审核生产边界已验证普通用户/直接 service-role 表写均被拒绝、管理 allowlist 拒绝非管理员、suppress/restore 账本投影一致、扫描只产生 pending 信号且无自动处罚。
 
 每周观察：报告量/千活跃用户、各级响应/解决时间、确认违规率、复犯率、申诉率与推翻率、自动检测精确/召回抽样、未成年人/隐私/版权类别、孤儿附件数量、审核员敏感内容暴露量。不得以“删除更多”作为唯一成功指标。
 

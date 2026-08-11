@@ -90,4 +90,4 @@ and exists (select 1 from public.courses c
 
 API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/图片10MB，再创建短期 signed URL与 Postgres job/quota reservation；BullMQ 只投 UUID，FastAPI 解析并回调进度。页面每2秒轮询，后台退避到10秒，离开/刷新不取消。成功试卷落在同一 `courses.id` 的 My Notes；删除材料/科目可保留到 Unfiled 或同时删除 AI 结果，两者都取消任务、清 parse cache和过程文件。
 
-生产仍为 0038，必须等真实 provider/资源/发布门禁后才可称为上线。Storage 文件删除是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
+生产数据库当前到 0040，但 Materials AI 尚未部署；必须等真实 provider/资源/发布门禁后才可称为上线。Storage 文件删除是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。

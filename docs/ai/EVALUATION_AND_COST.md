@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-10。生产仍为 0038。0041–0043 已在仓库实现 Materials AI 试卷生成候选，但尚未取得完整 CI、真实 DeepSeek/MiMo/ZDR、2G canary 或生产证据；因此下文明确区分“候选实现”和“发布门禁”。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-11。生产已到 0040：Azure Speech、OpenRouter 语义翻译前测和 Fish Audio 中文 STT 已启用，Redis API/Courses 频率保护在既有供应商持久配额之外使成本路径 fail-closed。0041–0043 已在仓库实现 Materials AI 试卷生成候选，但尚未取得完整 CI、真实 DeepSeek/MiMo/ZDR、2G canary 或生产证据；因此下文明确区分“候选实现”和“发布门禁”。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -256,7 +256,7 @@ total_variable_cost = provider_cost
 - **任务预算：**estimated upper bound 对应 credit hold；实际超预算取消或降级，不自动扩大；
 - **队列背压：**达到容量/预算时排队或拒绝，不能无限堆积和过期扣费；
 - **kill switch：**按 provider/model/产物/地区关闭，保留已有资料访问。
-- **入口频率保护：**0039 候选的 Redis 滑动窗口限制 Courses 写入和可能排队/消耗供应商成本的读取；它只吸收突发并提供 `Retry-After`，不能替代数据库中的 Azure/OpenRouter/Fish 用量、月预算、幂等租约或熔断。Redis 不可用时成本相关请求返回 `503 RATE_LIMIT_UNAVAILABLE`，私有无成本读取才允许降级。
+- **入口频率保护：**生产 0039 的 Redis 滑动窗口限制 Courses 写入和可能排队/消耗供应商成本的读取；它只吸收突发并提供 `Retry-After`，不能替代数据库中的 Azure/OpenRouter/Fish 用量、月预算、幂等租约或熔断。Redis 不可用时成本相关请求返回 `503 RATE_LIMIT_UNAVAILABLE`，私有无成本读取才允许降级。
 
 阈值作为受控环境配置，不在前端；变更有审计。降级顺序可为：减少上下文/输出 → 更便宜且已评测模型 → 只解析/保存草稿 → 延后/拒绝并释放 hold。不得在未告知时用质量显著不同的模型冒充原产品。
 

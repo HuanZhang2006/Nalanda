@@ -3,7 +3,7 @@
 > **本文内容：**记录核心业务与文档解析/模型生成分为 Node 和 Python 两个服务的决策。  
 > **作用：**明确服务职责、信任边界和 AI 异步编排的目标形态，防止浏览器直接调用模型服务。  
 > **何时更新：**AI 运行时、队列、服务间契约、模型供应商或部署边界变化时；若合并服务应新建替代 ADR。  
-> **实现提示：**0041–0043 已按本 ADR 实现 Materials AI 候选；生产仍停在 0038，候选须通过真实供应商和受保护发布门禁。
+> **实现提示：**0041–0043 已按本 ADR 实现 Materials AI 候选；生产数据库当前到 0040，但 AI 链路尚未部署，候选须通过真实供应商和受保护发布门禁。
 
 - **状态：**Accepted
 - **日期：**2026-06-20
@@ -29,7 +29,7 @@
 ## 当前实现与目标差距
 
 - **候选实现：**0041–0043 已加入 NestJS 鉴权/配额/幂等编排、durable Postgres jobs、BullMQ UUID 队列、内部 token、FastAPI DocumentIR/安全审查/局部视觉恢复/生成、usage ledger、取消与 Notes 原子落库；旧固定桩已删除。
-- **尚未成为生产事实：**生产仍为 0038；真实 DeepSeek/MiMo ZDR、接近上限的 2G 资源 canary、完整 CI、受保护迁移与公网登录用户 smoke 尚待执行。
+- **尚未成为生产事实：**生产数据库当前到 0040，但 Materials AI 尚未部署；真实 DeepSeek/MiMo ZDR、接近上限的 2G 资源 canary、完整 CI、受保护迁移与公网登录用户 smoke 尚待执行。
 - **后续目标：**Courses 导入、RAG、销售 credits/支付、更多 AI 产物和通用管理后台仍按 [AI 评测与成本治理](../ai/EVALUATION_AND_COST.md) 与[统一规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md)推进。
 
 ## 验证与复审
