@@ -211,7 +211,7 @@ git check-ignore .env.rls.local
 - 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；0009 根据 2026-07-21 产品/安全决定追加等额 reversal 归零。自动测试证明迁移与冲正语义，但生产发布仍须保存聚合审计和处置记录；
 - `community-media` public bucket 的写/删/对象清理；
 - 账号删除后的全部 Storage 孤儿与隐私删除流程；
-- 0039–0040 已完成生产第一阶段发布，24 小时兼容观察仍在进行；未来 0044–0045 contract grant 撤销不得提前执行，0041–0043 是独立的 additive Materials AI 候选；
+- 0039–0040 已完成生产第一阶段发布，24 小时兼容观察仍在进行；未来 0044–0045 contract grant 撤销不得提前执行，0041–0043 是已独立受保护发布的 additive Materials AI；
 - 协同检测只覆盖已锁定的四类阈值并且只标记，不包含内容语义垃圾识别、自动处罚、完整审核后台或跨站设备图谱；跨午夜行为由数据库冻结窗口设计和迁移断言约束，仍需托管 staging 的可控时钟演练；
 - Redis 集成在本机未安装 Redis 时会明确 skip；只有 CI 中的真实 Redis service 能提供该层证据。普通 answer 的并发/超时重放已覆盖，但 recognition、旧模块写入、进程崩溃窗口和长时间 session 仍需持续扩展；
 - 真实 Azure 账号、音频供应商网络、浏览器麦克风权限与实际发音质量；自动测试只使用 adapter fake/固定 WAV。
@@ -454,7 +454,7 @@ python3 scripts/smoke-material-ai-provider.py
 | Courses 双考试掌握 | 真实 Supabase E2E 验证跨日复习与单项考试均不 learned、两项考试任意顺序共同 learned、失败考试不写事实、term/translations/IPA 编辑精确撤销；0034 空库/升级断言字段、check constraint、review 无正向写入和 service-role-only 权限 |
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | 其它 AI 产物（未来） | 新 schema、parser/prompt/eval + API/RLS/jsdom/Playwright + 真实 provider gate；不得复用试卷 gate 推断质量 |
-| Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；发布前另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
+| Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；每次关键发布另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
 | nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 
@@ -477,6 +477,8 @@ python3 scripts/smoke-material-ai-provider.py
 同日的翻译语音输入与共享波形样本：PR #49 run `30904901828` 通过 0007→0038、空库重建/lint、真实本地 Supabase RLS/Storage、72 个 API 测试、85 个 Web/jsdom 测试与 Chromium Playwright；main run `30905971129` 按迁移保护规则只验证不部署。只读 plan `30906629924` 首次因一次性 Supabase 上游瞬时响应失败，同 SHA 重跑失败 job 后通过且唯一列出 0037–0038。受保护 run `30907716733` 保留 artifact `8892006761`、应用到 0038 并激活 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1`。Playwright STT 仍为 fake；独立真实直连和生产待激活 API gate 使用合成中文 WAV，后者返回 `transcriptionMatched=true`。这证明当时 endpoint/key/额度与固定样本，不证明物理麦克风或多口音质量。
 
 2026-08-10 的安全/限流 Stage A 样本：PR #51 run `31367746106`、PR #52 run `31370961413` 与 main run `31371608883` 通过 docs/lint/typecheck、Web/API tests、build、真实 Redis Lua、0007→0040、空库/database lint、双用户 RLS/Storage 和 Chromium Playwright；Playwright 的供应商仍为 fake。plan `31368447660` 只列 0039–0040，protected run `31369657292` 保留 artifact `9055783205` 后应用到 0040。该 run 暴露的远端 stdin 假成功由 #52 回归修复；最终 plan `31372198037` 为空，protected run `31372888441` 以 artifact `9057062920` 再验证远端并激活 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5`。真实 Redis/nginx/Azure/OpenRouter/Fish/Courses gates 与公网 `deps.redis=ok`、auth/admin 401、注册 RateLimit headers 是独立生产证据；OpenRouter 的瞬时超时/429 均在切流前阻断，不能算成功测试。时间列撤权的未来 0044–0045 仍待 24 小时 go/no-go。
+
+2026-08-11 的 Materials AI 样本：PR #56 run `31462982923`、PR #57 run `31465041901`、main run `31465776658` 均通过 docs/lint/typecheck、104 个 API、105 个 Web/jsdom、25 个 Python AI 测试、真实 Redis、0007→0043、空库/lint、双用户 RLS/Storage、AI Docker 和 fake-provider Chromium Playwright。只读 plan `31465816321` 确认 0043/空 dry-run；protected run `31467153739` 创建 artifact `9092230348`，再跑 220 页资源 canary、真实 DeepSeek/MiMo 固定格式/视觉/注入/评分 suite、真实 Azure/OpenRouter/Courses gate和登录用户 Materials→Notes→Exam→grading→delete，最终激活 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`。更早 `31463661987` 的 workflow 假绿被服务器 image/Web/flag 和公网 404 独立检查识别，修复裸 `compose exec` heredoc stdin 后才重发；因此 Actions success 不能代替独立生产 smoke。
 
 ## 11. 新增测试约定
 

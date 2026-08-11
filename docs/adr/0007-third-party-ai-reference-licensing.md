@@ -27,7 +27,7 @@
 
 ## 当前实现与目标差距
 
-- **当前候选：**0041–0043 的 Materials parser、provider adapter、prompt 与验证器为 Nalanda 自有实现，没有复制所述非商业项目；第三方 Python/Node 依赖仍须在合并门禁中扫描许可证。
+- **当前生产实现：**0041–0043 的 Materials parser、provider adapter、prompt 与验证器为 Nalanda 自有实现，没有复制所述非商业项目；第三方 Python/Node 依赖仍须在合并门禁中扫描许可证。
 - **目标：**持续只选择商业兼容依赖或干净重写，并建立自动 SBOM/许可证扫描、NOTICE/归属和代码来源评审。
 
 ## 验证与复审

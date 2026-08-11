@@ -1,6 +1,6 @@
 # API 文档
 
-> **本文内容：** 记录当前 NestJS 公网 API、0041–0043 候选 FastAPI 内部接口，以及浏览器直接使用的 Supabase Auth/PostgREST/Storage 数据面；同时指出尚未实现的目标 API。
+> **本文内容：** 记录当前 NestJS 公网 API、生产 0041–0043 FastAPI 内部接口，以及浏览器直接使用的 Supabase Auth/PostgREST/Storage 数据面；同时指出尚未实现的目标 API。
 > **作用：** 为前后端联调、客户端开发、自动化测试、安全评审和接口演进提供明确契约，避免把架构蓝图中的接口误认为已经可用。  
 > **何时更新：** 新增/删除/变更路由、请求/响应/状态码、认证授权、数据 schema、Supabase 访问方式、错误码或 API 版本策略时，与实现同一提交更新。
 
@@ -10,16 +10,16 @@
 flowchart LR
     Browser["Web 浏览器"] -->|"/api/*"| Nest["NestJS API"]
     Browser -->|"Auth / PostgREST / Storage"| Supabase["Supabase Cloud"]
-    Nest -->|"rate limits / locks / BullMQ job UUID"| Redis["private Redis（candidate）"]
+    Nest -->|"rate limits / locks / BullMQ job UUID"| Redis["private Redis（production）"]
     Nest -->|"Admin Auth / JWKS / Courses 事务 RPC"| Supabase
     Nest -->|"TTS / pronunciation assessment"| Azure["Azure Speech（可选）"]
-    Nest -->|"X-AI-Internal-Token"| AI["private FastAPI AI worker（0041 candidate）"]
+    Nest -->|"X-AI-Internal-Token"| AI["private FastAPI AI worker（production 0041–0043）"]
     AI -->|"strict JSON + ZDR"| OpenRouter["OpenRouter DeepSeek / MiMo"]
 ```
 
 - 生产 Web/API 同源基址：`https://nalanda.online`；本文示例默认本地 `http://localhost:3000`。
 - NestJS 全局前缀：`/api`。
-- FastAPI 默认本地基址：`http://localhost:8000`，只允许 compose 私网访问；0041 候选由 BullMQ consumer 通过内部 token 调用，生产 0040 尚未部署该链路。
+- FastAPI 默认本地基址：`http://localhost:8000`，生产只允许 compose 私网访问；0041 由 BullMQ consumer 通过内部 token 调用，生产 0043 已部署该链路。
 - 当前没有 OpenAPI 文件、API 版本号、请求 ID 或通用分页规范。Nest 全局错误已统一为 `{ code, message, fieldErrors?, currentRevision?, retryAfterSeconds? }`。生产 0039–0040 已启用全局 Redis 限流。
 - NestJS 跨域许可来自 `CORS_ALLOWED_ORIGINS`，未设置时复用 `PUBLIC_ORIGIN`；生产两者都缺失时不返回跨域许可，同源 nginx `/api` 不受影响，且当前不启用 credential cookie。
 
@@ -206,7 +206,7 @@ curl -fsS http://localhost:3000/api/me \
 
 `targetType=post` 会在数据库内解析根内容 key，并覆盖锚定该根的原创、转发、点赞和评论奖励；只冲正历史实际获得金额。`restore` 不补发日上限为零的 claim，也不恢复已删除来源。每次操作追加 `point_moderation_actions`，理由必填。PATCH 审核经 service-only `review_point_abuse_signal` 写入数据库时间和 reviewer；API service-role 对 claim、signal、moderation action 都只有 SELECT，不能绕过受控 RPC 直接改写。
 
-## 4. Courses API（功能迁移 0011–0038，生产 history 到 0040）
+## 4. Courses API（功能迁移 0011–0038，生产总 history 到 0043）
 
 所有请求/响应使用 `@nalanda/types` 的 camelCase；API 内部显式转换 PostgreSQL snake_case。除标记“公开”外都需要 Supabase bearer token。`FEATURE_LEARNING_COURSES_ENABLED` 是总开关，分享、市场和语音另有子开关；生产未显式开启时分别返回 503/404，不应据此回退为前端 mock。
 
@@ -443,9 +443,9 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 | OpenRouter 滚动 24 小时实际 provider 配额达到上限 | 429 `TRANSLATION_ASSESSMENT_DAILY_LIMIT` + `retryAfterSeconds` |
 | Courses 配额/成本变量不是有限正数 | 503 `SERVER_MISCONFIG` |
 
-## 5. Materials AI、Notes 与在线考试（0041–0043 候选）
+## 5. Materials AI、Notes 与在线考试（生产 0041–0043）
 
-以下接口已经在仓库实现但尚未通过受保护生产发布，全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。`FEATURE_MATERIAL_AI=false` 时不接受新生成任务。
+以下接口已通过受保护生产发布，全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。`FEATURE_MATERIAL_AI=false` 时不接受新生成任务；生产当前为 true，但仍可按事故 runbook 关闭。
 
 | 方法与路径 | 输入/行为 | 关键边界 |
 |---|---|---|
@@ -486,7 +486,7 @@ Postgres `generation_jobs` 是 durable 事实，BullMQ 只保存 UUID；reconcil
 
 ## 5.3 历史 FastAPI 桩（已删除，不可调用）
 
-早期仓库曾提供无认证的 `/parse`、`/generate/knowledge-list|quiz|graph|exam` 固定输出；0041 候选已删除这些路由。下列旧示例只用于解释历史 mock，不是 API 契约。
+早期仓库曾提供无认证的 `/parse`、`/generate/knowledge-list|quiz|graph|exam` 固定输出；生产 0041 已删除这些路由。下列旧示例只用于解释历史 mock，不是 API 契约。
 
 ### `GET /health`
 
@@ -636,7 +636,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 |---|---|---|---|
 | 个人资料 | `profiles` | 本人 select；只更新 username/university/major/year/language/timezone | 0008/0011 的列级 GRANT、IANA 校验与防御触发器保护 points/credits/level/VIP/streak |
 | Points | `point_entries` + `get_point_reward_receipt` | 本人只读账本；业务成功后按 event/source 取本人奖励回执 | state/window/claim/moderation/signal/audit 表对客户端完全隐藏；receipt 从 `auth.uid()` 推导 owner |
-| 资料库 | `courses`, `materials` | owner CRUD；删除在 0041 候选改经 Nest 编排 | materials 写入额外校验课程 owner；AI 删除选择保证 cache/job/note 生命周期 |
+| 资料库 | `courses`, `materials` | owner CRUD；生产 0041 起删除经 Nest 编排 | materials 写入额外校验课程 owner；AI 删除选择保证 cache/job/note 生命周期 |
 | Materials AI | `ai_*`, `generation_*`, `notes`, `note_*`, `exam_*` | owner 只读由 UI 主要经 Nest；无客户端写 | service-role-only 事务推进 reservation/job/result/score；缓存/usage/operation 对客户端隐藏 |
 | 通知 | `notifications` | owner select/insert/update | 用户可标已读；当前 policy 也允许改其它 own 字段 |
 | 反馈 | `feedback` | owner select/insert | 生产 0039 起仅允许插入 `category/summary/body`，无 UPDATE/DELETE；status/time/owner 由服务端维护 |
@@ -662,7 +662,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 
 ### 6.4 数据库函数/RPC 暴露面
 
-前端没有直接调用 Courses 或 Materials AI `rpc()`。迁移 0008–0038 已收口既有内部 helper。生产 0039 新增的审核、信号 review、扫描、滥用审计与时间窗口函数全部只授予 service-role，并且 service-role 对相应事实表只有 SELECT；0041–0043 候选新增的 AI reservation/job/result/exam/delete 函数也全部只授予 service-role。0039 唯一新增 authenticated RPC 是：
+前端没有直接调用 Courses 或 Materials AI `rpc()`。迁移 0008–0038 已收口既有内部 helper。生产 0039 新增的审核、信号 review、扫描、滥用审计与时间窗口函数全部只授予 service-role，并且 service-role 对相应事实表只有 SELECT；生产 0041–0043 新增的 AI reservation/job/result/exam/delete 函数也全部只授予 service-role。0039 唯一新增 authenticated RPC 是：
 
 ```ts
 get_point_reward_receipt(eventType, sourceId) => {
@@ -682,8 +682,8 @@ get_point_reward_receipt(eventType, sourceId) => {
 
 以下能力属于最终产品路线，不是当前可调用接口：
 
-- Knowledge list、独立 Quiz、Knowledge graph 生成；试卷生成已在 0041–0043 候选实现；
-- Notes 编辑、版本历史与 PDF 导出；私有试卷列表/查看/删除已在候选实现；
+- Knowledge list、独立 Quiz、Knowledge graph 生成；试卷生成已在生产 0041–0043 实现；
+- Notes 编辑、版本历史与 PDF 导出；私有试卷列表/查看/删除已在生产实现；
 - 笔记市场购买、credits 授权、搜索和创作者结算；Courses 只有免费发布/克隆，不提供购买或分成；
 - credits 不可变账本、余额、VIP entitlement；points 日上限、审核冲正和待审信号的窄实现已上线，但完整规则版本管理、自动内容质量和审核 UI 未实现；
 - Stripe checkout/payment intent/webhook/refund；

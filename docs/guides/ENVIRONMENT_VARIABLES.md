@@ -37,10 +37,10 @@
 | `RATE_LIMIT_HMAC_SECRET` | 生产 0039–0040 必需 | **最高机密** | Redis service/health | 至少 32 bytes；只对 IP/email 派生 HMAC，不得与 Redis、JWT、备份或供应商 secret 复用。 |
 | `POINT_ABUSE_SCANNER_ENABLED` | 可选，默认启用（除显式 `false`） | 受限配置 | points scanner | Redis 已配置时是否周期扫描协同信号；CI Playwright 显式 false 避免后台不确定性。 |
 | `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | 可选，默认 300，最小 60 | 公开运维配置 | points scanner | 扫描周期；当前 Redis lock TTL 为 240 秒。 |
-| `AI_SERVICE_URL` | 0041–0043 候选必需 | 内部配置 | AI internal client/health | FastAPI 内网基址，生产候选为 `http://ai:8000`；不可指向公网。 |
-| `AI_CALLBACK_BASE_URL` | 候选必需 | 内部配置 | generation processor | worker 阶段进度回调的 API 内网基址，生产为 `http://api:3000/api`。 |
-| `AI_INTERNAL_TOKEN` | 候选必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
-| `FEATURE_MATERIAL_AI` | production 默认 false | 公开配置 | Materials AI API/Web | 新候选总开关；部署安装后仍为 false，只在 readiness/canary/真实 gate 通过后开启。 |
+| `AI_SERVICE_URL` | 生产 0041–0043 必需 | 内部配置 | AI internal client/health | FastAPI 内网基址，生产为 `http://ai:8000`；不可指向公网。 |
+| `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation processor | worker 阶段进度回调的 API 内网基址，生产为 `http://api:3000/api`。 |
+| `AI_INTERNAL_TOKEN` | 生产必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
+| `FEATURE_MATERIAL_AI` | 安装默认 false；当前生产 true | 公开配置 | Materials AI API/Web | 总开关；部署安装后先保持 false，只在 readiness/canary/真实 gate 通过后开启。 |
 | `MATERIAL_AI_MONTHLY_BUDGET_USD` | 可选，20 | 受限配置 | AI processor | provider usage 成功费用达到全局月预算后停止新调用。 |
 | `MATERIAL_AI_GENERATION_MAX_COST_USD` | 可选，0.50 | 受限配置 | generation processor | 单次生成费用硬门；超限不保存结果并释放用户 quota reservation。 |
 | `MATERIAL_AI_GRADING_MAX_COST_USD` | 可选，0.05 | 受限配置 | grading processor | 单次主观题评分费用硬门。 |
@@ -100,7 +100,7 @@
 
 `OPENROUTER_ASSESSMENTS_PER_DAY=500` 是语义判分默认值；STT 独立使用 20/分钟、300/本地日和 5,000,000 micro-USD/月。修改本文或 `.env.example` 不会改写正在运行的服务器；0037–0038 已于 2026-08-04 通过受保护安装脚本原子写入 STT 非密钥配置并复用既有 secret。后续发布/轮换仍须单独核对容器内生效值且不得打印 key。
 
-## 4. FastAPI Materials AI 运行时变量（0041–0043 候选）
+## 4. FastAPI Materials AI 运行时变量（生产 0041–0043）
 
 来源模板：`apps/ai/.env.example`。本地使用进程私有环境；生产由受保护脚本生成 mode-600 `/opt/nalanda/.ai.env`。worker **不会**收到 service-role、Redis、Azure、JWT 或 Web key。
 
@@ -216,7 +216,7 @@ Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECR
 |---|---|---|---|
 | 本地 | `apps/web/.env.local` | `apps/api/.env`；AI 进程环境 | 当前 shell/安全密码文件 |
 | GitHub Actions | Actions Secrets 注入 Web 构建 | API 运行密钥仍只在服务器；DB 发布密钥在 protected environment | `SERVER_SSH_KEY`、已核验 host key、Supabase CLI 密钥、备份加密 key |
-| 当前生产/Materials AI 候选 | 已编译在 `/opt/nalanda/web` 静态包 | 当前为 `/opt/nalanda/.env` + 隔离的 `/opt/nalanda/.redis.env`；候选新增 `/opt/nalanda/.ai.env`。均 `0600`，AI env 无 service-role/Redis | 仅维护窗口临时注入，不落日志 |
+| 当前生产/Materials AI | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env` + 隔离的 `/opt/nalanda/.redis.env` + `/opt/nalanda/.ai.env`。均 `0600`，AI env 无 service-role/Redis | 仅维护窗口临时注入，不落日志 |
 | hybrid 目标 | 构建 Web 时另行注入 `VITE_*` | `infra/hybrid-2g/.env` | 仅维护窗口临时注入 |
 
 ## 10. 新增变量检查清单

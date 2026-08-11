@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-08-11。本文不是法律意见或已发布隐私政策；生产已到 0040，HMAC 化限流审计和 points 审核/协同信号已启用。0041–0043 Materials AI 只属于候选：它会处理用户明确选择的 Materials 文件，使用私有解析缓存和 Notes，并在任务结束清理过程文件；必须完成同意、真实 ZDR/provider 和受保护发布后才是生产事实。STT 与既有 Speech 均不持久化用户 WAV，录音只在请求内存中转发并立即丢弃。
+> **状态基线：**2026-08-11。本文不是法律意见或已发布隐私政策；生产已到 0043，HMAC 化限流审计、points 审核/协同信号和 Materials AI 第一阶段已启用。Materials AI 只处理用户明确选择的 Materials 文件，使用私有解析缓存和 Notes，并在任务结束清理过程文件；逐账号同意、真实 ZDR/provider 和受保护发布门禁已经实现，但不替代正式第三方/跨境法律审查。STT 与既有 Speech 均不持久化用户 WAV，录音只在请求内存中转发并立即丢弃。
 
 ## 1. 原则与责任
 
@@ -35,10 +35,10 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | 浏览器弱网副本 | IndexedDB attempt outbox、Cache Storage 音频 | 断网重试、未来五词预取和用户选择的单元音频离线副本 | 登出清除该账号待同步 outbox；音频按全局内容键存可重建副本，用户可删除，浏览器也可能在存储压力下回收 |
 | 通知/反馈 | `notifications`、`feedback` | 互动通知、用户工单 | 生产 0039 起用户对 feedback 只读/新增，status 仅支持流程维护；无正式工单留存/删除编排 |
 | 原型/假数据 | 前端 bundle/内存 | 演示 Home、Notes、Market、AI | 不是用户事实源，不应进入用户导出 |
-| Materials AI 任务与额度（0041 候选） | `ai_user_plans/ai_daily_usage/generation_jobs/events` | 每账号同意、Free 双额度、持久任务/阶段 | Auth 删除 CASCADE；job 不保存正文/prompt/raw response；失败/取消释放 reservation |
-| Materials AI 解析/产物（0041 候选） | 私有 `ai_material_parse_cache`、`notes/note_materials/note_artifacts` | 同文件复用 DocumentIR；保存用户请求的完整试卷/答案/来源 | cache 随 material CASCADE；删除来源可保留到 Unfiled 或连结果删除；用户可删除 Notes |
-| 在线考试（0041 候选） | `exam_attempts/answers/operations`、浏览器 IndexedDB draft | deadline、草稿、成绩、AI feedback 和幂等重放 | note/Auth 删除 CASCADE；登出不让草稿跨账号提交；完整 DSAR/一键删除仍未实现 |
-| AI provider 计量（0041 候选） | `ai_provider_usage_events` | model/token/micro-USD/latency/request ID/ZDR/status | 不含 prompt/正文/答案/raw response；删除 Note/答卷后保留不可变 subject UUID 与成本事实，防止通过删除内容绕过预算；随 Auth 用户删除 CASCADE |
+| Materials AI 任务与额度（生产 0041） | `ai_user_plans/ai_daily_usage/generation_jobs/events` | 每账号同意、Free 双额度、持久任务/阶段 | Auth 删除 CASCADE；job 不保存正文/prompt/raw response；失败/取消释放 reservation |
+| Materials AI 解析/产物（生产 0041） | 私有 `ai_material_parse_cache`、`notes/note_materials/note_artifacts` | 同文件复用 DocumentIR；保存用户请求的完整试卷/答案/来源 | cache 随 material CASCADE；删除来源可保留到 Unfiled 或连结果删除；用户可删除 Notes |
+| 在线考试（生产 0041） | `exam_attempts/answers/operations`、浏览器 IndexedDB draft | deadline、草稿、成绩、AI feedback 和幂等重放 | note/Auth 删除 CASCADE；登出不让草稿跨账号提交；完整 DSAR/一键删除仍未实现 |
+| AI provider 计量（生产 0041） | `ai_provider_usage_events` | model/token/micro-USD/latency/request ID/ZDR/status | 不含 prompt/正文/答案/raw response；删除 Note/答卷后保留不可变 subject UUID 与成本事实，防止通过删除内容绕过预算；随 Auth 用户删除 CASCADE |
 | 支付数据 | 当前无 Stripe/订单表 | 未实现 | 未来仅保存必要 Stripe ID/状态，不保存卡号/CVC |
 | 限流/滥用审计（生产 0039） | 私有 Redis、`api_abuse_events` | 短时滑动窗口、分布式扫描锁、路由组/规则/桶级聚合 | IP/规范化邮箱只保存独立 secret 派生 HMAC；不保存原 IP、邮箱、正文或课程数据；DB 聚合默认 30 天，Redis key/AOF 是可重建运行副本 |
 | 运维数据 | 主机/容器/GitHub/Supabase 日志 | 部署和排障 | 普通日志不得记录原 IP/邮箱/正文/secret；当前仍缺统一导出和删除编排 |
@@ -57,7 +57,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 - **更正：**Profile 已以列级权限区分用户资料与内部成长/经济字段；生产 0039 已收口 feedback status 和帖子可信字段。
 - **删除：**可删除自己的部分资料/帖子/评论/任务；没有“一键删除账户”、跨 Storage/AI/备份/支付的编排和完成证明。
 - **Courses：**用户可编辑/删除私有课程、取消日程和撤销分享；删除课程不删除已经发生的 points/徽章历史。当前无完整数据导出、一键账号删除、作者自助撤回全部 publication/举报历史的统一流程。
-- **Materials AI 候选：**用户可取消任务、删除试卷；删除 Materials/科目时可选择保留到 Unfiled 或同时删除结果。过程目录立即清理，持久解析缓存只在删除来源/账号时清理；这仍不等于跨备份/第三方的一键永久删除。
+- **Materials AI：**用户可取消任务、删除试卷；删除 Materials/科目时可选择保留到 Unfiled 或同时删除结果。过程目录立即清理，持久解析缓存只在删除来源/账号时清理；这仍不等于跨备份/第三方的一键永久删除。
 - **导出：**当前没有机器可读的完整导出。
 - **限制/反对/撤回：**当前没有统一工单状态与自动化执行。
 
@@ -135,7 +135,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。OpenRouter 当前是窄范围翻译语义与中文翻译录音处理者；0041 候选把它扩为 Materials AI 处理者：完整规范化 DocumentIR 发送给 DeepSeek，只有失败范围图像 base64 发送给 MiMo；不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。2026-08-04 的真实发布 gate 已证明固定合成中文 WAV 经生产候选 API 可由 Fish Audio 识别，不代表真实用户口音质量。Materials AI 请求强制 ZDR/deny data collection/require parameters，不提供跨模型 fallback；同一固定模型的 provider failover 仍必须逐端点满足这些过滤条件。技术参数不替代对留存、训练、子处理者、跨境、删除、事件 SLA 和用户告知的正式审查。生产私有 Redis 不是新的外部数据处理者，只保存短时 HMAC 限流键、审计聚合和分布式锁；AOF 也不得写原始 IP、邮箱、正文、课程或供应商 secret。Anthropic 不再是该候选依赖；Stripe/邮件/监控仍是未来处理者。
+当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。OpenRouter 同时是窄范围翻译语义/中文翻译录音和生产 Materials AI 的处理者：完整规范化 DocumentIR 发送给 DeepSeek，只有失败范围图像 base64 发送给 MiMo；不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。2026-08-11 的真实发布 gate 证明固定文档、图表、注入/安全教材和评分样本在当时可用，不代表所有真实课件、攻击方式或持续质量。Materials AI 请求强制 ZDR/deny data collection/require parameters，不提供跨模型 fallback；同一固定模型的 provider failover 仍必须逐端点满足这些过滤条件。技术参数不替代对留存、训练、子处理者、跨境、删除、事件 SLA 和用户告知的正式审查。生产私有 Redis 不是新的外部数据处理者，只保存短时 HMAC 限流键、审计聚合、分布式锁和 job UUID；AOF 也不得写原始 IP、邮箱、正文、课程或供应商 secret。Anthropic 不是当前依赖；Stripe/邮件/监控仍是未来处理者。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
 
