@@ -89,7 +89,12 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await page.locator('#nav [data-go="materials"]').click();
   await page.getByRole("button", { name: "BIO AI", exact: true }).click();
   await page.getByRole("button", { name: "Delete course", exact: true }).click();
+  const deleted = page.waitForResponse((response) => response.request().method() === "DELETE"
+    && response.url().includes("/api/material-courses/"));
   await page.getByRole("button", { name: "Delete source and results", exact: true }).click();
+  const deleteResponse = await deleted;
+  expect(deleteResponse.ok(), await deleteResponse.text()).toBe(true);
+  await expect(page.getByText("Course deleted", { exact: true })).toBeVisible();
   await expect(page.getByText(`AI Biology ${nonce}`, { exact: true })).toBeHidden();
   await page.locator('#nav [data-go="notes"]').click();
   await expect(page.getByRole("heading", { name: "Your generated notes" })).toBeVisible();
