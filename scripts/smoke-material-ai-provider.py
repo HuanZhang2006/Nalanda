@@ -51,6 +51,15 @@ def admin_headers(content_type: str = "application/json") -> dict[str, str]:
     return {"apikey": SERVICE_KEY, "Authorization": f"Bearer {SERVICE_KEY}", "Content-Type": content_type}
 
 
+def absolute_storage_url(value: str) -> str:
+    if value.startswith(("http://", "https://")):
+        return value
+    # Raw Supabase Storage REST responses are relative to `/storage/v1`, even
+    # though `signedURL` starts with a slash. Joining it to the project origin
+    # would drop the Storage prefix and make the real-provider gate fetch 404.
+    return f"{SUPABASE_URL}/storage/v1/{value.lstrip('/')}"
+
+
 def upload_fixture(path: Path) -> str:
     storage_path = f"material-ai-release-smoke/{uuid.uuid4()}-{path.name}"
     encoded = quote(storage_path, safe="/")
@@ -70,7 +79,7 @@ def upload_fixture(path: Path) -> str:
         require(signed.is_success, f"fixture signing failed: HTTP {signed.status_code}")
         value = signed.json().get("signedURL") or signed.json().get("signedUrl")
         require(isinstance(value, str) and value, "fixture signing returned no URL")
-        return value if value.startswith("http") else SUPABASE_URL + value
+        return absolute_storage_url(value)
 
 
 def clean_storage() -> None:
