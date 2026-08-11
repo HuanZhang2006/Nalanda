@@ -8,12 +8,13 @@
 
 当前已有信号：
 
-- `GET /api/health`：生产 0040 真实探测 Supabase、校验 HMAC 配置并执行 Redis PING；Supabase/Redis 任一失败 readiness 都是 503。`GET /api/health/ai` 在 0041–0043 候选检查 worker、队列和依赖，不以变量存在冒充 readiness；
-- FastAPI `GET /health`：实际检查 OpenRouter 配置、LibreOffice、临时磁盘和内部认证；production fake 明确失败。生产数据库已到 0043，但 Materials AI 应用因真实 provider 429 在切流前回滚，当前仍未公开启用；
+- `GET /api/health`：生产 0043 真实探测 Supabase、校验 HMAC 配置并执行 Redis PING；Supabase/Redis 任一失败 readiness 都是 503。`GET /api/health/ai` 检查 worker、队列和内部依赖，不以变量存在冒充 readiness；
+- FastAPI `GET /health`：实际检查 OpenRouter 配置、LibreOffice、临时磁盘和内部认证；production fake 明确失败。Materials AI 已于 2026-08-11 通过真实 provider/canary/登录用户 gate 后公开启用；health 本身不逐次调用真实模型；
 - deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase/deps.redis`，并检查公网 Web root；失败会回退上一 Web/API release；
 - API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
 - nginx access/error log、systemd、Docker 与主机资源命令；
 - GitHub Actions deploy 运行结果；
+- 最新生产 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 已独立核对 API/AI image、Web symlink、feature flag、公网 Supabase/Redis/AI health 和匿名鉴权；此前 workflow `31463661987` 的假绿证明 Actions success 不能替代这些独立信号；
 - Supabase 控制台可提供平台侧 Auth/数据库/Storage 日志与指标，具体可用项取决于项目配置。
 - Courses 举报达到配置阈值时 API 输出单行 JSON `event=course_report_threshold`；speech 配额/估算成本持久在 `learning_speech_usage`，429 使用稳定 `SPEECH_QUOTA_EXCEEDED`；这些当前仍需日志/SQL 人工查看，不是完整告警链。
 - 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
@@ -43,12 +44,12 @@
 | Supabase Auth | 是 | API health 的 JWKS 探针、平台日志、注册错误 | 登录由浏览器直连；health 不执行真实登录 |
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
-| FastAPI Materials AI | 数据库 0041–0043 已发布；应用/flag 因真实 provider gate 失败而回滚关闭 | 真实依赖 `/health`、stage callback、provider usage、uvicorn log | 无持续真实质量/成本仪表盘；不得记录正文 |
-| Courses API | 功能迁移已启用至 0038，生产 history 到 0040 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
+| FastAPI Materials AI | 生产 0041–0043、worker 与 flag 已启用 | 真实依赖 `/health`、stage callback、provider usage、uvicorn log | 无持续真实质量/成本仪表盘；不得记录正文 |
+| Courses API | 功能迁移已启用至 0038，生产总 history 到 0043 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
-| OpenRouter 翻译前测 / Fish Audio STT | 两者功能迁移已启用至 0038，生产 history 到 0040 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
+| OpenRouter 翻译前测 / Fish Audio STT | 两者功能迁移已启用至 0038，生产总 history 到 0043 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
-| Redis 请求保护/BullMQ | 请求保护由生产 0039 启用；BullMQ 是 0041–0043 候选 | PING readiness、`rate_*`/`redis_error`、BullMQ execution/reconcile、真实 CI Redis 测试 | 无集中 memory/AOF/eviction/queue depth 告警；Redis 不是 points/job/额度事实库 |
+| Redis 请求保护/BullMQ | 请求保护由生产 0039 启用；BullMQ 由生产 0041 启用 | PING readiness、`rate_*`/`redis_error`、BullMQ execution/reconcile、真实 CI Redis 测试 | 无集中 memory/AOF/eviction/queue depth 告警；Redis 不是 points/job/额度事实库 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
 | 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
 
@@ -208,7 +209,7 @@ tail -n 200 /var/log/nginx/error.log
 1. `docker stats --no-stream`、`free -m`、`df -h` 定位内存/磁盘。
 2. 检查日志、上传 artifact、Docker layers 占用；保留事故证据后再清理。
 3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
-4. 生产 0040 有 API 容器、128 MiB Redis 容器和持久 volume，AI 仍未部署；0041 候选加入 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时保持 Materials AI flag 关闭。
+4. 生产 0043 有 API、128 MiB Redis 容器/持久 volume，以及 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的单并发 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时关闭 Materials AI flag，保留既有 Notes/考试只读路径。
 
 ### 6.7 Materials AI / 在线考试
 

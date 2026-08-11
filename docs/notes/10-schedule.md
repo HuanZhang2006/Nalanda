@@ -4,7 +4,7 @@
 > - **内容**：记录学习目标/普通任务、独立课程复习日程、RLS、完成奖励、连续学习和当前规则式填充。
 > - **作用**：解释 Schedule 如何合并两套数据源，同时保持普通任务积分与 Courses 复习事实隔离。
 > - **何时更新**：任务/目标字段、奖励幂等、提醒、排程算法、时区或关联权限变化时。
-> - **状态基线**：2026-08-10。生产已到 0040；关联 owner trigger、数据库派生 `done_at` 和任务日上限已上线。
+> - **状态基线**：2026-08-11。生产总 history 已到 0043；关联 owner trigger、数据库派生 `done_at` 和任务日上限已上线。
 
 > 文件：`supabase/migrations/20260625000007_schedule.sql`（结构/旧触发器）、`...0008_security_points_ledger.sql`（稳定任务键、points 冲正与敏感列保护）、`...0011_learning_courses.sql`/`...0012_learning_course_workflows.sql`（复习日程及服务端工作流）、`...0039_security_integrity_rate_limit_points_abuse.sql`（生产 owner/done_at/日上限）、`apps/web/src/legacy/schedule.ts`、`apps/api/src/learning/*`。
 

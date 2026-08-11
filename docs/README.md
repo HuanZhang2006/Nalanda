@@ -5,7 +5,7 @@
 > - **作用**：避免“当前实现、最终蓝图、历史复盘、操作手册”相互覆盖或产生状态冲突。
 > - **何时更新**：新增、删除、重命名文档，或某类文档的负责人/权威范围变化时。
 
-最后核对：2026-08-11。生产事实已到 0040；0041–0043 Materials AI 是待发布候选。
+最后核对：2026-08-11。生产事实已到 0043；Materials AI 试卷生成与在线考试第一阶段已通过受保护发布启用。
 
 ## 1. 事实来源优先级
 
@@ -72,7 +72,7 @@
 
 ADR 只记录已经做出的、影响多个模块或难以逆转的决策。开放问题保留在项目蓝图；决定后新增 ADR 并更新相关当前文档。
 
-最新候选决策：[ADR-0012 Materials AI 持久队列、ZDR 与 2G Office 渲染](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md)。Accepted 表示决策已采用，不表示生产 flag 已开启。
+最新已落地决策：[ADR-0012 Materials AI 持久队列、ZDR 与 2G Office 渲染](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md)。Accepted 表示决策已采用；其生产证据仍以架构、测试和发布记录为准。
 
 ## 8. 实现笔记
 

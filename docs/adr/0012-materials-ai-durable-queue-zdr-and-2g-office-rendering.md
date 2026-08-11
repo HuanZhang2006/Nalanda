@@ -6,9 +6,9 @@
 >
 > **何时更新：**队列/worker 拓扑、parser、模型/provider/ZDR、资源上限、配额/收费、临时或持久数据生命周期、发布门禁变化时。
 
-- **状态：**Accepted；0041–0043 已进入生产数据库，2G canary 已通过；应用因真实 provider gate 失败仍回滚关闭。
+- **状态：**Accepted / deployed；0041–0043 与不可变应用已于 2026-08-11 进入生产，真实 provider、2G canary、登录用户 smoke 与独立公网核验均通过。
 - **日期：**2026-08-10
-- **修订：**2026-08-11 明确启用同一固定模型的合规 provider failover；不增加跨模型 fallback。
+- **修订：**2026-08-11 明确启用同一固定模型的合规 provider failover、不增加跨模型 fallback，并记录受保护生产激活。
 - **决策者：**Nalanda owner
 
 ## 背景
@@ -42,3 +42,5 @@ Redis 可能重启或丢队列项；模型可能超时、返回坏 JSON或没有
 - 真实 gate：无个人数据 PDF/DOCX/PPTX/chart/injection/safe lesson/grading，验证失败范围、ZDR、strict JSON、source refs、token/cost和注入拒绝/正常教材不误杀。
 - 资源 gate：近上限 Office fixture 记录 RSS、swap、队列、临时盘及邻站健康；kernel OOM、邻站失败或持续不可接受 swap 即 no-go。
 - 生产：只读 plan → 加密恢复点 → apply 0041–0043 → `FEATURE_MATERIAL_AI=false` 启动 Redis/AI/API → readiness/清理/canary/真实 provider → 开 flag → 登录用户公网 smoke。应用异常恢复不可变 release并关 flag；数据库只 forward-fix。
+
+实际发布证据：plan `31465816321`；apply/deploy `31467153739`；加密恢复 artifact `9092230348`；release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`。此前真实 provider 429 和远端 heredoc stdin 假绿均未计作上线；最终 workflow 及服务器/公网独立核验一致后才将状态改为 deployed。

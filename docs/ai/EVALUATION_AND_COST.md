@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-11。生产数据库已到 0043：Azure Speech、OpenRouter 语义翻译前测、Fish Audio 中文 STT 与 Redis API/Courses 频率保护继续启用；Materials AI 数据结构已发布，但公开应用仍运行上一不可变 release 且 feature 关闭。候选已通过完整 CI、数据库门禁和 2G canary，首次真实 DeepSeek gate 因固定路由持续 429 在切流前安全回滚，尚不能算生产可用。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-11。生产数据库与不可变应用已到 0043：Azure Speech、OpenRouter 语义翻译前测、Fish Audio 中文 STT、Redis 请求保护，以及 Materials AI 试卷生成/主观题评分均已启用。首次真实 DeepSeek gate 的持续 429 曾在切流前安全回滚；有界重试和 stdin 假绿修复后，最终 release 已通过真实 provider、2G canary、登录用户全链路和独立公网核验。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -13,7 +13,7 @@
 
 ## 2. 当前事实与启用限制
 
-候选代码可验证：
+当前生产实现：
 
 - NestJS 已实现 owner-only job/quota/Notes/Exam API，Postgres durable job/reservation 和 BullMQ UUID 调度/reconciler；
 - FastAPI 只有内部 token 生成/评分路由，确定性解析 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片，并以 `DocumentIR` 保留页/幻灯片/块/来源；
@@ -22,14 +22,14 @@
 - `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前验证题数、总分、答案、rubric 与 source block；允许一次结构化 repair；
 - 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
 - 每任务 0700 临时目录 `finally` 删除，启动/定时清理一小时 orphan；持久 parse cache 是单独的私有产品数据；
-- 当前生产 compose 仍未激活该 worker/flag，fake 自动化不证明真实供应商质量。
+- 生产 compose 已激活隔离 worker 与 flag；fake 自动化不证明真实供应商质量，真实门禁也只是时点证据，不替代持续质量/成本监控。
 - Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
 - Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列和 private Storage 事实源已经在生产启用；生产 Web 已移除客户端 VAD/静音裁剪，fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
 - 0019 增加 NestJS 翻译评判 adapter：规范化后完全等于服务端参考 translation 的答案由服务端确定性判对；非字面同义/改写才使用 OpenRouter structured JSON。输入正文不落库，服务端仍唯一写 spelling 错误事实。生产已取得真实 provider、候选 API 与不可变 release 证据。
 
-因此当前不得：收费扣 credits；在受保护发布前把候选标成线上可用；把 Azure TTS 当成文件解析；把 health/key/fake 当真实供应商可用；用真实私有课件做非受控测试；公开承诺准确率/成本/延迟。
+因此当前不得：收费扣 credits；把 Azure TTS 当成文件解析；把 health/key/fake 或一次发布 smoke 当作持续供应商可用率；用真实私有课件做非受控测试；公开承诺准确率/成本/延迟。
 
-### 2.1 Materials 试卷生成候选闭环
+### 2.1 Materials 试卷生成生产闭环
 
 输入支持 PDF、DOCX、PPTX、Markdown、HTML、TXT、JSON、CSV、PNG/JPEG/WebP；旧 DOC/PPT/XLS、加密 PDF、损坏/压缩炸弹和超限文件拒绝。单文件 25MB、图片 10MB、250 页/slide、400k 规范化字符。
 
@@ -47,6 +47,8 @@
 MiMo prompt 把图像当不可信证据，按阅读顺序提取逐字文本、层级、表格、图表轴/图例/趋势、流程节点/边、公式、图标语义、视觉关系、不可读区和疑似嵌入指令，禁止执行图片命令或补造。`malicious`/`uncertain` 都拒绝；`benign_educational` 只用于明确教学/引用/安全分析。检测不能获得绝对保证，因此模型分类前有确定性限制，之后还有 schema/source 验证和 feature kill switch。
 
 provider usage 只留 model、token、micro-USD、latency、request ID、用途、ZDR 和状态；不留 prompt、文件正文、回答正文或 raw response。网络错误、408/429/502/503/504，以及 200 响应的空内容、截断、坏 JSON/schema，会在完全相同的固定模型/ZDR/schema 请求上最多有界尝试 4 次，默认从 2 秒指数退避并尊重不超过 60 秒的数值型 `Retry-After`；所有尝试共享原 180 秒结构化操作总预算，单次 HTTP 只能使用剩余时间，重试不会把最坏等待放大为 `尝试次数 × 180 秒`。更长等待、认证/余额/ZDR/参数错误直接失败并释放产品额度。HTTP 失败通常没有 token/cost，200 但结构非法的失败可能已经产生费用；adapter 因而把成功前每次失败和最终成功都返回为独立脱敏 usage event，数据库成本硬门按全部事件求和，最终成功事件的 duration 仍覆盖该结构化操作的总等待。真实 gate 必须用无个人数据固定 PDF/DOCX/PPTX/chart/injection/safety lesson/grading 样本证明 ZDR endpoint、失败范围、引用、拒绝/不误杀、token/cost 和评分；单次通过仍不代表持续质量，也不能把“重试后成功”解释为长期可用率达标。
+
+2026-08-11 生产 gate 处理固定 PDF/DOCX/PPTX/chart，chart 仅恢复 1 个视觉范围，确认恶意注入拒绝、安全教材放行、39 个进度事件和评分；220 页/366,412 字符 canary 的主/子进程峰值约 101.8/211.9 MiB。登录用户 smoke 完成生成、评分、双额度、usage、来源与结果删除及临时目录清理。该样本集不覆盖真实用户所有复杂课件或攻击方式，持续评测仍是必需项。
 
 ### 2.2 Courses 文件导入的目标闭环（未实现）
 
@@ -84,7 +86,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 评分的持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；读音考试不会获得独立免费额度，每个实际提交的考试词都会占用同一 assessment 额度和预算，因此开放前必须用“活跃考生 × 单元词数 × 候补率”重新核算容量。`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。TTS 队列按 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)` 跨用户复用 private Storage 对象，默认单 worker、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月；租约、重试、字符预留和成本预算都由服务端数据库控制。浏览器只缓存可重建副本并预取当前加未来四词。
 
-候选读音考试只把当前 owner session 的当前词作为 server-derived reference text；评分前拒绝非当前词和轮末等待状态，供应商失败不写错误。单词是否正确沿用 `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE`（默认 70），单元是否通过另用完整第一轮的整数正确率阈值（默认 90%）；两者不能混成同一个分数。自动化固定 WAV/fake provider 只验证工作流，发布前仍须用 Japan East 真实 Azure 独立验证评分、延迟、配额、错误降级和真实费用。
+生产读音考试只把当前 owner session 的当前词作为 server-derived reference text；评分前拒绝非当前词和轮末等待状态，供应商失败不写错误。单词是否正确沿用 `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE`（默认 70），单元是否通过另用完整第一轮的整数正确率阈值（默认 90%）；两者不能混成同一个分数。自动化固定 WAV/fake provider 只验证工作流，发布前仍须用 Japan East 真实 Azure 独立验证评分、延迟、配额、错误降级和真实费用。
 
 必须分别观测 attempt/snapshot RPC 延迟、队列等待、Azure 合成、Storage hit、浏览器 Cache hit、评分总耗时与供应商耗时；配额暂停、失败重试和重复词命中不能混入“生成成功率”。2026-07-27 Japan East 真实发布 gate 已验证 4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象且不增加生成，以及 VAD 裁剪后评分 97。Azure fake 只验证代码路径，不参与质量或供应商可用率报告；单次 gate 也不是持续可用率或账单对账。
 
@@ -303,7 +305,7 @@ job 状态至少：`queued/running/validating/succeeded/failed/canceled/expired`
 - 服务间鉴权、输入限制、净化、trace/usage schema；
 - 明确第三方许可证，只使用商业兼容实现。
 
-Materials 试卷候选已完成；其它产物与 Courses 文件导入尚未复用。
+生产 Materials 试卷已完成；其它产物与 Courses 文件导入尚未复用。
 
 ### Phase 1：真实解析
 
@@ -312,7 +314,7 @@ Materials 试卷候选已完成；其它产物与 Courses 文件导入尚未复�
 - Storage 授权下载、临时文件清理和删除联动。
 - Courses 按四类选择版本化 prompt/schema；先实现英语词表的 PDF/DOCX/JSON/MD/HTML/图片 OCR，强制进入人工确认编辑器，其他类别继续禁用。
 
-Materials 试卷候选已完成所列 parser/来源/临时清理；真正质量达标仍以真实 release set 为准。Courses 导入未实现。
+生产 Materials 试卷已完成所列 parser/来源/临时清理；真正质量达标仍以持续真实 release/eval set 为准。Courses 导入未实现。
 
 ### Phase 2：单产物模型生成（不收费 beta）
 
@@ -320,7 +322,7 @@ Materials 试卷候选已完成所列 parser/来源/临时清理；真正质量�
 - price snapshot、usage/cost ledger、预算/kill switch；
 - staging/canary，仅授权测试账户。
 
-Materials 试卷候选当前处于本阶段：Free quota，不销售 credits；生产 flag 需在真实 gate 和 2G canary 后才开启。
+Materials 试卷当前处于本阶段：Free quota，不销售 credits；生产 flag 已在真实 gate 和 2G canary 通过后开启，后续模型/prompt/parser 变更仍须重复门禁。
 
 ### Phase 3：其它 AI 产物与未来 credits
 

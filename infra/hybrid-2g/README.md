@@ -5,7 +5,7 @@
 > - **作用**：用于未来接入 AI/队列或独立新环境；它不是当前 `nalanda.online` 的生产拓扑。
 > - **何时更新**：compose、镜像、内存预算、服务依赖、端口、环境变量或安全基线变化时。
 
-目标拓扑与开发阶段见 [项目蓝图](../../docs/PROJECT_BLUEPRINT.md)。**数据底座（数据库 / 登录 / 存储 / 实时）用 Supabase 云；2G 服务器只用 Docker 跑项目自己的代码**：Caddy + NestJS + Python AI + Redis。Materials AI 候选通过 OpenRouter 调用固定 DeepSeek/MiMo 模型；Stripe 仍是未实现的未来外部依赖。
+目标拓扑与开发阶段见 [项目蓝图](../../docs/PROJECT_BLUEPRINT.md)。**数据底座（数据库 / 登录 / 存储 / 实时）用 Supabase 云；2G 服务器只用 Docker 跑项目自己的代码**：Caddy + NestJS + Python AI + Redis。Materials AI 生产实现通过 OpenRouter 调用固定 DeepSeek/MiMo 模型；Stripe 仍是未实现的未来外部依赖。
 
 ```
 你的服务器（2G · Docker Compose）
@@ -19,7 +19,7 @@
   Supabase 云  ·  OpenRouter API  ·  未来 Stripe
 ```
 
-> ⚠️ 这是**参考模板**，不是 `nalanda.online` 的实际发布入口。0041–0043 已实现 API→BullMQ→FastAPI 候选，但只有通过真实 ZDR、资源 canary、受保护迁移和公网 smoke 后才可启用。四容器能启动不等于核心业务链可发布。
+> ⚠️ 这是**参考模板**，不是 `nalanda.online` 的实际发布入口。实际生产已由 `infra/deploy` 于 2026-08-11 完成 0041–0043、真实 ZDR/provider、资源 canary 与公网登录用户 smoke；单独启动本模板的四容器仍不等于复制了该发布证据。
 
 ---
 

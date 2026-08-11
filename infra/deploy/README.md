@@ -4,7 +4,7 @@
 > - **内容**：记录当前生产服务器上的 Web/API/nginx 拓扑、部署依赖和维护入口。
 > - **作用**：帮助理解现网布局；正式发布、数据库变更、备份与恢复应按 operations 手册执行。
 > - **何时更新**：域名、服务器、CI、compose、nginx/TLS、部署账号或密钥位置变化时。
-> - **状态基线**：2026-08-11。生产已运行 0040/Web+API+私有 Redis 拓扑；nginx 分层限流和独立 secret 已受保护发布。本目录另含 0041–0043 Materials AI worker 候选，尚待完整门禁与受保护发布；时间列撤权 contract 顺延为未来 0044–0045。
+> - **状态基线**：2026-08-11。生产已运行 0043/Web+API+内网 AI+私有 Redis 拓扑；nginx 分层限流、独立 secret 与 Materials AI 已完成受保护发布。时间列撤权 contract 顺延为未来 0044–0045。
 
 服务器已运行多个项目（共用 nginx + uofa.ink）。Nalanda 以**隔离、可叠加**的方式接入，不影响既有服务。
 
@@ -21,7 +21,7 @@ GitHub push → Actions（在 runner 上构建，不占服务器内存）
         ▼
 服务器 /opt/nalanda/
   ├─ 新 images + 分离 .env/.ai.env/.redis.env → 真实 Azure/OpenRouter gates
-  ├─ 0015+ 候选 API → 队列首次生成/Storage hit/重复词/裁剪评分 gate
+  ├─ Courses API → 队列首次生成/Storage hit/重复词/裁剪评分 gate
   ├─ docker compose（.deploy.env 选择不可变 API/AI images + 私有 Redis）
   ├─ releases/<release-id>/web + web 原子 symlink
   ├─ .env（API secrets，含 password URL；mode 600）

@@ -69,7 +69,7 @@
 
 ## 9. 后续 TODO（迁移方向）
 
-0041–0043 候选在不扩大 React 收敛范围的前提下增加 Materials “Use AI” 菜单/设置/任务面板，以及 React `NotesView` 的真实试卷/在线考试。它们复用现有 locale、class、token、焦点与响应式规则；历史 My Notes 数据保留为明确 Demo 分组。默认英文，中文模式完整翻译；账号变化会清理用户级 consent、job polling 和 IndexedDB 草稿。
+生产 0041–0043 在不扩大 React 收敛范围的前提下增加 Materials “Use AI” 菜单/设置/任务面板，以及 React `NotesView` 的真实试卷/在线考试。它们复用现有 locale、class、token、焦点与响应式规则；历史 My Notes 数据保留为明确 Demo 分组。默认英文，中文模式完整翻译；账号变化会清理用户级 consent、job polling 和 IndexedDB 草稿。
 
 这不是全站 React 迁移：Home、Create、Note Market 等 legacy/mock 边界仍存在。不得因为 Notes 局部真实化就删除其它原型数据或改变原设计。
 

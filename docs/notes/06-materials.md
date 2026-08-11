@@ -10,10 +10,10 @@
 ## 1. 需求
 按课程上传 / 查看 / 下载学习资料；每份归属一个课程；用户只能管理自己的；支持 PDF/PPT/Word/Markdown/HTML/TXT。
 
-## 2. 关键设计：supabase-js 直连 + RLS（不加后端接口）
-和登录读 profiles 一样，Materials 的增删查**全部前端直连 Supabase**：表数据走 `supabase.from(...)`，文件走 `supabase.storage`，安全靠 **RLS + 存储策略**在数据层强制。
+## 2. 关键设计：基础 CRUD 直连 Supabase，AI 经服务端
+和登录读 profiles 一样，Materials 的基础增删查**前端直连 Supabase**：表数据走 `supabase.from(...)`，文件走 `supabase.storage`，安全靠 **RLS + 存储策略**在数据层强制。0041–0043 新增的 AI 生成不沿用这条写路径，必须经过 NestJS owner 校验、service-role 事务、durable queue 和隔离 worker。
 
-为什么不走 NestJS：这些是「用户自有数据 CRUD」，RLS 已保证安全，加后端接口多余。后端只留给需要服务端密钥/逻辑的事（注册、将来 AI、支付）。
+为什么基础 CRUD 不走 NestJS：这些是「用户自有数据 CRUD」，RLS 已保证安全。后端留给需要服务端密钥/特权事务的注册、已上线 Materials AI，以及未来支付。
 
 ## 3. 数据模型（迁移 0002）
 ```
@@ -84,10 +84,10 @@ and exists (select 1 from public.courses c
 - 列表分页 / 搜索 / 排序；更稳定的 PDF.js / Office 服务端转图。
 - 上传大小限制、类型白名单、进度条。
 
-### 8.1 Materials AI 试卷候选（0041–0043）
+### 8.1 Materials AI 试卷（生产 0041–0043）
 
 每行新增 “Use AI” 二级菜单；Generate test paper 可配置语言、难度、15–240 分钟、20–200 分、六类题型、答案详略和 focus，其余 Knowledge list/Quiz/Knowledge graph 显示 Coming soon。首次按用户记录第三方/ZDR/私有 parse cache 同意。
 
 API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/图片10MB，再创建短期 signed URL与 Postgres job/quota reservation；BullMQ 只投 UUID，FastAPI 解析并回调进度。页面每2秒轮询，后台退避到10秒，离开/刷新不取消。成功试卷落在同一 `courses.id` 的 My Notes；删除材料/科目可保留到 Unfiled 或同时删除 AI 结果，两者都取消任务、清 parse cache和过程文件。
 
-生产数据库当前到 0040，但 Materials AI 尚未部署；必须等真实 provider/资源/发布门禁后才可称为上线。Storage 文件删除是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
+生产数据库与应用当前已到 0043。2026-08-11 的受保护发布通过真实 DeepSeek/MiMo、220 页 Office canary、登录用户生成/评分/删除、临时目录清理和独立公网 readiness 后开启 `FEATURE_MATERIAL_AI`。Storage 文件删除仍是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
