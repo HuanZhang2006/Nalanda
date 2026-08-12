@@ -4,26 +4,51 @@ from __future__ import annotations
 
 import asyncio
 import hmac
+import json
 import os
+import re
 import shutil
 import tempfile
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+import httpx
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .errors import PipelineError
 from .openrouter import OpenRouterClient, fake_enabled
-from .pipeline import grade_exam, process_exam
-from .schemas import GradeExamRequest, ProcessExamRequest
+from .pipeline import grade_exam, process_exam, process_material_job
+from .schemas import (
+    GradeExamRequest,
+    GradingWorkerResult,
+    ProcessExamRequest,
+    ProcessMaterialJobRequest,
+    UsageEvent,
+)
 
 TEMP_ROOT = Path(os.getenv("MATERIAL_AI_TEMP_ROOT", "/tmp/nalanda-material-ai"))
 JOB_TEMP_LIMIT = int(os.getenv("MATERIAL_AI_JOB_TEMP_LIMIT_BYTES", str(1024 * 1024 * 1024)))
 MIN_FREE_BYTES = int(os.getenv("MATERIAL_AI_TEMP_MIN_FREE_BYTES", str(512 * 1024 * 1024)))
+RESUME_TTL_SECONDS = int(os.getenv("MATERIAL_AI_RESUME_TTL_SECONDS", "86400"))
+JOB_TIMEOUT_SECONDS = max(60, int(os.getenv("MATERIAL_AI_JOB_TIMEOUT_SECONDS", "1200")))
+GRADING_TIMEOUT_SECONDS = max(30, int(os.getenv("MATERIAL_AI_GRADING_TIMEOUT_SECONDS", "240")))
 worker_slot = asyncio.Semaphore(1)
+active_jobs: set[tuple[str, str]] = set()
+JOB_ID = re.compile(
+    r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
+    r"[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
+)
+LOCAL_CHECKPOINT = "resume-checkpoint.json"
+CHECKPOINT_RANK = {
+    "parsed": 1,
+    "audited": 2,
+    "document_ready": 3,
+    "artifact_ready": 4,
+    "answer_ready": 4,
+}
 
 
 def _ensure_temp_root() -> None:
@@ -33,11 +58,15 @@ def _ensure_temp_root() -> None:
 
 def _sweep_stale() -> int:
     _ensure_temp_root()
-    cutoff = time.time() - 3600
+    # The database accepts a five-minute minimum resume TTL. Do not silently
+    # keep private local checkpoints for an extra hour when an operator chooses
+    # a shorter retention period.
+    cutoff = time.time() - max(300, RESUME_TTL_SECONDS)
+    active_names = {f"job-{job_id.lower()}" for job_id, _lease in tuple(active_jobs)}
     removed = 0
     for child in TEMP_ROOT.iterdir():
         try:
-            if child.is_dir() and child.stat().st_mtime < cutoff:
+            if child.name not in active_names and child.is_dir() and child.stat().st_mtime < cutoff:
                 shutil.rmtree(child)
                 removed += 1
         except OSError:
@@ -47,7 +76,9 @@ def _sweep_stale() -> int:
 
 async def _sweeper() -> None:
     while True:
-        await asyncio.sleep(15 * 60)
+        # Bound deletion lag while avoiding a hot filesystem scan for the
+        # default one-day retention window.
+        await asyncio.sleep(min(15 * 60, max(60, RESUME_TTL_SECONDS // 4)))
         await asyncio.to_thread(_sweep_stale)
 
 
@@ -162,8 +193,401 @@ async def material_exam(request: ProcessExamRequest, x_ai_internal_token: str | 
             shutil.rmtree(workdir, ignore_errors=True)
 
 
+def _workdir(job_id: str) -> Path:
+    if not JOB_ID.fullmatch(job_id):
+        raise PipelineError("INVALID_INTERNAL_REQUEST", "Invalid AI job identifier", 422)
+    return TEMP_ROOT / f"job-{job_id.lower()}"
+
+
+async def _post_callback(
+    request: ProcessMaterialJobRequest | GradeExamRequest,
+    suffix: str,
+    payload: dict,
+    timeout_seconds: float = 30,
+) -> None:
+    try:
+        async with httpx.AsyncClient(timeout=timeout_seconds) as client:
+            response = await client.post(
+                f"{str(request.callbacks.baseUrl).rstrip('/')}/{suffix}",
+                headers={"X-AI-Internal-Token": request.callbacks.token},
+                json={"leaseToken": request.callbacks.leaseToken, **payload},
+            )
+    except httpx.HTTPError as exc:
+        raise PipelineError("AI_CALLBACK_UNAVAILABLE", "AI job state could not be persisted", 503) from exc
+    if response.is_success:
+        return
+    try:
+        error_body = response.json()
+        if isinstance(error_body.get("message"), dict):
+            error_body = error_body["message"]
+    except (ValueError, AttributeError):
+        error_body = {}
+    code = error_body.get("code") if isinstance(error_body, dict) else None
+    if code == "AI_COST_LIMIT_EXCEEDED":
+        raise PipelineError(code, "The configured AI cost limit was reached", 503)
+    if response.status_code in (401, 403, 409):
+        raise PipelineError("JOB_CANCELLED", "The AI job lease is no longer active", 409)
+    raise PipelineError("AI_CALLBACK_UNAVAILABLE", "AI job state could not be persisted", 503)
+
+
+async def _persist_usage(
+    request: ProcessMaterialJobRequest | GradeExamRequest, workdir: Path, event: UsageEvent
+) -> None:
+    # Write the small accounting event before crossing the network. If the API
+    # is temporarily unavailable, the next lease replays this spool before it
+    # makes another provider request. No prompt or material body is written.
+    path = workdir / f"usage-{event.eventId}.json"
+    path.write_text(json.dumps(event.model_dump(), separators=(",", ":")), encoding="utf-8")
+    try:
+        await _post_callback(request, "usage", {"event": event.model_dump()})
+    except PipelineError as error:
+        if error.code != "AI_CALLBACK_UNAVAILABLE":
+            raise
+        # Keep the accounting fact but allow the validated provider response
+        # to reach the local stage checkpoint before the worker yields.
+        return
+    else:
+        path.unlink(missing_ok=True)
+
+
+async def _flush_usage(request: ProcessMaterialJobRequest | GradeExamRequest, workdir: Path) -> None:
+    for path in sorted(workdir.glob("usage-*.json")):
+        try:
+            event = UsageEvent.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            path.unlink(missing_ok=True)
+            continue
+        await _post_callback(request, "usage", {"event": event.model_dump()})
+        path.unlink(missing_ok=True)
+
+
+def _spooled_usage_cost(workdir: Path) -> int:
+    total = 0
+    for path in workdir.glob("usage-*.json"):
+        try:
+            event = UsageEvent.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        total += event.costMicroUsd or 0
+    return total
+
+
+def _budgeted_usage_sink(
+    request: ProcessMaterialJobRequest | GradeExamRequest,
+    workdir: Path,
+):
+    # The API subtracts already-persisted cost before dispatch. Include any
+    # unacknowledged local spool from the previous lease so a callback outage
+    # cannot reset the remaining per-job budget.
+    spent_micro_usd = _spooled_usage_cost(workdir)
+    limit_micro_usd = request.budgetMicroUsd
+
+    def ensure_budget() -> None:
+        if limit_micro_usd is not None and spent_micro_usd > limit_micro_usd:
+            raise PipelineError(
+                "AI_COST_LIMIT_EXCEEDED",
+                "The configured AI cost limit was reached",
+                503,
+            )
+
+    async def persist(event: UsageEvent) -> None:
+        nonlocal spent_micro_usd
+        await _persist_usage(request, workdir, event)
+        spent_micro_usd += event.costMicroUsd or 0
+        ensure_budget()
+
+    return persist, ensure_budget
+
+
+def _clear_process_files(workdir: Path) -> None:
+    for child in workdir.iterdir():
+        if (child.name.startswith("usage-") and child.suffix == ".json") or child.name == LOCAL_CHECKPOINT:
+            continue
+        if child.is_dir():
+            shutil.rmtree(child, ignore_errors=True)
+        else:
+            child.unlink(missing_ok=True)
+
+
+def _write_local_checkpoint(workdir: Path, stage: str, payload: dict) -> None:
+    value = {"checkpointStage": stage, **payload}
+    temporary = workdir / f".{LOCAL_CHECKPOINT}.tmp"
+    temporary.write_text(json.dumps(value, separators=(",", ":")), encoding="utf-8")
+    os.chmod(temporary, 0o600)
+    temporary.replace(workdir / LOCAL_CHECKPOINT)
+    os.utime(workdir, None)
+
+
+def _read_local_checkpoint(workdir: Path) -> dict | None:
+    path = workdir / LOCAL_CHECKPOINT
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        path.unlink(missing_ok=True)
+        return None
+    stage = value.get("checkpointStage") if isinstance(value, dict) else None
+    return value if stage in CHECKPOINT_RANK else None
+
+
+def _best_checkpoint(remote: dict | None, local: dict | None) -> dict | None:
+    if not local:
+        return remote
+    if not remote:
+        return local
+    remote_rank = CHECKPOINT_RANK.get(str(remote.get("checkpointStage")), 0)
+    local_rank = CHECKPOINT_RANK.get(str(local.get("checkpointStage")), 0)
+    return local if local_rank >= remote_rank else remote
+
+
+RETRYABLE_PIPELINE_CODES = {
+    "AI_WORKER_TIMEOUT",
+    "AI_CALLBACK_UNAVAILABLE",
+    "AI_TEMP_DISK_PRESSURE",
+    "OPENROUTER_UNREACHABLE",
+    "OPENROUTER_RATE_LIMIT",
+    "OPENROUTER_FAILED",
+    "OPENROUTER_ZDR_UNAVAILABLE",
+}
+
+
+async def _run_material_job(request: ProcessMaterialJobRequest) -> None:
+    workdir = _workdir(request.jobId)
+    callback_finished = False
+    try:
+        async with worker_slot:
+            _resource_gate()
+            workdir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(workdir, 0o700)
+            os.utime(workdir, None)
+            request = request.model_copy(update={
+                "checkpoint": _best_checkpoint(
+                    request.checkpoint, _read_local_checkpoint(workdir)
+                )
+            })
+            usage_sink, ensure_budget = _budgeted_usage_sink(request, workdir)
+            await _flush_usage(request, workdir)
+            ensure_budget()
+            await asyncio.to_thread(_clear_process_files, workdir)
+
+            async def checkpoint_sink(stage: str, payload: dict) -> None:
+                try:
+                    await asyncio.to_thread(
+                        _write_local_checkpoint, workdir, stage, payload
+                    )
+                except OSError as error:
+                    raise PipelineError(
+                        "AI_TEMP_DISK_PRESSURE",
+                        "AI processing could not persist its retry checkpoint",
+                        503,
+                    ) from error
+
+            try:
+                async with asyncio.timeout(JOB_TIMEOUT_SECONDS):
+                    result = await process_material_job(
+                        request,
+                        workdir,
+                        usage_sink=usage_sink,
+                        checkpoint_sink=checkpoint_sink,
+                    )
+            except TimeoutError as error:
+                raise PipelineError(
+                    "AI_WORKER_TIMEOUT",
+                    "AI processing reached its bounded execution time; resume from the latest checkpoint",
+                    503,
+                ) from error
+            if _directory_size(workdir) > JOB_TEMP_LIMIT:
+                raise PipelineError("AI_JOB_TEMP_LIMIT", "AI processing exceeded its temporary disk limit", 503)
+            # Completion is not allowed to erase an unacknowledged provider
+            # cost. Any remaining spool is replayed before the final artifact.
+            await _flush_usage(request, workdir)
+            await _post_callback(request, "complete", {"result": result}, timeout_seconds=60)
+            callback_finished = True
+    except PipelineError as error:
+        if error.code == "JOB_CANCELLED":
+            callback_finished = True
+            return
+        if error.code == "AI_CALLBACK_UNAVAILABLE":
+            # An unacknowledged accounting/checkpoint callback must not be
+            # converted into a terminal failure: doing so can delete the local
+            # usage spool before the API has recorded provider cost. Leave the
+            # lease and 0700 work directory for the reconciler to replay.
+            return
+        retryable = error.code in RETRYABLE_PIPELINE_CODES
+        try:
+            await _flush_usage(request, workdir)
+            await _post_callback(request, "fail", {
+                "code": error.code,
+                "message": error.safe_message,
+                "retryable": retryable,
+            })
+            callback_finished = True
+        except PipelineError as callback_error:
+            # The API/reconciler retains the authoritative lease and retries
+            # after expiry. The local spool is intentionally left for replay.
+            if callback_error.code in {"JOB_CANCELLED", "AI_COST_LIMIT_EXCEEDED"}:
+                # These responses are raised only after the API has already
+                # persisted the usage event and closed the authoritative job.
+                callback_finished = True
+    except Exception:
+        try:
+            await _flush_usage(request, workdir)
+            await _post_callback(request, "fail", {
+                "code": "AI_SYSTEM_FAILURE",
+                "message": "AI processing failed",
+                "retryable": False,
+            })
+            callback_finished = True
+        except PipelineError:
+            pass
+    finally:
+        active_jobs.discard((request.jobId, request.callbacks.leaseToken))
+        if callback_finished:
+            shutil.rmtree(workdir, ignore_errors=True)
+        elif workdir.exists():
+            os.utime(workdir, None)
+
+
+@app.post("/internal/materials/jobs", status_code=status.HTTP_202_ACCEPTED)
+async def material_job(
+    request: ProcessMaterialJobRequest,
+    background_tasks: BackgroundTasks,
+    x_ai_internal_token: str | None = Header(default=None),
+):
+    _internal_token(x_ai_internal_token)
+    _resource_gate()
+    active_key = (request.jobId, request.callbacks.leaseToken)
+    replayed = active_key in active_jobs
+    if not replayed:
+        active_jobs.add(active_key)
+        background_tasks.add_task(_run_material_job, request)
+    return {"accepted": True, "replayed": replayed}
+
+
 @app.post("/internal/exams/grade")
 async def exam_grade(request: GradeExamRequest, x_ai_internal_token: str | None = Header(default=None)):
     _internal_token(x_ai_internal_token)
     async with worker_slot:
         return await grade_exam(request)
+
+
+async def _run_exam_grading(request: GradeExamRequest) -> None:
+    if request.callbacks is None:
+        return
+    workdir = _workdir(request.attemptId)
+    callback_finished = False
+    result_path = workdir / "grading-result.json"
+    try:
+        async with worker_slot:
+            _resource_gate()
+            workdir.mkdir(parents=True, exist_ok=True, mode=0o700)
+            os.chmod(workdir, 0o700)
+            os.utime(workdir, None)
+            usage_sink, ensure_budget = _budgeted_usage_sink(request, workdir)
+            await _flush_usage(request, workdir)
+            ensure_budget()
+            result: dict | None = None
+            candidates: list[object] = []
+            if result_path.exists():
+                try:
+                    candidates.append(json.loads(result_path.read_text(encoding="utf-8")))
+                except (OSError, ValueError):
+                    result_path.unlink(missing_ok=True)
+            if isinstance(request.checkpoint, dict) and "result" in request.checkpoint:
+                candidates.append(request.checkpoint["result"])
+            for candidate in candidates:
+                if not isinstance(candidate, dict):
+                    continue
+                try:
+                    result = GradingWorkerResult.model_validate({
+                        "subjectiveScore": candidate.get("subjectiveScore"),
+                        "results": candidate.get("results"),
+                    }).model_dump()
+                    break
+                except ValueError:
+                    continue
+            if result is None:
+                try:
+                    async with asyncio.timeout(GRADING_TIMEOUT_SECONDS):
+                        generated = await grade_exam(
+                            request,
+                            usage_sink=usage_sink,
+                        )
+                except TimeoutError as error:
+                    raise PipelineError(
+                        "AI_GRADING_TIMEOUT", "AI grading reached its bounded execution time", 503
+                    ) from error
+                result = GradingWorkerResult.model_validate({
+                    "subjectiveScore": generated.get("subjectiveScore"),
+                    "results": generated.get("results"),
+                }).model_dump()
+                # Retain only the validated grading result until the API
+                # acknowledges completion. This prevents a callback outage
+                # from paying for and executing the same grading twice.
+                result_path.write_text(
+                    json.dumps(result, separators=(",", ":")), encoding="utf-8"
+                )
+            # The validated result is durable locally before provider facts
+            # cross the network. A callback outage can therefore replay both
+            # accounting and completion without paying to grade twice.
+            await _post_callback(
+                request, "checkpoint", {"payload": {"result": result}}, timeout_seconds=30
+            )
+            await _flush_usage(request, workdir)
+            await _post_callback(request, "complete", {"result": result}, timeout_seconds=60)
+            callback_finished = True
+    except PipelineError as error:
+        if error.code == "JOB_CANCELLED":
+            callback_finished = True
+        elif error.code != "AI_CALLBACK_UNAVAILABLE":
+            try:
+                await _flush_usage(request, workdir)
+                await _post_callback(
+                    request,
+                    "fail",
+                    {"code": error.code, "message": error.safe_message},
+                )
+                callback_finished = True
+            except PipelineError as callback_error:
+                if callback_error.code in {"JOB_CANCELLED", "AI_COST_LIMIT_EXCEEDED"}:
+                    callback_finished = True
+    except Exception:
+        # BackgroundTasks does not have an HTTP caller left to receive an
+        # unhandled exception. Persist a stable terminal result so the lease
+        # cannot spin forever on an unexpected parser/serialization defect.
+        try:
+            await _flush_usage(request, workdir)
+            await _post_callback(
+                request,
+                "fail",
+                {"code": "AI_GRADING_FAILED", "message": "AI grading failed"},
+            )
+            callback_finished = True
+        except PipelineError:
+            pass
+    finally:
+        active_jobs.discard((request.attemptId, request.callbacks.leaseToken))
+        if callback_finished:
+            shutil.rmtree(workdir, ignore_errors=True)
+        elif workdir.exists():
+            os.utime(workdir, None)
+
+
+@app.post("/internal/exams/jobs", status_code=status.HTTP_202_ACCEPTED)
+async def exam_grading_job(
+    request: GradeExamRequest,
+    background_tasks: BackgroundTasks,
+    x_ai_internal_token: str | None = Header(default=None),
+):
+    _internal_token(x_ai_internal_token)
+    _resource_gate()
+    if request.callbacks is None:
+        raise HTTPException(
+            status_code=422,
+            detail={"code": "INVALID_INTERNAL_REQUEST", "message": "Grading callbacks are required"},
+        )
+    active_key = (request.attemptId, request.callbacks.leaseToken)
+    replayed = active_key in active_jobs
+    if not replayed:
+        active_jobs.add(active_key)
+        background_tasks.add_task(_run_exam_grading, request)
+    return {"accepted": True, "replayed": replayed}

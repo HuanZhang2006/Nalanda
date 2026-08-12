@@ -21,7 +21,7 @@ import { PointsAdminService } from "./points/points-admin.service";
 import { RateLimitInterceptor } from "./rate-limit/rate-limit.interceptor";
 import { RateLimitService } from "./rate-limit/rate-limit.service";
 import { RedisService } from "./rate-limit/redis.service";
-import { AiController, AiInternalController } from "./ai/ai.controller";
+import { AiController, AiGradingInternalController, AiInternalController } from "./ai/ai.controller";
 import { AiInternalClientService } from "./ai/ai-internal-client.service";
 import { AiProcessorService } from "./ai/ai-processor.service";
 import { AiQueueService } from "./ai/ai-queue.service";
@@ -33,7 +33,7 @@ import { AiHealthController } from "./ai/ai-health.controller";
   controllers: [
     HealthController, MeController, AuthController, LearningController,
     PublicLearningController, PronunciationController, OpenRouterTranscriptionController,
-    PointsAdminController, AiController, AiInternalController, AiHealthController,
+    PointsAdminController, AiController, AiInternalController, AiGradingInternalController, AiHealthController,
   ],
   providers: [
     SupabaseAdminService, IpaService, LearningService, LearningAudioService, PronunciationService,

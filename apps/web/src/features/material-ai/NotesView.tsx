@@ -2,14 +2,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   ExamAnswerInput,
   GeneratedExamAttempt,
+  GeneratedExamNoteDetail,
   GeneratedExamQuestionV1,
+  GeneratedKnowledgeGraphV1,
   GeneratedNoteDetail,
   GeneratedNoteSummary,
+  KnowledgeNodeQuestion,
 } from "@nalanda/types";
 import { DB } from "../../legacy/data";
 import { supabase } from "../../lib/supabase";
 import { ApiClientError } from "../../lib/api";
-import { formatDateTime, useI18n } from "../../i18n";
 import { materialsAiApi } from "./api";
 import { materialAiErrorText } from "./errorText";
 import { clearOtherAccounts, deleteDraft, draftKey, loadDraft, saveDraft } from "./examDraftStore";
@@ -26,9 +28,13 @@ interface Props {
 }
 
 const gradient = "linear-gradient(135deg,#a97142,#d2a675)";
+const english = (englishText: string, _chineseText: string) => englishText;
+const formatEnglishDateTime = (value: string) => new Intl.DateTimeFormat("en-US", {
+  dateStyle: "medium", timeStyle: "short",
+}).format(new Date(value));
 
 export function NotesView(props: Props) {
-  const { l } = useI18n();
+  const l = english;
   const [notes, setNotes] = useState<GeneratedNoteSummary[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [filter, setFilter] = useState("all");
@@ -70,7 +76,7 @@ export function NotesView(props: Props) {
       {(filter !== "demo") && <section>
         <div className="sec-h" style={{ marginTop: 0 }}><h2 className="serif">{l("Your generated notes", "你的生成笔记")}</h2><span className="chip chip-accent">{l("Private", "私有")}</span></div>
         {visible.length ? <div className="grid g-3">{visible.map((note) => <RealNoteCard key={note.id} note={note} onOpen={() => props.onOpenReal(note.id)} />)}</div>
-          : <div className="card card-pad center muted">{l("No generated test papers in this group yet.", "此分组还没有生成试卷。")}</div>}
+          : <div className="card card-pad center muted">{l("No generated AI notes in this group yet.", "此分组还没有 AI 笔记。")}</div>}
       </section>}
       {demoNotes.length > 0 && <section>
         <div className="sec-h"><h2 className="serif">{l("Demo", "演示")}</h2><span className="chip chip-outline">{l("Sample data — not your files", "演示数据，并非你的文件")}</span></div>
@@ -85,18 +91,18 @@ export function NotesView(props: Props) {
 }
 
 function RealNoteCard({ note, onOpen }: { note: GeneratedNoteSummary; onOpen: () => void }) {
-  const { l } = useI18n();
+  const l = english;
   return <button className="card ncard hoverable material-ai-note-button" onClick={onOpen}>
     <div className="ncard-top" style={{ background: gradient }}><span className="chip material-ai-demo-chip">{note.courseCode || note.courseName}</span></div>
-    <div className="ncard-body"><div className="chip chip-accent">{l("AI test paper", "AI 试卷")}</div><h3 className="serif">{note.title}</h3>
-      <p className="muted">{note.questionCount} {l("questions", "题")} · {note.totalMarks} {l("marks", "分")} · {note.sourceDeleted ? l("Source deleted", "源资料已删除") : note.materialName}</p>
-      <div className="ncard-foot"><span className="meta">{formatDateTime(note.updatedAt)}</span><span className="chip chip-outline">{l("Open", "打开")} ›</span></div>
+    <div className="ncard-body"><div className="chip chip-accent">{note.kind === "ai_knowledge_graph" ? "AI knowledge map" : l("AI test paper", "AI 试卷")}</div><h3 className="serif">{note.title}</h3>
+      <p className="muted">{note.kind === "ai_knowledge_graph" ? `${note.nodeCount} knowledge points · ${note.edgeCount} relationships` : `${note.questionCount} ${l("questions", "题")} · ${note.totalMarks} ${l("marks", "分")}`} · {note.sourceDeleted ? l("Source deleted", "源资料已删除") : note.materialName}</p>
+      <div className="ncard-foot"><span className="meta">{formatEnglishDateTime(note.updatedAt)}</span><span className="chip chip-outline">{l("Open", "打开")} ›</span></div>
     </div>
   </button>;
 }
 
 function RealNote({ noteId, userId, onBack, toast }: { noteId: string; userId: string; onBack: () => void; toast: Props["toast"] }) {
-  const { l } = useI18n();
+  const l = english;
   const [note, setNote] = useState<GeneratedNoteDetail | null>(null);
   const [attempts, setAttempts] = useState<GeneratedExamAttempt[]>([]);
   const [active, setActive] = useState<GeneratedExamAttempt | null>(null);
@@ -104,13 +110,14 @@ function RealNote({ noteId, userId, onBack, toast }: { noteId: string; userId: s
   const [busy, setBusy] = useState(false);
   const load = useCallback(async () => {
     try {
-      const [detail, history] = await Promise.all([materialsAiApi.note(noteId), materialsAiApi.attempts(noteId)]);
+      const detail = await materialsAiApi.note(noteId);
+      const history = detail.kind === "ai_exam" ? await materialsAiApi.attempts(noteId) : [];
       setNote(detail); setAttempts(history); setError("");
     } catch (failure) { setError(materialAiErrorText(failure, l("The note could not be loaded.", "笔记加载失败。"), l)); }
   }, [l, noteId]);
   useEffect(() => { void load(); }, [load]);
 
-  if (active && note) return <ExamSession userId={userId} note={note} initial={active} onExit={() => { setActive(null); void load(); }} toast={toast} />;
+  if (active && note?.kind === "ai_exam") return <ExamSession userId={userId} note={note} initial={active} onExit={() => { setActive(null); void load(); }} toast={toast} />;
   if (!note) return <div className="wrap"><button className="btn btn-ghost btn-sm" onClick={onBack}>‹ My Notes</button>{error ? <div className="course-feedback wrong">{error}</div> : <div className="card card-pad muted">{l("Loading…", "加载中…")}</div>}</div>;
   const start = async () => {
     setBusy(true);
@@ -125,6 +132,16 @@ function RealNote({ noteId, userId, onBack, toast }: { noteId: string; userId: s
     catch (failure) { toast(materialAiErrorText(failure, l("Delete failed.", "删除失败。"), l)); }
     finally { setBusy(false); }
   };
+  if (note.kind === "ai_knowledge_graph") {
+    return <div className="wrap wrap-wide">
+      <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: 18 }}>‹ My Notes</button>
+      <div className="page-head"><div><div className="row gap-8"><span className="chip chip-accent">✦ AI-generated</span><span className="chip chip-tag">{note.courseName}</span></div>
+        <h1 className="page-title serif">{note.title}</h1><p className="meta mt-8">From <b>{note.materialName}</b> · {note.sourceDeleted ? "source deleted" : "private source"}</p></div>
+        <button className="btn" disabled={busy} onClick={() => void remove()}>Delete</button>
+      </div>
+      <KnowledgeGraphView noteId={note.id} graph={note.graph} toast={toast} />
+    </div>;
+  }
   return <div className="wrap">
     <button className="btn btn-ghost btn-sm" onClick={onBack} style={{ marginBottom: 18 }}>‹ My Notes</button>
     <div className="page-head"><div><div className="row gap-8"><span className="chip chip-accent">✦ {l("AI-generated", "AI 生成")}</span><span className="chip chip-tag">{note.courseName}</span></div>
@@ -142,6 +159,109 @@ function RealNote({ noteId, userId, onBack, toast }: { noteId: string; userId: s
       </aside>
     </div>
   </div>;
+}
+
+function KnowledgeGraphView({ noteId, graph, toast }: {
+  noteId: string;
+  graph: GeneratedKnowledgeGraphV1;
+  toast: Props["toast"];
+}) {
+  const ordered = [...graph.nodes].sort((a, b) => a.sourceOrder - b.sourceOrder || a.id.localeCompare(b.id));
+  const [selectedId, setSelectedId] = useState(ordered[0]?.id || "");
+  const [question, setQuestion] = useState("");
+  const [questionJob, setQuestionJob] = useState<KnowledgeNodeQuestion | null>(null);
+  const [asking, setAsking] = useState(false);
+  const selected = ordered.find((node) => node.id === selectedId) || ordered[0];
+  const maxLevel = Math.max(0, ...ordered.map((node) => node.level));
+  const width = Math.max(900, 260 + maxLevel * 220);
+  const height = Math.max(360, ordered.length * 118 + 50);
+  const position = new Map(ordered.map((node, index) => [node.id, {
+    x: 28 + Math.min(node.level, 10) * 210,
+    y: 24 + index * 118,
+  }]));
+
+  useEffect(() => {
+    if (!questionJob || !["queued", "processing"].includes(questionJob.status)) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void materialsAiApi.knowledgeQuestion(questionJob.id).then((next) => {
+        if (!cancelled) setQuestionJob(next);
+      }).catch((failure) => {
+        if (!cancelled) toast(materialAiErrorText(failure, "The knowledge answer could not be refreshed.", english));
+      });
+    }, document.hidden ? 10000 : 2000);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [questionJob, toast]);
+
+  const ask = async () => {
+    if (!selected || !question.trim() || asking) return;
+    setAsking(true); setQuestionJob(null);
+    try {
+      const job = await materialsAiApi.askKnowledgeNode(noteId, selected.id, {
+        idempotencyKey: crypto.randomUUID(), question: question.trim(),
+      });
+      setQuestionJob(job);
+    } catch (failure) {
+      toast(materialAiErrorText(failure, "The question could not be queued.", english));
+    } finally { setAsking(false); }
+  };
+
+  if (!selected) return <div className="card card-pad muted">This knowledge map has no renderable points.</div>;
+  return <>
+    <div className="card card-pad material-knowledge-intro"><div className="eyebrow">Knowledge map overview</div><p>{graph.overview}</p>
+      {!!graph.learningObjectives.length && <div className="row gap-8 wrap-flex">{graph.learningObjectives.map((item, index) => <span className="chip chip-outline" key={index}>{item}</span>)}</div>}
+    </div>
+    <div className="grid material-knowledge-layout">
+      <div className="card material-knowledge-scroll" role="region" aria-label="Interactive knowledge graph">
+        <div className="material-knowledge-canvas" style={{ width, height }}>
+          <svg className="material-knowledge-edges" width={width} height={height} aria-hidden="true">
+            <defs><marker id="knowledge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" /></marker></defs>
+            {graph.edges.map((edge) => {
+              const from = position.get(edge.from); const to = position.get(edge.to);
+              if (!from || !to) return null;
+              return <g key={edge.id}><line x1={from.x + 176} y1={from.y + 39} x2={to.x} y2={to.y + 39} markerEnd="url(#knowledge-arrow)" />
+                <title>{edge.label || edge.relation}: {edge.explanation}</title></g>;
+            })}
+          </svg>
+          {ordered.map((node, index) => {
+            const point = position.get(node.id)!;
+            return <button type="button" key={node.id} className={`material-knowledge-node ${selected.id === node.id ? "selected" : ""}`}
+              style={{ left: point.x, top: point.y }} onClick={() => { setSelectedId(node.id); setQuestionJob(null); }}>
+              <span className="eyebrow">{index + 1} · {node.kind.replaceAll("_", " ")}</span><b>{node.title}</b><span>{node.summary}</span>
+              <span className="material-knowledge-hover" role="tooltip"><b>{node.title}</b>{node.explanation}</span>
+            </button>;
+          })}
+        </div>
+      </div>
+      <aside className="card card-pad material-ai-sticky material-knowledge-detail">
+        <div className="row between gap-8"><span className="chip chip-accent">Point {ordered.indexOf(selected) + 1}</span><span className="chip chip-tag">Level {selected.level}</span></div>
+        <h2 className="serif">{selected.title}</h2><p>{selected.explanation}</p>
+        <KnowledgeNodeList title="Key details" values={selected.keyDetails} />
+        <KnowledgeNodeList title="Examples" values={selected.examples} />
+        <KnowledgeNodeList title="Formulas" values={selected.formulas} />
+        <KnowledgeNodeList title="Common misconceptions" values={selected.commonMisconceptions} />
+        <KnowledgeNodeList title="Check yourself" values={selected.checkQuestions} />
+        <div className="divider" />
+        <div className="eyebrow">Ask about this knowledge point</div>
+        <p className="muted" style={{ fontSize: 12 }}>Each successful answer uses one daily free AI generation. Your question cannot change the model, tools, or safety rules.</p>
+        <textarea className="search material-ai-answer" maxLength={2000} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a specific question…" />
+        <button className="btn btn-primary" disabled={asking || !question.trim()} style={{ width: "100%", marginTop: 8 }} onClick={() => void ask()}>{asking ? "Queuing…" : "Ask this point"}</button>
+        {questionJob && <div className={`course-feedback ${questionJob.status === "failed" ? "wrong" : ""}`} style={{ marginTop: 12 }}>
+          {questionJob.status === "succeeded" && questionJob.answer ? <><b>Answer</b><p>{questionJob.answer.answer}</p>
+            <KnowledgeNodeList title="Key points" values={questionJob.answer.keyPoints} />
+            <KnowledgeNodeList title="Follow-up questions" values={questionJob.answer.followUpQuestions} /></>
+            : questionJob.status === "failed" ? `${questionJob.errorCode || "AI_QUESTION_FAILED"} · ${questionJob.errorMessage || "The answer could not be generated."}`
+              : "Preparing a grounded answer…"}
+        </div>}
+        <div className="material-knowledge-sources"><div className="eyebrow">Sources</div>{selected.sourceRefs.map((ref) => <span className="chip chip-outline" key={`${ref.blockId}-${ref.label}`}>{ref.label || ref.blockId}</span>)}</div>
+      </aside>
+    </div>
+  </>;
+}
+
+function KnowledgeNodeList({ title, values }: { title: string; values: string[] }) {
+  if (!values.length) return null;
+  return <section className="material-knowledge-list"><b>{title}</b><ul>{values.map((value, index) => <li key={index}>{value}</li>)}</ul></section>;
 }
 
 function attemptStatus(status: GeneratedExamAttempt["status"], l: (english: string, chinese: string) => string) {
@@ -165,9 +285,9 @@ function questionType(type: GeneratedExamQuestionV1["type"], l: (english: string
 }
 
 function ExamSession({ userId, note, initial, onExit, toast }: {
-  userId: string; note: GeneratedNoteDetail; initial: GeneratedExamAttempt; onExit: () => void; toast: Props["toast"];
+  userId: string; note: GeneratedExamNoteDetail; initial: GeneratedExamAttempt; onExit: () => void; toast: Props["toast"];
 }) {
-  const { l } = useI18n();
+  const l = english;
   const [attempt, setAttempt] = useState(initial);
   const [answers, setAnswers] = useState<Record<string, ExamAnswerInput["value"]>>(() => Object.fromEntries(initial.answers.map((answer) => [answer.questionId, answer.value])));
   const [dirty, setDirty] = useState(false);
@@ -319,7 +439,7 @@ function ExamQuestion({ question, index, value, disabled, onChange, onBlur, resu
   onChange: (value: ExamAnswerInput["value"]) => void; onBlur: () => void;
   result?: GeneratedExamAttempt["results"][number]; full?: GeneratedExamQuestionV1;
 }) {
-  const { l } = useI18n();
+  const l = english;
   const toggleMultiple = (optionIndex: number) => {
     const current = Array.isArray(value) ? value.map(Number) : [];
     onChange(current.includes(optionIndex) ? current.filter((item) => item !== optionIndex) : [...current, optionIndex].sort((a, b) => a - b));

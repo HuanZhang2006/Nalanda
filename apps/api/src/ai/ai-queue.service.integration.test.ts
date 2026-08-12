@@ -11,6 +11,9 @@ redisDescribe("Materials AI BullMQ with real Redis", () => {
     dispatchableGenerationJobs: vi.fn().mockResolvedValue([]),
     dispatchableGradingAttempts: vi.fn().mockResolvedValue([]),
     overdueExamAttempts: vi.fn().mockResolvedValue([]),
+    generationExecutionState: vi.fn().mockResolvedValue({ status: "succeeded", lease_expires_at: null }),
+    gradingExecutionState: vi.fn().mockResolvedValue({ status: "completed", grading_lease_expires_at: null }),
+    expireGenerationCheckpoints: vi.fn().mockResolvedValue(0),
   };
   const service = new AiQueueService(processor as any, repository as any);
 
@@ -38,5 +41,30 @@ redisDescribe("Materials AI BullMQ with real Redis", () => {
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
     expect(processor.generation).toHaveBeenCalledWith(missing);
+  });
+
+  it("keeps the single queue slot until an accepted generation leaves its database lease", async () => {
+    const first = randomUUID();
+    const second = randomUUID();
+    const future = new Date(Date.now() + 60_000).toISOString();
+    repository.generationExecutionState.mockImplementation(async (value: string) => value === first
+      ? { status: "processing", lease_expires_at: future }
+      : { status: "succeeded", lease_expires_at: null });
+    const baseline = processor.generation.mock.calls.length;
+    await service.enqueueGeneration(first);
+    await service.enqueueGeneration(second);
+    for (let attempt = 0; attempt < 50 && processor.generation.mock.calls.length === baseline; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(processor.generation.mock.calls.slice(baseline)).toEqual([[first]]);
+
+    repository.generationExecutionState.mockImplementation(async () => ({
+      status: "succeeded", lease_expires_at: null,
+    }));
+    for (let attempt = 0; attempt < 100 && !processor.generation.mock.calls
+      .slice(baseline).some(([value]) => value === second); attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    }
+    expect(processor.generation.mock.calls.slice(baseline)).toEqual([[first], [second]]);
   });
 });

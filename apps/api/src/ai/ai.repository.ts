@@ -13,6 +13,8 @@ import type {
   ExamAnswerInput,
   GeneratedExamAttempt,
   GeneratedExamV1,
+  GeneratedKnowledgeGraphV1,
+  KnowledgeNodeQuestion,
   GeneratedNoteDetail,
   GeneratedNoteSummary,
 } from "@nalanda/types";
@@ -41,6 +43,15 @@ export class AiRepository {
         throw new HttpException({ code: message.includes("GRADING") ? "AI_GRADING_DAILY_LIMIT" : "AI_GENERATION_DAILY_LIMIT", message: "Daily free AI allowance has been used" }, 429);
       }
       if (/AI_JOB_ACTIVE/.test(message)) throw new ConflictException({ code: "AI_JOB_ACTIVE", message: "Finish or cancel the active AI job first" });
+      if (/AI_JOB_NOT_RESUMABLE|AI_RESUME_EXPIRED|AI_WORKER_RETRY_EXHAUSTED/.test(message)) {
+        const stableCode = message.match(/AI_(?:JOB_NOT_RESUMABLE|RESUME_EXPIRED|WORKER_RETRY_EXHAUSTED)/)?.[0] || "AI_JOB_NOT_RESUMABLE";
+        throw new ConflictException({
+          code: stableCode,
+          message: stableCode === "AI_RESUME_EXPIRED"
+            ? "The saved AI progress has expired; start a new job"
+            : "This AI job cannot be resumed",
+        });
+      }
       if (/IDEMPOTENCY_CONFLICT/.test(message)) throw new ConflictException({ code: "IDEMPOTENCY_CONFLICT", message: "The idempotency key was already used for another request" });
       if (/REVISION_CONFLICT/.test(message)) throw new ConflictException({ code: "EXAM_REVISION_CONFLICT", message: "This exam was updated elsewhere; refresh before continuing" });
       if (/NOT_FOUND/.test(message) || code === "P0002") throw new NotFoundException({ code: message.match(/[A-Z][A-Z_]+/)?.[0] || "NOT_FOUND", message: "The requested item was not found" });
@@ -59,7 +70,7 @@ export class AiRepository {
       materialId: row.material_id ?? null,
       materialName: row.material_name,
       courseId: row.course_id ?? null,
-      kind: "exam",
+      kind: row.kind,
       status: row.status,
       stage: row.stage,
       progress: Number(row.progress),
@@ -68,6 +79,9 @@ export class AiRepository {
       errorCode: row.error_code ?? null,
       errorMessage: row.error_message ?? null,
       noteId: row.note_id ?? null,
+      retryable: Boolean(row.retryable),
+      resumeUntil: row.resume_until ?? null,
+      checkpointStage: row.checkpoint_stage ?? null,
       createdAt: row.created_at,
       startedAt: row.started_at ?? null,
       finishedAt: row.finished_at ?? null,
@@ -79,12 +93,13 @@ export class AiRepository {
   }
 
   async createJob(userId: string, materialId: string, idempotencyKey: string, fingerprint: string,
-    settings: unknown, consentVersion: number) {
+    kind: "exam" | "knowledge_graph", settings: unknown, consentVersion: number) {
     const rows = await this.call(() => this.db.rpc<DbRow[]>("ai_create_generation_job", {
       p_user_id: userId,
       p_material_id: materialId,
       p_idempotency_key: idempotencyKey,
       p_request_fingerprint: fingerprint,
+      p_kind: kind,
       p_settings: settings,
       p_consent_version: consentVersion,
     }));
@@ -95,9 +110,9 @@ export class AiRepository {
   async listJobs(userId: string, limit = 30) {
     const [rows, queued] = await Promise.all([
       this.call(() => this.db.select<DbRow>("generation_jobs", query({
-        select: "*", user_id: `eq.${userId}`, order: "created_at.desc", limit: String(Math.max(1, Math.min(100, limit))),
+        select: "*", user_id: `eq.${userId}`, kind: "in.(exam,knowledge_graph)", order: "created_at.desc", limit: String(Math.max(1, Math.min(100, limit))),
       }))),
-      this.db.select<DbRow>("generation_jobs", query({ select: "id", status: "eq.queued", order: "created_at.asc", limit: "1000" })),
+      this.db.select<DbRow>("generation_jobs", query({ select: "id", status: "eq.queued", kind: "in.(exam,knowledge_graph)", order: "created_at.asc", limit: "1000" })),
     ]);
     const positions = new Map(queued.map((row, index) => [row.id, index + 1]));
     return rows.map((row) => this.job(row, positions.get(row.id) || null));
@@ -131,12 +146,57 @@ export class AiRepository {
     return [...queued, ...expired].map((row) => String(row.id));
   }
 
+  async generationExecutionState(id: string) {
+    const rows = await this.db.select<DbRow>("generation_jobs", query({
+      select: "status,lease_expires_at", id: `eq.${id}`, limit: "1",
+    }));
+    return rows[0] || null;
+  }
+
+  retryJob(userId: string, id: string) {
+    return this.call(async () => {
+      const rows = await this.db.rpc<DbRow[]>("ai_retry_generation_job", {
+        p_user_id: userId, p_job_id: id,
+      });
+      if (!rows[0]) throw new ServiceUnavailableException({ code: "AI_JOB_RETRY_FAILED", message: "AI job could not be resumed" });
+      if (["AI_RESUME_EXPIRED", "AI_WORKER_RETRY_EXHAUSTED"].includes(String(rows[0].error_code || ""))) {
+        const code = String(rows[0].error_code);
+        throw new ConflictException({
+          code,
+          message: code === "AI_RESUME_EXPIRED"
+            ? "The saved AI progress has expired; start a new job"
+            : "This AI job cannot be resumed",
+        });
+      }
+      return rows[0];
+    });
+  }
+
+  expireGenerationCheckpoints() {
+    return this.db.rpc<number>("ai_expire_generation_checkpoints", {});
+  }
+
   async dispatchableGradingAttempts() {
     const now = new Date().toISOString();
     const rows = await this.db.select<DbRow>("exam_attempts", query({
       select: "id", status: "eq.grading", or: `(grading_lease_expires_at.is.null,grading_lease_expires_at.lt.${now})`, limit: "100",
     }));
     return rows.map((row) => String(row.id));
+  }
+
+  async gradingExecutionState(id: string) {
+    const rows = await this.db.select<DbRow>("exam_attempts", query({
+      select: "status,grading_lease_expires_at", id: `eq.${id}`, limit: "1",
+    }));
+    return rows[0] || null;
+  }
+
+  async gradingCheckpointForAttempt(id: string) {
+    const rows = await this.db.select<DbRow>("exam_grading_checkpoints", query({
+      select: "payload,checkpoint_version,expires_at", attempt_id: `eq.${id}`,
+      expires_at: `gt.${new Date().toISOString()}`, limit: "1",
+    }));
+    return rows[0] || null;
   }
 
   async overdueExamAttempts() {
@@ -151,10 +211,37 @@ export class AiRepository {
     return rows[0] || null;
   }
 
+  markJobAccepted(id: string, leaseToken: string) {
+    return this.db.rpc<void>("ai_mark_generation_job_accepted", {
+      p_job_id: id, p_lease_token: leaseToken,
+    });
+  }
+
   updateJob(id: string, leaseToken: string, stage: string, progress: number, eventCode?: string) {
     return this.db.rpc<void>("ai_update_generation_job", {
       p_job_id: id, p_lease_token: leaseToken, p_stage: stage, p_progress: progress, p_event_code: eventCode || null,
     });
+  }
+
+  recordJobUsage(id: string, leaseToken: string, event: unknown) {
+    return this.db.rpc<void>("ai_record_generation_usage", {
+      p_job_id: id, p_lease_token: leaseToken, p_event: event,
+    });
+  }
+
+  checkpointJob(id: string, leaseToken: string, stage: string, payload: unknown, ttlSeconds: number) {
+    return this.db.rpc<void>("ai_checkpoint_generation_job", {
+      p_job_id: id, p_lease_token: leaseToken, p_stage: stage,
+      p_payload: payload, p_ttl_seconds: ttlSeconds,
+    });
+  }
+
+  async checkpointForJob(id: string) {
+    const rows = await this.db.select<DbRow>("generation_job_checkpoints", query({
+      select: "stage,checkpoint_version,payload,expires_at", job_id: `eq.${id}`,
+      expires_at: `gt.${new Date().toISOString()}`, limit: "1",
+    }));
+    return rows[0] || null;
   }
 
   async materialForJob(job: DbRow) {
@@ -172,28 +259,53 @@ export class AiRepository {
 
   signMaterial(path: string) { return this.db.storageCreateSignedUrl("materials", path, 1_200); }
 
-  completeJob(jobId: string, leaseToken: string, result: DbRow) {
-    return this.db.rpc<string>("ai_complete_generation_job", {
+  completeMaterialJob(jobId: string, leaseToken: string, result: DbRow) {
+    const artifact = result.exam || result.graph;
+    const schemaVersion = result.exam ? "generated-exam.v1" : "generated-knowledge-graph.v1";
+    return this.db.rpc<string>("ai_complete_material_generation_job", {
       p_job_id: jobId,
       p_lease_token: leaseToken,
       p_source_sha256: result.sourceSha256,
       p_parser_version: result.parserVersion,
       p_audit_version: result.auditVersion,
+      p_prompt_version: result.promptVersion,
       p_canonical_document: result.document,
       p_block_count: result.blockCount,
       p_visual_region_count: result.visualRegionCount,
-      p_title: result.exam.title,
-      p_exam: result.exam,
-      p_question_count: result.questionCount,
-      p_total_marks: result.totalMarks,
-      p_usage_events: result.usageEvents || [],
+      p_title: artifact.title,
+      p_schema_version: schemaVersion,
+      p_artifact: artifact,
+      p_primary_count: result.exam ? result.questionCount : result.nodeCount,
+      p_secondary_count: result.exam ? result.totalMarks : result.edgeCount,
     });
   }
 
-  failJob(jobId: string, leaseToken: string | null, code: string, message: string, usageEvents: unknown[] = []) {
-    return this.db.rpc<void>("ai_fail_generation_job", {
-      p_job_id: jobId, p_lease_token: leaseToken, p_error_code: code, p_error_message: message, p_usage_events: usageEvents,
+  completeKnowledgeQuestion(jobId: string, leaseToken: string, answer: unknown) {
+    return this.db.rpc<void>("ai_complete_knowledge_question_job", {
+      p_job_id: jobId, p_lease_token: leaseToken, p_answer: answer,
     });
+  }
+
+  failJob(jobId: string, leaseToken: string | null, code: string, message: string,
+    retryable = false, resumeSeconds = 86_400) {
+    return this.db.rpc<void>("ai_fail_generation_job_v2", {
+      p_job_id: jobId, p_lease_token: leaseToken, p_error_code: code,
+      p_error_message: message, p_retryable: retryable, p_resume_seconds: resumeSeconds,
+    });
+  }
+
+  async jobProviderCostMicroUsd(jobId: string) {
+    const rows = await this.db.select<DbRow>("ai_provider_usage_events", query({
+      select: "cost_micro_usd", job_id: `eq.${jobId}`,
+    }));
+    return rows.reduce((sum, row) => sum + Math.max(0, Number(row.cost_micro_usd || 0)), 0);
+  }
+
+  async attemptProviderCostMicroUsd(attemptId: string) {
+    const rows = await this.db.select<DbRow>("ai_provider_usage_events", query({
+      select: "cost_micro_usd", attempt_id: `eq.${attemptId}`,
+    }));
+    return rows.reduce((sum, row) => sum + Math.max(0, Number(row.cost_micro_usd || 0)), 0);
   }
 
   async monthlyProviderCostMicroUsd() {
@@ -211,7 +323,7 @@ export class AiRepository {
     const notes = await this.call(() => this.db.select<DbRow>("notes", query({ select: "*", user_id: `eq.${userId}`, order: "updated_at.desc" })));
     const ids = notes.map((note) => note.id);
     const [artifacts, sources, courses] = await Promise.all([
-      ids.length ? this.db.select<DbRow>("note_artifacts", query({ select: "note_id,question_count,total_marks", note_id: `in.(${ids.join(",")})` })) : [],
+      ids.length ? this.db.select<DbRow>("note_artifacts", query({ select: "note_id,question_count,total_marks,node_count,edge_count", note_id: `in.(${ids.join(",")})` })) : [],
       ids.length ? this.db.select<DbRow>("note_materials", query({ select: "note_id,material_id", note_id: `in.(${ids.join(",")})` })) : [],
       this.courseMap(notes.map((note) => note.course_id)),
     ]);
@@ -227,11 +339,13 @@ export class AiRepository {
       courseName: course?.name || "Unfiled",
       courseCode: course?.code || null,
       title: note.title,
-      kind: "ai_exam",
+      kind: note.kind,
       materialName: note.material_name,
       sourceDeleted: !source?.material_id,
       questionCount: Number(artifact?.question_count || 0),
       totalMarks: Number(artifact?.total_marks || 0),
+      nodeCount: Number(artifact?.node_count || 0),
+      edgeCount: Number(artifact?.edge_count || 0),
       createdAt: note.created_at,
       updatedAt: note.updated_at,
     };
@@ -247,7 +361,54 @@ export class AiRepository {
       this.courseMap([note.course_id]),
     ]);
     if (!artifacts[0]) throw new NotFoundException({ code: "NOTE_ARTIFACT_NOT_FOUND", message: "Generated note content is missing" });
-    return { ...this.noteSummary(note, artifacts[0], sources[0], courses.get(note.course_id)), exam: artifacts[0].content as GeneratedExamV1 };
+    const summary = this.noteSummary(note, artifacts[0], sources[0], courses.get(note.course_id));
+    return note.kind === "ai_knowledge_graph"
+      ? { ...summary, kind: "ai_knowledge_graph", graph: artifacts[0].content as GeneratedKnowledgeGraphV1 }
+      : { ...summary, kind: "ai_exam", exam: artifacts[0].content as GeneratedExamV1 } as GeneratedNoteDetail;
+  }
+
+  async createKnowledgeQuestion(userId: string, noteId: string, nodeId: string, questionText: string,
+    idempotencyKey: string, fingerprint: string) {
+    const rows = await this.call(() => this.db.rpc<DbRow[]>("ai_create_knowledge_question_job", {
+      p_user_id: userId, p_note_id: noteId, p_node_id: nodeId,
+      p_question: questionText, p_idempotency_key: idempotencyKey,
+      p_request_fingerprint: fingerprint,
+    }));
+    if (!rows[0]) throw new ServiceUnavailableException({ code: "KNOWLEDGE_QUESTION_CREATE_FAILED", message: "Knowledge question could not be created" });
+    return rows[0];
+  }
+
+  async knowledgeQuestion(userId: string, id: string): Promise<KnowledgeNodeQuestion> {
+    const rows = await this.call(() => this.db.select<DbRow>("knowledge_node_questions", query({
+      select: "*", id: `eq.${id}`, user_id: `eq.${userId}`, limit: "1",
+    })));
+    if (!rows[0]) throw new NotFoundException({ code: "KNOWLEDGE_QUESTION_NOT_FOUND", message: "Knowledge question not found" });
+    const job = await this.getJob(userId, id);
+    return this.knowledgeQuestionResponse(rows[0], job);
+  }
+
+  private knowledgeQuestionResponse(row: DbRow, job: DbRow): KnowledgeNodeQuestion {
+    return {
+      id: row.id, noteId: row.note_id, nodeId: row.node_id, question: row.question,
+      status: job.status, answer: row.answer ?? null,
+      errorCode: job.error_code ?? null, errorMessage: job.error_message ?? null,
+      createdAt: row.created_at, answeredAt: row.answered_at ?? null,
+    };
+  }
+
+  async knowledgeQuestionContext(job: DbRow) {
+    if (!job.note_id) throw new NotFoundException({ code: "KNOWLEDGE_NOTE_NOT_FOUND", message: "Knowledge note is missing" });
+    const [questions, notes, artifacts, sources] = await Promise.all([
+      this.db.select<DbRow>("knowledge_node_questions", query({ select: "*", id: `eq.${job.id}`, limit: "1" })),
+      this.db.select<DbRow>("notes", query({ select: "*", id: `eq.${job.note_id}`, user_id: `eq.${job.user_id}`, limit: "1" })),
+      this.db.select<DbRow>("note_artifacts", query({ select: "*", note_id: `eq.${job.note_id}`, limit: "1" })),
+      this.db.select<DbRow>("note_materials", query({ select: "*", note_id: `eq.${job.note_id}`, limit: "1" })),
+    ]);
+    if (!questions[0] || !notes[0] || !artifacts[0] || !sources[0]) {
+      throw new NotFoundException({ code: "KNOWLEDGE_CONTEXT_NOT_FOUND", message: "Knowledge question context is missing" });
+    }
+    const cache = sources[0].material_id ? await this.cachedDocument(sources[0].material_id) : null;
+    return { question: questions[0], note: notes[0], artifact: artifacts[0], source: sources[0], cache };
   }
 
   deleteNote(userId: string, noteId: string) {
@@ -345,8 +506,21 @@ export class AiRepository {
   }
 
   async claimGrading(attemptId: string, leaseToken: string) {
-    const rows = await this.db.rpc<DbRow[]>("ai_claim_exam_grading", { p_attempt_id: attemptId, p_lease_token: leaseToken, p_lease_seconds: 300 });
+    const rows = await this.db.rpc<DbRow[]>("ai_claim_exam_grading", { p_attempt_id: attemptId, p_lease_token: leaseToken, p_lease_seconds: 900 });
     return rows[0] || null;
+  }
+
+  recordGradingUsage(attemptId: string, leaseToken: string, event: unknown) {
+    return this.db.rpc<void>("ai_record_grading_usage", {
+      p_attempt_id: attemptId, p_lease_token: leaseToken, p_event: event,
+    });
+  }
+
+  checkpointGrading(attemptId: string, leaseToken: string, payload: unknown, ttlSeconds: number) {
+    return this.db.rpc<void>("ai_checkpoint_exam_grading", {
+      p_attempt_id: attemptId, p_lease_token: leaseToken,
+      p_payload: payload, p_ttl_seconds: ttlSeconds,
+    });
   }
 
   completeGrading(attemptId: string, leaseToken: string, subjectiveScore: number, results: unknown[], usageEvents: unknown[]) {

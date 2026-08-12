@@ -17,7 +17,30 @@
 .material-ai-answer{display:block;width:100%;min-height:110px;background:var(--card-2);margin-top:12px;resize:vertical}
 .material-ai-question details{margin-top:8px}
 .material-ai-question summary{cursor:pointer;font-weight:650}
+.material-knowledge-intro{margin-bottom:18px}
+.material-knowledge-intro p{line-height:1.7;margin:8px 0 14px}
+.material-knowledge-layout{grid-template-columns:minmax(0,1fr) 340px;align-items:start;gap:22px}
+.material-knowledge-scroll{overflow:auto;min-height:520px;background:var(--card-2)}
+.material-knowledge-canvas{position:relative;min-height:100%;background-image:radial-gradient(var(--border) 1px,transparent 1px);background-size:22px 22px}
+.material-knowledge-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
+.material-knowledge-edges line{stroke:var(--accent);stroke-width:1.5;opacity:.52}
+.material-knowledge-edges marker path{fill:var(--accent)}
+.material-knowledge-node{position:absolute;width:176px;min-height:78px;padding:10px 12px;text-align:left;border:1px solid var(--border-strong);border-radius:12px;background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm);cursor:pointer;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease;z-index:2}
+.material-knowledge-node>b,.material-knowledge-node>span{display:block}
+.material-knowledge-node>span:not(.eyebrow):not(.material-knowledge-hover){font-size:11.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}
+.material-knowledge-node:hover,.material-knowledge-node:focus-visible,.material-knowledge-node.selected{transform:translateY(-2px);border-color:var(--accent);box-shadow:var(--shadow-sm)}
+.material-knowledge-node:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.material-knowledge-hover{display:none;position:absolute;left:0;top:calc(100% + 8px);width:280px;max-height:190px;overflow:auto;padding:12px;border:1px solid var(--border-strong);border-radius:12px;background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm);font-size:12px;line-height:1.55;z-index:10}
+.material-knowledge-hover>b{display:block;margin-bottom:5px}
+.material-knowledge-node:hover .material-knowledge-hover,.material-knowledge-node:focus-visible .material-knowledge-hover{display:block}
+.material-knowledge-detail h2{font-size:22px;margin:14px 0 8px}
+.material-knowledge-detail>p{line-height:1.68}
+.material-knowledge-list{margin-top:14px}
+.material-knowledge-list ul{margin:6px 0 0;padding-left:20px;color:var(--ink-soft);line-height:1.6}
+.material-knowledge-sources{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px}
+.material-knowledge-sources .eyebrow{width:100%}
 @media(max-width:800px){
-  .material-ai-note-layout,.material-ai-exam-layout{grid-template-columns:1fr}
+  .material-ai-note-layout,.material-ai-exam-layout,.material-knowledge-layout{grid-template-columns:1fr}
   .material-ai-sticky{position:static}
+  .material-knowledge-scroll{min-height:430px}
 }

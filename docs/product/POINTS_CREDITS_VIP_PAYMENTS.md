@@ -35,6 +35,7 @@
 - Course Market 的 publication/clone/report 表不是商业市场账本；卡片只显示“免费”，不会产生购买、销量分成、credits debit 或 creator payable。
 - 生产 0039 增加 `point_daily_windows/point_daily_award_claims/point_moderation_actions/point_abuse_signals`，并扩展 event state；内部表不开放 PostgREST 写入，service-role 也只能通过受控 SECURITY DEFINER 工作流改变事实。普通用户只能通过 owner-only receipt 读取自己的单次奖励决策。
 - 生产 0041–0043 Materials AI 不读取、冻结或消费 `profiles.credits`：所有用户默认 Free，按 Profile IANA 时区本地日分别有 10 次**成功**试卷生成和 10 次**成功**主观题评分。reservation 在成功时 consume，在注入拒绝/格式错误/取消/资源/模型/ZDR/坏 JSON/系统失败时 release；AI 试卷和考试不发 points、徽章或 VIP。
+- 0046–0048 候选中的知识图谱生成和节点问答与试卷共用同一类 `generation` Free 日额度：每个成功图谱或成功节点回答各消费 1 次；同一 job 在恢复期限内 Resume 不新增 reservation，也不重复消费。可恢复故障继续占原 reservation，过期、取消或不可恢复失败才 release。它们同样不发 points/徽章、不读取 credits；受保护发布前这只是候选规则而非线上承诺。
 
 ### 2.2 发布限制
 

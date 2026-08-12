@@ -39,6 +39,7 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | Materials AI 解析/产物（生产 0041） | 私有 `ai_material_parse_cache`、`notes/note_materials/note_artifacts` | 同文件复用 DocumentIR；保存用户请求的完整试卷/答案/来源 | cache 随 material CASCADE；删除来源可保留到 Unfiled 或连结果删除；用户可删除 Notes |
 | 在线考试（生产 0041） | `exam_attempts/answers/operations`、浏览器 IndexedDB draft | deadline、草稿、成绩、AI feedback 和幂等重放 | note/Auth 删除 CASCADE；登出不让草稿跨账号提交；完整 DSAR/一键删除仍未实现 |
 | AI provider 计量（生产 0041） | `ai_provider_usage_events` | model/token/micro-USD/latency/request ID/ZDR/status | 不含 prompt/正文/答案/raw response；删除 Note/答卷后保留不可变 subject UUID 与成本事实，防止通过删除内容绕过预算；随 Auth 用户删除 CASCADE |
+| AI 恢复与知识图谱（0046–0048 候选） | DB `generation_job_checkpoints/exam_grading_checkpoints/knowledge_node_questions`，worker 0700 local checkpoint/usage spool，graph artifact | 断线或容器替换后恢复已验证生成/评分阶段、记录知识图谱及用户对所选节点的问题/答案 | DB checkpoint 有 owner/expiry，终态/TTL 清除；local 副本不备份且成功/终态/TTL 清除；Q&A 随 note/user CASCADE；event usage 不保存 prompt/正文/raw response |
 | 支付数据 | 当前无 Stripe/订单表 | 未实现 | 未来仅保存必要 Stripe ID/状态，不保存卡号/CVC |
 | 限流/滥用审计（生产 0039） | 私有 Redis、`api_abuse_events` | 短时滑动窗口、分布式扫描锁、路由组/规则/桶级聚合 | IP/规范化邮箱只保存独立 secret 派生 HMAC；不保存原 IP、邮箱、正文或课程数据；DB 聚合默认 30 天，Redis key/AOF 是可重建运行副本 |
 | 运维数据 | 主机/容器/GitHub/Supabase 日志 | 部署和排障 | 普通日志不得记录原 IP/邮箱/正文/secret；当前仍缺统一导出和删除编排 |
@@ -57,7 +58,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 - **更正：**Profile 已以列级权限区分用户资料与内部成长/经济字段；生产 0039 已收口 feedback status 和帖子可信字段。
 - **删除：**可删除自己的部分资料/帖子/评论/任务；没有“一键删除账户”、跨 Storage/AI/备份/支付的编排和完成证明。
 - **Courses：**用户可编辑/删除私有课程、取消日程和撤销分享；删除课程不删除已经发生的 points/徽章历史。当前无完整数据导出、一键账号删除、作者自助撤回全部 publication/举报历史的统一流程。
-- **Materials AI：**用户可取消任务、删除试卷；删除 Materials/科目时可选择保留到 Unfiled 或同时删除结果。过程目录立即清理，持久解析缓存只在删除来源/账号时清理；这仍不等于跨备份/第三方的一键永久删除。
+- **Materials AI：**用户可取消任务、删除试卷/知识图谱；删除 Materials/科目时可选择保留到 Unfiled 或同时删除结果。正常终态过程目录立即清理；只有可恢复故障会在已告知 TTL 内保留 0700 checkpoint/usage spool，过期清理；持久解析缓存只在删除来源/账号时清理。这仍不等于跨备份/第三方的一键永久删除。
 - **导出：**当前没有机器可读的完整导出。
 - **限制/反对/撤回：**当前没有统一工单状态与自动化执行。
 
@@ -107,9 +108,9 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 | 账户/profile/私有学习内容 | 账户存续期 | 主系统 30 天内清除 | 可先短期软删除支持误操作恢复 |
 | 社区内容 | 发布至用户删除/审核移除 | 主系统 30 天内删除或匿名化 | 违规证据只保存最小必要内容与期限 |
 | 社区/资料孤儿对象 | 无有效元数据引用 | 7 天内清理 | public URL 可能被外部缓存，需向用户说明 |
-| AI 临时输入/渲染/OCR/原始响应 | 单任务执行期间 | 成功/失败/取消/超时 `finally` 立即删除；启动/定时清理 >1h orphan | 每任务 0700 目录；与持久解析 cache 明确分开 |
+| AI 临时输入/渲染/OCR/原始响应 | 单任务执行期间 | 成功/不可恢复失败/取消立即删除；可恢复 callback/provider 故障只留验证过的 checkpoint/usage spool，默认 24h TTL 后清除 | 每任务 0700；不保留 signed URL、token/header；与私有 DB checkpoint/parse cache 明确分开 |
 | Materials AI 私有解析 cache | 来源 material 存续期或用户删除 | material/Auth 删除时 CASCADE | 绑定 source hash + parser/audit/vision version；只用于同一用户文件后续处理 |
-| Materials AI Notes/答卷 | 用户保留结果期间 | 用户删除 Note 或账号时 CASCADE；删除来源按 keep/delete 选择 | provider usage 正文从未保存；备份按滚动期限自然淘汰 |
+| Materials AI Notes/图谱/节点问答/答卷 | 用户保留结果期间 | 用户删除 Note 或账号时 CASCADE；删除来源按 keep/delete 选择 | provider usage 正文从未保存；节点问题/回答属于私有学习内容；备份按滚动期限自然淘汰 |
 | 用户朗读 WAV | 单次评分请求 | Azure 响应/失败后立即从内存丢弃 | 浏览器最多录制 6 秒且不做 VAD/静音裁剪；只转换为 Azure 所需 PCM WAV，服务端上限 8 秒/2 MB；不落盘、DB、Storage、日志或备份 |
 | 朗读评分/学习 attempts | 账户存续期/学习反馈 | 随课程或账户删除；必要安全证据另审批 | 只存分数、错误类型、音素反馈和本地日期 |
 | 翻译前测输入/判定 | 输入正文仅单请求；hash/判定随 session 存续 | 正文响应结束即丢弃；assessment 行随 session/word/user 级联 | OpenRouter 接收英文、参考 translations 与用户答案；数据库/普通日志不保存输入正文 |

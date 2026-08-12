@@ -49,7 +49,7 @@ describe("Materials AI public service boundary", () => {
     queue.enqueueGeneration.mockRejectedValueOnce(new Error("redis offline"));
     await expect(service.createJob(USER, MATERIAL, request())).resolves.toMatchObject({ id: "job-1" });
     expect(repository.ownedMaterial).toHaveBeenCalledWith(USER, MATERIAL);
-    expect(repository.createJob).toHaveBeenCalledWith(USER, MATERIAL, request().idempotencyKey, expect.stringMatching(/^[0-9a-f]{64}$/), request().settings, 1);
+    expect(repository.createJob).toHaveBeenCalledWith(USER, MATERIAL, request().idempotencyKey, expect.stringMatching(/^[0-9a-f]{64}$/), "exam", request().settings, 1);
   });
 
   it("rejects legacy Office formats before reserving quota", async () => {

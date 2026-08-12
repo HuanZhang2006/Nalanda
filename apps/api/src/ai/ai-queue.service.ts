@@ -24,12 +24,14 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
   private queue?: Queue<AiQueueData>;
   private worker?: Worker<AiQueueData>;
   private reconcileTimer?: ReturnType<typeof setInterval>;
+  private shuttingDown = false;
 
   constructor(private readonly processor: AiProcessorService, private readonly repository: AiRepository) {}
 
   configured() { return Boolean(process.env.REDIS_URL); }
 
   async onApplicationBootstrap() {
+    this.shuttingDown = false;
     const redisUrl = process.env.REDIS_URL;
     if (!redisUrl) return;
     const connection = connectionFromUrl(redisUrl);
@@ -37,8 +39,14 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
       attempts: 1, removeOnComplete: { age: 3_600, count: 1_000 }, removeOnFail: { age: 86_400, count: 1_000 },
     } });
     this.worker = new Worker<AiQueueData>("materials-ai", async (job) => {
-      if (job.data.kind === "generation") await this.processor.generation(job.data.id);
-      else if (job.data.kind === "grading") await this.processor.grading(job.data.id);
+      if (job.data.kind === "generation") {
+        await this.processor.generation(job.data.id);
+        await this.holdExecutionSlot("generation", job.data.id);
+      }
+      else if (job.data.kind === "grading") {
+        await this.processor.grading(job.data.id);
+        await this.holdExecutionSlot("grading", job.data.id);
+      }
       else await this.processor.timeout(job.data.id);
     }, { connection, concurrency: 1, lockDuration: 15 * 60_000 });
     this.worker.on("error", (error) => this.logger.error(`Materials AI queue error: ${error.message}`));
@@ -48,6 +56,7 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
   }
 
   async onApplicationShutdown() {
+    this.shuttingDown = true;
     if (this.reconcileTimer) clearInterval(this.reconcileTimer);
     await this.worker?.close();
     await this.queue?.close();
@@ -71,6 +80,31 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
     return this.add("timeout", id, Math.max(0, new Date(deadlineAt).getTime() - Date.now()));
   }
 
+  private async holdExecutionSlot(kind: "generation" | "grading", id: string) {
+    // FastAPI acknowledges durable work before the provider call completes.
+    // Keep BullMQ's single concurrency slot until Postgres shows the task is
+    // terminal or its lease has expired; otherwise a large backlog would be
+    // accepted into worker memory and later jobs could expire before starting.
+    while (!this.shuttingDown) {
+      let row: Record<string, any> | null;
+      try {
+        row = kind === "generation"
+          ? await this.repository.generationExecutionState(id)
+          : await this.repository.gradingExecutionState(id);
+      } catch (error) {
+        this.logger.warn(`Materials AI slot state check failed: ${error instanceof Error ? error.message : "unknown error"}`);
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
+        continue;
+      }
+      const activeStatus = kind === "generation" ? "processing" : "grading";
+      const leaseValue = kind === "generation" ? row?.lease_expires_at : row?.grading_lease_expires_at;
+      if (!row || row.status !== activeStatus) return;
+      const remaining = new Date(String(leaseValue || "")).getTime() - Date.now();
+      if (!Number.isFinite(remaining) || remaining <= 0) return;
+      await new Promise((resolve) => setTimeout(resolve, Math.min(1_000, remaining)));
+    }
+  }
+
   async reconcile() {
     if (!this.queue) return;
     try {
@@ -78,6 +112,7 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
         this.repository.dispatchableGenerationJobs(), this.repository.dispatchableGradingAttempts(),
         this.repository.overdueExamAttempts(),
       ]);
+      await this.repository.expireGenerationCheckpoints();
       await Promise.all([
         ...jobs.map((id) => this.enqueueGeneration(id)),
         ...attempts.map((id) => this.enqueueGrading(id)),

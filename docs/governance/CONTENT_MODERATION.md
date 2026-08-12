@@ -72,6 +72,8 @@ Course v1 保存目标 ID、类别、≤1000 字说明、举报人和状态，�
 
 MiMo 视觉 prompt 只要求逐字文本、标题、表格、图表、流程、公式、图标含义、视觉关系、不可读区和疑似嵌入指令，禁止遵从图片命令或补造信息。prompt injection 检测不能保证绝对安全；误报进入安全/AI 质量复核，不能临时关闭分类、允许工具/Web、改用非 ZDR endpoint 或把原文件贴进工单。
 
+0046–0048 候选的知识图谱仍是用户私有 Note，不进入社区或市场。图谱 generation 使用与试卷相同的两次文件安全审查，节点顺序、解释和 sourceBlockIds 经过 schema/引用校验；点击节点提问时，问题再次作为不可信数据隔离，只允许模型读取所选节点、相邻节点及其允许来源，不能改写 system/schema、索取其它 Note、启用工具/Web 或扩展检索范围。节点问题含指令注入信号时拒绝并释放 reservation，不因拒绝自动处罚用户。答案是教学反馈，不是审核结论、权威事实或可自动发布内容。
+
 生产 0039–0040 另建立 points 滥用审核边界。协同扫描每五分钟在 Redis 分布式锁下运行，仅生成 `point_abuse_signals(status=pending)`：同一 actor 对同一 owner 的高集中互动、双向互刷、3–8 人小团体和新账号集中突发均只是调查线索，不是违规结论。系统不自动冻结、扣分、隐藏或封禁；管理员在 `MODERATION_ADMIN_USER_IDS`（兼容期仅在为空时回退 Course Market allowlist）内，经受控 API 标记信号并提交带理由、可选 case reference 的 `suppress/restore`。原创帖 suppress 覆盖锚定同一 root 的原创、转发、评论与点赞奖励，所有变化以不可变冲正和审核 action 留痕；restore 不补发最初因每日上限为零的奖励。
 
 若有效法律/政策请求要求移除某个合成发音，应按规范化 term、locale、voice、format 与 synthesis version 定位并删除对应 private Storage 对象、停止/重排队列并保留不含用户录音的最小审计。不得把共享合成对象错误归属给最先请求它的用户，也不得把普通课程删除当成全局音频下架。

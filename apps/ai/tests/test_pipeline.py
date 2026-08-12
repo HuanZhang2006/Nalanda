@@ -6,15 +6,24 @@ from PIL import Image
 import app.pipeline as pipeline
 from app.errors import PipelineError
 from app.openrouter import OpenRouterClient
-from app.pipeline import audit_document, enforce_audit, recover_visuals, validate_exam
+from app.pipeline import (
+    audit_document,
+    enforce_audit,
+    generate_knowledge_graph,
+    recover_visuals,
+    validate_exam,
+    validate_knowledge_graph,
+)
 from app.schemas import (
     AuditResult,
     DocumentBlock,
     DocumentIR,
     ExamSettings,
     GeneratedExam,
+    KnowledgeGraphSettings,
     ParseDiagnostic,
     ProcessExamRequest,
+    ProcessMaterialJobRequest,
     UsageEvent,
     VisualRegion,
 )
@@ -90,15 +99,23 @@ async def test_visual_recovery_uses_two_concurrency_safe_regions(monkeypatch, tm
                 message="visual semantics require recovery",
             )
         )
+    checkpoints: list[set[str]] = []
+
+    async def checkpoint(_document, completed):
+        checkpoints.append(set(completed))
+
     count, usage = await recover_visuals(
         OpenRouterClient(),
         doc,
         regions,
         AuditResult(classification="safe", rationale="ok", failedRanges=[], injectionLocations=[]),
+        on_recovered=checkpoint,
     )
     assert count == 2
     assert len(usage) == 2
     assert len([block for block in doc.blocks if block.source == "vision"]) == 2
+    assert len(checkpoints) == 2
+    assert checkpoints[-1] == {"p1", "p2"}
 
 
 @pytest.mark.asyncio
@@ -283,3 +300,203 @@ async def test_parse_cache_hit_still_rejects_injection_in_new_focus(monkeypatch,
     with pytest.raises(PipelineError) as caught:
         await pipeline._process_exam(request, tmp_path, [])
     assert caught.value.code == "PROMPT_INJECTION_REJECTED"
+
+
+@pytest.mark.asyncio
+async def test_knowledge_graph_is_detailed_source_ordered_and_directly_renderable(monkeypatch):
+    monkeypatch.setenv("MATERIAL_AI_FAKE_PROVIDER", "true")
+    doc = DocumentIR(
+        title="Biology",
+        sourceType="txt",
+        pageCount=1,
+        slideCount=0,
+        blocks=[
+            DocumentBlock(id="b1", order=1, kind="heading", text="Cells", page=1, label="Cells"),
+            DocumentBlock(id="b2", order=2, kind="paragraph", text="Membranes regulate transport.", page=1, label="Membranes"),
+        ],
+        diagnostics=[],
+    )
+    usage = []
+    graph = await generate_knowledge_graph(
+        OpenRouterClient(),
+        doc,
+        KnowledgeGraphSettings(language="en", detail="comprehensive", focus=""),
+        usage,
+    )
+    assert validate_knowledge_graph(graph, doc) == []
+    assert [node.sourceOrder for node in graph.nodes] == sorted(node.sourceOrder for node in graph.nodes)
+    assert all(node.explanation and node.sourceRefs for node in graph.nodes)
+    assert {event.purpose for event in usage} == {"knowledge_graph_generation", "knowledge_graph_review"}
+
+
+@pytest.mark.asyncio
+async def test_repaired_knowledge_graph_is_the_candidate_used_by_final_semantic_review():
+    doc = document("A supported source concept")
+    settings = KnowledgeGraphSettings(language="en", detail="comprehensive", focus="")
+    base = pipeline._fake_knowledge_graph(doc, settings)
+    first = pipeline.GeneratedKnowledgeGraph.model_validate({**base, "title": "Original graph"})
+    repaired = pipeline.GeneratedKnowledgeGraph.model_validate({**base, "title": "Repaired graph"})
+    reviewed_payloads: list[str] = []
+
+    class Client:
+        async def structured(self, *, purpose, user_content, **_kwargs):
+            event = UsageEvent(
+                purpose=purpose, model="fake", requestId="fake", durationMs=1,
+                zdrEnforced=True, status="succeeded",
+            )
+            if purpose == "knowledge_graph_generation":
+                return first, [event]
+            if purpose == "knowledge_graph_review":
+                reviewed_payloads.append(str(user_content))
+                if len(reviewed_payloads) == 1:
+                    return pipeline.ReviewResult(valid=False, issues=["needs repair"]), [event]
+                return pipeline.ReviewResult(valid=True, issues=[]), [event]
+            if purpose == "knowledge_graph_repair":
+                return repaired, [event]
+            raise AssertionError(f"unexpected provider purpose: {purpose}")
+
+    result = await generate_knowledge_graph(Client(), doc, settings, [])
+
+    assert result.title == "Repaired graph"
+    assert "Original graph" in reviewed_payloads[0]
+    assert "Repaired graph" in reviewed_payloads[1]
+
+
+@pytest.mark.asyncio
+async def test_knowledge_question_can_ground_an_answer_in_a_connected_node_source():
+    doc = DocumentIR(
+        title="Biology",
+        sourceType="txt",
+        pageCount=1,
+        slideCount=0,
+        blocks=[
+            DocumentBlock(id="b1", order=1, kind="paragraph", text="Cells are units of life.", page=1, label="Cells"),
+            DocumentBlock(id="b2", order=2, kind="paragraph", text="Membranes regulate transport.", page=1, label="Membranes"),
+        ],
+        diagnostics=[],
+    )
+    settings = KnowledgeGraphSettings(language="en", detail="comprehensive", focus="")
+    graph = pipeline.GeneratedKnowledgeGraph.model_validate(
+        pipeline._fake_knowledge_graph(doc, settings)
+    )
+    captured: dict[str, str] = {}
+
+    class Client:
+        async def structured(self, *, user_content, **_kwargs):
+            captured["content"] = str(user_content)
+            return pipeline.KnowledgeNodeAnswer.model_validate({
+                "schemaVersion": "knowledge-node-answer.v1",
+                "answer": "The connected membrane concept explains regulated transport.",
+                "keyPoints": ["Transport is regulated"],
+                "sourceRefs": [{"blockId": "b2", "page": 1, "slide": None, "label": "Membranes"}],
+                "followUpQuestions": [],
+            }), [UsageEvent(
+                purpose="knowledge_node_question", model="fake", requestId="fake",
+                durationMs=1, zdrEnforced=True, status="succeeded",
+            )]
+
+    request = ProcessMaterialJobRequest.model_validate({
+        "jobId": "11111111-1111-4111-8111-111111111111",
+        "kind": "knowledge_question",
+        "userId": "22222222-2222-4222-8222-222222222222",
+        "callbacks": {
+            "baseUrl": "http://api:3000/api/internal/ai-jobs/11111111-1111-4111-8111-111111111111",
+            "token": "test-internal-token-12345",
+            "leaseToken": "33333333-3333-4333-8333-333333333333",
+        },
+        "question": "How is the next concept related?",
+        "nodeId": graph.nodes[0].id,
+        "graph": graph.model_dump(by_alias=True),
+        "document": doc.model_dump(),
+        "budgetMicroUsd": 500000,
+    })
+
+    answer = await pipeline.answer_knowledge_question(Client(), request, [])
+
+    assert answer.sourceRefs[0].blockId == "b2"
+    assert '"id":"b2"' in captured["content"]
+
+
+@pytest.mark.asyncio
+async def test_artifact_checkpoint_resumes_without_download_or_provider_calls(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("MATERIAL_AI_FAKE_PROVIDER", "true")
+    doc = document("Source concept")
+    settings = KnowledgeGraphSettings(language="en", detail="comprehensive", focus="")
+    graph = pipeline.GeneratedKnowledgeGraph.model_validate(pipeline._fake_knowledge_graph(doc, settings))
+
+    async def no_callback(*_args, **_kwargs):
+        return None
+
+    async def should_not_download(*_args, **_kwargs):
+        raise AssertionError("artifact checkpoint must not redownload the source")
+
+    monkeypatch.setattr(pipeline, "_progress", no_callback)
+    monkeypatch.setattr(pipeline, "_checkpoint", no_callback)
+    monkeypatch.setattr(pipeline, "download_material", should_not_download)
+    request = ProcessMaterialJobRequest.model_validate(
+        {
+            "jobId": "11111111-1111-4111-8111-111111111111",
+            "kind": "knowledge_graph",
+            "userId": "22222222-2222-4222-8222-222222222222",
+            "material": {
+                "id": "33333333-3333-4333-8333-333333333333",
+                "name": "lesson.txt",
+                "type": "txt",
+                "sizeBytes": 10,
+                "signedUrl": "https://storage.example/lesson.txt",
+            },
+            "settings": settings.model_dump(),
+            "callbacks": {
+                "baseUrl": "http://api:3000/api/internal/ai-jobs/11111111-1111-4111-8111-111111111111",
+                "token": "test-internal-token-12345",
+                "leaseToken": "44444444-4444-4444-8444-444444444444",
+            },
+            "checkpoint": {
+                "checkpointStage": "artifact_ready",
+                "sourceSha256": "a" * 64,
+                "document": doc.model_dump(),
+                "visualRegionCount": 0,
+                "artifact": graph.model_dump(by_alias=True),
+            },
+            "budgetMicroUsd": 500000,
+        }
+    )
+    result = await pipeline.process_material_job(request, tmp_path)
+    assert result["kind"] == "knowledge_graph"
+    assert result["nodeCount"] == len(graph.nodes)
+    assert result["usageEvents"] == []
+
+
+@pytest.mark.asyncio
+async def test_grading_provider_payload_excludes_internal_callback_credentials(monkeypatch):
+    monkeypatch.setenv("MATERIAL_AI_FAKE_PROVIDER", "true")
+    captured: dict[str, object] = {}
+    original = pipeline.OpenRouterClient.structured
+
+    async def capture(self, **kwargs):
+        captured.update(kwargs)
+        return await original(self, **kwargs)
+
+    monkeypatch.setattr(pipeline.OpenRouterClient, "structured", capture)
+    request = pipeline.GradeExamRequest.model_validate({
+        "attemptId": "22222222-2222-4222-8222-222222222222",
+        "questions": [{
+            "id": "q1", "prompt": "Explain", "marks": 5,
+            "modelAnswer": "Supported answer", "rubric": ["Accurate"],
+            "learnerAnswer": "Learner answer",
+        }],
+        "language": "en",
+        "callbacks": {
+            "baseUrl": "http://api:3000/api/internal/exam-attempts/22222222-2222-4222-8222-222222222222",
+            "token": "do-not-send-this-internal-token",
+            "leaseToken": "11111111-1111-4111-8111-111111111111",
+        },
+        "budgetMicroUsd": 50000,
+    })
+
+    await pipeline.grade_exam(request)
+
+    content = str(captured["user_content"])
+    assert "do-not-send-this-internal-token" not in content
+    assert "callbacks" not in content
+    assert "budgetMicroUsd" not in content
