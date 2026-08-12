@@ -16,7 +16,9 @@
 6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
 7. 若远端 history 为空，临时只保留 0001–0007 迁移，通过 public schema 零差异和 Storage policy/bucket 核验后才将这 7 个已存在版本标记为 applied；已建立的远端 history 必须是至少包含 0001–0007 的连续本地前缀；
 8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建并上传应用；生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在待激活 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分和翻译评判幂等。0037 起还必须以 Azure 合成“苹果”中文 WAV 调用真实 Fish Audio STT，验证 owner/revision/word 绑定和中文 transcript 后才激活 Web release。
+9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建应用。上传前生产主机定向清理同 SHA/过期 incoming 与未被容器或当前 `.deploy.env` 引用的 Nalanda image，并要求至少 6 GiB 可用空间；不满足时保持当前应用不动。
+10. 生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在待激活 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分和翻译评判幂等。0037 起还必须以 Azure 合成“苹果”中文 WAV 调用真实 Fish Audio STT，验证 owner/revision/word 绑定和中文 transcript 后才激活 Web release。
+11. 任一激活门禁失败时，EXIT trap 清除失败候选制品；上一 API 使用上一 `.deploy.env`/compose 的不可变镜像以 `--no-deps` 恢复并独立验证，不能因可选 AI unhealthy 把应用回滚扩大为公网 502。
 
 生产 0039–0040 进一步要求：用独立 secret 启动无宿主机端口的 Redis，验证认证 PING、AOF `everysec`、`noeviction` 和 private network；API readiness 必须同时返回 `deps.supabase=ok`、`deps.redis=ok`，并验证标准限流 headers 与未认证 points admin 401。Redis/nginx 可在应用回退后继续运行；它们不能代替数据库恢复点或 provider gates。
 
