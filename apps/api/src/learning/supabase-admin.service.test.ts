@@ -38,6 +38,21 @@ describe("SupabaseAdminService Storage cache", () => {
       .rejects.toMatchObject({ response: { code: "UPSTREAM_UNREACHABLE" } });
   });
 
+  it("maps a response-body timeout instead of letting the DOMException escape", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      text: vi.fn().mockRejectedValue(new DOMException("slow body", "TimeoutError")),
+    }));
+
+    await expect(service().rest("rpc/learning_get_unit_audio_manifest", {
+      method: "POST", body: "{}",
+    })).rejects.toMatchObject({
+      status: 503,
+      response: { code: "UPSTREAM_TIMEOUT", retryAfterSeconds: 2 },
+    });
+  });
+
   it("resolves a raw signed object path against the Storage API base", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
       signedURL: "/object/sign/materials/user/source.txt?token=private",

@@ -27,6 +27,8 @@
 
 ### Fixed
 
+- Courses 音频预热、manifest 与单词音频准备现在只对可安全重放的 Supabase 408/425/429/5xx、连接失败和响应体超时做三次有限重试；最终失败统一返回带重试提示的 503，而不是无信息 500。Supabase REST/Storage 的响应正文读取也纳入 20 秒 transport 边界，发布失败会输出仅含 route、错误类别、上游 HTTP/稳定 code 的脱敏 API 日志，不记录数据库正文或用户内容。
+- 真实 Courses 音频发布 gate 对幂等 prewarm/manifest 增加三次有限瞬时重试，并在同一超时边界内消费 JSON/音频正文；401/403/契约错误仍立即失败。这样一次可重试的上游 500 不再直接回滚已通过 DeepSeek/MiMo、Azure 和 Gemma 的候选，同时持续失败仍阻断切流并保留诊断日志。
 - 真实 Gemma 发布门禁不再把交互 API 的 12 秒 SLA 当作整次 release smoke 的预算：每次尝试使用独立 30 秒上限、全部尝试共享 180 秒硬预算，并在同一重试边界内读取完整响应体。这样即使 2xx 响应头已到但正文流超时，也会以同一固定模型有限重试，而不会让 `DOMException TimeoutError` 逃逸并误触发无诊断回滚；坏 JSON/坏语义、永久 HTTP 状态和预算耗尽仍失败关闭。
 - 受保护应用发布现在会在上传前删除同 SHA 的半成品、清理超过 24 小时的 abandoned incoming 目录，并只回收未被容器或当前 `.deploy.env` 引用的 Nalanda 镜像；可用空间不足 6 GiB 时在切流前失败。失败候选通过 EXIT trap 删除自身 Web 目录、incoming 包和镜像，避免连续失败把共享主机磁盘填满。
 - 应用回滚不再让上一 API 等待可选 AI 容器达到 healthy：Redis/AI 分开尽力恢复，上一 API 使用 `--no-deps` 从已审计镜像强制重建并独立验证进程、鉴权和公网契约。AI 因磁盘水位等原因 unhealthy 时不再把一次受保护发布失败扩大成 nginx 502；readiness 失败日志同时输出脱敏 `/health` 依赖状态。

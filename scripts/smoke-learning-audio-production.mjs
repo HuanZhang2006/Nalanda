@@ -3,6 +3,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import {
   AUDIO_OUTPUT_FORMAT,
   learningAudioCacheKey,
+  runLearningAudioSmokeRequest,
 } from "./learning-audio-smoke-lib.mjs";
 
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
@@ -48,38 +49,56 @@ async function responseBody(response) {
   try { return JSON.parse(text); } catch { return text; }
 }
 
-async function request(name, url, init = {}, expected = [200, 201]) {
-  let response;
-  try {
-    response = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
-  } catch (error) {
-    throw new Error(`${name} could not reach its target`, { cause: error });
-  }
-  const body = await responseBody(response);
-  if (!expected.includes(response.status)) {
-    const safe = typeof body === "object" && body
-      ? JSON.stringify({ code: body.code, message: body.message })
-      : String(body || "");
-    throw new Error(`${name} returned HTTP ${response.status}: ${safe}`);
-  }
-  return { response, body };
+async function request(name, url, init = {}, expected = [200, 201], retryTransient = false) {
+  return runLearningAudioSmokeRequest(async () => {
+    let response;
+    let body;
+    try {
+      response = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+      // Consume the body before leaving the timeout boundary. Node resolves
+      // fetch after headers, so a stalled body must remain retryable too.
+      body = await responseBody(response);
+    } catch (cause) {
+      const error = new Error(`${name} could not reach its target`, { cause });
+      error.retryable = true;
+      throw error;
+    }
+    if (!expected.includes(response.status)) {
+      const safe = typeof body === "object" && body
+        ? JSON.stringify({ code: body.code, message: body.message })
+        : String(body || "");
+      const error = new Error(`${name} returned HTTP ${response.status}: ${safe}`);
+      error.status = response.status;
+      throw error;
+    }
+    return { response, body };
+  }, {
+    maxAttempts: retryTransient ? 3 : 1,
+    onRetry: ({ attempt, delayMs, status }) => {
+      console.warn(`${name} transient ${status ? `HTTP ${status}` : "transport error"}; retry ${attempt + 1}/3 in ${delayMs} ms`);
+    },
+  });
 }
 
 async function requestRaw(name, url, init = {}, expected = [200, 201]) {
   let response;
+  let bytes;
   try {
     response = await fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
-  } catch (error) {
-    throw new Error(`${name} could not reach its target`, { cause: error });
+    bytes = Buffer.from(await response.arrayBuffer());
+  } catch (cause) {
+    throw new Error(`${name} could not reach its target`, { cause });
   }
   if (!expected.includes(response.status)) {
-    const body = await responseBody(response);
+    const text = bytes.toString("utf8");
+    let body;
+    try { body = JSON.parse(text); } catch { body = text; }
     const safe = typeof body === "object" && body
       ? JSON.stringify({ code: body.code, message: body.message })
       : String(body || "");
     throw new Error(`${name} returned HTTP ${response.status}: ${safe}`);
   }
-  return response;
+  return { response, bytes };
 }
 
 async function cleanProbeAssets() {
@@ -171,6 +190,8 @@ async function manifest(user, unitId, prepare = false) {
       headers: authHeaders(user.token),
       ...(prepare ? { body: "{}" } : {}),
     },
+    [200, 201],
+    true,
   )).body;
 }
 
@@ -202,10 +223,9 @@ async function assetAttempts() {
 }
 
 async function getAudio(user, asset) {
-  const response = await requestRaw("private audio read", new URL(asset.audioUrl, apiOrigin).toString(), {
+  const { response, bytes } = await requestRaw("private audio read", new URL(asset.audioUrl, apiOrigin).toString(), {
     headers: { Authorization: `Bearer ${user.token}` },
   });
-  const bytes = Buffer.from(await response.arrayBuffer());
   assert.ok(bytes.length > 44, "private audio response is unexpectedly small");
   assert.equal(response.headers.get("etag"), `"${asset.cacheKey}"`);
   return bytes;
@@ -216,7 +236,7 @@ async function synthesizeAssessmentWav() {
     "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;",
   })[char]);
   const body = `<speak version="1.0" xml:lang="en-US"><voice name="${escapedVoice}">${terms[0]}</voice></speak>`;
-  const response = await requestRaw(
+  const { bytes: wav } = await requestRaw(
     "real Azure assessment fixture",
     `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`,
     {
@@ -230,7 +250,6 @@ async function synthesizeAssessmentWav() {
       body,
     },
   );
-  const wav = Buffer.from(await response.arrayBuffer());
   assert.ok(wav.length > 44, "real Azure assessment fixture is unexpectedly small");
   assert.equal(wav.toString("ascii", 0, 4), "RIFF");
   assert.equal(wav.toString("ascii", 8, 12), "WAVE");
@@ -239,7 +258,7 @@ async function synthesizeAssessmentWav() {
 
 async function synthesizeChineseTranslationWav() {
   const body = '<speak version="1.0" xml:lang="zh-CN"><voice name="zh-CN-XiaoxiaoNeural">苹果</voice></speak>';
-  const response = await requestRaw(
+  const { bytes: wav } = await requestRaw(
     "real Azure Chinese STT fixture",
     `https://${azureRegion}.tts.speech.microsoft.com/cognitiveservices/v1`,
     {
@@ -253,7 +272,6 @@ async function synthesizeChineseTranslationWav() {
       body,
     },
   );
-  const wav = Buffer.from(await response.arrayBuffer());
   assert.ok(wav.length > 44, "Chinese STT fixture is unexpectedly small");
   assert.equal(wav.toString("ascii", 0, 4), "RIFF");
   assert.equal(wav.toString("ascii", 8, 12), "WAVE");

@@ -7,6 +7,7 @@ export class SupabaseRequestError extends Error {
     readonly body: unknown,
   ) {
     super(message);
+    this.name = "SupabaseRequestError";
   }
 }
 
@@ -23,6 +24,26 @@ function storageObjectMissing(status: number, text: string) {
   }
 }
 
+function requestTimeoutSignal() {
+  const configured = Number(process.env.SUPABASE_REQUEST_TIMEOUT_MS || 20_000);
+  const milliseconds = Number.isFinite(configured)
+    ? Math.max(1_000, Math.min(60_000, Math.round(configured)))
+    : 20_000;
+  return AbortSignal.timeout(milliseconds);
+}
+
+function upstreamUnavailable(error: unknown, dependency: "Database" | "Storage") {
+  const name = error && typeof error === "object" && "name" in error
+    ? String((error as { name: unknown }).name)
+    : "";
+  const timedOut = name === "TimeoutError" || name === "AbortError";
+  return new ServiceUnavailableException({
+    code: timedOut ? "UPSTREAM_TIMEOUT" : "UPSTREAM_UNREACHABLE",
+    message: `${dependency} is temporarily unavailable`,
+    retryAfterSeconds: 2,
+  });
+}
+
 @Injectable()
 export class SupabaseAdminService {
   private config() {
@@ -37,18 +58,26 @@ export class SupabaseAdminService {
 
   async rest<T>(path: string, init: RequestInit = {}): Promise<T> {
     const { url, key } = this.config();
-    const response = await fetch(`${url}/rest/v1/${path}`, {
-      ...init,
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        ...(init.body ? { "Content-Type": "application/json" } : {}),
-        ...init.headers,
-      },
-    }).catch(() => {
-      throw new ServiceUnavailableException({ code: "UPSTREAM_UNREACHABLE", message: "Database is unavailable" });
-    });
-    const text = await response.text();
+    let response: Response;
+    let text: string;
+    try {
+      response = await fetch(`${url}/rest/v1/${path}`, {
+        ...init,
+        signal: init.signal || requestTimeoutSignal(),
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          ...(init.body ? { "Content-Type": "application/json" } : {}),
+          ...init.headers,
+        },
+      });
+      // Keep response-body streaming inside the same timeout/error boundary.
+      // A fetch promise resolves as soon as headers arrive, so reading the
+      // body outside this try would let a late AbortSignal escape unmapped.
+      text = await response.text();
+    } catch (error) {
+      throw upstreamUnavailable(error, "Database");
+    }
     const body = text ? (() => { try { return JSON.parse(text); } catch { return text; } })() : null;
     if (!response.ok) {
       const message = typeof body === "object" && body && "message" in body
@@ -89,53 +118,67 @@ export class SupabaseAdminService {
 
   async storageGet(bucket: string, path: string): Promise<Uint8Array | null> {
     const { url, key } = this.config();
-    const response = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
-      headers: { apikey: key, Authorization: `Bearer ${key}` },
-    }).catch(() => {
-      throw new ServiceUnavailableException({
-        code: "UPSTREAM_UNREACHABLE",
-        message: "Storage is unavailable",
+    let response: Response;
+    try {
+      response = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
+        signal: requestTimeoutSignal(),
+        headers: { apikey: key, Authorization: `Bearer ${key}` },
       });
-    });
+    } catch (error) { throw upstreamUnavailable(error, "Storage"); }
     if (!response.ok) {
-      const text = await response.text();
+      let text: string;
+      try { text = await response.text(); }
+      catch (error) { throw upstreamUnavailable(error, "Storage"); }
       // Supabase Storage currently reports a missing private object as HTTP
       // 400 with a JSON statusCode of 404. Treat both wire shapes as a normal
       // cache miss; otherwise the first TTS request never reaches Azure.
       if (storageObjectMissing(response.status, text)) return null;
       throw new SupabaseRequestError("Storage read failed", response.status, text || null);
     }
-    return new Uint8Array(await response.arrayBuffer());
+    try { return new Uint8Array(await response.arrayBuffer()); }
+    catch (error) { throw upstreamUnavailable(error, "Storage"); }
   }
 
   async storagePut(bucket: string, path: string, bytes: Uint8Array, contentType: string): Promise<void> {
     const { url, key } = this.config();
-    const response = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
-      method: "POST",
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        "Content-Type": contentType,
-        "x-upsert": "true",
-      },
-      body: Buffer.from(bytes),
-    }).catch(() => null);
-    if (!response?.ok) throw new SupabaseRequestError("Storage upload failed", response?.status || 503, null);
+    let response: Response;
+    try {
+      response = await fetch(`${url}/storage/v1/object/${bucket}/${path}`, {
+        method: "POST",
+        signal: requestTimeoutSignal(),
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          "Content-Type": contentType,
+          "x-upsert": "true",
+        },
+        body: Buffer.from(bytes),
+      });
+    } catch (error) { throw upstreamUnavailable(error, "Storage"); }
+    if (!response.ok) throw new SupabaseRequestError("Storage upload failed", response.status, null);
   }
 
   async storageCreateSignedUrl(bucket: string, path: string, expiresIn = 900): Promise<string> {
     const { url, key } = this.config();
-    const response = await fetch(`${url}/storage/v1/object/sign/${bucket}/${path}`, {
-      method: "POST",
-      headers: {
-        apikey: key,
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ expiresIn }),
-    }).catch(() => null);
-    if (!response?.ok) throw new SupabaseRequestError("Storage signing failed", response?.status || 503, null);
-    const body = await response.json() as { signedURL?: string; signedUrl?: string };
+    let response: Response;
+    let text: string;
+    try {
+      response = await fetch(`${url}/storage/v1/object/sign/${bucket}/${path}`, {
+        method: "POST",
+        signal: requestTimeoutSignal(),
+        headers: {
+          apikey: key,
+          Authorization: `Bearer ${key}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ expiresIn }),
+      });
+      text = await response.text();
+    } catch (error) { throw upstreamUnavailable(error, "Storage"); }
+    if (!response.ok) throw new SupabaseRequestError("Storage signing failed", response.status, null);
+    let body: { signedURL?: string; signedUrl?: string };
+    try { body = JSON.parse(text) as typeof body; }
+    catch { throw new SupabaseRequestError("Storage returned an invalid signing response", 502, null); }
     const signed = body.signedURL || body.signedUrl;
     if (!signed) throw new SupabaseRequestError("Storage did not return a signed URL", 502, body);
     // The raw Storage REST endpoint returns `/object/sign/...`, relative to
@@ -151,11 +194,15 @@ export class SupabaseAdminService {
   async storageDelete(bucket: string, paths: string[]): Promise<void> {
     if (!paths.length) return;
     const { url, key } = this.config();
-    const response = await fetch(`${url}/storage/v1/object/${bucket}`, {
-      method: "DELETE",
-      headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ prefixes: paths }),
-    }).catch(() => null);
-    if (!response?.ok) throw new SupabaseRequestError("Storage delete failed", response?.status || 503, null);
+    let response: Response;
+    try {
+      response = await fetch(`${url}/storage/v1/object/${bucket}`, {
+        method: "DELETE",
+        signal: requestTimeoutSignal(),
+        headers: { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ prefixes: paths }),
+      });
+    } catch (error) { throw upstreamUnavailable(error, "Storage"); }
+    if (!response.ok) throw new SupabaseRequestError("Storage delete failed", response.status, null);
   }
 }
