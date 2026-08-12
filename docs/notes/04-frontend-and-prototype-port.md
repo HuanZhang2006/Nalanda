@@ -52,7 +52,7 @@
 
 ## 6. 数据形状对齐（接真后端的红利）
 
-0041 试卷链已经统一 `GeneratedExamV1`、job/quota/Notes/attempt 的 Web/Nest camelCase 契约与 FastAPI strict Pydantic；数据库 snake_case 只在 API adapter 内转换。考试 session 显式剔除答案/rubric。Knowledge、独立 Quiz、Graph 的历史原型仍与未来 schema 不一致，图谱还依赖 `x/y/cls`；它们保持 Demo/Coming soon，不能直接“换数据即可”。
+0041 试卷链已经统一 `GeneratedExamV1`、job/quota/Notes/attempt 的 Web/Nest camelCase 契约与 FastAPI strict Pydantic；数据库 snake_case 只在 API adapter 内转换。考试 session 显式剔除答案/rubric。Knowledge list/独立 Quiz 的历史原型仍保持 Demo/Coming soon。0046–0048 候选没有复用旧 `x/y/cls` mock，而是新增 source-ordered `GeneratedKnowledgeGraphV1`、自适应 SVG 布局、hover/click detail 与 node Q&A；生产发布前仍不得称线上实现。
 
 ## 7. 踩坑
 
@@ -69,7 +69,7 @@
 
 ## 9. 后续 TODO（迁移方向）
 
-生产 0041–0043 在不扩大 React 收敛范围的前提下增加 Materials “Use AI” 菜单/设置/任务面板，以及 React `NotesView` 的真实试卷/在线考试。它们复用现有 locale、class、token、焦点与响应式规则；历史 My Notes 数据保留为明确 Demo 分组。默认英文，中文模式完整翻译；账号变化会清理用户级 consent、job polling 和 IndexedDB 草稿。
+生产 0041–0043 在不扩大 React 收敛范围的前提下增加 Materials “Use AI” 菜单/设置/任务面板，以及 React `NotesView` 的真实试卷/在线考试。0046–0048 候选只在同一边界增加图谱/节点问答并修复文案漂移：Materials 与 My Notes 始终显示英文，复用原 class/token/字体/焦点与响应式规则，不跟随全局中文 locale。历史 My Notes 数据继续保留为明确 Demo 分组；账号变化会清理用户级 consent、job polling 和 IndexedDB 草稿。
 
 这不是全站 React 迁移：Home、Create、Note Market 等 legacy/mock 边界仍存在。不得因为 Notes 局部真实化就删除其它原型数据或改变原设计。
 

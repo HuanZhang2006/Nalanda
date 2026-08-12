@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseJobRequest, parseSaveAnswers, requestFingerprint } from "./ai.dto";
+import { parseJobRequest, parseKnowledgeQuestion, parseSaveAnswers, requestFingerprint } from "./ai.dto";
 
 const valid = () => ({
   idempotencyKey: "11111111-1111-4111-8111-111111111111",
@@ -38,5 +38,21 @@ describe("Materials AI request validation", () => {
       answers: [{ questionId: "q1", value: "a" }, { questionId: "q1", value: "b" }],
     })).toThrowError(/Question IDs must be unique/);
   });
-});
 
+  it("accepts comprehensive knowledge maps and bounds node questions", () => {
+    const request = parseJobRequest({
+      idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      kind: "knowledge_graph",
+      consentVersion: 1,
+      settings: { language: "auto", detail: "comprehensive", focus: "source order" },
+    });
+    expect(request).toMatchObject({ kind: "knowledge_graph", settings: { detail: "comprehensive" } });
+    expect(parseKnowledgeQuestion({
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      question: "  How does this connect to the prior point?  ",
+    }).question).toBe("How does this connect to the prior point?");
+    expect(() => parseKnowledgeQuestion({
+      idempotencyKey: "22222222-2222-4222-8222-222222222222", question: "",
+    })).toThrowError(/Review the knowledge point question/);
+  });
+});

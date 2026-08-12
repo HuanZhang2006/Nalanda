@@ -77,8 +77,8 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/App.auth.test.ts` | 登录会话切换、登出/登录 loading 复位与认证错误恢复 |
 | `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、9 个导航模块、Create、退出、resize listener 重挂与跨账号清理 |
 | `apps/web/src/legacy/account-modules.test.ts` | 通知未读/已读、错误处理、反馈提交、Profile 加载/编辑/壳同步 |
-| `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功 |
-| `apps/web/src/features/material-ai/NotesView.test.tsx` | Demo/真实 Notes 分组、Materials course 同步、考试 deadline、500ms 草稿、未同步阻止提交、到期 fallback、评分与删除 |
+| `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功；Materials AI 菜单全英文、知识图谱创建、同一 job Resume 与队列状态恢复 |
+| `apps/web/src/features/material-ai/NotesView.test.tsx` | Demo/真实 Notes 分组、Materials course 同步、考试 deadline、500ms 草稿、未同步阻止提交、到期 fallback、评分与删除；知识图谱按来源顺序渲染、hover 详情、节点选择与基于该节点的问答 |
 | `apps/web/src/features/material-ai/examDraftStore.test.ts` | IndexedDB 草稿按 user/attempt 隔离与清理 |
 | `apps/web/src/features/material-ai/errorText.test.ts` | 稳定 AI/provider/security error code 的统一中英文显示 |
 | `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
@@ -354,7 +354,7 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG、页/块引用、Office 全量渲染、只对失败 slide/region 做视觉补全、加密 PDF、损坏/zip bomb、字符/临时空间上限、外链图片不抓取、malicious/uncertain 拒绝、benign educational、schema/引用验证、finally 与 orphan 清理。它使用 fake OpenRouter，不证明真实模型质量。
+当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG、页/块引用、Office 全量渲染、只对失败 slide/region 做视觉补全、加密 PDF、损坏/zip bomb、字符/临时空间上限、外链图片不抓取、malicious/uncertain 拒绝、benign educational、试卷/知识图谱 schema 与引用验证、来源顺序、节点及相邻节点来源问答、202 快速接收、20 分钟总预算的可恢复超时、后台评分意外异常、回调鉴权、finally 与配置 TTL 清理。专项故障测试还模拟“provider 已成功但 API 回调不可用”：先落本地 validated checkpoint/usage spool，新 lease 恢复后不得再次调用 provider，usage event 与最终结果重放成功后才删除任务目录。它使用 fake OpenRouter，不证明真实模型质量或供应商可用性。
 
 启动带开发配置的 `uvicorn` 后：
 
@@ -364,7 +364,7 @@ curl -fsS http://localhost:8000/health
 
 内部生成/评分路由需要 token、短期 Storage URL 和回调，不提供无认证 curl 示例，避免泄漏。真实固定 fixture gate 使用 `python3 scripts/smoke-material-ai-provider.py`，必须由受保护环境提供 OpenRouter 与临时 Supabase fixture；它不等于浏览器/RLS E2E。
 
-API 测试另覆盖 AI 鉴权/owner/格式、idempotency、quota reserve/consume/release、Redis 投递丢失后重投、预算/ZDR/坏响应、objective grading、deadline、revision/operation replay 和三次 lease 恢复。`RUN_REDIS_E2E=true` 时 `ai-queue.service.integration.test.ts` 用真实 BullMQ/Redis 验证 UUID execution/reconcile；默认 skip 不算真实 Redis 证据。fake DB/fetch 仍不证明真实 PostgREST 锁、RLS 或 provider。
+API 测试另覆盖 AI 鉴权/owner/格式、idempotency、quota reserve/consume/release、Redis 投递丢失后重投、预算/ZDR/坏响应、objective grading、deadline、revision/operation replay 和三次 lease 恢复。0046–0048 候选还覆盖显式 Undici `headersTimeout/bodyTimeout`、接收 timeout 与业务预算的分离、`AI_WORKER_TIMEOUT`/`AI_WORKER_UNREACHABLE` 映射、202 接收、增量 usage 回调、checkpoint stage 不倒退、同一 job 恢复、恢复期限延长，以及过期/次数耗尽后持久终态与 checkpoint 清理。`RUN_REDIS_E2E=true` 时 `ai-queue.service.integration.test.ts` 用真实 BullMQ/Redis 验证 UUID execution/reconcile，并证明前一任务仍持有 processing lease 时后一任务不会被 FastAPI 接收；默认 skip 不算真实 Redis 证据。fake DB/fetch 仍不证明真实 PostgREST 锁、RLS、迁移事务或 provider。
 
 ## 8. 文档测试
 
@@ -455,6 +455,7 @@ python3 scripts/smoke-material-ai-provider.py
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | 其它 AI 产物（未来） | 新 schema、parser/prompt/eval + API/RLS/jsdom/Playwright + 真实 provider gate；不得复用试卷 gate 推断质量 |
 | Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；每次关键发布另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
+| Materials AI 可恢复任务/知识图谱（0046–0048 候选） | Python 回调断线/checkpoint/usage spool/graph/Q&A + API timeout 分类/202/回调/同 job retry unit + 真实 Redis + 0007→latest/空库/lint + 双用户 RLS/权限/过期清理 + Materials/My Notes jsdom + fake-provider Chromium；发布前另跑真实 DeepSeek/MiMo 图谱、节点问答、来源引用、回调断线恢复与费用账本 gate，最后做登录用户生产 smoke |
 | nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 

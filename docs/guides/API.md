@@ -443,19 +443,22 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 | OpenRouter 滚动 24 小时实际 provider 配额达到上限 | 429 `TRANSLATION_ASSESSMENT_DAILY_LIMIT` + `retryAfterSeconds` |
 | Courses 配额/成本变量不是有限正数 | 503 `SERVER_MISCONFIG` |
 
-## 5. Materials AI、Notes 与在线考试（生产 0041–0043）
+## 5. Materials AI、Notes、知识图谱与在线考试
 
-以下接口已通过受保护生产发布，全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。`FEATURE_MATERIAL_AI=false` 时不接受新生成任务；生产当前为 true，但仍可按事故 runbook 关闭。
+基础试卷/考试接口已随生产 0041–0043 发布；标记为“0046–0048 候选”的接口尚未上线。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。`FEATURE_MATERIAL_AI=false` 时不接受新任务。
 
 | 方法与路径 | 输入/行为 | 关键边界 |
 |---|---|---|
-| `POST /api/materials/:id/ai-jobs` | `CreateAiExamJobRequest`：UUID `idempotencyKey`、版本化同意和试卷设置 | owner、格式/25MB、每日 reservation、单用户 active job；同 key 重放不重复预留 |
+| `POST /api/materials/:id/ai-jobs` | 生产支持 `kind=exam`；候选增加 `kind=knowledge_graph`。均含 UUID `idempotencyKey`、版本化同意与对应 settings | owner、格式/25MB、每日 generation reservation、单用户 active job；同 key 重放不重复预留 |
 | `GET /api/ai-jobs?limit=50` | 最近任务及阶段/进度/稳定错误/结果引用 | owner-only；limit 被服务器夹紧 |
 | `GET /api/ai-jobs/:id` | 单任务 | owner-only |
 | `POST /api/ai-jobs/:id/cancel` | 取消尚未终止的任务 | 原子释放 reservation；worker 最迟在阶段边界停止 |
+| `POST /api/ai-jobs/:id/retry` | **0046–0048 候选**：恢复同一 retryable job | 仅 owner；期限/次数/active job 校验；重新预留，复用既有 checkpoint，不创建新 job |
 | `GET /api/profile/ai-quota` | Free plan 两类 `used/reserved/remaining`、时区、`nextResetAt` | 以 Profile 合法 IANA 时区本地日计算；默认各 10 |
-| `GET /api/notes` / `GET /api/notes/:id` | 私有生成试卷列表/详情 | 列表按 Materials course 聚合；详情仅 owner 可见完整答案 |
-| `DELETE /api/notes/:id` | 删除试卷及答卷 | owner-only 事务 |
+| `GET /api/notes` / `GET /api/notes/:id` | 私有试卷；候选另返回 `ai_knowledge_graph` | 列表按 Materials course 聚合；详情仅 owner；Graph 契约不复用 Demo |
+| `POST /api/notes/:id/knowledge-nodes/:nodeId/questions` | **候选** `{ idempotencyKey, question }` | server 从 owner Note 读取 graph/source；问题最多 2000 字，成功占一次 generation 额度 |
+| `GET /api/knowledge-questions/:id` | **候选** 查询 queued/processing/succeeded/failed 和 grounded answer | owner-only；答案引用必须属于选定 node 的 source refs |
+| `DELETE /api/notes/:id` | 删除试卷/图谱及答卷/节点问题 | owner-only 事务；provider 成本事实保留 |
 | `DELETE /api/materials/:id?aiResults=keep|delete` | 删除来源且保留到 Unfiled，或同时删 AI 结果 | 取消未完成任务、删除解析缓存和 Storage 对象（对象删除为 best effort） |
 | `DELETE /api/material-courses/:id?aiResults=keep|delete` | 同上，作用于 Materials 科目 | 不作用于 `learning_courses` |
 | `POST /api/notes/:id/exam-attempts` | 开始一次新考试 | 无限重考；服务器写绝对 `deadlineAt` |
@@ -464,17 +467,23 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 | `POST /api/exam-attempts/:id/grade` | 额度重置后重试主观题评分 | 每日评分 reservation；同 attempt 不重复排队/扣费 |
 | `GET /api/exam-attempts/:id` / `GET /api/notes/:id/exam-attempts` | 当前答卷/历史 | owner-only；完成前不泄露答案/解析/rubric |
 
-创建设置约束：语言 `auto|en|zh`，难度四档，15–240 分钟，20–200 分，六类题型合计 5–100，每题至少 1 分，总分不小于题数，focus 最长 200 字。任务阶段为 `queued → validating → extracting → auditing → visualRecovery → generating → reviewing → saving → succeeded`。成功才消费 generation 额度；注入拒绝、坏文件、取消、provider/ZDR/预算失败均释放。
+试卷设置约束：语言 `auto|en|zh`，难度四档，15–240 分钟，20–200 分，六类题型合计 5–100，总分不小于题数，focus 最长 200 字。图谱设置为 `{ language, detail:"comprehensive", focus }`。候选阶段全集为 `queued → validating → extracting → auditing → visualRecovery → generating|organizing|answering → reviewing → saving → succeeded`。成功才消费；失败/拒绝/取消释放，retry 时重新 reservation。
 
 `GeneratedExamV1` 的每题包含稳定 ID、题型、分值、答案/解析/rubric 和至少一个 `sourceRefs.blockId`；服务端验证题数、总分、选择题索引、答案和来源引用。短答/论述只在整卷提交后用一次 DeepSeek 严格 schema 批量评分；其余题型不调用模型。
+
+候选 `GeneratedKnowledgeGraphV1` 包含 1–250 个 node 与最多 1000 条 edge。node 有稳定 ID、`sourceOrder`、0–12 层级、类型、摘要、详细解释、详情/例子/公式/误区/自测/关键词和 1–20 个 source refs；edge 只允许 `sequence|prerequisite|part_of|causes|supports|contrasts|applies_to|example_of|related`。API 明确 snake_case→camelCase，Web 按 source order 渲染。
 
 ### 5.1 内部 FastAPI（不得公网暴露）
 
 | 路径 | 认证 | 行为 |
 |---|---|---|
 | `GET /health` | compose 私网访问 | 实际探测 OpenRouter 配置、LibreOffice、临时磁盘、内部 token，production fake 时失败 |
-| `POST /internal/materials/exam` | `X-AI-Internal-Token` | 下载短期 private signed URL，执行 DocumentIR/安全/视觉恢复/生成/验证，返回结果和脱敏 usage events |
-| `POST /internal/exams/grade` | 同上 | 对主观题按 rubric 批量评分 |
+| `POST /internal/materials/jobs` | **候选** `X-AI-Internal-Token` | 校验后快速 202；后台执行 exam/knowledge_graph/knowledge_question 并回调 |
+| `POST /internal/exams/jobs` | **候选** 同上 | 快速 202；主观题结果先落 worker 临时恢复文件与私有 DB TTL checkpoint，再回调 usage/complete，容器替换不重复评分 |
+| `POST /internal/materials/exam` | 兼容同步路由 | 上一应用回退与直接 provider gate；不得作为候选生产长任务链路 |
+| `POST /internal/exams/grade` | 兼容同步路由 | 同上 |
+
+候选 callback base 由 API 生成，worker 只能追加 `progress|usage|checkpoint|complete|fail`。每次均携带当前 lease token；API 只接受 active lease。生成 checkpoint 阶段为 `parsed|audited|document_ready|artifact_ready|answer_ready`；评分 checkpoint 只接受已验证的 `{ result }`。两者默认 86400 秒、范围 300–604800 秒，且都不开放客户端 PostgREST。
 
 FastAPI 的请求/响应 Pydantic 模型 `extra=forbid`；内部 token 常量时间比较。旧公开 `/parse`、`/generate/*` 固定桩已经删除。
 
@@ -482,9 +491,11 @@ FastAPI 的请求/响应 Pydantic 模型 `extra=forbid`；内部 token 常量时
 
 确定性解析器保留页/幻灯片/块/表格/公式/图片关系及诊断；DeepSeek 首次审查后，只把解析器失败范围与模型指出的失败范围并集送给 MiMo，拼回完整 IR 后再次安全审查。`malicious` 或 `uncertain` 均由内部 worker 以 HTTP 422 + `PROMPT_INJECTION_REJECTED` 拒绝，`benign_educational` 可继续。所有 OpenRouter 请求固定单一模型、严格 JSON schema、禁用 reasoning/工具/Web，并设置 `provider.zdr=true`、`data_collection="deny"`、`require_parameters=true`、`sort="throughput"`、`allow_fallbacks=true`；最后两项按吞吐量优先、只允许同模型的合规 provider endpoint 故障转移，请求不提供跨模型 `models` 列表。
 
-Postgres `generation_jobs` 是 durable 事实，BullMQ 只保存 UUID；reconciler 重投缺失项目。月度默认总预算 US$20，单生成/评分上限 US$0.50/US$0.05。provider usage 只保存模型、token、micro-USD、延迟、request ID、用途和 ZDR 标志，不保存 prompt、文件正文、回答或原始模型响应。
+Postgres `generation_jobs`/`exam_attempts` 是 durable 事实，BullMQ 只保存 UUID；reconciler 重投 queued/过期 lease并保持单一执行槽到终态/租约到期。候选 usage 请求增加 UUID `eventId`，断线重放使用唯一约束不重复计费；完成与失败前必须 flush。worker 另在 0700 目录短期保存 usage spool 和已验证 checkpoint，并把生成/评分的已验证结果同步到私有 DB checkpoint；终态/TTL 清除且本地副本不得备份。月度默认总预算 US$20，单生成/评分上限 US$0.50/US$0.05；usage ledger 不保存 prompt、正文、回答或原始模型响应。
 
-## 5.3 历史 FastAPI 桩（已删除，不可调用）
+候选稳定错误新增：`AI_WORKER_TIMEOUT`（内部 transport 超时）、`AI_WORKER_UNREACHABLE`、`AI_CALLBACK_UNAVAILABLE`、`AI_JOB_NOT_RESUMABLE`、`AI_RESUME_EXPIRED`、`AI_WORKER_RETRY_EXHAUSTED`、`AI_KNOWLEDGE_GRAPH_VALIDATION_FAILED`、`KNOWLEDGE_NODE_NOT_FOUND`。retry 冲突为 409；安全/格式错误不可恢复。
+
+### 5.3 历史 FastAPI 桩（已删除，不可调用）
 
 早期仓库曾提供无认证的 `/parse`、`/generate/knowledge-list|quiz|graph|exam` 固定输出；生产 0041 已删除这些路由。下列旧示例只用于解释历史 mock，不是 API 契约。
 
@@ -682,7 +693,7 @@ get_point_reward_receipt(eventType, sourceId) => {
 
 以下能力属于最终产品路线，不是当前可调用接口：
 
-- Knowledge list、独立 Quiz、Knowledge graph 生成；试卷生成已在生产 0041–0043 实现；
+- Knowledge list、独立 Quiz；试卷生成已在生产 0041–0043 实现，Knowledge graph/节点问答已有 0046–0048 候选 API，但受保护发布完成前不属于生产可调用能力；
 - Notes 编辑、版本历史与 PDF 导出；私有试卷列表/查看/删除已在生产实现；
 - 笔记市场购买、credits 授权、搜索和创作者结算；Courses 只有免费发布/克隆，不提供购买或分成；
 - credits 不可变账本、余额、VIP entitlement；points 日上限、审核冲正和待审信号的窄实现已上线，但完整规则版本管理、自动内容质量和审核 UI 未实现；

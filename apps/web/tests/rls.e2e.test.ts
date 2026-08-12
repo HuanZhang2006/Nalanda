@@ -937,6 +937,11 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.from("ai_material_parse_cache").select("id").limit(1)).error).not.toBeNull();
     expect((await a.from("ai_provider_usage_events").select("id").limit(1)).error).not.toBeNull();
     expect((await a.from("exam_attempt_operations").select("operation_id").limit(1)).error).not.toBeNull();
+    expect((await a.from("generation_job_checkpoints").select("job_id").limit(1)).error).not.toBeNull();
+    expect((await a.from("exam_grading_checkpoints").select("attempt_id").limit(1)).error).not.toBeNull();
+    expect((await a.from("knowledge_node_questions").insert({
+      id: randomUUID(), user_id: aId, note_id: randomUUID(), node_id: "forged", question: "forged",
+    })).error).not.toBeNull();
     expect((await a.rpc("ai_create_generation_job", {
       p_user_id: aId, p_material_id: material.data!.id, p_idempotency_key: randomUUID(),
       p_request_fingerprint: "1".repeat(64), p_settings: settings, p_consent_version: 1,
@@ -975,6 +980,128 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     });
     expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
       .toMatchObject({ consumed: 0, reserved: 0, remaining: 10 });
+
+    // The v2 workflow persists stage checkpoints and provider usage before a
+    // final artifact exists. Usage replay is idempotent, retry keeps the same
+    // job, and only service_role can drive any of these transitions.
+    const resumableRows = await rpc<any[]>("ai_create_generation_job", {
+      ...createArgs,
+      p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "7".repeat(64),
+      p_kind: "knowledge_graph",
+      p_settings: { language: "en", detail: "comprehensive", focus: "" },
+    });
+    const resumableJobId = resumableRows[0].id;
+    const resumableLease = randomUUID();
+    await rpc("ai_claim_generation_job", {
+      p_job_id: resumableJobId, p_lease_token: resumableLease, p_lease_seconds: 900,
+    });
+    const checkpointPayload = {
+      sourceSha256: "8".repeat(64), parserVersion: "parser-v1", auditVersion: "audit-v1",
+      visionModel: "xiaomi/mimo-v2.5", visualRegionCount: 0, document: {
+        version: "document-ir.v1", title: "Resume fixture", sourceType: "txt",
+        pageCount: 1, slideCount: 0, blocks: [], diagnostics: [],
+      },
+    };
+    await rpc("ai_checkpoint_generation_job", {
+      p_job_id: resumableJobId, p_lease_token: resumableLease,
+      p_stage: "document_ready", p_payload: checkpointPayload, p_ttl_seconds: 86400,
+    });
+    await rpc("ai_checkpoint_generation_job", {
+      p_job_id: resumableJobId, p_lease_token: resumableLease,
+      p_stage: "parsed", p_payload: { stale: true }, p_ttl_seconds: 86400,
+    });
+    expect((await admin.from("generation_job_checkpoints")
+      .select("stage,payload").eq("job_id", resumableJobId).single()).data)
+      .toMatchObject({ stage: "document_ready", payload: checkpointPayload });
+    const usageEventId = randomUUID();
+    const usageEvent = {
+      eventId: usageEventId, purpose: "knowledge_graph_generation",
+      model: "deepseek/deepseek-v4-flash-0731", requestId: "rls-resume-usage",
+      promptTokens: 12, completionTokens: 8, totalTokens: 20,
+      costMicroUsd: 9, durationMs: 14, zdrEnforced: true, status: "succeeded",
+    };
+    await rpc("ai_record_generation_usage", {
+      p_job_id: resumableJobId, p_lease_token: resumableLease, p_event: usageEvent,
+    });
+    await rpc("ai_record_generation_usage", {
+      p_job_id: resumableJobId, p_lease_token: resumableLease, p_event: usageEvent,
+    });
+    expect((await admin.from("ai_provider_usage_events").select("event_id")
+      .eq("event_id", usageEventId)).data).toHaveLength(1);
+    expect((await a.rpc("ai_record_generation_usage", {
+      p_job_id: resumableJobId, p_lease_token: resumableLease, p_event: usageEvent,
+    })).error).not.toBeNull();
+    await rpc("ai_fail_generation_job_v2", {
+      p_job_id: resumableJobId, p_lease_token: resumableLease,
+      p_error_code: "OPENROUTER_RATE_LIMIT", p_error_message: "retry fixture",
+      p_retryable: true, p_resume_seconds: 86400,
+    });
+    const retryableRow = await admin.from("generation_jobs")
+      .select("status,retryable,resume_until,checkpoint_stage,quota_reserved")
+      .eq("id", resumableJobId).single();
+    expect(retryableRow.data).toMatchObject({
+      status: "failed", retryable: true, checkpoint_stage: "document_ready", quota_reserved: false,
+    });
+    const firstResumeUntil = new Date(retryableRow.data!.resume_until).getTime();
+    expect((await a.rpc("ai_retry_generation_job", {
+      p_user_id: aId, p_job_id: resumableJobId,
+    })).error).not.toBeNull();
+    const retriedRows = await rpc<any[]>("ai_retry_generation_job", {
+      p_user_id: aId, p_job_id: resumableJobId,
+    });
+    expect(retriedRows[0]).toMatchObject({
+      id: resumableJobId, status: "queued", stage: "organizing", retryable: false,
+      checkpoint_stage: "document_ready", quota_reserved: true,
+    });
+    expect(new Date(retriedRows[0].resume_until).getTime()).toBeGreaterThanOrEqual(firstResumeUntil);
+    const resumedLease = randomUUID();
+    await rpc("ai_claim_generation_job", {
+      p_job_id: resumableJobId, p_lease_token: resumedLease, p_lease_seconds: 900,
+    });
+    await rpc("ai_fail_generation_job_v2", {
+      p_job_id: resumableJobId, p_lease_token: resumedLease,
+      p_error_code: "SAFE_TEST_FAILURE", p_error_message: "terminal fixture",
+      p_retryable: false, p_resume_seconds: 86400,
+    });
+    expect((await admin.from("generation_job_checkpoints").select("job_id")
+      .eq("job_id", resumableJobId)).data).toEqual([]);
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
+      .toMatchObject({ consumed: 0, reserved: 0, remaining: 10 });
+
+    const expiringJob = (await rpc<any[]>("ai_create_generation_job", {
+      ...createArgs, p_idempotency_key: randomUUID(), p_request_fingerprint: "d".repeat(64),
+      p_kind: "knowledge_graph", p_settings: { language: "en", detail: "comprehensive", focus: "" },
+    }))[0];
+    const expiringLease = randomUUID();
+    await rpc("ai_claim_generation_job", {
+      p_job_id: expiringJob.id, p_lease_token: expiringLease, p_lease_seconds: 900,
+    });
+    const crossJobUsageReplay = await admin.rpc("ai_record_generation_usage", {
+      p_job_id: expiringJob.id, p_lease_token: expiringLease, p_event: usageEvent,
+    });
+    expect(crossJobUsageReplay.error?.message).toContain("USAGE_EVENT_CONFLICT");
+    await rpc("ai_checkpoint_generation_job", {
+      p_job_id: expiringJob.id, p_lease_token: expiringLease,
+      p_stage: "document_ready", p_payload: checkpointPayload, p_ttl_seconds: 86400,
+    });
+    await rpc("ai_fail_generation_job_v2", {
+      p_job_id: expiringJob.id, p_lease_token: expiringLease,
+      p_error_code: "OPENROUTER_RATE_LIMIT", p_error_message: "expiry fixture",
+      p_retryable: true, p_resume_seconds: 86400,
+    });
+    expect((await admin.from("generation_jobs").update({
+      resume_until: new Date(Date.now() - 60_000).toISOString(),
+    }).eq("id", expiringJob.id)).error).toBeNull();
+    const expiredRetry = await admin.rpc("ai_retry_generation_job", {
+      p_user_id: aId, p_job_id: expiringJob.id,
+    });
+    expect(expiredRetry.error).toBeNull();
+    expect(expiredRetry.data[0]).toMatchObject({
+      status: "failed", retryable: false, error_code: "AI_RESUME_EXPIRED", checkpoint_stage: null,
+    });
+    expect((await admin.from("generation_job_checkpoints").select("job_id")
+      .eq("job_id", expiringJob.id)).data).toEqual([]);
 
     const completedJobRows = await rpc<any[]>("ai_create_generation_job", {
       ...createArgs, p_idempotency_key: randomUUID(), p_request_fingerprint: "4".repeat(64),
@@ -1030,6 +1157,78 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await b.from("notes").select("id").eq("id", noteId)).data).toEqual([]);
     expect((await b.from("note_artifacts").select("note_id").eq("note_id", noteId)).data).toEqual([]);
 
+    const graphJob = (await rpc<any[]>("ai_create_generation_job", {
+      ...createArgs,
+      p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "9".repeat(64),
+      p_kind: "knowledge_graph",
+      p_settings: { language: "en", detail: "comprehensive", focus: "" },
+    }))[0];
+    const graphLease = randomUUID();
+    await rpc("ai_claim_generation_job", {
+      p_job_id: graphJob.id, p_lease_token: graphLease, p_lease_seconds: 900,
+    });
+    const graph = {
+      schemaVersion: "generated-knowledge-graph.v1", title: "Cell knowledge map", language: "en",
+      overview: "A source-ordered map of the fixture.",
+      learningObjectives: ["Explain the fixture concept."],
+      nodes: [{
+        id: "node-1", title: "Core concept", kind: "concept", level: 0, sourceOrder: 1,
+        summary: "The core source concept.", explanation: "A detailed explanation grounded in block 1.",
+        keyDetails: ["A is correct."], examples: [], formulas: [], commonMisconceptions: [],
+        checkQuestions: ["Why is A correct?"], keywords: ["concept"],
+        sourceRefs: [{ blockId: "block-1", page: 1, slide: null, label: "Page 1" }],
+      }],
+      edges: [],
+    };
+    const graphNoteId = await rpc<string>("ai_complete_material_generation_job", {
+      p_job_id: graphJob.id, p_lease_token: graphLease,
+      p_source_sha256: "a".repeat(64), p_parser_version: "parser-v1",
+      p_audit_version: "audit-v1", p_prompt_version: "knowledge-graph.v1",
+      p_canonical_document: document, p_block_count: 1, p_visual_region_count: 0,
+      p_title: graph.title, p_schema_version: graph.schemaVersion,
+      p_artifact: graph, p_primary_count: 1, p_secondary_count: 0,
+    });
+    expect((await a.from("notes").select("kind").eq("id", graphNoteId).single()).data)
+      .toEqual({ kind: "ai_knowledge_graph" });
+    expect((await b.from("notes").select("id").eq("id", graphNoteId)).data).toEqual([]);
+    expect((await a.rpc("ai_create_knowledge_question_job", {
+      p_user_id: aId, p_note_id: graphNoteId, p_node_id: "node-1",
+      p_question: "Explain this point", p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "b".repeat(64),
+    })).error).not.toBeNull();
+    const questionJob = (await rpc<any[]>("ai_create_knowledge_question_job", {
+      p_user_id: aId, p_note_id: graphNoteId, p_node_id: "node-1",
+      p_question: "Explain this point", p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "c".repeat(64),
+    }))[0];
+    expect((await a.from("knowledge_node_questions").select("id,node_id,question")
+      .eq("id", questionJob.id)).data).toEqual([{
+      id: questionJob.id, node_id: "node-1", question: "Explain this point",
+    }]);
+    expect((await b.from("knowledge_node_questions").select("id").eq("id", questionJob.id)).data)
+      .toEqual([]);
+    const questionLease = randomUUID();
+    await rpc("ai_claim_generation_job", {
+      p_job_id: questionJob.id, p_lease_token: questionLease, p_lease_seconds: 900,
+    });
+    await rpc("ai_complete_knowledge_question_job", {
+      p_job_id: questionJob.id, p_lease_token: questionLease,
+      p_answer: {
+        schemaVersion: "knowledge-node-answer.v1",
+        answer: "The source states that A is correct.",
+        keyPoints: ["A is correct."],
+        sourceRefs: [{ blockId: "block-1", page: 1, slide: null, label: "Page 1" }],
+        followUpQuestions: ["What evidence supports A?"],
+      },
+    });
+    expect((await a.from("knowledge_node_questions").select("answer,answered_at")
+      .eq("id", questionJob.id).single()).data).toMatchObject({
+      answer: { schemaVersion: "knowledge-node-answer.v1" }, answered_at: expect.any(String),
+    });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
+      .toMatchObject({ consumed: 3, reserved: 0, remaining: 7 });
+
     const firstAttempt = (await rpc<any[]>("ai_create_exam_attempt", {
       p_user_id: aId, p_note_id: noteId,
     }))[0];
@@ -1079,17 +1278,45 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_lease_seconds: 300,
     }))[0]).toMatchObject({ id: gradingAttempt.id, status: "grading" });
     const gradingUsage = {
+      eventId: randomUUID(),
       purpose: "exam_grading", model: "deepseek/deepseek-v4-flash-0731",
       requestId: "rls-delete-audit", promptTokens: 10, completionTokens: 5,
       totalTokens: 15, costMicroUsd: 7, durationMs: 12,
       zdrEnforced: true, status: "failed", errorCode: "SAFE_TEST_FAILURE",
     };
+    await rpc("ai_record_grading_usage", {
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_event: gradingUsage,
+    });
+    await rpc("ai_record_grading_usage", {
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_event: gradingUsage,
+    });
+    expect((await a.rpc("ai_record_grading_usage", {
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_event: gradingUsage,
+    })).error).not.toBeNull();
+    const gradingCheckpoint = {
+      result: { subjectiveScore: 10, results: [{
+        questionId: "q-short", awardedMarks: 10, correct: true, feedback: "Supported",
+      }] },
+    };
+    await rpc("ai_checkpoint_exam_grading", {
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease,
+      p_payload: gradingCheckpoint, p_ttl_seconds: 86400,
+    });
+    expect((await admin.from("exam_grading_checkpoints")
+      .select("payload").eq("attempt_id", gradingAttempt.id).single()).data)
+      .toEqual({ payload: gradingCheckpoint });
+    expect((await a.rpc("ai_checkpoint_exam_grading", {
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease,
+      p_payload: gradingCheckpoint, p_ttl_seconds: 86400,
+    })).error).not.toBeNull();
     await rpc("ai_fail_exam_grading", {
-      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_usage_events: [gradingUsage],
+      p_attempt_id: gradingAttempt.id, p_lease_token: gradingLease, p_usage_events: [],
     });
     expect((await admin.from("exam_attempts").select("status,grading_quota_reserved")
       .eq("id", gradingAttempt.id).single()).data)
       .toEqual({ status: "submitted_ungraded", grading_quota_reserved: false });
+    expect((await admin.from("exam_grading_checkpoints")
+      .select("attempt_id").eq("attempt_id", gradingAttempt.id)).data).toEqual([]);
     expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).grading)
       .toMatchObject({ consumed: 0, reserved: 0, remaining: 10 });
 
@@ -1116,7 +1343,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.from("notes").select("course_id").eq("id", noteId).single()).data)
       .toEqual({ course_id: null });
     expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation)
-      .toMatchObject({ consumed: 1, reserved: 0, remaining: 9 });
+      .toMatchObject({ consumed: 3, reserved: 0, remaining: 7 });
 
     // Provider cost events are immutable budget/audit facts. Deleting the
     // generated Note must remove its attempts without nulling or deleting the
@@ -1124,6 +1351,9 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await admin.from("ai_provider_usage_events").select("attempt_id,cost_micro_usd")
       .eq("attempt_id", gradingAttempt.id).single()).data)
       .toEqual({ attempt_id: gradingAttempt.id, cost_micro_usd: 7 });
+    await rpc("ai_delete_note", { p_user_id: aId, p_note_id: graphNoteId });
+    expect((await a.from("knowledge_node_questions").select("id").eq("id", questionJob.id)).data)
+      .toEqual([]);
     await rpc("ai_delete_note", { p_user_id: aId, p_note_id: noteId });
     expect((await admin.from("exam_attempts").select("id").eq("note_id", noteId)).data).toEqual([]);
     expect((await admin.from("ai_provider_usage_events").select("attempt_id,cost_micro_usd")

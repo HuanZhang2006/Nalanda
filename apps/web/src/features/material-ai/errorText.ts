@@ -4,7 +4,7 @@ type Localize = (english: string, chinese: string) => string;
 
 const messages: Record<string, [string, string]> = {
   AI_PROCESSING_CONSENT_REQUIRED: ["Confirm AI processing consent to continue.", "请先确认 AI 处理同意。"],
-  AI_GENERATION_DAILY_LIMIT: ["Today's 10 free test-paper generations have been used.", "今日 10 次免费试卷生成额度已用完。"],
+  AI_GENERATION_DAILY_LIMIT: ["Today's 10 free AI generations have been used.", "今日 10 次免费 AI 生成额度已用完。"],
   AI_GRADING_DAILY_LIMIT: ["Today's 10 free subjective grading runs have been used.", "今日 10 次免费主观题评分额度已用完。"],
   AI_JOB_ACTIVE: ["Finish or cancel the active AI job first.", "请先完成或取消当前 AI 任务。"],
   AI_FILE_TYPE_UNSUPPORTED: ["Convert the file to a supported format before using AI.", "请先将文件转换为 AI 支持的格式。"],
@@ -29,8 +29,16 @@ const messages: Record<string, [string, string]> = {
   AI_MONTHLY_BUDGET_REACHED: ["The monthly AI safety budget is paused.", "本月 AI 安全预算已暂停。"],
   AI_COST_LIMIT_EXCEEDED: ["This request exceeded its AI cost safety limit.", "本次请求超过 AI 成本安全上限。"],
   AI_WORKER_RETRY_EXHAUSTED: ["AI processing could not recover after repeated worker restarts.", "AI 处理在多次工作进程重启后仍无法恢复。"],
+  AI_WORKER_TIMEOUT: ["The AI worker timed out. Resume this job to continue from its latest saved checkpoint.", "AI 工作进程超时，可从最近检查点继续。"],
+  AI_WORKER_UNREACHABLE: ["The AI worker is temporarily unreachable. Resume this job when service returns.", "AI 工作进程暂时不可达，可在服务恢复后继续。"],
+  AI_CALLBACK_UNAVAILABLE: ["Progress could not be saved temporarily. The job will resume from its latest durable checkpoint.", "进度暂时无法保存，任务会从最近检查点继续。"],
+  AI_JOB_NOT_RESUMABLE: ["This job no longer has resumable progress. Start a new AI job.", "该任务已无可恢复进度，请新建任务。"],
+  AI_RESUME_EXPIRED: ["The saved progress expired. Start a new AI job.", "已保存进度已过期，请新建任务。"],
+  AI_KNOWLEDGE_GRAPH_VALIDATION_FAILED: ["The knowledge map did not pass source and structure validation.", "知识图未通过来源和结构校验。"],
+  AI_KNOWLEDGE_ANSWER_VALIDATION_FAILED: ["The grounded answer did not pass source validation.", "知识点回答未通过来源校验。"],
   EXAM_REVISION_CONFLICT: ["This exam changed elsewhere; the latest server version was restored.", "此答卷已在其他设备修改，现已恢复服务器版本。"],
   DATABASE_UNAVAILABLE: ["AI records are temporarily unavailable.", "AI 记录暂不可用。"],
+  UPSTREAM_UNREACHABLE: ["The storage service is temporarily unavailable. Nothing was deleted.", "存储服务暂不可用，未删除任何内容。"],
 };
 
 export function materialAiErrorText(

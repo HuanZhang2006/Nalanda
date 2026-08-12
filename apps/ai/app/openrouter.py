@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import time
+from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
 import httpx
@@ -31,13 +32,18 @@ class StructuredOutputError(Exception):
 
 
 class OpenRouterClient:
-    def __init__(self):
+    def __init__(self, usage_sink: Callable[[UsageEvent], Awaitable[None]] | None = None):
         self.api_key = os.getenv("OPENROUTER_API_KEY", "")
         self.base_url = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
         self.timeout = float(os.getenv("MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS", "180"))
         self.max_attempts = self._bounded_int("MATERIAL_AI_PROVIDER_MAX_ATTEMPTS", 4, 1, 10)
         self.retry_base_seconds = self._bounded_float("MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS", 2.0, 0.0, 60.0)
         self.retry_max_seconds = self._bounded_float("MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS", 60.0, 0.0, 300.0)
+        self.usage_sink = usage_sink
+
+    async def _emit(self, event: UsageEvent) -> None:
+        if self.usage_sink is not None:
+            await self.usage_sink(event)
 
     def configured(self) -> bool:
         return bool(self.api_key) or fake_enabled()
@@ -57,8 +63,8 @@ class OpenRouterClient:
         if fake_enabled():
             if fake_value is None:
                 raise PipelineError("FAKE_FIXTURE_MISSING", "The fake provider fixture is incomplete", 500)
-            return result_type.model_validate(fake_value), [
-                UsageEvent(
+            parsed = result_type.model_validate(fake_value)
+            event = UsageEvent(
                     purpose=purpose,
                     model=model,
                     requestId="fake",
@@ -69,8 +75,9 @@ class OpenRouterClient:
                     durationMs=1,
                     zdrEnforced=True,
                     status="succeeded",
-                )
-            ]
+            )
+            await self._emit(event)
+            return parsed, [event]
         if not self.api_key:
             raise PipelineError("OPENROUTER_NOT_CONFIGURED", "OpenRouter is not configured", 503)
 
@@ -140,6 +147,7 @@ class OpenRouterClient:
                     event = self._usage(
                         purpose, model, None, attempt_started, "failed", "OPENROUTER_UNREACHABLE"
                     )
+                    await self._emit(event)
                     failed_events.append(event)
                     retry_delay = self._retry_delay(attempt, None)
                     remaining = deadline - self._now()
@@ -157,9 +165,9 @@ class OpenRouterClient:
                     try:
                         parsed = self._decode_structured(response, result_type)
                     except StructuredOutputError as exc:
-                        failed_events.append(
-                            self._usage(purpose, model, response, attempt_started, "failed", exc.code)
-                        )
+                        event = self._usage(purpose, model, response, attempt_started, "failed", exc.code)
+                        await self._emit(event)
+                        failed_events.append(event)
                         retry_delay = self._retry_delay(attempt, None)
                         remaining = deadline - self._now()
                         if (
@@ -176,10 +184,12 @@ class OpenRouterClient:
                             [item.model_dump() for item in failed_events],
                         ) from exc
                     succeeded = self._usage(purpose, model, response, started, "succeeded", None)
+                    await self._emit(succeeded)
                     return parsed, [*failed_events, succeeded]
 
                 code = self._provider_error_code(response.status_code)
                 event = self._usage(purpose, model, response, attempt_started, "failed", code)
+                await self._emit(event)
                 failed_events.append(event)
                 retry_delay = self._retry_delay(attempt, response)
                 remaining = deadline - self._now()

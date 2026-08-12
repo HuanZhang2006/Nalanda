@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-test("Materials AI production smoke uses public auth, persistent queue, exam grading, and cleanup", async () => {
+test("Materials AI production smoke uses public auth, exam grading, knowledge graph Q&A, and cleanup", async () => {
   const source = await readFile("scripts/smoke-material-ai-production.mjs", "utf8");
   assert.match(source, /FEATURE_MATERIAL_AI.*"true"/);
   assert.match(source, /MATERIAL_AI_FAKE_PROVIDER.*"true"/);
   assert.match(source, /\/materials\/\$\{source\.material\.id\}\/ai-jobs/);
   assert.match(source, /\/exam-attempts\/\$\{attempt\.id\}\/answers/);
   assert.match(source, /\/exam-attempts\/\$\{attempt\.id\}\/submit/);
+  assert.match(source, /kind: "knowledge_graph"/);
+  assert.match(source, /knowledge-nodes\/\$\{selectedNode\.id\}\/questions/);
+  assert.match(source, /knowledge_graph_generation/);
+  assert.match(source, /knowledge_node_question/);
   assert.match(source, /ai_provider_usage_events/);
   assert.match(source, /material-courses\/\$\{source\.course\.id\}\?aiResults=delete/);
   assert.match(source, /finally \{[\s\S]*await cleanup\(\)/);

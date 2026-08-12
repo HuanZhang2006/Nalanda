@@ -2,7 +2,9 @@ import { BadRequestException } from "@nestjs/common";
 import { createHash } from "node:crypto";
 import type {
   AiExamGenerationSettings,
-  CreateAiExamJobRequest,
+  AiKnowledgeGraphGenerationSettings,
+  CreateAiMaterialJobRequest,
+  CreateKnowledgeNodeQuestionRequest,
   ExamAnswerInput,
   SaveExamAnswersRequest,
   SubmitExamAttemptRequest,
@@ -23,17 +25,34 @@ export function assertUuid(value: unknown, field = "id"): string {
   return value as string;
 }
 
-export function parseJobRequest(input: unknown): CreateAiExamJobRequest {
+export function parseJobRequest(input: unknown): CreateAiMaterialJobRequest {
   if (!input || typeof input !== "object" || Array.isArray(input)) invalid("INVALID_AI_JOB", "Invalid AI job request");
   const body = input as Record<string, unknown>;
   const settings = body.settings as Record<string, unknown> | undefined;
-  const counts = settings?.questionCounts as Record<string, unknown> | undefined;
   const fieldErrors: Record<string, string> = {};
-  if (body.kind !== "exam") fieldErrors.kind = "Only Generate test paper is available";
+  if (body.kind !== "exam" && body.kind !== "knowledge_graph") fieldErrors.kind = "Choose an available AI action";
   if (typeof body.idempotencyKey !== "string" || !UUID.test(body.idempotencyKey)) fieldErrors.idempotencyKey = "Must be a UUID";
   if (!Number.isSafeInteger(body.consentVersion) || Number(body.consentVersion) < 1) fieldErrors.consentVersion = "AI processing consent is required";
   if (!settings || Array.isArray(settings)) fieldErrors.settings = "Settings are required";
   if (!LANGUAGES.has(String(settings?.language))) fieldErrors["settings.language"] = "Choose auto, English, or Chinese";
+  if (typeof settings?.focus !== "string" || Array.from(String(settings?.focus || "")).length > 200) fieldErrors["settings.focus"] = "Use at most 200 characters";
+
+  if (body.kind === "knowledge_graph") {
+    if (settings?.detail !== "comprehensive") fieldErrors["settings.detail"] = "Comprehensive detail is required";
+    if (Object.keys(fieldErrors).length) invalid("INVALID_AI_JOB", "Review the knowledge point settings", fieldErrors);
+    return {
+      idempotencyKey: String(body.idempotencyKey),
+      kind: "knowledge_graph",
+      consentVersion: Number(body.consentVersion),
+      settings: {
+        language: settings!.language as AiKnowledgeGraphGenerationSettings["language"],
+        detail: "comprehensive",
+        focus: String(settings!.focus).trim(),
+      },
+    };
+  }
+
+  const counts = settings?.questionCounts as Record<string, unknown> | undefined;
   if (!DIFFICULTIES.has(String(settings?.difficulty))) fieldErrors["settings.difficulty"] = "Choose a supported difficulty";
   if (!Number.isSafeInteger(settings?.durationMinutes) || Number(settings?.durationMinutes) < 15 || Number(settings?.durationMinutes) > 240) {
     fieldErrors["settings.durationMinutes"] = "Must be between 15 and 240 minutes";
@@ -42,7 +61,6 @@ export function parseJobRequest(input: unknown): CreateAiExamJobRequest {
     fieldErrors["settings.totalMarks"] = "Must be between 20 and 200";
   }
   if (!ANSWER_DETAILS.has(String(settings?.answerDetail))) fieldErrors["settings.answerDetail"] = "Choose concise or detailed";
-  if (typeof settings?.focus !== "string" || Array.from(settings.focus).length > 200) fieldErrors["settings.focus"] = "Use at most 200 characters";
   let total = 0;
   for (const key of COUNT_KEYS) {
     const value = counts?.[key];
@@ -71,8 +89,31 @@ export function parseJobRequest(input: unknown): CreateAiExamJobRequest {
   };
 }
 
-export function requestFingerprint(materialId: string, request: CreateAiExamJobRequest) {
+export function requestFingerprint(materialId: string, request: CreateAiMaterialJobRequest) {
   return createHash("sha256").update(JSON.stringify({ materialId, kind: request.kind, settings: request.settings })).digest("hex");
+}
+
+export function parseKnowledgeQuestion(input: unknown): CreateKnowledgeNodeQuestionRequest {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    invalid("INVALID_KNOWLEDGE_QUESTION", "Invalid knowledge point question");
+  }
+  const body = input as Record<string, unknown>;
+  const fieldErrors: Record<string, string> = {};
+  if (typeof body.idempotencyKey !== "string" || !UUID.test(body.idempotencyKey)) {
+    fieldErrors.idempotencyKey = "Must be a UUID";
+  }
+  const question = typeof body.question === "string" ? body.question.trim() : "";
+  if (!question || Array.from(question).length > 2000) fieldErrors.question = "Use 1 to 2,000 characters";
+  if (Object.keys(fieldErrors).length) {
+    invalid("INVALID_KNOWLEDGE_QUESTION", "Review the knowledge point question", fieldErrors);
+  }
+  return { idempotencyKey: String(body.idempotencyKey), question };
+}
+
+export function knowledgeQuestionFingerprint(noteId: string, nodeId: string, request: CreateKnowledgeNodeQuestionRequest) {
+  return createHash("sha256")
+    .update(JSON.stringify({ noteId, nodeId, question: request.question }))
+    .digest("hex");
 }
 
 export function parseSaveAnswers(input: unknown): SaveExamAnswersRequest {

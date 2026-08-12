@@ -8,6 +8,8 @@
 
 最后核对：2026-08-11。生产已受保护发布到 0043；0039–0040 安全第一阶段仍在兼容观察，0041–0043 Materials AI 第一阶段已上线。时间列撤权 contract 顺延为未来 0044–0045，必须在至少观察至 `2026-08-11T09:35:34Z` 并通过 go/no-go 后另行追加。
 
+2026-08-12 代码候选已占用 0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；它尚未发布，0044–0045 仍保留给独立的时间列 contract，二者不能合并或改写历史。
+
 ---
 
 ## 1. 一句话定义
@@ -36,8 +38,8 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 已上线增量：0025–0026 为 active 学习/复习增加显式取消事务；0027–0028 增加拼写轮末错题清单与手动确认、默认 90% 可调阈值的单元考试，以及仅对真实 OpenRouter 请求计数的每用户 20 次/分钟、滚动 500 次/24 小时配额。
 - 已上线增量：0037–0038 为拼写前翻译输入增加默认中文的 Fish Audio STT 和所有用户录音入口的实时波形。识别只回填可编辑文本、不自动提交；同一服务端 OpenRouter key 由 NestJS 复用，数据库在调用前验证 owner/session/revision/current word 并预留独立配额。2026-08-04 已通过受保护数据库发布、真实 Fish Audio gate 和不可变生产激活。
 - 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
-- 仍为 mock/未实现：Home 聚合、独立 AI Create、知识清单/独立 Quiz/知识图谱、Note Market；My Notes 历史硬数据保留在 Demo 分组，Materials 生成的真实试卷和在线考试已持久化上线。
-- 已上线：Materials AI 第一阶段只开放 Generate test paper。NestJS 已接 Postgres durable job、BullMQ/Redis、隔离 FastAPI、OpenRouter ZDR、安全解析、私有 Notes 与在线考试；Knowledge list、Quiz、Knowledge graph 仍为 Coming soon。fake 自动化与真实生产门禁在测试记录中分别标注。
+- 仍为 mock/未实现：Home 聚合、独立 AI Create、知识清单、独立 Quiz、Note Market；My Notes 历史硬数据保留在 Demo 分组。
+- 已上线：Materials AI 第一阶段的 Generate test paper、私有 Notes、在线考试和主观题评分。未发布候选另完成知识点梳理、交互图谱/节点问答以及长任务断点续跑；在受保护发布完成前不得标为上线。
 - 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；pgvector/RAG、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。生产 Redis 同时用于 API 限流、审计聚合、协同扫描锁和 BullMQ UUID 投递。
 - 安全基线进展：生产已应用 0008–0043，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 与 Materials AI 私有写入/RPC/传播、幂等 operation、配额和结果事实均通过双用户 RLS 与发布断言。
 - 已上线待观察：0039–0040 与兼容应用于 `2026-08-10T09:35:34Z` 激活；未来 0044–0045 在 24 小时观察和 go/no-go 完成前不得撤销兼容时间列 grant。
@@ -116,7 +118,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 - 统一 TypeScript/Python/前端渲染契约，废除当前 mock 的短字段形状或提供显式适配层。
 - 定义 `materialId/material_id` 的序列化规范和 OpenAPI。
-- 建立 `generation_jobs / notes / note_materials / knowledge_points / quizzes / graphs / exams / embeddings` 等数据模型。
+- 生产已建立 `generation_jobs / notes / note_materials / exams`；0046–0048 候选增加 graph artifact、checkpoint 与 node questions。Knowledge list、独立 quizzes、embeddings/RAG 仍需未来数据模型。
 - 为每个生成片段保存材料来源与页码，避免无引用答案。
 - 建立幂等键、重试、取消、超时、预算上限、失败退款和质量评测。
 
@@ -246,9 +248,18 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 验收结果：PR/main 完整 CI、真实固定 provider suite、220 页近上限资源 canary、只读 plan/加密恢复点/远端验证、flag 关闭 readiness、登录生产用户完整链路和独立公网复核均通过；同一幂等键/operation 不重复额度/结果，失败释放 reservation，任务前后临时目录清理。持续质量、成本、真实复杂文件和 prompt injection 误报率仍需监控。
 
+### 阶段 B+：可恢复长任务与知识点图谱（当前候选）
+
+- API/worker 采用 202 接收与持久回调，显式 Undici timeout 只保护 transport，不再持有最长 20 分钟 HTTP 响应。
+- provider usage 按 UUID 增量持久；数据库 checkpoint 与 worker 0700 本地结果共同支持默认 24 小时 Resume，同一 job、重新预留、成功才 consume。
+- Materials 开放 Organize knowledge points；My Notes 渲染 source-ordered graph、hover/detail、节点来源约束问答。Knowledge list 和独立 Quiz 继续禁用。
+- Materials/My Notes 保持英文和原有视觉；不把本阶段扩大成全站 React/i18n 重写。
+
+验收尚未完成：0046–0048 空库/升级/RLS、fake Chromium、真实 DeepSeek/MiMo 图谱/节点问答、2G canary、只读 plan、恢复点、生产登录 smoke 和独立公网核验。
+
 ### 阶段 C：四类产物与学习闭环
 
-- 扩展测验、知识图谱、模拟试卷。
+- 将候选知识点图谱完成生产观察；继续扩展知识清单和独立 Quiz，试卷保持现有闭环。
 - 测验作答/解析、图谱布局、试卷答案与评分标准。
 - Home 全部换真数据；基于薄弱点生成计划。
 - 分阶段把 legacy 视图替换为类型安全 React 组件。
@@ -291,8 +302,9 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
 | AI-01 | 试卷统一生成契约、任务/额度/Notes/答卷 | 已上线 | B | 0041–0043；真实 provider/canary/生产门禁已完成 |
 | AI-02 | Materials 确定性解析、视觉恢复和引用 | 已上线 | B | FastAPI DocumentIR/DeepSeek/MiMo；embedding/pgvector 不在首版 |
-| AI-03 | 知识清单真实生成 | mock | B | AI-01/02 |
-| AI-04 | 测验、图谱、试卷 | 部分 | C | 试卷已上线；独立 Quiz/Graph 与持续评测待完成 |
+| AI-03 | Materials 知识图谱与节点问答 | 候选已实现，未上线 | B | 0046–0048 + AI-01/02；待 CI、真实 provider、受保护发布 |
+| AI-04 | Knowledge list / 独立 Quiz | mock | C | AI-01/02；仍 Coming soon |
+| AI-05 | 长任务增量 usage 与断点续跑 | 候选已实现，未上线 | B+ | 本地单元已通过；真实 Supabase/provider/生产门禁待完成 |
 | NOTE-01 | Notes CRUD、编辑、版本和导出 | 部分 | B/C | 私有试卷查看/删除/考试已实现；编辑/版本/PDF导出待完成 |
 | HOME-01 | 首页真实聚合 | mock | C | Notes/Tasks/Usage |
 | PLAN-01 | 到期提醒与薄弱点排程 | 部分 | C/E | Realtime/cron |

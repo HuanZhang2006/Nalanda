@@ -33,7 +33,8 @@
 | `public` schema、函数、RLS、业务行 | 是 | 数据一致性、grants、trigger 验证 |
 | Points 日窗口/永久 claim/审核 action/协同 signal/API 滥用桶 | 是 | ledger/Profile 投影、claim 不可变、审核链和 30 天审计保留专项对账 |
 | Courses 内容/会话/attempt/progress/日程/分享/出版/举报/徽章/语音用量/音频队列 metadata | 是 | append-only attempt/points、revision/幂等响应、熟练日期、publication 不可变性、queue lease 与 service-only RPC 专项对账 |
-| Materials AI plan/quota/job/events/parse cache/Notes/exam/provider usage（生产 0041–0043） | 是 | reservation/consume、job lease、operation UUID/revision、source refs、ZDR/cost metadata 和 owner RLS 专项对账；不得把 dump 中正文复制进开发 |
+| Materials AI plan/quota/job/events/parse cache/Notes/exam/provider usage（生产 0041–0043；候选 0046–0048 增加 DB checkpoint/graph/Q&A/event UUID） | 是 | reservation/consume、job lease/resume TTL、checkpoint stage/expiry、usage event UUID、graph source refs、Q&A owner、ZDR/cost metadata 和 RLS 专项对账；不得把 dump 中正文复制进开发 |
+| AI worker 本地 checkpoint/usage spool | 否，且禁止纳入常规备份 | 这是单机 0700、TTL 有界的传输恢复副本，不是长期事实源；数据库 checkpoint/usage ledger 才可恢复。主机丢失时允许从最近 DB checkpoint 重做尚未保存的模型阶段，但必须用 event UUID 防重复记费，并向用户保留稳定 retry 状态 |
 | Auth 用户 UUID/metadata | data dump 覆盖 | Provider、SMTP、URL、签名配置；密码/会话恢复能力需演练 |
 | Storage bucket/object metadata | data dump 覆盖 | **对象文件字节的异地复制和 manifest** |
 | migration history | 独立 schema/data dump | 与仓库 migration checksum 对账 |
@@ -115,7 +116,7 @@ bucket,path,size,content_type,etag_or_sha256,version,backed_up_at
 
 浏览器 IndexedDB answer outbox 与 Cache Storage 不属于服务端备份：outbox 在登出时按账号清除，尚未同步的 provisional 答案不能由数据库恢复；本地音频是可回收副本，用户可删除。灾难恢复后客户端通过 session revision/snapshot 解决冲突，服务器确认前不得补发完成、points 或徽章。
 
-Materials AI 的 `/tmp/nalanda-material-ai/job-*` 是必须清除的过程文件，**不得备份或恢复**。`ai_material_parse_cache` 是有 FK/版本的私有持久数据并包含规范化课件内容，随数据库 archive 受同级加密/访问/删除规则约束。恢复后将所有过期 processing leases 交给 reconciler；相同 idempotency/operation UUID 必须返回既有结果，不能重复消耗 Free quota或重复生成 Notes。
+Materials AI 的 `/tmp/nalanda-material-ai/job-*` 是短期过程/恢复目录，**不得进入长期备份或跨环境复制**。候选 worker 可在其中短期保留已验证 checkpoint 与 usage spool，以承受 API callback 断线；成功、不可恢复失败、取消或 `MATERIAL_AI_RESUME_TTL_SECONDS` 到期后清除。`ai_material_parse_cache` 与数据库 `generation_job_checkpoints/exam_grading_checkpoints` 是有 owner/FK/版本/expiry 的私有持久数据，随数据库 archive 受同级加密/访问/删除规则约束；因此容器替换后也能恢复已完成的生成或评分结果。恢复后将过期 processing/grading leases 交给 reconciler，并先重放唯一 `event_id` usage，再完成结果；相同 idempotency/operation/event UUID 必须返回既有事实，不能重复消耗 Free quota、重复记成本或重复生成 Notes。
 
 ## 6. Supabase 平台恢复点
 

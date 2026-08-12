@@ -3,7 +3,6 @@
 // 渲染进 legacy 应用提供的 #mat-root 容器，自管状态与事件。
 import { ICON } from "./icons";
 import { marked } from "marked";
-import { getLocale, localize } from "../i18n";
 import { materialsAiApi } from "../features/material-ai/api";
 import { materialAiErrorText } from "../features/material-ai/errorText";
 
@@ -18,7 +17,10 @@ let fileInput = null;
 let uploading = false;
 let sessionVersion = 0;
 let jobsTimer = null;
-const l = (en, zh) => localize(en, zh, getLocale());
+// Materials and My Notes intentionally remain English-only during this phase.
+// Keep the two-argument call shape so the surrounding legacy layout can be
+// migrated later without introducing a second visual implementation.
+const l = (en, _zh) => en;
 const AI_EXT = new Set(["pdf", "docx", "pptx", "md", "markdown", "html", "htm", "txt", "json", "csv", "png", "jpg", "jpeg", "webp"]);
 
 const FT = { pdf: "pdf", ppt: "ppt", pptx: "ppt", doc: "doc", docx: "doc", md: "md", markdown: "md", html: "html", htm: "html", txt: "txt" };
@@ -40,7 +42,7 @@ function fmtDate(s) {
   if (days <= 0) return l("today", "今天");
   if (days === 1) return l("yesterday", "昨天");
   if (days < 7) return l(`${days} days ago`, `${days} 天前`);
-  return d.toLocaleDateString();
+  return d.toLocaleDateString("en-US");
 }
 function previewKind(ext) {
   if (ext === "pdf") return "pdf";
@@ -128,27 +130,33 @@ function aiJobsHtml() {
   const stage = {
     queued: l("Queued", "排队中"), validating: l("Validating", "验证中"), extracting: l("Extracting", "解析中"),
     auditing: l("Safety review", "安全审查"), visualRecovery: l("Visual recovery", "视觉补全"),
-    generating: l("Generating", "生成中"), reviewing: l("Reviewing", "复核中"), saving: l("Saving", "保存中"),
+    generating: l("Generating", "生成中"), organizing: l("Organizing knowledge points", "梳理知识点"),
+    answering: l("Answering", "回答中"), reviewing: l("Reviewing", "复核中"), saving: l("Saving", "保存中"),
     succeeded: l("Ready", "已完成"), failed: l("Failed", "失败"), cancelled: l("Cancelled", "已取消"),
+  };
+  const jobKind = {
+    exam: l("Test paper", "试卷"),
+    knowledge_graph: l("Knowledge map", "知识图"),
+    knowledge_question: l("Knowledge question", "知识点提问"),
   };
   return `<section class="card card-pad" style="margin-bottom:18px" aria-label="${l("AI generation queue", "AI 生成队列")}">
     <div class="row between wrap-flex gap-12" style="margin-bottom:12px">
       <div><div class="eyebrow">${l("AI generation queue", "AI 生成队列")}</div>
-        <h2 class="serif" style="font-size:17px">${l("Generate test paper", "生成试卷")}</h2></div>
+        <h2 class="serif" style="font-size:17px">${l("Materials AI", "资料 AI")}</h2></div>
       ${state.quota ? `<span class="chip chip-accent">${l("Free today", "今日免费额度")} · ${state.quota.generation.remaining}/${state.quota.generation.limit}</span>` : ""}
     </div>
     ${state.jobsError ? `<div class="course-feedback wrong" role="alert">${esc(state.jobsError)}</div>` : ""}
     ${state.jobs.slice(0, 10).map((job) => `<div class="list-row" style="padding:11px 0">
       <div class="stat-ic" style="margin:0">${job.status === "succeeded" ? ICON("check") : job.status === "failed" ? ICON("close") : ICON("sparkles")}</div>
       <div class="fill"><div style="font-weight:650;font-size:13px">${esc(job.materialName)}</div>
-        <div class="faint" style="font-size:11.5px">${esc(stage[job.stage] || job.stage)}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
+        <div class="faint" style="font-size:11.5px">${esc(jobKind[job.kind] || job.kind)} · ${esc(stage[job.stage] || job.stage)}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
         <div class="bar" style="margin-top:6px"><i style="width:${Math.max(0, Math.min(100, job.progress))}%"></i></div>
         ${job.errorCode ? `<div class="course-feedback wrong" style="margin-top:7px">${esc(job.errorCode)} · ${esc(materialAiErrorText(job.errorCode, job.errorMessage || l("Try again later.", "请稍后重试。"), l))}</div>` : ""}
       </div>
       <div class="row gap-6">
         ${job.status === "succeeded" && job.noteId ? `<button class="btn btn-sm" data-mat="openAiNote" data-note-id="${job.noteId}">${l("Open result", "打开结果")}</button>` : ""}
         ${job.status === "queued" || job.status === "processing" ? `<button class="btn btn-sm" data-mat="cancelAiJob" data-id="${job.id}">${l("Cancel", "取消")}</button>` : ""}
-        ${job.status === "failed" || job.status === "cancelled" ? `<button class="btn btn-sm" data-mat="retryAiJob" data-id="${job.id}">${l("Retry", "重试")}</button>` : ""}
+        ${job.status === "failed" && job.retryable ? `<button class="btn btn-sm" data-mat="retryAiJob" data-id="${job.id}">${l("Resume", "继续")}</button>` : ""}
       </div>
     </div>`).join("")}
   </section>`;
@@ -182,7 +190,7 @@ function aiResultDeleteDialog({ title, message }) {
     scrim.innerHTML = `<div class="modal"><div class="modal-pad">
       <h2 class="serif" style="font-size:19px;margin-bottom:8px">${esc(title)}</h2>
       <p class="muted" style="font-size:13px;line-height:1.55">${esc(message)}</p>
-      <div class="card card-pad" style="margin-top:14px;font-size:12.5px"><b>${l("Keep AI results", "保留 AI 结果")}</b><div class="muted">${l("Generated test papers move to Unfiled and remain available.", "生成试卷会移入 Unfiled 并继续保留。")}</div></div>
+      <div class="card card-pad" style="margin-top:14px;font-size:12.5px"><b>${l("Keep AI results", "保留 AI 结果")}</b><div class="muted">${l("Generated AI notes move to Unfiled and remain available.", "生成的 AI 笔记会移入 Unfiled 并继续保留。")}</div></div>
       <div class="row gap-8 wrap-flex" style="justify-content:flex-end;margin-top:18px">
         <button class="btn" data-delete-choice="cancel">${l("Cancel", "取消")}</button>
         <button class="btn" data-delete-choice="keep">${l("Keep results and delete source", "保留结果并删除源文件")}</button>
@@ -318,15 +326,15 @@ function aiMenu(materialId) {
   const scrim = document.createElement("div"); scrim.className = "scrim";
   const choices = [
     ["exam", l("Generate test paper", "生成试卷"), l("Create a cited, answerable paper and take it online.", "生成带来源引用的试卷，并可在线考试。"), true],
+    ["knowledge_graph", l("Organize knowledge points", "知识点梳理"), l("Create a detailed, source-ordered interactive knowledge map.", "创建详细且遵循源文件顺序的交互知识图。"), true],
     ["knowledge", l("Knowledge list", "知识清单"), l("Coming soon", "即将推出"), false],
     ["quiz", l("Quiz", "测验"), l("Coming soon", "即将推出"), false],
-    ["graph", l("Knowledge graph", "知识图谱"), l("Coming soon", "即将推出"), false],
   ];
   scrim.innerHTML = `<div class="modal"><div class="modal-pad">
     <div class="eyebrow">${l("Use AI", "使用 AI")}</div><h2 class="serif" style="font-size:20px;margin-bottom:4px">${esc(material.name)}</h2>
     <p class="muted" style="font-size:12.5px;margin-bottom:16px">${l("Choose an AI action. Your source stays private and results are saved to My Notes.", "选择 AI 操作；源文件保持私有，结果会保存到 My Notes。")}</p>
     <div class="grid g-2">${choices.map(([id, title, description, available]) => `<button class="gen-card ${available ? "" : "locked"}" data-ai-choice="${id}" ${available ? "" : "disabled"} style="text-align:left">
-      <div class="gen-ic">${ICON(id === "exam" ? "exam" : id === "knowledge" ? "list" : id)}</div><div class="fill"><div style="font-weight:650">${title}</div><div class="muted" style="font-size:12px">${description}</div></div>
+      <div class="gen-ic">${ICON(id === "exam" ? "exam" : id === "knowledge" ? "list" : id === "knowledge_graph" ? "graph" : id)}</div><div class="fill"><div style="font-weight:650">${title}</div><div class="muted" style="font-size:12px">${description}</div></div>
     </button>`).join("")}</div>
     <div class="row" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-ai-close>${l("Cancel", "取消")}</button></div>
   </div></div>`;
@@ -335,6 +343,55 @@ function aiMenu(materialId) {
   scrim.addEventListener("click", (event) => { if (event.target === scrim) close(); });
   scrim.querySelector("[data-ai-close]").onclick = close;
   scrim.querySelector('[data-ai-choice="exam"]').onclick = () => { close(); examSettingsModal(material); };
+  scrim.querySelector('[data-ai-choice="knowledge_graph"]').onclick = () => { close(); knowledgeSettingsModal(material); };
+}
+
+function consentBlock(alreadyConsented) {
+  return alreadyConsented
+    ? `<div class="card card-pad row gap-10" style="margin-top:14px;align-items:flex-start"><span aria-hidden>✓</span><span class="muted" style="font-size:12.5px;line-height:1.55">AI processing consent v1 is recorded for this account. Third-party processing uses Zero Data Retention routing; the private parse cache remains until the material is deleted, and temporary files are removed after every terminal job. Retry checkpoints expire automatically.</span></div>`
+    : `<label class="card card-pad row gap-10" style="margin-top:14px;align-items:flex-start;cursor:pointer"><input type="checkbox" id="ai-consent" style="margin-top:3px"><span class="muted" style="font-size:12.5px;line-height:1.55">I agree that this file is processed by third-party AI providers using Zero Data Retention routing. Nalanda keeps a private structured parse cache until the material is deleted. Temporary files are deleted after each terminal job; private retry checkpoints expire automatically.</span></label>`;
+}
+
+function knowledgeSettingsModal(material) {
+  const consentKey = `nalanda-material-ai-consent-v1:${USER?.id || "anonymous"}`;
+  const alreadyConsented = localStorage.getItem(consentKey) === "1";
+  const scrim = document.createElement("div"); scrim.className = "scrim";
+  scrim.innerHTML = `<div class="modal" style="width:min(620px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto"><div class="modal-pad">
+    <div class="eyebrow">Organize knowledge points</div><h2 class="serif" style="font-size:21px;margin-bottom:4px">${esc(material.name)}</h2>
+    <p class="muted" style="font-size:12.5px;line-height:1.55;margin-bottom:18px">Build a comprehensive knowledge map in source order. Every point includes a detailed explanation, citations, relationships, examples, misconceptions, and review questions.</p>
+    <label><span class="eyebrow">Output language</span><select class="search" id="ai-language" style="width:100%;background:var(--card-2);margin-top:6px"><option value="auto">Match material</option><option value="en">English</option><option value="zh">Chinese</option></select></label>
+    <label style="display:block;margin-top:16px"><span class="eyebrow">Topic focus (optional, 200 characters)</span><textarea class="search" id="ai-focus" maxlength="200" style="width:100%;min-height:76px;background:var(--card-2);margin-top:6px"></textarea></label>
+    ${consentBlock(alreadyConsented)}
+    <div class="course-feedback wrong" data-ai-error style="display:none;margin-top:12px"></div>
+    <div class="row gap-8" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-ai-cancel>Cancel</button><button class="btn btn-primary" data-ai-submit>${ICON("sparkles")}<span>Generate</span></button></div>
+  </div></div>`;
+  document.body.appendChild(scrim);
+  const close = () => scrim.remove();
+  scrim.addEventListener("click", (event) => { if (event.target === scrim) close(); });
+  scrim.querySelector("[data-ai-cancel]").onclick = close;
+  const submit = scrim.querySelector("[data-ai-submit]");
+  submit.onclick = async () => {
+    const error = scrim.querySelector("[data-ai-error]");
+    if (!alreadyConsented && !scrim.querySelector("#ai-consent")?.checked) {
+      error.textContent = "Confirm AI processing consent to continue."; error.style.display = "block"; return;
+    }
+    submit.disabled = true; submit.querySelector("span").textContent = "Queuing…"; error.style.display = "none";
+    try {
+      await materialsAiApi.createJob(material.id, {
+        idempotencyKey: crypto.randomUUID(), kind: "knowledge_graph", consentVersion: 1,
+        settings: {
+          language: scrim.querySelector("#ai-language").value,
+          detail: "comprehensive",
+          focus: scrim.querySelector("#ai-focus").value.trim(),
+        },
+      });
+      localStorage.setItem(consentKey, "1"); close();
+      toastFn("Knowledge point organization queued", "check"); await loadAiJobs();
+    } catch (failure) {
+      error.textContent = materialAiErrorText(failure, "The AI job could not be created.", l);
+      error.style.display = "block"; submit.disabled = false; submit.querySelector("span").textContent = "Generate";
+    }
+  };
 }
 
 function examSettingsModal(material, preset = null) {
@@ -350,7 +407,7 @@ function examSettingsModal(material, preset = null) {
     <div class="eyebrow">${l("Generate test paper", "生成试卷")}</div><h2 class="serif" style="font-size:21px;margin-bottom:4px">${esc(material.name)}</h2>
     <p class="muted" style="font-size:12.5px;margin-bottom:18px">${l("Configure a 5–100 question paper. Marks must be at least the number of questions.", "配置 5–100 道题；总分不得小于题目数量。")}</p>
     <div class="grid g-3">
-      <label><span class="eyebrow">${l("Language", "语言")}</span><select class="search" id="ai-language" style="width:100%;background:var(--card-2);margin-top:6px"><option value="auto">${l("Match material", "跟随资料")}</option><option value="en">English</option><option value="zh">中文</option></select></label>
+      <label><span class="eyebrow">${l("Language", "语言")}</span><select class="search" id="ai-language" style="width:100%;background:var(--card-2);margin-top:6px"><option value="auto">${l("Match material", "跟随资料")}</option><option value="en">English</option><option value="zh">Chinese</option></select></label>
       <label><span class="eyebrow">${l("Difficulty", "难度")}</span><select class="search" id="ai-difficulty" style="width:100%;background:var(--card-2);margin-top:6px"><option value="introductory">${l("Introductory", "入门")}</option><option value="intermediate">${l("Intermediate", "中等")}</option><option value="advanced">${l("Advanced", "进阶")}</option><option value="mixed">${l("Mixed", "混合")}</option></select></label>
       <label><span class="eyebrow">${l("Answer detail", "答案详略")}</span><select class="search" id="ai-answer-detail" style="width:100%;background:var(--card-2);margin-top:6px"><option value="concise">${l("Concise", "简洁")}</option><option value="detailed">${l("Detailed", "详细")}</option></select></label>
       <label><span class="eyebrow">${l("Duration (minutes)", "时长（分钟）")}</span><input class="search" id="ai-duration" type="number" min="15" max="240" value="${settings.durationMinutes}" style="width:100%;background:var(--card-2);margin-top:6px"></label>
@@ -361,9 +418,7 @@ function examSettingsModal(material, preset = null) {
       ${number("fillBlank", l("Fill in the blank", "填空题"))}${number("shortAnswer", l("Short answer", "简答题"))}${number("essay", l("Essay", "论述题"))}
     </div>
     <label style="display:block;margin-top:16px"><span class="eyebrow">${l("Topic focus (optional, 200 characters)", "主题聚焦（可选，最多 200 字）")}</span><textarea class="search" id="ai-focus" maxlength="200" style="width:100%;min-height:76px;background:var(--card-2);margin-top:6px">${esc(settings.focus || "")}</textarea></label>
-    ${alreadyConsented
-      ? `<div class="card card-pad row gap-10" style="margin-top:14px;align-items:flex-start"><span aria-hidden>✓</span><span class="muted" style="font-size:12.5px;line-height:1.55">${l("AI processing consent v1 is recorded for this account. Third-party processing uses Zero Data Retention routing; the private parse cache remains until the material is deleted, and temporary files are removed after every job.", "此账号已记录 AI 处理同意 v1。第三方处理使用零数据保留路由；私有解析缓存保留至资料删除，每次任务结束后会清理临时文件。")}</span></div>`
-      : `<label class="card card-pad row gap-10" style="margin-top:14px;align-items:flex-start;cursor:pointer"><input type="checkbox" id="ai-consent" style="margin-top:3px"><span class="muted" style="font-size:12.5px;line-height:1.55">${l("I agree that this file is processed by third-party AI providers using Zero Data Retention routing. Nalanda keeps a private structured parse cache until the material is deleted. Temporary and intermediate files are deleted after every job.", "我同意由启用零数据保留路由的第三方 AI 供应商处理此文件。Nalanda 会私有保存结构化解析缓存直至资料删除，并在每次任务结束后清理临时及过程文件。")}</span></label>`}
+    ${consentBlock(alreadyConsented)}
     <div class="course-feedback wrong" data-ai-error style="display:none;margin-top:12px"></div>
     <div class="row gap-8" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-ai-cancel>${l("Cancel", "取消")}</button><button class="btn btn-primary" data-ai-submit>${ICON("sparkles")}<span>${l("Generate", "开始生成")}</span></button></div>
   </div></div>`;
@@ -407,11 +462,15 @@ async function cancelAiJob(id) {
   catch (error) { toastFn(materialAiErrorText(error, l("Could not cancel the AI job", "无法取消 AI 任务"), l)); }
 }
 
-function retryAiJob(id) {
-  const job = state.jobs.find((item) => item.id === id);
-  const material = job && state.materials.find((item) => item.id === job.materialId);
-  if (!material) { toastFn(l("The source material is no longer available.", "源资料已不存在。")); return; }
-  examSettingsModal(material, job.settings);
+async function retryAiJob(id) {
+  try {
+    await materialsAiApi.retry(id);
+    toastFn("AI job resumed from its latest saved checkpoint", "check");
+    await loadAiJobs();
+  } catch (error) {
+    toastFn(materialAiErrorText(error, "The AI job could not be resumed.", l));
+    await loadAiJobs();
+  }
 }
 
 /* ---------- 课程：新建 / 重命名（带加载态 + 防重复提交） ---------- */
@@ -488,7 +547,7 @@ async function deleteCourse(id) {
     toastFn(l("Course deleted", "科目已删除"), "check");
   } catch (e) {
     if (currentVersion !== sessionVersion) return;
-    toastFn(l("Delete failed: ", "删除失败：") + (e.message || ""));
+    toastFn(materialAiErrorText(e, "The course could not be deleted.", l));
   }
   await Promise.all([load(), loadAiJobs()]);
 }
@@ -557,7 +616,7 @@ async function delMaterial(id) {
     toastFn(l("Material deleted", "资料已删除"), "check");
   } catch (e) {
     if (currentVersion !== sessionVersion) return;
-    toastFn(l("Delete failed: ", "删除失败：") + (e.message || ""));
+    toastFn(materialAiErrorText(e, "The material could not be deleted.", l));
   }
   await Promise.all([load(), loadAiJobs()]);
 }
