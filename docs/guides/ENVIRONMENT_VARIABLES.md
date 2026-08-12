@@ -38,12 +38,13 @@
 | `POINT_ABUSE_SCANNER_ENABLED` | 可选，默认启用（除显式 `false`） | 受限配置 | points scanner | Redis 已配置时是否周期扫描协同信号；CI Playwright 显式 false 避免后台不确定性。 |
 | `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | 可选，默认 300，最小 60 | 公开运维配置 | points scanner | 扫描周期；当前 Redis lock TTL 为 240 秒。 |
 | `AI_SERVICE_URL` | 生产 0041–0043 必需 | 内部配置 | AI internal client/health | FastAPI 内网基址，生产为 `http://ai:8000`；不可指向公网。 |
-| `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation processor | worker 阶段进度回调的 API 内网基址，生产为 `http://api:3000/api`。 |
+| `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation/grading processor | worker 的 progress/usage/checkpoint/complete/fail 回调 API 内网基址，生产为 `http://api:3000/api`。 |
 | `AI_INTERNAL_TOKEN` | 生产必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
 | `FEATURE_MATERIAL_AI` | 安装默认 false；当前生产 true | 公开配置 | Materials AI API/Web | 总开关；部署安装后先保持 false，只在 readiness/canary/真实 gate 通过后开启。 |
 | `MATERIAL_AI_MONTHLY_BUDGET_USD` | 可选，20 | 受限配置 | AI processor | provider usage 成功费用达到全局月预算后停止新调用。 |
 | `MATERIAL_AI_GENERATION_MAX_COST_USD` | 可选，0.50 | 受限配置 | generation processor | 单次生成费用硬门；超限不保存结果并释放用户 quota reservation。 |
 | `MATERIAL_AI_GRADING_MAX_COST_USD` | 可选，0.05 | 受限配置 | grading processor | 单次主观题评分费用硬门。 |
+| `MATERIAL_AI_RESUME_TTL_SECONDS` | **0046 候选**，86400 | 受限配置 | API/AI worker | retry/checkpoint/本地恢复目录保留秒数；允许 300–604800，API 与 worker 必须相同。 |
 | `NODE_ENV` | 部署配置 | 公开配置 | Node/Nest、Courses flags | `production` 时未设置的 Courses/分享/市场 flag 默认关闭；非生产时前三者默认开，语音始终默认关。 |
 
 ### 3.1 Courses、市场、Azure Speech 与 OpenRouter
@@ -100,7 +101,7 @@
 
 `OPENROUTER_ASSESSMENTS_PER_DAY=500` 是语义判分默认值；STT 独立使用 20/分钟、300/本地日和 5,000,000 micro-USD/月。修改本文或 `.env.example` 不会改写正在运行的服务器；0037–0038 已于 2026-08-04 通过受保护安装脚本原子写入 STT 非密钥配置并复用既有 secret。后续发布/轮换仍须单独核对容器内生效值且不得打印 key。
 
-## 4. FastAPI Materials AI 运行时变量（生产 0041–0043）
+## 4. FastAPI Materials AI 运行时变量（生产 0041–0043 + 0046 候选）
 
 来源模板：`apps/ai/.env.example`。本地使用进程私有环境；生产由受保护脚本生成 mode-600 `/opt/nalanda/.ai.env`。worker **不会**收到 service-role、Redis、Azure、JWT 或 Web key。
 
@@ -114,16 +115,20 @@
 | `MATERIAL_AI_ALLOWED_STORAGE_HOSTS` | 可选补充 | 受限配置 | 逗号分隔额外允许 host；生产通常为空，禁止宽泛通配。 |
 | `PUBLIC_APP_URL` | `https://nalanda.online` | 公开配置 | OpenRouter `HTTP-Referer` 标识。 |
 | `MATERIAL_AI_FAKE_PROVIDER` | false | 测试配置 | pytest/Playwright 的确定性 adapter；production true 会使 readiness 失败。 |
-| `MATERIAL_AI_TEMP_ROOT` | `/tmp/nalanda-material-ai` | 受限路径 | 0700 job 临时目录根；启动/定时清除 >1h orphan。 |
+| `MATERIAL_AI_TEMP_ROOT` | `/tmp/nalanda-material-ai` | 受限路径 | 0700 job 临时目录根；候选会短期保存 usage spool 与验证后的 resume checkpoint，终态或 TTL 清除。 |
 | `MATERIAL_AI_TEMP_MIN_FREE_BYTES` | 536870912 | 受限配置 | 创建和解析过程中低于 512MiB 失败关闭。 |
 | `MATERIAL_AI_JOB_TEMP_LIMIT_BYTES` | 1073741824 | 受限配置 | 单任务临时空间 1GiB 硬上限。 |
 | `MATERIAL_AI_MAX_CHARACTERS` | 400000 | 受限配置 | 规范化 DocumentIR 文本上限。 |
 | `MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS` | 120 | 受限配置 | DOCX/PPTX 全量低优先级渲染硬超时。 |
-| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 一次结构化 OpenRouter 操作（包括全部重试与退避）的共享总时间上限；每次 HTTP 尝试只能使用剩余预算，完整 Nest 请求另有 20 分钟上限。 |
+| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 一次结构化 OpenRouter 操作（包括全部重试与退避）的共享 wall-clock 上限；候选 Nest 仅等待 30 秒接收，不等待完整任务。 |
+| `MATERIAL_AI_JOB_TIMEOUT_SECONDS` | **候选**，1200 | 受限配置 | 一次 Materials 生成/知识图任务的总执行预算；到期保存既有 durable checkpoint、释放运行槽并允许期限内续跑。 |
+| `MATERIAL_AI_GRADING_TIMEOUT_SECONDS` | **候选**，240 | 受限配置 | 一次主观题批量评分的总执行预算；防止后台任务无限占用单并发 worker。 |
 | `MATERIAL_AI_PROVIDER_MAX_ATTEMPTS` | 4 | 受限配置 | 同一固定模型请求的最大有界尝试次数，限制 1–10；仅网络错误及 408/429/502/503/504 可重试。 |
 | `MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS` | 2 | 受限配置 | 指数退避起点，限制 0–60 秒；不会改变 model、ZDR 或同模型 provider failover 策略。 |
 | `MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS` | 60 | 受限配置 | 单次退避上限，限制 0–300 秒；数值型 `Retry-After` 优先且不得提前请求，超过上限则该任务失败并释放额度。 |
 | `MATERIAL_AI_GENERATION_MAX_TOKENS` | 30000 | 成本配置 | 试卷生成/一次 repair 最大 completion tokens。 |
+| `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS` | **候选**，30000 | 成本配置 | 知识图谱生成/repair 最大 completion tokens。 |
+| `MATERIAL_AI_RESUME_TTL_SECONDS` | **候选**，86400 | 受限配置 | worker orphan 与本地 checkpoint/spool 的保留期限；需和 API 一致。 |
 
 模型 ID不是用户变量：代码固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，变更需 ADR、评测、成本和隐私复审。有界重试始终复用完全相同的模型与严格 schema；请求不提供其它 `models`，所以不存在跨模型 fallback。`sort="throughput"` 与 `allow_fallbacks=true` 只让该模型按吞吐量优先在仍满足 ZDR、拒绝数据收集与参数支持过滤器的 provider endpoint 间故障转移；401/402/403、ZDR 不可用和坏请求不会由应用重试。重试上限耗尽后返回稳定供应商错误，生成/评分额度 reservation 释放，用户可稍后重新提交。
 

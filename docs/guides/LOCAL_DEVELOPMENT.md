@@ -157,6 +157,7 @@ AI_INTERNAL_TOKEN=<same-local-32-byte-secret-as-worker>
 MATERIAL_AI_MONTHLY_BUDGET_USD=20
 MATERIAL_AI_GENERATION_MAX_COST_USD=0.50
 MATERIAL_AI_GRADING_MAX_COST_USD=0.05
+MATERIAL_AI_RESUME_TTL_SECONDS=86400
 ```
 
 非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音和翻译前测始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
@@ -236,7 +237,7 @@ chmod 600 .env
 curl -fsS http://localhost:8000/health
 ```
 
-health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。生成/评分接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 开关打开后，从 Materials 上传无个人数据 fixture，用 “Use AI → Generate test paper” 验证持久队列。
+health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000` 与和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`。生成/评分接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与候选 “Organize knowledge points”。
 
 运行 Python 门禁：
 
@@ -269,6 +270,7 @@ curl -I http://localhost:5173
 9. 开启音频预热后选定单元：确认 manifest 从 pending 变 ready，当前题及后四词进入浏览器 Cache Storage；“下载单元音频”可续传、显示失败/配额暂停并可删除本地副本。浏览器即使授予 persistent storage，仍可能在存储压力下回收。
 10. 在开发者工具设 Offline 后连续完成至少两题，确认反馈立即出现且完成页显示等待同步；恢复网络后同一 attempt UUID 串行提交，刷新不会重复累计错误。完整 Web app shell/PWA 离线启动不在此功能范围。
 11. 开始包含拼写的学习/复习时分别验证：不勾选时行为不变；勾选限时并设 3 秒时，输入出现后倒计时并只自动提交一次；同时勾选翻译前测时，计时必须等语义回答通过后才开始。语义错误直接形成一次 spelling 错误，供应商超时/失败只显示可重试错误，不增加 wrong count。正确和错误结果都要同时显示英文拼写与分开的翻译。
+12. Materials 候选链路：上传无个人数据文件，创建试卷并确认内部 `/jobs` 在 provider 完成前已返回；生成知识图谱后确认节点按来源顺序、hover/detail 可读，节点提问只引用该节点来源。模拟 retryable failure 时 Resume 必须使用同一 job ID；超过 TTL 后返回稳定过期错误且 checkpoint/worker 目录最终清理。
 
 本地当日无法验证“两次不同日期复习即熟练”时，不要手改生产数据；使用一次性本地 Supabase RLS fixture，测试会按 profile 时区生成两个不同 `local_date`。
 

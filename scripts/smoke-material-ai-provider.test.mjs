@@ -10,6 +10,9 @@ test("Materials AI real-provider gate covers fixed formats, ZDR evidence, inject
     assert.match(source, new RegExp(`"${fixture}"`));
   }
   assert.match(source, /PROMPT_INJECTION_REJECTED/);
+  assert.match(source, /kind": "knowledge_graph"/);
+  assert.match(source, /\/internal\/materials\/jobs/);
+  assert.match(source, /knowledgeGraphNodes/);
   assert.match(source, /zdrEnforced/);
   assert.match(source, /costMicroUsd/);
   assert.match(source, /totalTokens/);

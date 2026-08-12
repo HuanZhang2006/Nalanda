@@ -7,6 +7,7 @@ import json
 import os
 import tempfile
 import threading
+import time
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -72,6 +73,7 @@ class CallbackHandler(BaseHTTPRequestHandler):
         length = min(int(self.headers.get("content-length", "0")), 100_000)
         payload = json.loads(self.rfile.read(length) or b"{}")
         require(self.headers.get("x-ai-internal-token") == INTERNAL_TOKEN, "callback token mismatch")
+        payload["_callbackPath"] = self.path
         progress_events.append(payload)
         self.send_response(204)
         self.end_headers()
@@ -275,6 +277,80 @@ def process_fixture(label: str, path: Path, expect_vision: bool = False) -> dict
     return result
 
 
+def process_knowledge_graph(path: Path) -> dict:
+    signed_url = upload_fixture(path)
+    job_id = str(uuid.uuid4())
+    lease_token = str(uuid.uuid4())
+    payload = {
+        "jobId": job_id,
+        "kind": "knowledge_graph",
+        "userId": str(uuid.uuid4()),
+        "material": {
+            "id": str(uuid.uuid4()),
+            "name": path.name,
+            "type": path.suffix.lstrip("."),
+            "sizeBytes": path.stat().st_size,
+            "signedUrl": signed_url,
+        },
+        "settings": {"language": "en", "detail": "comprehensive", "focus": ""},
+        "cache": None,
+        "callbacks": {
+            "baseUrl": f"http://{CALLBACK_HOST}:8787/internal/ai-jobs/{job_id}",
+            "token": INTERNAL_TOKEN,
+            "leaseToken": lease_token,
+        },
+        "checkpoint": None,
+        "budgetMicroUsd": 500000,
+    }
+    with httpx.Client(timeout=30) as client:
+        response = client.post(
+            f"{WORKER_URL}/internal/materials/jobs",
+            headers={"X-AI-Internal-Token": INTERNAL_TOKEN},
+            json=payload,
+        )
+    require(response.status_code == 202, f"knowledge graph was not accepted: {safe_worker_failure(response)}")
+    require(response.json().get("accepted") is True, "knowledge graph acceptance was invalid")
+    deadline = time.monotonic() + 900
+    result = None
+    while time.monotonic() < deadline:
+        failed = next(
+            (
+                item
+                for item in progress_events
+                if item.get("_callbackPath") == f"/internal/ai-jobs/{job_id}/fail"
+            ),
+            None,
+        )
+        require(failed is None, f"knowledge graph failed with {failed.get('code') if failed else 'unknown'}")
+        completed = next(
+            (
+                item
+                for item in progress_events
+                if item.get("_callbackPath") == f"/internal/ai-jobs/{job_id}/complete"
+            ),
+            None,
+        )
+        if completed:
+            result = completed.get("result")
+            break
+        time.sleep(1)
+    require(isinstance(result, dict), "knowledge graph did not finish before the provider gate deadline")
+    graph = result.get("graph", {})
+    nodes = graph.get("nodes", [])
+    require(nodes, "knowledge graph returned no nodes")
+    require(
+        all(index == 0 or node.get("sourceOrder", -1) >= nodes[index - 1].get("sourceOrder", -1)
+            for index, node in enumerate(nodes)),
+        "knowledge graph did not preserve source order",
+    )
+    require(
+        all(node.get("explanation") and node.get("sourceRefs") for node in nodes),
+        "knowledge graph nodes were not detailed and cited",
+    )
+    assert_usage(result, False)
+    return result
+
+
 def reject_injection(path: Path) -> None:
     signed_url = upload_fixture(path)
     with httpx.Client(timeout=300) as client:
@@ -341,6 +417,7 @@ def main() -> None:
             }
             process_fixture("educational", fixtures["educational"])
             reject_injection(fixtures["malicious"])
+            knowledge = process_knowledge_graph(fixtures["pdf"])
             grading = grade_subjective()
         require(len(progress_events) > started_progress, "worker progress callbacks were not emitted")
         print(json.dumps({
@@ -352,6 +429,7 @@ def main() -> None:
             "promptInjectionRejected": True,
             "educationalSecurityContentAllowed": True,
             "gradingScore": grading["subjectiveScore"],
+            "knowledgeGraphNodes": knowledge["nodeCount"],
             "progressEvents": len(progress_events) - started_progress,
         }, separators=(",", ":")))
     finally:

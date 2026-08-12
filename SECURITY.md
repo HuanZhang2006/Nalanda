@@ -5,6 +5,8 @@
 > **何时更新：**认证/授权、RLS、上传、AI、支付、部署拓扑或第三方处理者变化时；发现或修复高风险问题时；至少每季度复核一次。  
 > **状态基线：**2026-08-11。生产受保护发布证据已到 0043；字段收口、points 上限/审核/协同信号、Redis 限流和 Materials AI 第一阶段均已上线。时间列最终撤权 contract 顺延为未来 0044–0045，仍须等待兼容应用至少 24 小时并通过 go/no-go。本文明确区分代码、测试与上线状态。
 
+> **Unreleased 安全变更：**0046–0048 候选为 Materials AI 增加 service-role-only checkpoint/usage/知识问答工作流、幂等成本事件和 24 小时恢复 TTL；生产仍未应用，必须以 CI RLS 与受保护发布证据为准。
+
 ## 1. 支持范围
 
 当前仅维护 `main` 分支的最新提交以及生产站点 `nalanda.online` 对应版本。原型目录 `app/` 仅作为设计基线，不接受其作为生产安全边界。历史提交、个人 fork、本地修改版和未部署的 `infra/hybrid-2g` 脚手架不在支持范围内，但其中可复现到当前代码的问题仍欢迎报告。
@@ -48,6 +50,9 @@
 | 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
 
 ## 4. 已修复控制与开放风险
+
+- 候选代码已移除 API 对长时间 worker response headers 的依赖：202 接收后只允许持有内部 token 的 worker 回调。provider usage 先写 0600/0700 本地 spool，再幂等写账本；已验证断点可能在 TTL 内包含私有 DocumentIR/产物，禁止备份、日志输出或跨 job 复用。
+- 知识节点提问只由 API 从 owner 的 Note 读取 graph/DocumentIR；浏览器不能提交模型、key、source blocks 或回调地址。问题、focus、文件文本与图片一律是不可信数据，确定性信号和两次安全审查继续失败关闭。
 
 仓库的 0008 migration 已关闭最初三项 P0：
 

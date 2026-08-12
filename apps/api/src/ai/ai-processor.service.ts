@@ -1,8 +1,8 @@
-import { Injectable, Logger } from "@nestjs/common";
+import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { GeneratedExamV1 } from "@nalanda/types";
 import { AiInternalClientService, AiWorkerError } from "./ai-internal-client.service";
-import { AiRepository } from "./ai.repository";
+import { AiRepository, type DbRow } from "./ai.repository";
 import { gradeObjective } from "./exam-grading";
 
 function positiveNumber(name: string, fallback: number) {
@@ -10,12 +10,16 @@ function positiveNumber(name: string, fallback: number) {
   return Number.isFinite(value) && value > 0 ? value : fallback;
 }
 
-function usageCost(events: unknown) {
-  return Array.isArray(events) ? events.reduce((sum, event) => {
-    const cost = event && typeof event === "object" ? Number((event as Record<string, unknown>).costMicroUsd || 0) : 0;
-    return sum + (Number.isFinite(cost) && cost > 0 ? cost : 0);
-  }, 0) : 0;
-}
+const RETRYABLE_CODES = new Set([
+  "AI_WORKER_TIMEOUT",
+  "AI_WORKER_UNREACHABLE",
+  "AI_CALLBACK_UNAVAILABLE",
+  "AI_TEMP_DISK_PRESSURE",
+  "OPENROUTER_UNREACHABLE",
+  "OPENROUTER_RATE_LIMIT",
+  "OPENROUTER_FAILED",
+  "OPENROUTER_ZDR_UNAVAILABLE",
+]);
 
 @Injectable()
 export class AiProcessorService {
@@ -23,12 +27,28 @@ export class AiProcessorService {
 
   constructor(private readonly repository: AiRepository, private readonly worker: AiInternalClientService) {}
 
-  private async budget(kind: "generation" | "grading") {
+  private async budget(kind: "generation" | "grading", alreadySpentMicroUsd = 0) {
     const spent = await this.repository.monthlyProviderCostMicroUsd();
     const limit = positiveNumber("MATERIAL_AI_MONTHLY_BUDGET_USD", 20) * 1_000_000;
     const callLimit = positiveNumber(kind === "generation" ? "MATERIAL_AI_GENERATION_MAX_COST_USD" : "MATERIAL_AI_GRADING_MAX_COST_USD", kind === "generation" ? 0.5 : 0.05) * 1_000_000;
     if (spent >= limit) throw new AiWorkerError("AI_MONTHLY_BUDGET_REACHED", "The monthly AI budget is paused");
-    return { remaining: limit - spent, callLimit };
+    const available = Math.floor(Math.min(limit - spent, callLimit - Math.max(0, alreadySpentMicroUsd)));
+    if (available <= 0) {
+      throw new AiWorkerError("AI_COST_LIMIT_EXCEEDED", "The configured per-job AI cost limit was reached");
+    }
+    return available;
+  }
+
+  private callbackBase(jobId: string) {
+    return `${(process.env.AI_CALLBACK_BASE_URL || "http://api:3000/api").replace(/\/$/, "")}/internal/ai-jobs/${jobId}`;
+  }
+
+  private callbacks(jobId: string, leaseToken: string) {
+    return {
+      baseUrl: this.callbackBase(jobId),
+      token: process.env.AI_INTERNAL_TOKEN,
+      leaseToken,
+    };
   }
 
   async generation(jobId: string) {
@@ -36,46 +56,132 @@ export class AiProcessorService {
     const job = await this.repository.claimJob(jobId, leaseToken);
     if (!job) return;
     try {
-      const budget = await this.budget("generation");
-      const material = await this.repository.materialForJob(job);
-      if (!material) throw new AiWorkerError("MATERIAL_NOT_FOUND", "The source material was deleted");
-      const signedUrl = await this.repository.signMaterial(material.storage_path);
-      const cached = await this.repository.cachedDocument(material.id);
-      const callbackBase = (process.env.AI_CALLBACK_BASE_URL || "http://api:3000/api").replace(/\/$/, "");
-      const result = await this.worker.generate({
-        jobId,
-        leaseToken,
-        userId: job.user_id,
-        material: {
-          id: material.id,
-          name: material.name,
-          type: material.type,
-          sizeBytes: Number(material.size_bytes || 0),
-          signedUrl,
-        },
-        settings: job.settings,
-        cache: cached ? {
-          sourceSha256: cached.source_sha256,
-          parserVersion: cached.parser_version,
-          auditVersion: cached.audit_version,
-          visionModel: cached.vision_model,
-          document: cached.canonical_document,
-        } : null,
-        callbackUrl: `${callbackBase}/internal/ai-jobs/${jobId}/progress`,
-        callbackToken: process.env.AI_INTERNAL_TOKEN,
-      });
-      const cost = usageCost(result.usageEvents);
-      if (cost > budget.callLimit || cost > budget.remaining) {
-        throw new AiWorkerError("AI_COST_LIMIT_EXCEEDED", "The provider cost exceeded the configured safety limit", result.usageEvents || []);
+      const alreadySpent = await this.repository.jobProviderCostMicroUsd(jobId);
+      const budgetMicroUsd = await this.budget("generation", alreadySpent);
+      const checkpoint = await this.repository.checkpointForJob(jobId);
+      let payload: Record<string, unknown>;
+      if (job.kind === "knowledge_question") {
+        const context = await this.repository.knowledgeQuestionContext(job);
+        payload = {
+          jobId,
+          kind: job.kind,
+          userId: job.user_id,
+          question: context.question.question,
+          nodeId: context.question.node_id,
+          graph: context.artifact.content,
+          document: context.cache?.canonical_document || null,
+          callbacks: this.callbacks(jobId, leaseToken),
+          checkpoint: checkpoint ? { checkpointStage: checkpoint.stage, ...checkpoint.payload } : null,
+          budgetMicroUsd,
+        };
+      } else {
+        const material = await this.repository.materialForJob(job);
+        if (!material) throw new AiWorkerError("MATERIAL_NOT_FOUND", "The source material was deleted");
+        const signedUrl = await this.repository.signMaterial(material.storage_path);
+        const cached = await this.repository.cachedDocument(material.id);
+        payload = {
+          jobId,
+          kind: job.kind,
+          userId: job.user_id,
+          material: {
+            id: material.id,
+            name: material.name,
+            type: material.type,
+            sizeBytes: Number(material.size_bytes || 0),
+            signedUrl,
+          },
+          settings: job.settings,
+          cache: cached ? {
+            sourceSha256: cached.source_sha256,
+            parserVersion: cached.parser_version,
+            auditVersion: cached.audit_version,
+            visionModel: cached.vision_model,
+            document: cached.canonical_document,
+          } : null,
+          callbacks: this.callbacks(jobId, leaseToken),
+          checkpoint: checkpoint ? { checkpointStage: checkpoint.stage, ...checkpoint.payload } : null,
+          budgetMicroUsd,
+        };
       }
-      await this.repository.completeJob(jobId, leaseToken, result);
+      const accepted = await this.worker.dispatchGeneration(payload);
+      if (!accepted.accepted) {
+        throw new AiWorkerError("AI_WORKER_PROTOCOL_ERROR", "AI worker did not accept the durable job", [], true);
+      }
+      await this.repository.markJobAccepted(jobId, leaseToken);
     } catch (error) {
       const code = error instanceof AiWorkerError ? error.code : "AI_SYSTEM_FAILURE";
       const message = error instanceof Error ? error.message : "AI processing failed";
-      const usage = error instanceof AiWorkerError ? error.usageEvents : [];
-      this.logger.warn(`Materials AI job ${jobId} failed with ${code}`);
-      await this.repository.failJob(jobId, leaseToken, code, message, usage).catch(() => undefined);
+      const retryable = error instanceof AiWorkerError && error.retryable || RETRYABLE_CODES.has(code);
+      this.logger.warn(`Materials AI job ${jobId} dispatch failed with ${code}`);
+      await this.repository.failJob(
+        jobId, leaseToken, code, message, retryable,
+        positiveNumber("MATERIAL_AI_RESUME_TTL_SECONDS", 86_400),
+      ).catch(() => undefined);
     }
+  }
+
+  async usage(jobId: string, leaseToken: string, event: unknown) {
+    if (!leaseToken || !event || typeof event !== "object" || Array.isArray(event)) {
+      throw new BadRequestException({ code: "INVALID_USAGE_EVENT", message: "Invalid provider usage event" });
+    }
+    await this.repository.recordJobUsage(jobId, leaseToken, event);
+    const [jobCost, totalCost] = await Promise.all([
+      this.repository.jobProviderCostMicroUsd(jobId),
+      this.repository.monthlyProviderCostMicroUsd(),
+    ]);
+    const jobLimit = positiveNumber("MATERIAL_AI_GENERATION_MAX_COST_USD", 0.5) * 1_000_000;
+    const monthlyLimit = positiveNumber("MATERIAL_AI_MONTHLY_BUDGET_USD", 20) * 1_000_000;
+    if (jobCost > jobLimit || totalCost > monthlyLimit) {
+      await this.repository.failJob(jobId, leaseToken, "AI_COST_LIMIT_EXCEEDED", "The configured AI cost limit was reached", false)
+        .catch(() => undefined);
+      throw new ServiceUnavailableException({ code: "AI_COST_LIMIT_EXCEEDED", message: "The configured AI cost limit was reached" });
+    }
+    return { persisted: true };
+  }
+
+  checkpoint(jobId: string, leaseToken: string, stage: string, payload: unknown) {
+    if (!leaseToken || !["parsed", "audited", "document_ready", "artifact_ready", "answer_ready"].includes(stage)
+        || !payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new BadRequestException({ code: "INVALID_CHECKPOINT", message: "Invalid AI checkpoint" });
+    }
+    return this.repository.checkpointJob(
+      jobId,
+      leaseToken,
+      stage,
+      payload,
+      positiveNumber("MATERIAL_AI_RESUME_TTL_SECONDS", 86_400),
+    ).then(() => ({ persisted: true }));
+  }
+
+  async complete(jobId: string, leaseToken: string, result: unknown) {
+    if (!leaseToken || !result || typeof result !== "object" || Array.isArray(result)) {
+      throw new BadRequestException({ code: "INVALID_AI_RESULT", message: "Invalid AI result" });
+    }
+    const cost = await this.repository.jobProviderCostMicroUsd(jobId);
+    const limit = positiveNumber("MATERIAL_AI_GENERATION_MAX_COST_USD", 0.5) * 1_000_000;
+    if (cost > limit) {
+      await this.repository.failJob(jobId, leaseToken, "AI_COST_LIMIT_EXCEEDED", "The configured per-job AI cost limit was reached", false);
+      throw new ServiceUnavailableException({ code: "AI_COST_LIMIT_EXCEEDED", message: "The configured per-job AI cost limit was reached" });
+    }
+    const value = result as DbRow;
+    if (value.kind === "knowledge_question") {
+      await this.repository.completeKnowledgeQuestion(jobId, leaseToken, value.answer);
+      return { completed: true };
+    }
+    await this.repository.completeMaterialJob(jobId, leaseToken, value);
+    return { completed: true };
+  }
+
+  fail(jobId: string, leaseToken: string, code: string, message: string, requestedRetryable: boolean) {
+    const retryable = requestedRetryable && RETRYABLE_CODES.has(code);
+    return this.repository.failJob(
+      jobId,
+      leaseToken || null,
+      code,
+      message,
+      retryable,
+      positiveNumber("MATERIAL_AI_RESUME_TTL_SECONDS", 86_400),
+    ).then(() => ({ failed: true, retryable }));
   }
 
   async grading(attemptId: string) {
@@ -83,8 +189,10 @@ export class AiProcessorService {
     const claimed = await this.repository.claimGrading(attemptId, leaseToken);
     if (!claimed) return;
     try {
-      const budget = await this.budget("grading");
+      const alreadySpent = await this.repository.attemptProviderCostMicroUsd(attemptId);
+      const budgetMicroUsd = await this.budget("grading", alreadySpent);
       const context = await this.repository.attemptContext(attemptId);
+      const checkpoint = await this.repository.gradingCheckpointForAttempt(attemptId);
       const exam = context.artifact.content as GeneratedExamV1;
       const answerMap = new Map(context.answers.map((answer) => [answer.question_id, answer.answer]));
       const questions = exam.sections.flatMap((section) => section.questions)
@@ -97,21 +205,71 @@ export class AiProcessorService {
           rubric: question.rubric,
           learnerAnswer: answerMap.get(question.id) ?? null,
         }));
-      const result = await this.worker.grade({ attemptId, questions, language: exam.language });
-      const cost = usageCost(result.usageEvents);
-      if (cost > budget.callLimit || cost > budget.remaining) {
-        throw new AiWorkerError("AI_COST_LIMIT_EXCEEDED", "The grading cost exceeded the configured safety limit", result.usageEvents || []);
+      const accepted = await this.worker.dispatchGrading({
+        attemptId, questions, language: exam.language,
+        callbacks: {
+          baseUrl: `${(process.env.AI_CALLBACK_BASE_URL || "http://api:3000/api").replace(/\/$/, "")}/internal/exam-attempts/${attemptId}`,
+          token: process.env.AI_INTERNAL_TOKEN,
+          leaseToken,
+        },
+        budgetMicroUsd,
+        checkpoint: checkpoint?.payload || null,
+      });
+      if (!accepted.accepted) {
+        throw new AiWorkerError("AI_WORKER_PROTOCOL_ERROR", "AI worker did not accept the grading job", [], true);
       }
-      await this.repository.completeGrading(
-        attemptId, leaseToken, Number(result.subjectiveScore || 0),
-        Array.isArray(result.results) ? result.results : [], Array.isArray(result.usageEvents) ? result.usageEvents : [],
-      );
     } catch (error) {
       const code = error instanceof AiWorkerError ? error.code : "AI_GRADING_FAILED";
       this.logger.warn(`Exam grading ${attemptId} failed with ${code}`);
       const usage = error instanceof AiWorkerError ? error.usageEvents : [];
       await this.repository.failGrading(attemptId, leaseToken, usage).catch(() => undefined);
     }
+  }
+
+  async gradingUsage(attemptId: string, leaseToken: string, event: unknown) {
+    if (!leaseToken || !event || typeof event !== "object" || Array.isArray(event)) {
+      throw new BadRequestException({ code: "INVALID_USAGE_EVENT", message: "Invalid provider usage event" });
+    }
+    await this.repository.recordGradingUsage(attemptId, leaseToken, event);
+    const [attemptCost, totalCost] = await Promise.all([
+      this.repository.attemptProviderCostMicroUsd(attemptId),
+      this.repository.monthlyProviderCostMicroUsd(),
+    ]);
+    const attemptLimit = positiveNumber("MATERIAL_AI_GRADING_MAX_COST_USD", 0.05) * 1_000_000;
+    const monthlyLimit = positiveNumber("MATERIAL_AI_MONTHLY_BUDGET_USD", 20) * 1_000_000;
+    if (attemptCost > attemptLimit || totalCost > monthlyLimit) {
+      await this.repository.failGrading(attemptId, leaseToken, []).catch(() => undefined);
+      throw new ServiceUnavailableException({ code: "AI_COST_LIMIT_EXCEEDED", message: "The configured AI cost limit was reached" });
+    }
+    return { persisted: true };
+  }
+
+  gradingCheckpoint(attemptId: string, leaseToken: string, payload: unknown) {
+    if (!leaseToken || !payload || typeof payload !== "object" || Array.isArray(payload)
+        || !("result" in payload)) {
+      throw new BadRequestException({ code: "INVALID_GRADING_CHECKPOINT", message: "Invalid grading checkpoint" });
+    }
+    return this.repository.checkpointGrading(
+      attemptId, leaseToken, payload,
+      positiveNumber("MATERIAL_AI_RESUME_TTL_SECONDS", 86_400),
+    ).then(() => ({ persisted: true }));
+  }
+
+  async gradingComplete(attemptId: string, leaseToken: string, result: unknown) {
+    if (!leaseToken || !result || typeof result !== "object" || Array.isArray(result)) {
+      throw new BadRequestException({ code: "INVALID_AI_RESULT", message: "Invalid grading result" });
+    }
+    const value = result as DbRow;
+    await this.repository.completeGrading(
+      attemptId, leaseToken, Number(value.subjectiveScore || 0),
+      Array.isArray(value.results) ? value.results : [], [],
+    );
+    return { completed: true };
+  }
+
+  async gradingFail(attemptId: string, leaseToken: string) {
+    await this.repository.failGrading(attemptId, leaseToken, []);
+    return { failed: true };
   }
 
   async timeout(attemptId: string) {

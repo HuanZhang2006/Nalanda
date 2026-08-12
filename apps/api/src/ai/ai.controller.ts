@@ -37,6 +37,9 @@ export class AiController {
   @Post("ai-jobs/:id/cancel")
   cancel(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.cancel(user.id, id); }
 
+  @Post("ai-jobs/:id/retry")
+  retry(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.retry(user.id, id); }
+
   @Get("profile/ai-quota")
   quota(@CurrentUser() user: AuthUser) { return this.ai.quota(user.id); }
 
@@ -45,6 +48,19 @@ export class AiController {
 
   @Get("notes/:id")
   note(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.note(user.id, id); }
+
+  @Post("notes/:id/knowledge-nodes/:nodeId/questions")
+  createKnowledgeQuestion(
+    @CurrentUser() user: AuthUser,
+    @Param("id") id: string,
+    @Param("nodeId") nodeId: string,
+    @Body() body: unknown,
+  ) { return this.ai.createKnowledgeQuestion(user.id, id, nodeId, body); }
+
+  @Get("knowledge-questions/:id")
+  knowledgeQuestion(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.ai.knowledgeQuestion(user.id, id);
+  }
 
   @Delete("notes/:id")
   deleteNote(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.deleteNote(user.id, id); }
@@ -100,5 +116,103 @@ export class AiInternalController {
     const progress = Number(body.progress);
     if (!leaseToken || !Number.isInteger(progress)) throw new UnauthorizedException({ code: "INVALID_PROGRESS", message: "Invalid progress update" });
     return this.processor.progress(id, leaseToken, stage, progress, typeof body.eventCode === "string" ? body.eventCode : undefined);
+  }
+
+  @Post(":id/usage")
+  usage(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.usage(id, String(body.leaseToken || ""), body.event);
+  }
+
+  @Post(":id/checkpoint")
+  checkpoint(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.checkpoint(
+      id,
+      String(body.leaseToken || ""),
+      String(body.stage || ""),
+      body.payload,
+    );
+  }
+
+  @Post(":id/complete")
+  complete(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.complete(id, String(body.leaseToken || ""), body.result);
+  }
+
+  @Post(":id/fail")
+  fail(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.fail(
+      id,
+      String(body.leaseToken || ""),
+      String(body.code || "AI_SYSTEM_FAILURE"),
+      String(body.message || "AI processing failed"),
+      Boolean(body.retryable),
+    );
+  }
+}
+
+@Controller("internal/exam-attempts")
+export class AiGradingInternalController {
+  constructor(private readonly processor: AiProcessorService) {}
+
+  @Post(":id/usage")
+  usage(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.gradingUsage(id, String(body.leaseToken || ""), body.event);
+  }
+
+  @Post(":id/checkpoint")
+  checkpoint(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.gradingCheckpoint(
+      id, String(body.leaseToken || ""), body.payload,
+    );
+  }
+
+  @Post(":id/complete")
+  complete(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.gradingComplete(id, String(body.leaseToken || ""), body.result);
+  }
+
+  @Post(":id/fail")
+  fail(
+    @Headers("x-ai-internal-token") token: string | undefined,
+    @Param("id") id: string,
+    @Body() body: Record<string, unknown>,
+  ) {
+    internalToken(token);
+    return this.processor.gradingFail(id, String(body.leaseToken || ""));
   }
 }

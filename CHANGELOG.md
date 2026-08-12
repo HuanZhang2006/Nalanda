@@ -11,6 +11,32 @@
 
 - 时间列撤权 contract 顺延为未来 0044–0045，只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后才能创建。
 
+### Added
+
+- Materials 新增 “Organize knowledge points”：固定 DeepSeek 生成按来源顺序、带严格引用的 `GeneratedKnowledgeGraphV1`，My Notes 以交互图谱、hover 解释、点击详情呈现，并可对选定节点发起限定来源的问答。Knowledge list 与独立 Quiz 继续显示 Coming soon。
+- 追加候选迁移 0046–0048：`generation_job_checkpoints`、`exam_grading_checkpoints`、`knowledge_node_questions`、单调 usage `event_id`、可恢复 job 字段、知识图谱 artifact 约束、service-role-only 工作流和失败关闭权限断言。
+- 真实 provider/public smoke 候选覆盖知识图谱、节点问答、来源顺序、ZDR、增量成本账本和级联删除；fake Playwright 扩展到试卷、评分、图谱和节点问答完整路径。
+
+### Changed
+
+- API→FastAPI 生成与评分改为 30 秒内返回 202，后续由内部 token 回调 progress/usage/checkpoint/complete/fail；兼容同步路由暂留供旧应用回退和直接 provider gate 使用。
+- BullMQ 单并发槽现在持有到 Postgres 终态或 lease 到期，不会因 FastAPI 的 202 提前把 backlog 塞进进程内存；worker 以 1200/240 秒限制生成/评分总执行时间，生成超时可从 durable checkpoint 续跑。
+- 可恢复错误在默认 24 小时内复用同一 job。数据库保存阶段 checkpoint，worker 0700 目录另保存已验证结果和 usage spool；成功、非重试终态和过期均清理，重试重新预留、成功才消费 Free quota。
+- 恢复调度会先扣除该 job/attempt 已持久化的 provider cost，再把剩余预算交给 worker；worker 同时把上次回调失败留下的 usage spool 计入本地硬门，API 暂时不可用也不能借恢复流程重置单次成本上限。
+- Materials 与 My Notes 在本阶段固定全英文并保持既有 class/token/字体/动画；不扩大为全站 React 或视觉迁移。
+
+### Fixed
+
+- 修复 Node/Undici 默认约 300 秒 response headers timeout 把正常长任务误报为 `AI_WORKER_UNREACHABLE`；显式 dispatcher 现区分 `AI_WORKER_TIMEOUT`、不可达和协议错误。
+- 修复 provider 已返回但 API 回调断开时成本事件或已验证产物可能丢失、重试可能再次付费的问题；生成和评分在完成/失败前先幂等 flush usage，评分结果与生成阶段均可恢复。
+- 修复传给 FastAPI 的 `budgetMicroUsd` 过去只作为未使用元数据的问题；每个增量 usage event 现在会在继续下一次模型调用前更新 worker 预算，超限事实仍先写 spool/账本再失败关闭。
+- Materials AI 队列现在标明每项是 Test paper、Knowledge map 或 Knowledge question；同一文件存在多个历史任务时，用户与浏览器测试不会再把旧试卷误认成最新知识图。
+- 修复过期/耗尽 retry RPC 在抛异常后回滚自身清理的问题；终态现在持久保存稳定错误并由 API 映射 409。
+
+### Security
+
+- 新 checkpoint 表不开放客户端读取；知识问答仅 owner 可读且不能由客户端写。所有新 RPC 撤销 `public/anon/authenticated` EXECUTE，问题和来源内容继续按不可信数据处理，不能改变模型、工具或 system prompt。
+
 ## [0.11.1] - 2026-08-11
 
 ### Fixed

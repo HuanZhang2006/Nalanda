@@ -52,7 +52,7 @@ describe("资料错误处理", () => {
     expect(supabase.operations.some((operation) => operation.table === "materials" && operation.action === "delete")).toBe(false);
   });
 
-  it("shows only test generation as available, validates consent, and persists a queued job", async () => {
+  it("shows test and knowledge-map generation, validates consent, and persists a queued exam job", async () => {
     const created: Array<Record<string, any>> = [];
     vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: () => "11111111-1111-4111-8111-111111111111" });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
@@ -81,7 +81,8 @@ describe("资料错误处理", () => {
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
     const choices = document.querySelectorAll("[data-ai-choice]");
     expect(choices).toHaveLength(4);
-    expect(document.querySelectorAll("[data-ai-choice]:disabled")).toHaveLength(3);
+    expect(document.querySelectorAll("[data-ai-choice]:disabled")).toHaveLength(2);
+    expect(document.body.textContent).toContain("Organize knowledge points");
     expect(document.body.textContent).toContain("Coming soon");
     click(document.querySelector('[data-ai-choice="exam"]'));
     click(document.querySelector("[data-ai-submit]"));
@@ -123,6 +124,76 @@ describe("资料错误处理", () => {
     expect(localStorage.getItem("nalanda-material-ai-consent-v1:u2")).toBeNull();
   });
 
+  it("keeps Materials English in Chinese global locale and queues knowledge-point organization", async () => {
+    setLocale("zh", { persist: false });
+    localStorage.setItem("nalanda-material-ai-consent-v1:u1", "1");
+    const created: Array<Record<string, any>> = [];
+    vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: () => "11111111-1111-4111-8111-111111111111" });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
+        plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
+        generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+        grading: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/api/materials/m1/ai-jobs") && init.method === "POST") {
+        created.push(JSON.parse(String(init.body)));
+        return new Response(JSON.stringify({ id: "job-graph", materialId: "m1", materialName: "Week 1.pdf", courseId: "c1",
+          kind: "knowledge_graph", status: "queued", stage: "queued", progress: 0, queuePosition: 1,
+          settings: created[0].settings, errorCode: null, errorMessage: null, noteId: null, retryable: false,
+          resumeUntil: null, checkpointStage: null, createdAt: new Date().toISOString(), startedAt: null, finishedAt: null }),
+        { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/api/ai-jobs")) return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+    const root = document.createElement("div"); document.body.appendChild(root);
+    initMaterials(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
+    mountMaterials(root); await flush(16);
+    expect(root.textContent).toContain("Upload material");
+    expect(root.textContent).not.toMatch(/上传|资料库|新建科目/);
+
+    click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
+    click(document.querySelector('[data-ai-choice="knowledge_graph"]'));
+    expect(document.body.textContent).toContain("Build a comprehensive knowledge map in source order");
+    expect(document.body.textContent).not.toMatch(/知识点|取消|语言/);
+    click(document.querySelector("[data-ai-submit]"));
+    await flush(20);
+    expect(created[0]).toEqual({
+      idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      kind: "knowledge_graph",
+      consentVersion: 1,
+      settings: { language: "auto", detail: "comprehensive", focus: "" },
+    });
+  });
+
+  it("resumes the same retryable job instead of creating a replacement", async () => {
+    const retry = vi.fn();
+    const failed = { id: "job-1", materialId: "m1", materialName: "Week 1.pdf", courseId: "c1", kind: "exam",
+      status: "failed", stage: "failed", progress: 70, queuePosition: null, settings: {},
+      errorCode: "AI_WORKER_TIMEOUT", errorMessage: "Timed out", noteId: null, retryable: true,
+      resumeUntil: "2026-08-12T00:00:00Z", checkpointStage: "document_ready",
+      createdAt: "2026-08-10T00:00:00Z", startedAt: "2026-08-10T00:00:01Z", finishedAt: "2026-08-10T00:05:00Z" };
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
+        plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
+        generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 }, grading: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.endsWith("/api/ai-jobs/job-1/retry") && init.method === "POST") {
+        retry(); return new Response(JSON.stringify({ ...failed, status: "queued", stage: "generating", retryable: false }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/api/ai-jobs")) return new Response(JSON.stringify([failed]), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+    const root = document.createElement("div"); document.body.appendChild(root);
+    initMaterials(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
+    mountMaterials(root); await flush(20);
+    click(root.querySelector('[data-mat="retryAiJob"]'));
+    await flush(12);
+    expect(retry).toHaveBeenCalledOnce();
+  });
+
   it("restores the persistent queue and opens a completed result after remount", async () => {
     const openNote = vi.fn();
     const finished = { id: "job-1", materialId: "m1", materialName: "Week 1.pdf", courseId: "c1", kind: "exam",
@@ -148,6 +219,7 @@ describe("资料错误处理", () => {
 
     expect(root.textContent).toContain("AI generation queue");
     expect(root.textContent).toContain("Free today · 9/10");
+    expect(root.textContent).toContain("Test paper · Ready");
     expect(root.textContent).toContain("Ready");
     click(root.querySelector('[data-mat="openAiNote"]'));
     expect(openNote).toHaveBeenCalledWith("note-1");

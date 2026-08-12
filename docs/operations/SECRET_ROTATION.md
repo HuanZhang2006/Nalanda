@@ -174,13 +174,13 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 泄露时立即替换两个值中受影响者并审计 `api_abuse_events`、429/503、注册和 provider 用量。Redis AOF 不是 points 事实库；不得通过删除 claim/ledger 来“同步”新窗口。
 
-## 11. Materials AI 内部 token（生产 0041–0043）
+## 11. Materials AI 内部 token（生产 0041–0043；0046–0048 候选双向回调）
 
-`AI_INTERNAL_TOKEN` 是 API 与 FastAPI 双向内部调用的独立 32-byte hex；它不得等于 Redis password、HMAC、JWT、provider 或备份 key。GitHub `production` environment 保存输入，受保护安装脚本经 SSH stdin 同时原子写入 `/opt/nalanda/.env` 和隔离 `.ai.env`，两文件 mode 600，不打印值。
+`AI_INTERNAL_TOKEN` 是 API 与 FastAPI 双向内部调用的独立 32-byte hex；候选 202 协议中不仅保护 API→worker 接收，也保护 worker→API 的 progress、usage、checkpoint、complete/fail 回调。它不得等于 Redis password、HMAC、JWT、provider 或备份 key。GitHub `production` environment 保存输入，受保护安装脚本经 SSH stdin 同时原子写入 `/opt/nalanda/.env` 和隔离 `.ai.env`，两文件 mode 600，不打印值；0700 checkpoint/usage spool 只保存结果/计量 payload，不得保存 token/header。
 
 1. 保持 `FEATURE_MATERIAL_AI=false`，生成新 token 并更新 GitHub secret；
 2. 经受保护 installer 写入两个 env，在同一维护窗口 force-recreate `ai` 与 `api`，避免一半新一半旧；
-3. 验证 FastAPI health `internalAuth=ok`、`/api/health/ai`、错误 token 401、合法内部 progress 和完整无个人数据 fake/真实 smoke；
+3. 验证 FastAPI health `internalAuth=ok`、`/api/health/ai`、错误 token 401，以及合法内部 accept/progress/usage/checkpoint/complete/fail；用无个人数据故障 fixture 证明 callback 中断后旧 token 不会被本地 spool 保存，新 token 下可按唯一 event UUID 重放并完成；
 4. 检查 Actions/容器日志、shell history、artifact 无 token；记录 UTC/负责人/新 secret 指纹而非值；
 5. 泄露时立即关闭 Materials AI、轮换、取消 active leases并由 reconciler 安全重投，核查异常 callback/job 状态。不得为恢复可用性移除内部认证。
 
