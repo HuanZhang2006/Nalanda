@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- 真实 Gemma 发布门禁不再把交互 API 的 12 秒 SLA 当作整次 release smoke 的预算：每次尝试使用独立 30 秒上限、全部尝试共享 180 秒硬预算，并在同一重试边界内读取完整响应体。这样即使 2xx 响应头已到但正文流超时，也会以同一固定模型有限重试，而不会让 `DOMException TimeoutError` 逃逸并误触发无诊断回滚；坏 JSON/坏语义、永久 HTTP 状态和预算耗尽仍失败关闭。
 - 受保护应用发布现在会在上传前删除同 SHA 的半成品、清理超过 24 小时的 abandoned incoming 目录，并只回收未被容器或当前 `.deploy.env` 引用的 Nalanda 镜像；可用空间不足 6 GiB 时在切流前失败。失败候选通过 EXIT trap 删除自身 Web 目录、incoming 包和镜像，避免连续失败把共享主机磁盘填满。
 - 应用回滚不再让上一 API 等待可选 AI 容器达到 healthy：Redis/AI 分开尽力恢复，上一 API 使用 `--no-deps` 从已审计镜像强制重建并独立验证进程、鉴权和公网契约。AI 因磁盘水位等原因 unhealthy 时不再把一次受保护发布失败扩大成 nginx 502；readiness 失败日志同时输出脱敏 `/health` 依赖状态。
 - 受保护发布的真实 Gemma 翻译 gate 现在只对网络错误及 408/425/429/5xx 做有限指数退避并遵守 `Retry-After`；401/402/403、坏契约、持续限流或超过等待预算仍失败关闭，避免一次瞬时 OpenRouter 429 在其他真实 AI/Azure 门禁已通过后无条件回滚候选 release。
