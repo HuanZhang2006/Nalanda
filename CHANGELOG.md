@@ -27,6 +27,8 @@
 
 ### Fixed
 
+- 受保护应用发布现在会在上传前删除同 SHA 的半成品、清理超过 24 小时的 abandoned incoming 目录，并只回收未被容器或当前 `.deploy.env` 引用的 Nalanda 镜像；可用空间不足 6 GiB 时在切流前失败。失败候选通过 EXIT trap 删除自身 Web 目录、incoming 包和镜像，避免连续失败把共享主机磁盘填满。
+- 应用回滚不再让上一 API 等待可选 AI 容器达到 healthy：Redis/AI 分开尽力恢复，上一 API 使用 `--no-deps` 从已审计镜像强制重建并独立验证进程、鉴权和公网契约。AI 因磁盘水位等原因 unhealthy 时不再把一次受保护发布失败扩大成 nginx 502；readiness 失败日志同时输出脱敏 `/health` 依赖状态。
 - 受保护发布的真实 Gemma 翻译 gate 现在只对网络错误及 408/425/429/5xx 做有限指数退避并遵守 `Retry-After`；401/402/403、坏契约、持续限流或超过等待预算仍失败关闭，避免一次瞬时 OpenRouter 429 在其他真实 AI/Azure 门禁已通过后无条件回滚候选 release。
 - 修复 Node/Undici 默认约 300 秒 response headers timeout 把正常长任务误报为 `AI_WORKER_UNREACHABLE`；显式 dispatcher 现区分 `AI_WORKER_TIMEOUT`、不可达和协议错误。
 - 修复 provider 已返回但 API 回调断开时成本事件或已验证产物可能丢失、重试可能再次付费的问题；生成和评分在完成/失败前先幂等 flush usage，评分结果与生成阶段均可恢复。

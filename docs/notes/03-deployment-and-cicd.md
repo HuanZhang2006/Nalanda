@@ -67,10 +67,10 @@ server {
 2. **数据库/浏览器门**：自动暂存全部 0008+，执行 0007→latest 与空库 latest/lint；运行双用户 RLS/Storage/points/Courses/Materials AI E2E、nginx/compose，并以 fake providers 跑 Courses 与 Materials→Notes→Exam Playwright。
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API/AI image 都标为同一 `<git-sha>`，服务器不构建。
-5. **SSH**：使用预先核验的 known_hosts 上传到 `/opt/nalanda/incoming/<sha>/`。
+5. **磁盘/SSH**：使用预先核验的 known_hosts；上传前删除同 SHA 半成品和超过 24 小时的 abandoned incoming，只清理没有容器引用且不属于当前 `.deploy.env` 的 Nalanda image。可用空间不足 6 GiB 时阻断，再上传到 `/opt/nalanda/incoming/<sha>/`；其它项目镜像不在清理范围。
 6. **真实供应商/资源 gate**：既有 Azure/Courses OpenRouter gate之外，Materials AI 用固定 PDF/DOCX/PPTX/chart/injection/safe-course/grading 调真实 DeepSeek/MiMo，验证 ZDR/引用/费用/只恢复失败范围；近上限 Office canary 验证 RSS/swap/temp disk/邻站。任一失败触发 rollback、flag 保持 false。
 7. **激活**：安装 Redis/HMAC/internal token与隔离 `.ai.env`，验证 Redis PING/AOF/私网、FastAPI/OpenRouter/LibreOffice/temp disk/internal auth、API Supabase/Redis/AI readiness；门禁后才开启 flag并切 Web，再做公网登录用户完整链路。
-8. **应用回退**：任一激活后 smoke 失败即恢复上一 Web symlink 与运行中的上一 API image；新 release 始终要求 Supabase 双探针为 `ok`，回退验证只要求旧 API 进程契约可用且 `/api/me` 未认证返回 401，以兼容尚未提供依赖级 health 的旧 image；数据库不自动逆向。
+8. **应用回退**：任一激活后 smoke 失败即恢复上一 Web symlink 与不可变 API image；Redis/AI 分开尽力恢复，上一 API 必须以 `--no-deps` 启动并独立验证，不能因可选 AI unhealthy 扩大为公网 502。失败候选由 EXIT trap 与兜底步骤清除；数据库不自动逆向。
 
 Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
 
@@ -246,6 +246,8 @@ docker compose --env-file .deploy.env ps
 docker compose --env-file .deploy.env logs --tail=50 api
 docker compose --env-file .deploy.env restart api
 readlink -f web
+df -h /opt/nalanda
+docker system df
 # 手动触发部署：GitHub → Actions → deploy → Run workflow
 ```
 
