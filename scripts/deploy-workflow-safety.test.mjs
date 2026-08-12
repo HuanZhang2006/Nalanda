@@ -51,10 +51,16 @@ test("the complete protected remote activation script is valid Bash and rolls ba
     "real Materials AI provider gate failed",
     "real Azure Speech smoke failed",
     "real OpenRouter translation smoke failed",
+    "real queued audio/Storage/assessment gate failed",
     "authenticated Materials AI queue/Notes/exam gate failed",
   ]) {
     assert.match(script, new RegExp(`rollback_application "${reason}"`));
   }
+  assert.match(
+    script,
+    /smoke-learning-audio-production\.mjs; then\n\s+docker compose[^\n]+logs --tail=150 api \|\| true/,
+    "the audio gate must preserve sanitized candidate API diagnostics before rollback",
+  );
 });
 
 test("production release preflight reclaims only stale Nalanda artifacts and enforces disk headroom", async () => {
