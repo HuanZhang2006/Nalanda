@@ -27,6 +27,7 @@
 
 ### Fixed
 
+- 受保护发布的真实 Gemma 翻译 gate 现在只对网络错误及 408/425/429/5xx 做有限指数退避并遵守 `Retry-After`；401/402/403、坏契约、持续限流或超过等待预算仍失败关闭，避免一次瞬时 OpenRouter 429 在其他真实 AI/Azure 门禁已通过后无条件回滚候选 release。
 - 修复 Node/Undici 默认约 300 秒 response headers timeout 把正常长任务误报为 `AI_WORKER_UNREACHABLE`；显式 dispatcher 现区分 `AI_WORKER_TIMEOUT`、不可达和协议错误。
 - 修复 provider 已返回但 API 回调断开时成本事件或已验证产物可能丢失、重试可能再次付费的问题；生成和评分在完成/失败前先幂等 flush usage，评分结果与生成阶段均可恢复。
 - 修复传给 FastAPI 的 `budgetMicroUsd` 过去只作为未使用元数据的问题；每个增量 usage event 现在会在继续下一次模型调用前更新 worker 预算，超限事实仍先写 spool/账本再失败关闭。
