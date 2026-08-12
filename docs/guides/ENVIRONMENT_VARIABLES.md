@@ -82,6 +82,8 @@
 | `OPENROUTER_BASE_URL` | 可选，`https://openrouter.ai/api/v1` | 公开配置 | OpenRouter API 基址；只允许 API 读取。 |
 | `OPENROUTER_TIMEOUT_MS` | 可选，12,000 | 公开配置 | 单次评判硬超时，实现限制 1,000–30,000 ms；超时释放数据库租约且不记学习错误。 |
 | `OPENROUTER_SMOKE_MAX_ATTEMPTS` | 可选，5 | 受限发布配置 | 只控制受保护发布的真实 Gemma 翻译 gate，限制 1–6 次；不改变用户请求重试或产品额度。仅网络错误及 408/425/429/5xx 可重试，持续失败仍阻断发布。 |
+| `OPENROUTER_SMOKE_ATTEMPT_TIMEOUT_MS` | 可选，30000 | 受限发布配置 | 真实 Gemma 发布门禁单次请求（含响应正文读取）的超时，限制 5–60 秒；与交互 API 的 `OPENROUTER_TIMEOUT_MS` 分离。 |
+| `OPENROUTER_SMOKE_TOTAL_BUDGET_MS` | 可选，180000 | 受限发布配置 | 真实 Gemma 发布门禁全部尝试与退避共享的 wall-clock 硬预算，限制不低于单次超时且不超过 300 秒；耗尽后失败关闭。 |
 | `OPENROUTER_SMOKE_RETRY_BASE_MS` | 可选，5,000 | 受限发布配置 | 真实翻译 gate 的指数退避起点，限制 1,000–30,000 ms。 |
 | `OPENROUTER_SMOKE_RETRY_MAX_MS` | 可选，60,000 | 受限发布配置 | 单次 gate 退避及可接受 `Retry-After` 上限，限制至 120,000 ms；供应商要求等待更久时失败关闭。 |
 | `OPENROUTER_ASSESSMENTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户一分钟真实 provider 评判上限；确定性完全匹配、UUID 幂等重放和仅领取租约都不计数。 |
