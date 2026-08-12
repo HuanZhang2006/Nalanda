@@ -14,7 +14,7 @@ import { positiveEnvironmentNumber } from "./environment";
 import { FeatureFlagsService } from "./feature-flags.service";
 import { LearningService } from "./learning.service";
 import { assertUuid } from "./learning.util";
-import { SupabaseAdminService } from "./supabase-admin.service";
+import { SupabaseAdminService, SupabaseRequestError } from "./supabase-admin.service";
 
 type Row = Record<string, any>;
 
@@ -52,6 +52,23 @@ function fakeToneWav() {
     bytes.writeInt16LE(Math.round(Math.sin(index / 9) * 2_000), 44 + index * 2);
   }
   return new Uint8Array(bytes);
+}
+
+function exceptionCode(error: unknown) {
+  if (!(error instanceof HttpException)) return "";
+  const response = error.getResponse();
+  return typeof response === "object" && response && "code" in response
+    ? String((response as { code: unknown }).code)
+    : "";
+}
+
+function retryableAudioManifestError(error: unknown) {
+  if (error instanceof SupabaseRequestError) {
+    return error.status === 408 || error.status === 425 || error.status === 429 || error.status >= 500;
+  }
+  return error instanceof HttpException
+    && error.getStatus() >= 500
+    && ["UPSTREAM_TIMEOUT", "UPSTREAM_UNREACHABLE"].includes(exceptionCode(error));
 }
 
 @Injectable()
@@ -103,7 +120,7 @@ export class LearningAudioService implements OnModuleInit, OnModuleDestroy {
     this.flags.audioPrewarm();
     assertUuid(unitId, "unitId");
     const config = this.config();
-    const raw = await this.db.rpc<Row>("learning_prepare_unit_audio", {
+    const raw = await this.audioRpc("learning_prepare_unit_audio", {
       p_user_id: userId,
       p_unit_id: unitId,
       p_locale: config.locale,
@@ -120,7 +137,7 @@ export class LearningAudioService implements OnModuleInit, OnModuleDestroy {
     this.flags.audioPrewarm();
     assertUuid(unitId, "unitId");
     const config = this.config();
-    const raw = await this.db.rpc<Row>("learning_get_unit_audio_manifest", {
+    const raw = await this.audioRpc("learning_get_unit_audio_manifest", {
       p_user_id: userId,
       p_unit_id: unitId,
       p_locale: config.locale,
@@ -129,6 +146,40 @@ export class LearningAudioService implements OnModuleInit, OnModuleDestroy {
       p_synthesis_version: config.synthesisVersion,
     });
     return this.mapManifest(raw, config.synthesisVersion);
+  }
+
+  private async audioRpc(name: string, payload: Record<string, unknown>): Promise<Row> {
+    const delays = [200, 600];
+    for (let attempt = 1; attempt <= delays.length + 1; attempt += 1) {
+      try { return await this.db.rpc<Row>(name, payload); }
+      catch (error) {
+        const retryable = retryableAudioManifestError(error);
+        const status = error instanceof SupabaseRequestError
+          ? error.status
+          : error instanceof HttpException ? error.getStatus() : null;
+        const code = error instanceof SupabaseRequestError
+          && typeof error.body === "object" && error.body && "code" in error.body
+          ? String((error.body as { code: unknown }).code)
+          : exceptionCode(error) || null;
+        if (!retryable) throw error;
+        this.logger.warn(JSON.stringify({
+          event: "learning_audio_rpc_upstream_failure",
+          operation: name,
+          attempt,
+          status,
+          code,
+        }));
+        if (attempt > delays.length) {
+          throw new ServiceUnavailableException({
+            code: "AUDIO_MANIFEST_UNAVAILABLE",
+            message: "Audio preparation is temporarily unavailable",
+            retryAfterSeconds: 2,
+          });
+        }
+        await new Promise((resolve) => setTimeout(resolve, delays[attempt - 1]));
+      }
+    }
+    throw new Error("unreachable");
   }
 
   async audio(userId: string, wordId: string): Promise<{
@@ -140,7 +191,7 @@ export class LearningAudioService implements OnModuleInit, OnModuleDestroy {
     this.flags.audioPrewarm();
     assertUuid(wordId, "wordId");
     const config = this.config();
-    const row = await this.db.rpc<Row>("learning_prepare_word_audio", {
+    const row = await this.audioRpc("learning_prepare_word_audio", {
       p_user_id: userId,
       p_word_id: wordId,
       p_locale: config.locale,

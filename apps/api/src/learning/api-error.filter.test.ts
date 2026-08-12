@@ -1,6 +1,7 @@
 import { HttpException, ServiceUnavailableException } from "@nestjs/common";
 import { describe, expect, it, vi } from "vitest";
 import { ApiErrorFilter } from "./api-error.filter";
+import { SupabaseRequestError } from "./supabase-admin.service";
 
 describe("ApiErrorFilter", () => {
   it("preserves the dependency readiness response", () => {
@@ -53,6 +54,28 @@ describe("ApiErrorFilter", () => {
       code: "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
       message: "allowance used",
       retryAfterSeconds: 321,
+    });
+  });
+
+  it("maps an uncaught upstream 5xx to a retryable sanitized 503", () => {
+    const json = vi.fn();
+    const status = vi.fn(() => ({ json }));
+    const host = {
+      switchToHttp: () => ({
+        getResponse: () => ({ status }),
+        getRequest: () => ({ method: "POST", originalUrl: "/api/learning-units/id/audio-prewarm?private=x" }),
+      }),
+    };
+
+    new ApiErrorFilter().catch(new SupabaseRequestError(
+      "private database detail", 500, { code: "XX000", message: "private database detail" },
+    ), host as never);
+
+    expect(status).toHaveBeenCalledWith(503);
+    expect(json).toHaveBeenCalledWith({
+      code: "UPSTREAM_UNAVAILABLE",
+      message: "Service temporarily unavailable",
+      retryAfterSeconds: 2,
     });
   });
 });

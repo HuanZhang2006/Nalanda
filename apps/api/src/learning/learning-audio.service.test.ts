@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { LearningAudioService } from "./learning-audio.service";
+import { SupabaseRequestError } from "./supabase-admin.service";
 
 const unitId = "11111111-1111-4111-8111-111111111111";
 const wordId = "22222222-2222-4222-8222-222222222222";
@@ -38,6 +39,7 @@ function harness() {
 }
 
 afterEach(() => {
+  vi.useRealTimers();
   vi.unstubAllGlobals();
   delete process.env.AZURE_SPEECH_KEY;
   delete process.env.AZURE_SPEECH_REGION;
@@ -67,6 +69,46 @@ describe("durable learning audio queue", () => {
       p_voice: "en-US-JennyNeural",
       p_priority: 80,
     }));
+  });
+
+  it("retries a transient idempotent prewarm RPC without duplicating the request", async () => {
+    process.env.AZURE_SPEECH_KEY = "test";
+    process.env.AZURE_SPEECH_REGION = "japaneast";
+    const { service, db } = harness();
+    db.rpc
+      .mockRejectedValueOnce(new SupabaseRequestError("temporary", 500, { code: "XX000" }))
+      .mockResolvedValueOnce(manifest());
+    await expect(service.prepareUnit("user", unitId, 80)).resolves.toMatchObject({
+      unitId, total: 1, pending: 1,
+    });
+    expect(db.rpc).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry a permanent owner/configuration failure", async () => {
+    process.env.AZURE_SPEECH_KEY = "test";
+    process.env.AZURE_SPEECH_REGION = "japaneast";
+    const { service, db } = harness();
+    db.rpc.mockRejectedValue(new SupabaseRequestError("not found", 400, { code: "42501" }));
+    await expect(service.prepareUnit("user", unitId, 80)).rejects.toMatchObject({ status: 400 });
+    expect(db.rpc).toHaveBeenCalledTimes(1);
+  });
+
+  it("returns a stable retryable 503 after every transient prewarm attempt fails", async () => {
+    vi.useFakeTimers();
+    process.env.AZURE_SPEECH_KEY = "test";
+    process.env.AZURE_SPEECH_REGION = "japaneast";
+    const { service, db } = harness();
+    db.rpc.mockRejectedValue(new SupabaseRequestError("temporary", 500, { code: "XX000" }));
+    const result = expect(service.prepareUnit("user", unitId, 80)).rejects.toMatchObject({
+      status: 503,
+      response: {
+        code: "AUDIO_MANIFEST_UNAVAILABLE",
+        retryAfterSeconds: 2,
+      },
+    });
+    await vi.runAllTimersAsync();
+    await result;
+    expect(db.rpc).toHaveBeenCalledTimes(3);
   });
 
   it("returns 202-ready metadata until the worker has stored the object", async () => {
