@@ -172,6 +172,7 @@ tail -n 200 /var/log/nginx/error.log
 | health 仅 `deps.redis=unavailable`；私有 GET 仍可用而注册/写入 503 | Redis/password/HMAC/AOF/网络 | Redis health/log/volume/内存、API `REDIS_URL` 与 `.redis.env`；不得切为 fail-open 写入 |
 | API health 200，但注册失败 | Supabase Auth、service-role、DNS | API logs、变量是否为同一项目、Supabase Auth 日志 |
 | API health 200，但登录/业务查询失败 | 浏览器→Supabase、JWT、RLS、迁移 | Supabase logs、项目 URL、JWKS、RLS/表结构、前端 console |
+| AI `/health` 为 `tempDisk=pressure`，随后 API 502 | 根盘低水位 + compose AI healthy 依赖 | 先独立恢复当前 `.deploy.env` API；核对 `df`、`docker system df`、incoming 和当前 image，再按下方资源 runbook 做定向清理 |
 | 只上传/预览失败 | Storage policy/对象/签名 URL | bucket、路径首段、对象 policy、过期时间、浏览器错误 |
 | 发布后静态页面旧、API 新 | artifact/nginx cache/上传 | `/opt/nalanda/web` mtime、workflow artifact、浏览器 cache |
 | Courses 统一 disabled/404 | flag/circuit 配置漂移或 release 回退 | 先查 production history、当前 image 与服务器 `.env`；不要开放客户端 RPC/表写 |
@@ -212,9 +213,10 @@ tail -n 200 /var/log/nginx/error.log
 ### 6.4 主机资源紧张
 
 1. `docker stats --no-stream`、`free -m`、`df -h` 定位内存/磁盘。
-2. 检查日志、上传 artifact、Docker layers 占用；保留事故证据后再清理。
+2. 检查日志、`/opt/nalanda/incoming`、`docker system df` 和 Docker layers 占用；保留事故证据后再清理。发布前门禁会清理同 SHA 半成品、超过 24 小时的 abandoned incoming，以及没有任何容器引用且不属于当前 `.deploy.env` 的 Nalanda image，并要求至少 6 GiB 可用空间；不得扩大成全服务器无差别删除。
 3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
-4. 生产 0043 有 API、128 MiB Redis 容器/持久 volume，以及 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的单并发 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时关闭 Materials AI flag，保留既有 Notes/考试只读路径。
+4. 若 AI 因磁盘水位 unhealthy 且 Compose 依赖阻止 API 恢复，先保存状态和日志，再用当前已审计配置执行 `docker compose --env-file .deploy.env up -d --no-deps api`，验证本机与公网 health/auth；这只恢复 API，不代表 AI 已恢复。释放空间后必须另验 AI `/health` 的 `tempDisk=ok`。
+5. 生产 0043 有 API、128 MiB Redis 容器/持久 volume，以及 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的单并发 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时关闭 Materials AI flag，保留既有 Notes/考试只读路径。
 
 ### 6.7 Materials AI / 在线考试
 

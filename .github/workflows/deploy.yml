@@ -678,6 +678,53 @@ jobs:
             exit 2
           }
 
+      - name: Reclaim stale Nalanda artifacts and verify release disk headroom
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set -Eeuo pipefail
+          ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+            "$SERVER_USER@$SERVER_HOST" bash -se -- "$GITHUB_SHA" <<'PREFLIGHT'
+          set -Eeuo pipefail
+          sha="$1"
+          root=/opt/nalanda
+          minimum_free_bytes=6442450944
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]]
+          install -d -m 700 "$root/incoming"
+
+          # A retry of the same commit must never inherit a partial upload.
+          # Other abandoned upload directories expire after 24 hours. Release
+          # directories and active container images are deliberately untouched.
+          rm -rf -- "$root/incoming/$sha"
+          find "$root/incoming" -mindepth 1 -maxdepth 1 -type d -mmin +1440 \
+            -exec rm -rf -- {} +
+
+          # Remove only Nalanda images that no container (running or stopped)
+          # references. Images for other stacks on the shared host are out of
+          # scope, and the active release remains available for rollback.
+          configured_images=""
+          if [[ -f "$root/.deploy.env" ]]; then
+            configured_images="$(awk -F= '/^NALANDA_(API|AI)_IMAGE=/ { print substr($0, index($0, "=") + 1) }' "$root/.deploy.env")"
+          fi
+          while read -r image_ref image_id; do
+            [[ "$image_ref" == nalanda-api:* || "$image_ref" == nalanda-ai:* ]] || continue
+            [[ "$image_ref" != *':<none>' ]] || continue
+            grep -Fxq -- "$image_ref" <<< "$configured_images" && continue
+            if [[ -z "$(docker ps -aq --filter "ancestor=$image_id")" ]]; then
+              docker image rm "$image_ref" >/dev/null 2>&1 || true
+            fi
+          done < <(docker image ls --format '{{.Repository}}:{{.Tag}} {{.ID}}')
+
+          available_bytes="$(df -PB1 "$root" | awk 'NR == 2 { print $4 }')"
+          [[ "$available_bytes" =~ ^[0-9]+$ ]]
+          if (( available_bytes < minimum_free_bytes )); then
+            echo "Production release blocked: ${available_bytes} bytes free; ${minimum_free_bytes} required." >&2
+            exit 1
+          fi
+          echo "Production release disk preflight passed: ${available_bytes} bytes free."
+          PREFLIGHT
+
       - name: Upload release to an isolated incoming directory
         env:
           SERVER_HOST: ${{ secrets.SERVER_HOST }}
@@ -775,6 +822,19 @@ jobs:
           next_env="$root/.deploy.env.next-$release_id"
           previous_compose="$incoming/docker-compose.previous.yml"
           previous_deploy_env="$incoming/deploy.previous.env"
+          activation_succeeded=false
+
+          cleanup_candidate_on_exit() {
+            local status=$?
+            trap - EXIT
+            if [[ "$activation_succeeded" != true ]]; then
+              rm -f "$next_compose" "$next_env" "$root/web.next"
+              rm -rf -- "$release" "$incoming"
+              docker image rm "nalanda-api:$sha" "nalanda-ai:$sha" >/dev/null 2>&1 || true
+            fi
+            exit "$status"
+          }
+          trap cleanup_candidate_on_exit EXIT
 
           assert_api_health() {
             local endpoint="$1"
@@ -933,13 +993,24 @@ jobs:
                   "$previous_image" "${previous_ai_image:-nalanda-ai:$sha}" > "$root/.deploy.env.rollback"
               fi
               cp "$previous_compose" "$root/docker-compose.yml.rollback"
+              docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" \
+                up -d redis >/dev/null 2>&1 || true
               if docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" config --services | grep -qx ai; then
                 docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" \
-                  up -d --force-recreate redis ai api
+                  up -d --force-recreate ai >/dev/null 2>&1 || true
               else
                 docker compose --env-file "$next_env" -f "$next_compose" stop ai >/dev/null 2>&1 || true
+              fi
+              # The previous API must be recoverable even when an optional AI
+              # dependency is unhealthy (for example under disk pressure).
+              # Starting it without dependency waiting prevents a failed AI
+              # candidate from turning a guarded rollback into a public 502.
+              if ! docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" \
+                up -d --force-recreate --no-deps api; then
                 docker compose --env-file "$root/.deploy.env.rollback" -f "$root/docker-compose.yml.rollback" \
-                  up -d --force-recreate redis api
+                  logs --tail=100 api ai || true
+                echo "Previous API container could not be restarted; manual intervention required." >&2
+                return 1
               fi
               mv "$root/docker-compose.yml.rollback" "$root/docker-compose.yml"
               mv "$root/.deploy.env.rollback" "$root/.deploy.env"
@@ -1076,6 +1147,11 @@ jobs:
           done
           [[ "$ai_healthy" == true ]] || {
             docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 ai || true
+            if [[ -n "${ai_container:-}" ]]; then
+              docker exec "$ai_container" python -c \
+                'import urllib.request; print(urllib.request.urlopen("http://127.0.0.1:8000/health", timeout=5).read().decode())' \
+                </dev/null || true
+            fi
             rollback_application "Materials AI worker readiness failed" || true
             exit 1
           }
@@ -1251,7 +1327,22 @@ jobs:
             exit 1
           fi
 
-          rm -rf "$incoming"
+          activation_succeeded=true
+          rm -rf "$incoming" || true
           docker image prune -f >/dev/null 2>&1 || true
           echo "Release $release_id is healthy and active."
           REMOTE
+
+      - name: Remove isolated incoming directory after an unsuccessful release
+        if: failure()
+        env:
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USER: ${{ secrets.SERVER_USER }}
+        run: |
+          set +e
+          ssh -o BatchMode=yes -o ConnectTimeout=15 -i ~/.ssh/id_ed25519 \
+            "$SERVER_USER@$SERVER_HOST" bash -se -- "$GITHUB_SHA" <<'CLEANUP'
+          sha="$1"
+          [[ "$sha" =~ ^[0-9a-f]{40}$ ]] || exit 0
+          rm -rf -- "/opt/nalanda/incoming/$sha"
+          CLEANUP
