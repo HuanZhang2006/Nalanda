@@ -27,22 +27,57 @@ export function openRouterSmokeRetryDelay({
   return Math.max(exponential, requested ?? 0);
 }
 
+export function openRouterSmokeTransportReason(error) {
+  const name = error && typeof error === "object" ? error.name : "";
+  return name === "TimeoutError" || name === "AbortError" ? "timeout" : "network";
+}
+
 export async function runOpenRouterSmokeRequest(request, {
   maxAttempts,
   baseDelayMs,
   maxDelayMs,
+  maxElapsedMs = 180_000,
+  readBody = null,
+  now = Date.now,
   sleep = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)),
   onRetry = () => {},
 } = {}) {
   let lastError;
+  const startedAt = now();
+
+  const ensureRetryFitsBudget = (delayMs, error) => {
+    const elapsedMs = Math.max(0, now() - startedAt);
+    if (elapsedMs + delayMs >= maxElapsedMs) {
+      throw new Error(`OpenRouter translation smoke exceeded its ${maxElapsedMs} ms total retry budget`, {
+        cause: error,
+      });
+    }
+  };
+
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const elapsedMs = Math.max(0, now() - startedAt);
+    if (elapsedMs >= maxElapsedMs) {
+      throw new Error(`OpenRouter translation smoke exceeded its ${maxElapsedMs} ms total retry budget`, {
+        cause: lastError,
+      });
+    }
     let response;
     try {
-      response = await request();
+      response = await request({ attempt, remainingMs: maxElapsedMs - elapsedMs });
+      if (response.ok) {
+        // A fetch promise resolves after response headers arrive. Consume the
+        // body under the same retry boundary so an AbortSignal firing while
+        // streaming the body is treated as a transient transport timeout,
+        // instead of escaping as an uncaught DOMException after a nominal 2xx.
+        const body = readBody ? await readBody(response) : undefined;
+        return { response, body, attempts: attempt };
+      }
     } catch (error) {
       lastError = error;
+      const reason = openRouterSmokeTransportReason(error);
       if (attempt === maxAttempts) {
-        throw new Error(`OpenRouter translation smoke could not reach the provider after ${attempt} attempts`, {
+        const detail = reason === "timeout" ? "timed out" : "could not reach the provider";
+        throw new Error(`OpenRouter translation smoke ${detail} after ${attempt} attempts`, {
           cause: error,
         });
       }
@@ -52,12 +87,12 @@ export async function runOpenRouterSmokeRequest(request, {
         baseDelayMs,
         maxDelayMs,
       });
-      onRetry({ attempt, delayMs, reason: "network", status: null });
+      ensureRetryFitsBudget(delayMs, error);
+      onRetry({ attempt, delayMs, reason, status: null });
       await sleep(delayMs);
       continue;
     }
 
-    if (response.ok) return { response, attempts: attempt };
     if (!isRetryableOpenRouterSmokeStatus(response.status) || attempt === maxAttempts) {
       throw new Error(`OpenRouter translation smoke failed with HTTP ${response.status} after ${attempt} attempts`);
     }
@@ -70,6 +105,7 @@ export async function runOpenRouterSmokeRequest(request, {
     if (delayMs === null) {
       throw new Error(`OpenRouter translation smoke Retry-After exceeds the ${maxDelayMs} ms retry budget`);
     }
+    ensureRetryFitsBudget(delayMs);
     try {
       await response.body?.cancel();
     } catch {
