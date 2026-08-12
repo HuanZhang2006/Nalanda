@@ -1259,6 +1259,7 @@ jobs:
           fi
           if ! wait_for_api http://127.0.0.1:8411/api/health \
             || ! assert_ai_health http://127.0.0.1:8411/api/health/ai; then
+            docker compose --env-file "$next_env" -f "$next_compose" logs --tail=150 api ai || true
             rollback_application "API was unhealthy after Materials AI activation" || true
             exit 1
           fi
@@ -1274,6 +1275,7 @@ jobs:
             -v "$incoming/smoke-learning-audio-production.mjs:/tmp/smoke-learning-audio-production.mjs:ro" \
             -v "$incoming/learning-audio-smoke-lib.mjs:/tmp/learning-audio-smoke-lib.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-learning-audio-production.mjs; then
+            docker compose --env-file "$next_env" -f "$next_compose" logs --tail=150 api || true
             rollback_application "real queued audio/Storage/assessment gate failed" || true
             exit 1
           fi
@@ -1285,6 +1287,7 @@ jobs:
             --entrypoint node \
             -v "$incoming/smoke-material-ai-production.mjs:/tmp/smoke-material-ai-production.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-material-ai-production.mjs; then
+            docker compose --env-file "$next_env" -f "$next_compose" logs --tail=150 api ai || true
             rollback_application "authenticated Materials AI queue/Notes/exam gate failed" || true
             exit 1
           fi

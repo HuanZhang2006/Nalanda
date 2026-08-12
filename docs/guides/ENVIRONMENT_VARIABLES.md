@@ -31,6 +31,7 @@
 |---|---|---|---|---|
 | `PORT` | 当前可选 | 公开配置 | `apps/api/src/main.ts` | 监听端口；无效或缺失时为 `3000`。生产 compose 显式设置 `3000`。 |
 | `SUPABASE_URL` | 当前必需（认证/注册） | 公开配置 | Auth controller、JWT guard、health | Admin Auth 基址、JWKS/issuer 基址；缺失时注册报 `SERVER_MISCONFIG`，受保护接口无法通过 JWKS 验签。 |
+| `SUPABASE_REQUEST_TIMEOUT_MS` | 可选，20,000 | 受限配置 | NestJS service-role REST/Storage transport（含响应正文读取）超时，限制 1–60 秒；超时返回脱敏 `UPSTREAM_TIMEOUT`，不自动重放非幂等业务 RPC。Courses 音频 prepare/manifest 因数据库幂等而另有局部三次重试。 |
 | `SUPABASE_SERVICE_ROLE_KEY` | 当前必需（注册/readiness/Courses） | **最高机密** | Auth controller、health、Courses services | 调用 Admin Auth/PostgREST/Storage 与 service-only RPC；绕过 RLS，只能存在于后端且绝不进入响应/日志。 |
 | `SUPABASE_JWT_SECRET` | 当前可选 | **最高机密** | `apps/api/src/auth/supabase.guard.ts` | 旧 HS256 令牌的回退验签。当前守卫优先使用 JWKS；非对称签名项目不应无理由复制此值。 |
 | `REDIS_URL` | 生产 0039–0040 必需 | **机密连接串** | Redis service、health、全局限流、扫描器 | API 建立真实连接；生产为 `redis://:<64-hex>@redis:6379/0`。缺失/不可达使 readiness 503，受保护写入 fail-closed。 |
