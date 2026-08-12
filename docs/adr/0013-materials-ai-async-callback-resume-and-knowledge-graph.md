@@ -6,7 +6,7 @@
 >
 > **何时更新：**内部任务协议、lease/TTL、checkpoint 位置、provider usage、图谱 schema/布局、节点问答额度或临时数据生命周期变化时。
 
-- **状态：**Accepted / implemented in unreleased code；生产仍为 0043，0046–0048 与新应用必须完成受保护发布后才能改为 deployed。
+- **状态：**Accepted / deployed；0046–0048 与不可变应用已于 2026-08-12 完成受保护生产发布。
 - **日期：**2026-08-12
 - **决策者：**Nalanda owner
 
@@ -34,6 +34,10 @@
 - 双层断点让数据库回调正常时可跨 worker 恢复，API 短时不可达时也不会立即丢失已付费结果；代价是 TTL 内临时目录会短期包含私有 DocumentIR/产物，必须保持 0700、磁盘水位和清理告警。
 - 断点只保存通过当前 schema/安全校验的阶段结果。版本不兼容、期限届满、非重试错误或安全拒绝会清理并要求新任务。
 - 图谱布局首版使用来源顺序和层级定位，保证可读与确定性；自动布局、跨材料合并和通用 RAG 不在本决策内。
+
+## 发布记录
+
+独立只读 plan `31573329799` 证明远端已到 0048且 dry-run 为空；受保护 run `31574116130` 创建加密恢复点并通过完整 CI、本地真实 Supabase/RLS、fake-provider Chromium、2G canary、真实 DeepSeek/MiMo/Azure/OpenRouter/Courses、登录用户 Materials AI 完整链路及独立公网/服务器核验。release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` 已启用 `FEATURE_MATERIAL_AI=true`。fake Chromium 不构成真实模型证据，单次供应商 smoke 也不替代持续质量与成本监控。
 
 ## 验证与发布
 

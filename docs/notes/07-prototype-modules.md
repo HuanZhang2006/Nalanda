@@ -20,7 +20,7 @@
 | 模块 | 状态 | 说明 / 接真后端要补 |
 |---|---|---|
 | **Home 首页** | 🟡 mock | 仪表盘（欢迎语/统计卡/课程进度/最近笔记/动态）；可接真实「今日任务 + 积分 + 最近活动」 |
-| **Notes 笔记库 + 详情** | 🟡 混合 | 生产 0041–0043 已有 Materials 真实试卷、在线考试和历史；旧硬数据保留为 Demo。知识清单/独立测验仍 mock；0046–0048 候选已接真实 source-ordered graph、hover/click detail 与 node Q&A，尚未生产发布 |
+| **Notes 笔记库 + 详情** | 🟡 混合 | 生产 0041–0048 已有 Materials 真实试卷、在线考试、source-ordered graph、hover/click detail 与 node Q&A；旧硬数据保留为 Demo，知识清单/独立测验仍 mock |
 | **Create 创作流** | 🟡 mock | 选资料 → 勾产物 → 生成；接 Materials 资料 → AI 微服务异步生成 → 落库 |
 | **Market / Note Market** | 🟡 mock | 笔记卡片/购买弹窗；未来依赖上架/购买、credits 账本和创作者分成 |
 | **Market / Course Market** | ✅ 生产真后端 | 英语词表不可变版本、举报、免费克隆；不接 credits/支付，见 [11](11-learning-courses.md) |
@@ -42,6 +42,6 @@ Courses 与 `GeneratedExamV1`/job/quota/Notes/Exam 契约已由 `packages/types`
 5. push → 自动部署。
 
 ## 5. 剩余优先级
-1. **完成 Materials 试卷候选发布与质量观察**；随后开放知识清单/Quiz/知识图谱和 Notes 编辑/导出。当前实现为干净自研，不复制 CC BY-NC 参考代码。
+1. **观察已上线 Materials 试卷/知识图谱的质量、恢复率与成本**；随后开放知识清单/独立 Quiz 和 Notes 编辑/导出。当前实现为干净自研，不复制 CC BY-NC 参考代码。
 2. **Home 首页**接真数据（今日任务 / 积分 / 最近活动），把各模块串到首屏。
 3. **笔记市场 + 钱包/支付**（依赖 Stripe，放最后）。

@@ -15,7 +15,7 @@
 - 只有加密 artifact 成功上传，`db push` 才会执行；
 - artifact 名为 `db-recovery-<git-sha>`，Actions 保留 14 天；
 - `scripts/restore-db-release.sh` 可验证 archive，且只允许恢复到新的空白隔离 Supabase 项目。
-- 最新生产恢复点由 run `31467153739` 在 2026-08-11 创建：artifact `9092230348`，824,125 bytes，artifact zip SHA-256 `6939309024094791bb639112eaf73a1429d588a4800c42703e579185a0aa817f`，覆盖发布前 0043 roles/schema/data/migration history并保留 14 天。`pg_dump` 对循环外键给出的 data-only warning 需按本文“先 schema、再数据/必要时禁用 trigger”的隔离恢复顺序处理，不代表已完成恢复演练。
+- run `31467153739` 于 2026-08-11 创建的 0043 恢复点为 artifact `9092230348`（824,125 bytes，artifact zip SHA-256 `6939309024094791bb639112eaf73a1429d588a4800c42703e579185a0aa817f`）。最终 0048 发布 run `31574116130` 于 2026-08-12 再创建、立即解密/校验并上传新的 14 天加密恢复点；精确 artifact 元数据以该受保护 run 为审计来源。`pg_dump` 对循环外键给出的 data-only warning 需按本文“先 schema、再数据/必要时禁用 trigger”的隔离恢复顺序处理，不代表已完成恢复演练。
 
 这仍不是完整灾难恢复：
 
@@ -33,7 +33,7 @@
 | `public` schema、函数、RLS、业务行 | 是 | 数据一致性、grants、trigger 验证 |
 | Points 日窗口/永久 claim/审核 action/协同 signal/API 滥用桶 | 是 | ledger/Profile 投影、claim 不可变、审核链和 30 天审计保留专项对账 |
 | Courses 内容/会话/attempt/progress/日程/分享/出版/举报/徽章/语音用量/音频队列 metadata | 是 | append-only attempt/points、revision/幂等响应、熟练日期、publication 不可变性、queue lease 与 service-only RPC 专项对账 |
-| Materials AI plan/quota/job/events/parse cache/Notes/exam/provider usage（生产 0041–0043；候选 0046–0048 增加 DB checkpoint/graph/Q&A/event UUID） | 是 | reservation/consume、job lease/resume TTL、checkpoint stage/expiry、usage event UUID、graph source refs、Q&A owner、ZDR/cost metadata 和 RLS 专项对账；不得把 dump 中正文复制进开发 |
+| Materials AI plan/quota/job/events/parse cache/Notes/exam/provider usage/DB checkpoint/graph/Q&A/event UUID（生产 0041–0048） | 是 | reservation/consume、job lease/resume TTL、checkpoint stage/expiry、usage event UUID、graph source refs、Q&A owner、ZDR/cost metadata 和 RLS 专项对账；不得把 dump 中正文复制进开发 |
 | AI worker 本地 checkpoint/usage spool | 否，且禁止纳入常规备份 | 这是单机 0700、TTL 有界的传输恢复副本，不是长期事实源；数据库 checkpoint/usage ledger 才可恢复。主机丢失时允许从最近 DB checkpoint 重做尚未保存的模型阶段，但必须用 event UUID 防重复记费，并向用户保留稳定 retry 状态 |
 | Auth 用户 UUID/metadata | data dump 覆盖 | Provider、SMTP、URL、签名配置；密码/会话恢复能力需演练 |
 | Storage bucket/object metadata | data dump 覆盖 | **对象文件字节的异地复制和 manifest** |

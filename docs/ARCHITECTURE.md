@@ -6,15 +6,13 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-11。生产数据库与不可变应用已受保护发布到 0043：帖子/Feedback/Schedule 完整性、points 日上限/审核/协同信号、Redis 限流，以及 Materials 文件生成试卷、私有 Notes、在线考试和 Free 双额度均已启用。当前 release 为 `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`，API/AI/Web 同源且 `FEATURE_MATERIAL_AI=true`。时间列撤权 contract 顺延为未来 0044–0045，仍必须等兼容应用从 `2026-08-10T09:35:34Z` 起在线观察至少 24 小时并通过 go/no-go。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
-
-2026-08-12 候选代码（尚未部署）追加 0046–0048：Materials AI 的生成/评分内部调用改为 202 接收 + 持久回调，增加数据库/worker 双层断点、增量 usage ledger、知识点图谱和节点问答。以下带“候选”的段落描述当前分支，不改变上述生产事实。
+最后核对：2026-08-12。生产数据库与不可变应用已受保护发布到 0048：帖子/Feedback/Schedule 完整性、points 日上限/审核/协同信号、Redis 限流，以及 Materials 文件生成试卷、私有 Notes、在线考试、Free 双额度、可恢复长任务、知识点图谱和节点问答均已启用。当前 release 为 `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，API/AI/Web 同源且 `FEATURE_MATERIAL_AI=true`。时间列撤权 contract 仍保留为未来 0044–0045 的独立工作；完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 ---
 
 ## 1. 当前系统结论
 
-Nalanda 是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳、legacy DOM 模块和 React Courses/Notes 功能组成；认证与旧业务 CRUD 直接使用 Supabase；NestJS 提供注册、JWT、健康检查、Courses/学习/语音/传播，以及 Materials AI/Notes/考试接口。0041–0043 已把 Materials AI 接到 NestJS、BullMQ/Redis 和隔离 FastAPI，并于 2026-08-11 进入生产运行时。
+Nalanda 是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳、legacy DOM 模块和 React Courses/Notes 功能组成；认证与旧业务 CRUD 直接使用 Supabase；NestJS 提供注册、JWT、健康检查、Courses/学习/语音/传播，以及 Materials AI/Notes/考试接口。0041–0048 已把 Materials AI、异步回调/断点恢复和知识图谱接到 NestJS、BullMQ/Redis 与隔离 FastAPI，并进入生产运行时。
 
 “真后端”在旧模块中主要表示“真实写入 Supabase 并由 RLS 保护”；Courses 的内容与学习事实写入必须经 NestJS + service-role 专用事务 RPC。当前两条路径均已部署，但这仍不把 Home/Notes/AI Create 等 mock 变成真实能力。
 
@@ -48,7 +46,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已于 2026-08-11 同步到 0043：0039–0040 增加并验证直接 PostgREST 防御、冻结奖励窗口、审核和协同/滥用审计；0041–0043 增加并验证 Materials AI/Notes/在线考试事实、服务端事务、RLS 和精确 RPC grants。只读 plan `31465816321`、加密恢复 artifact `9092230348`、远端 history/lint/空 dry-run、2G canary、真实 DeepSeek/MiMo/Azure/OpenRouter、登录用户生成/评分/删除 gate、API/AI readiness 和公网 smoke 均有记录。时间列撤权 contract 顺延为未来 0044–0045。
+生产 migration history 已于 2026-08-12 同步到 0048：0039–0040 增加直接 PostgREST 防御、冻结奖励窗口、审核和协同/滥用审计；0041–0043 增加 Materials AI/Notes/在线考试事实；0046–0048 增加 checkpoint、幂等 usage、知识图谱/节点问答及 service-role-only 工作流。只读 plan `31573329799` 确认远端 up to date/空 dry-run；受保护 run `31574116130` 创建加密恢复点并通过远端 history/lint、2G canary、真实 DeepSeek/MiMo/Azure/OpenRouter/Courses、登录用户 gate、API/AI readiness 和独立公网 smoke。时间列撤权 contract 仍为未来 0044–0045。
 
 同机 Redis 已纳入生产依赖：Redis 只连接默认 compose 私网、无宿主端口、密码认证、AOF `everysec`、`noeviction`；API 使用原子 Lua 滑动窗口和 HMAC(IP/email)键，不保存原始 IP/email，并用 BullMQ 只投递 durable Postgres job UUID。写入/注册/克隆/举报/成本接口在 Redis 故障时 fail-closed，私有只读 fail-open 并输出 `rate_limit_degraded`；readiness 只有 Supabase 与 Redis PING 均成功才为 200，AI readiness 还要求 worker/queue 就绪。协同扫描器每五分钟以 Redis token lock 单实例执行，只写待审 signal，不自动冻结或冲正。
 
@@ -107,7 +105,7 @@ Nalanda/
 | Materials | Supabase tables + 私有 Storage | 真实 |
 | Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
 | Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产总 history 为 0043，Courses 功能迁移为 0011–0038，含显式取消、拼写/读音考试、任意选词、历史、双考试精确掌握投影、翻译中文 STT 及真实 provider 配额预留 |
+| Courses | NestJS + Supabase `learning_*` + React | 真实；生产总 history 为 0048，Courses 功能迁移为 0011–0038，含显式取消、拼写/读音考试、任意选词、历史、双考试精确掌握投影、翻译中文 STT 及真实 provider 配额预留 |
 | Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
 | Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
 | Feedback | Supabase table | 生产 0039 起用户只可新增/读取，status/time/owner 由支持流程维护 |
@@ -148,7 +146,7 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
 
 生产 0041–0043 已替换原固定桩：FastAPI 只接受 `X-AI-Internal-Token` 的内网请求，并在 0700 独立临时目录中执行确定性解析、两次安全审查、失败范围视觉恢复、严格结构化试卷生成和批量主观题评分。固定模型为 DeepSeek V4 Flash 0731 与 MiMo V2.5；provider 请求强制 ZDR、拒绝数据收集、参数支持并禁用 reasoning/tool/Web/跨模型 fallback，避免推理 token 吞掉 strict JSON completion。同一固定模型按吞吐量优先在仍满足全部隐私/参数过滤器的 provider endpoint 间故障转移。
 
-0046–0048 候选把 API→worker 改为短请求：Nest 使用显式 Undici Agent，30 秒内取得 202，worker 后续回调 progress、usage、checkpoint、complete/fail。这样业务任务不再受内置约 300 秒 response headers timeout 控制，transport timeout 会准确映射为 `AI_WORKER_TIMEOUT`。Postgres 仍是权威；Redis 只调度 UUID。BullMQ 的单并发槽在 202 后不会立即释放，而会轮询 Postgres 直到任务离开 processing/grading 或 lease 到期，避免把长任务积压到 FastAPI 内存并让尚未开始的任务租约过期。worker 另以 1200 秒生成总预算和 240 秒评分总预算防止无限占槽；生成超时保留 durable checkpoint 并允许期限内续跑。
+0046–0048 把 API→worker 改为短请求：Nest 使用显式 Undici Agent，30 秒内取得 202，worker 后续回调 progress、usage、checkpoint、complete/fail。这样业务任务不再受内置约 300 秒 response headers timeout 控制，transport timeout 会准确映射为 `AI_WORKER_TIMEOUT`。Postgres 仍是权威；Redis 只调度 UUID。BullMQ 的单并发槽在 202 后不会立即释放，而会轮询 Postgres 直到任务离开 processing/grading 或 lease 到期，避免把长任务积压到 FastAPI 内存并让尚未开始的任务租约过期。worker 另以 1200 秒生成总预算和 240 秒评分总预算防止无限占槽；生成超时保留 durable checkpoint 并允许期限内续跑。
 
 完整生成链路是：
 
@@ -166,15 +164,15 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
   → 单事务保存 Notes 并 consume；失败/cancel 则 release
 ```
 
-Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责投递。候选实现把 `parsed/audited/document_ready/artifact_ready/answer_ready` 保存到有 TTL 的私有数据库 checkpoint；worker 在同一 0700 目录保留更高阶段的短期恢复副本和 usage spool。API 回调短时中断时，下一 lease 先补记成本并恢复已验证结果，不重复付费阶段。成功/非重试终态立即清目录，默认 24 小时到期由数据库 reconciler 与 worker sweeper 双向清理。
+Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责投递。生产实现把 `parsed/audited/document_ready/artifact_ready/answer_ready` 保存到有 TTL 的私有数据库 checkpoint；worker 在同一 0700 目录保留更高阶段的短期恢复副本和 usage spool。API 回调短时中断时，下一 lease 先补记成本并恢复已验证结果，不重复付费阶段。成功/非重试终态立即清目录，默认 24 小时到期由数据库 reconciler 与 worker sweeper 双向清理。
 
-候选 worker 路由是 `GET /health`、快速接收的 `POST /internal/materials/jobs` 与 `POST /internal/exams/jobs`，以及兼容观察期保留的同步 `POST /internal/materials/exam`、`POST /internal/exams/grade`。全部内部写路由需要常量时间比较 token；FastAPI 默认 422 不回显 signed URL/callback token。同步路由只供上一不可变应用回退和直接 provider 质量 gate，不能重新成为生产长任务路径。
+生产 worker 路由是 `GET /health`、快速接收的 `POST /internal/materials/jobs` 与 `POST /internal/exams/jobs`，以及兼容观察期保留的同步 `POST /internal/materials/exam`、`POST /internal/exams/grade`。全部内部写路由需要常量时间比较 token；FastAPI 默认 422 不回显 signed URL/callback token。同步路由只供上一不可变应用回退和直接 provider 质量 gate，不能重新成为生产长任务路径。
 
 ### 6.1 契约边界
 
 公开 Web/Nest 契约统一来自 `@nalanda/types` 的 camelCase `GeneratedExamV1`；Nest 显式转换数据库 snake_case，Python Pydantic 使用同一 camelCase JSON 与 `extra="forbid"`。考试 session 会删除答案、解析、rubric 和 accepted answer，只给作答所需字段；生成者自己的 Notes detail 仍可查看完整答案，这是自学产品而不是防作弊考试系统。
 
-Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，仍为 Coming soon。候选 `GeneratedKnowledgeGraphV1` 是新的真实契约：节点按 source order，带层级、详细解释、例子/公式/误区/自测与严格引用；edge 有受限关系类型。节点问答只使用所选节点、相邻节点及这两类节点引用到的 source blocks，答案不能越过该来源并集。当前候选仍不含 embeddings、pgvector、Notes 编辑、导出、credits 或支付。
+Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，仍为 Coming soon。生产 `GeneratedKnowledgeGraphV1` 是新的真实契约：节点按 source order，带层级、详细解释、例子/公式/误区/自测与严格引用；edge 有受限关系类型。节点问答只使用所选节点、相邻节点及这两类节点引用到的 source blocks，答案不能越过该来源并集。当前实现仍不含 embeddings、pgvector、Notes 编辑、导出、credits 或支付。
 
 ## 7. 数据库与 Storage
 
@@ -194,7 +192,7 @@ Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，�
 | 分享市场 | `learning_course_shares`, `learning_course_publications`, `learning_course_reports`, `learning_course_moderation_actions` |
 | 课程徽章/语音配额 | `badge_definitions`, `user_badge_awards`, `learning_speech_usage` |
 | Materials AI 计划/额度 | `ai_plans`, `ai_user_plans`, `ai_daily_usage` |
-| Materials AI 任务/缓存 | 生产：`generation_jobs`, `generation_job_events`, `ai_material_parse_cache`, `ai_provider_usage_events`；0046 候选增加 `generation_job_checkpoints`, `exam_grading_checkpoints`, `knowledge_node_questions` 与 usage `event_id` |
+| Materials AI 任务/缓存 | `generation_jobs`, `generation_job_events`, `ai_material_parse_cache`, `ai_provider_usage_events`, `generation_job_checkpoints`, `exam_grading_checkpoints`, `knowledge_node_questions` 与 usage `event_id` |
 | 私有 Notes/来源 | `notes`, `note_materials`, `note_artifacts` |
 | 在线考试 | `exam_attempts`, `exam_attempt_answers`, `exam_attempt_operations` |
 
@@ -212,7 +210,7 @@ Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，�
 - `point_entries` 只允许用户读取自己的条目；客户端不能直接写，`point_event_states` 及 0039 新增的 claim/moderation/signal/audit 表对客户端完全隐藏。service-role 只经受控函数形成奖励和审核转换。
 - `learning_*` 私有表只允许 owner 读，客户端不能写内容、会话、尝试、progress、日程、徽章或奖励；评判事实表甚至不授予 owner SELECT。写入经 API 调用撤销了 `public/anon/authenticated` 权限的 service-role RPC。
 - 分享/出版物/举报/审核表不向匿名 PostgREST 开放。匿名分享和市场读取只能经过 API 返回转义、脱敏快照；出版快照由 trigger 保持不可变。
-- 生产 0041–0043 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage 与 operation 幂等表无客户端访问。0046–0048 候选进一步使 checkpoint 完全服务端私有，知识问答仅 owner SELECT、无客户端 INSERT/UPDATE/DELETE；所有新 RPC 均只授予 service role。provider usage 的 job/attempt UUID 是不可变审计引用，新增 event UUID 防止断线回放重复计费。
+- 生产 0041–0048 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage、operation 幂等表和 checkpoint 无客户端访问，知识问答仅 owner SELECT、无客户端 INSERT/UPDATE/DELETE；所有特权 RPC 均只授予 service role。provider usage 的 job/attempt UUID 是不可变审计引用，event UUID 防止断线回放重复计费。
 
 ### 7.3 已关闭项与剩余数据完整性边界
 
@@ -271,7 +269,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 
 ## 10. 当前优先风险
 
-- 0046–0048 尚未在真实 Supabase/生产应用，长任务恢复和图谱只能称为候选实现；必须由 CI migration/RLS、真实 OpenRouter 与公网 smoke 关闭门禁。
+- 0046–0048 已通过真实 Supabase/生产门禁，但长任务恢复、图谱质量和成本仍需持续观测；单次发布 smoke 不代表长期供应商可用率。
 - TTL 内 worker checkpoint 会包含私有 DocumentIR/已验证产物。目录权限、磁盘水位、sweeper 和“不得备份/记录正文”属于安全控制；主机被攻破时它仍是敏感数据。
 - prompt injection 检测无法数学上保证绝对正确；节点问题同样是不可信数据。任何模型输出都必须通过 schema、引用和产品约束，且不得获得工具/Web。
 

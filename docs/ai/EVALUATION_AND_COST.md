@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-12。生产数据库与不可变应用仍到 0043：Azure Speech、OpenRouter 语义翻译前测、Fish Audio 中文 STT、Redis 请求保护，以及 Materials AI 试卷生成/主观题评分均已启用。仓库 0046–0048 候选增加 202 callback、可恢复 checkpoint/费用重放和 Materials 知识图谱/节点问答，尚待真实 provider 与受保护发布。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-12。生产数据库与不可变应用已到 0048：Azure Speech、OpenRouter 语义翻译前测、Fish Audio 中文 STT、Redis 请求保护，以及 Materials AI 试卷/评分、202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答均已启用。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -23,12 +23,12 @@
 - 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters，关闭 reasoning/tool/Web/跨模型 fallback；同一模型按吞吐量优先、只在满足全部过滤器的 provider endpoint 间故障转移；
 - `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前验证题数、总分、答案、rubric 与 source block；允许一次结构化 repair；
 - 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
-- 生产 0043 每任务 0700 临时目录在 `finally` 删除并清理一小时 orphan；0046–0048 候选仅在可恢复故障下保留验证过的 checkpoint/usage spool 到配置 TTL，成功、不可恢复失败、取消或过期清理；持久 parse cache 和 DB checkpoint 是分开的私有产品数据；
+- 生产 0041–0048 每任务使用 0700 临时目录；仅在可恢复故障下保留验证过的 checkpoint/usage spool 到配置 TTL，成功、不可恢复失败、取消或过期清理；持久 parse cache 和 DB checkpoint 是分开的私有产品数据；
 - 生产 compose 已激活隔离 worker 与 flag；fake 自动化不证明真实供应商质量，真实门禁也只是时点证据，不替代持续质量/成本监控。
 - Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
 - Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列和 private Storage 事实源已经在生产启用；生产 Web 已移除客户端 VAD/静音裁剪，fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
 - 0019 增加 NestJS 翻译评判 adapter：规范化后完全等于服务端参考 translation 的答案由服务端确定性判对；非字面同义/改写才使用 OpenRouter structured JSON。输入正文不落库，服务端仍唯一写 spelling 错误事实。生产已取得真实 provider、候选 API 与不可变 release 证据。
-- 0046–0048 候选不再为最长 20 分钟任务保持 API→worker HTTP：API 只等待最长 30 秒的 202 接收，worker 通过带内部认证的 progress/usage/checkpoint/terminal callback 推进 durable job。BullMQ 仍只放行一个任务，并在 202 后持有该槽到 Postgres 终态/lease expiry，避免进程内 backlog；FastAPI 继续执行 1200 秒生成总预算和 240 秒评分总预算。每次 provider usage 先以 UUID 写本地 spool，再增量落账；每个验证过的 document/artifact/answer 与主观评分结果先落 0700 local checkpoint，再同步私有数据库 TTL checkpoint。callback 中断或容器替换后新 lease 合并有效 checkpoint，期限内不重复已完成 provider 调用；终态或 TTL 清理。API 在每次派发前从单次硬上限扣除该 job/attempt 已落账成本，worker 再把未确认 spool 计入本次剩余预算，因此 API 断线或换 lease 不会重置成本熔断。该机制仍须真实故障注入证明后才能称生产。
+- 0046–0048 不再为最长 20 分钟任务保持 API→worker HTTP：API 只等待最长 30 秒的 202 接收，worker 通过带内部认证的 progress/usage/checkpoint/terminal callback 推进 durable job。BullMQ 仍只放行一个任务，并在 202 后持有该槽到 Postgres 终态/lease expiry，避免进程内 backlog；FastAPI 继续执行 1200 秒生成总预算和 240 秒评分总预算。每次 provider usage 先以 UUID 写本地 spool，再增量落账；每个验证过的 document/artifact/answer 与主观评分结果先落 0700 local checkpoint，再同步私有数据库 TTL checkpoint。callback 中断或容器替换后新 lease 合并有效 checkpoint，期限内不重复已完成 provider 调用；终态或 TTL 清理。API 在每次派发前从单次硬上限扣除该 job/attempt 已落账成本，worker 再把未确认 spool 计入本次剩余预算，因此 API 断线或换 lease 不会重置成本熔断。该机制已通过发布门禁，但仍需持续真实故障演练与费用对账。
 
 因此当前不得：收费扣 credits；把 Azure TTS 当成文件解析；把 health/key/fake 或一次发布 smoke 当作持续供应商可用率；用真实私有课件做非受控测试；公开承诺准确率/成本/延迟。
 
@@ -51,7 +51,7 @@ MiMo prompt 把图像当不可信证据，按阅读顺序提取逐字文本、�
 
 provider usage 只留 model、token、micro-USD、latency、request ID、用途、ZDR 和状态；不留 prompt、文件正文、回答正文或 raw response。网络错误、408/429/502/503/504，以及 200 响应的空内容、截断、坏 JSON/schema，会在完全相同的固定模型/ZDR/schema 请求上最多有界尝试 4 次，默认从 2 秒指数退避并尊重不超过 60 秒的数值型 `Retry-After`；所有尝试共享原 180 秒结构化操作总预算，单次 HTTP 只能使用剩余时间，重试不会把最坏等待放大为 `尝试次数 × 180 秒`。更长等待、认证/余额/ZDR/参数错误直接失败并释放产品额度。HTTP 失败通常没有 token/cost，200 但结构非法的失败可能已经产生费用；adapter 因而把成功前每次失败和最终成功都返回为独立脱敏 usage event，数据库成本硬门按全部事件求和，worker 在每条事件落本地 spool 后也累计本次剩余 micro-USD，超限后不再发起后续模型调用。最终成功事件的 duration 仍覆盖该结构化操作的总等待。真实 gate 必须用无个人数据固定 PDF/DOCX/PPTX/chart/injection/safety lesson/grading 样本证明 ZDR endpoint、失败范围、引用、拒绝/不误杀、token/cost 和评分；单次通过仍不代表持续质量，也不能把“重试后成功”解释为长期可用率达标。
 
-2026-08-12 的原始故障在 301.896 秒触发 Node/Undici 响应头 timeout，旧 catch 又把它误报为 `AI_WORKER_UNREACHABLE`；worker 实际已进入试卷生成且没有 OOM/重启。候选显式区分 connect、accept、headers/body 和业务 timeout，并以 `AI_WORKER_TIMEOUT` 保留根因。更重要的是，transport timeout 不再决定长任务生死：已经完成的 provider 阶段与费用 UUID 可从 checkpoint/spool 恢复。评测必须包含“provider 成功、callback 失败、新 lease 恢复”的故障样本，断言 provider request 次数不增加、成本 event 只有一条、quota/Note 只完成一次。
+2026-08-12 的原始故障在 301.896 秒触发 Node/Undici 响应头 timeout，旧 catch 又把它误报为 `AI_WORKER_UNREACHABLE`；worker 实际已进入试卷生成且没有 OOM/重启。生产实现显式区分 connect、accept、headers/body 和业务 timeout，并以 `AI_WORKER_TIMEOUT` 保留根因。更重要的是，transport timeout 不再决定长任务生死：已经完成的 provider 阶段与费用 UUID 可从 checkpoint/spool 恢复。评测必须持续包含“provider 成功、callback 失败、新 lease 恢复”的故障样本，断言 provider request 次数不增加、成本 event 只有一条、quota/Note 只完成一次。
 
 2026-08-11 生产 gate 处理固定 PDF/DOCX/PPTX/chart，chart 仅恢复 1 个视觉范围，确认恶意注入拒绝、安全教材放行、39 个进度事件和评分；220 页/366,412 字符 canary 的主/子进程峰值约 101.8/211.9 MiB。登录用户 smoke 完成生成、评分、双额度、usage、来源与结果删除及临时目录清理。该样本集不覆盖真实用户所有复杂课件或攻击方式，持续评测仍是必需项。
 
@@ -182,7 +182,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 ### 5.5 知识图谱
 
-节点 ID 唯一、边端点存在、无孤立/重复（除非合理）、标签可读、关系有来源、层级/依赖符合课程语义。候选 `GeneratedKnowledgeGraphV1` 还必须验证：sourceOrder 尽量遵循材料阅读顺序；每个节点有 self-contained explanation、key details、可用时的 examples/formulas、常见误区、自测题、keywords 和至少一个有效 source block；edge 只用受限 relation 且 explanation 可解释。若产品声明 DAG，才把环作为错误；否则记录环与关系类型，不能凭视觉漂亮判断质量。
+节点 ID 唯一、边端点存在、无孤立/重复（除非合理）、标签可读、关系有来源、层级/依赖符合课程语义。生产 `GeneratedKnowledgeGraphV1` 还必须验证：sourceOrder 尽量遵循材料阅读顺序；每个节点有 self-contained explanation、key details、可用时的 examples/formulas、常见误区、自测题、keywords 和至少一个有效 source block；edge 只用受限 relation 且 explanation 可解释。若产品声明 DAG，才把环作为错误；否则记录环与关系类型，不能凭视觉漂亮判断质量。
 
 节点问答单独报告 groundedness、问题覆盖、source insufficiency 诚实度、引用 precision/recall、相邻节点越界率、prompt injection 成功率和用户可理解度。输入上下文只能包含所选节点、最多 20 个相邻节点和所选节点 sourceRefs 允许的 DocumentIR blocks；回答引用越界为 0 容忍结构失败。hover/click 能显示详情只证明渲染，不证明语义质量。
 
@@ -312,7 +312,7 @@ job 状态至少：`queued/processing/validating/.../succeeded/failed/cancelled`
 - 服务间鉴权、输入限制、净化、trace/usage schema；
 - 明确第三方许可证，只使用商业兼容实现。
 
-生产 Materials 试卷已完成；其它产物与 Courses 文件导入尚未复用。
+生产 Materials 试卷与知识图谱已完成；Knowledge list、独立 Quiz 与 Courses 文件导入尚未复用。
 
 ### Phase 1：真实解析
 

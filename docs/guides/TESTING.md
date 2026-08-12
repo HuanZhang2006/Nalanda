@@ -364,7 +364,7 @@ curl -fsS http://localhost:8000/health
 
 内部生成/评分路由需要 token、短期 Storage URL 和回调，不提供无认证 curl 示例，避免泄漏。真实固定 fixture gate 使用 `python3 scripts/smoke-material-ai-provider.py`，必须由受保护环境提供 OpenRouter 与临时 Supabase fixture；它不等于浏览器/RLS E2E。
 
-API 测试另覆盖 AI 鉴权/owner/格式、idempotency、quota reserve/consume/release、Redis 投递丢失后重投、预算/ZDR/坏响应、objective grading、deadline、revision/operation replay 和三次 lease 恢复。0046–0048 候选还覆盖显式 Undici `headersTimeout/bodyTimeout`、接收 timeout 与业务预算的分离、`AI_WORKER_TIMEOUT`/`AI_WORKER_UNREACHABLE` 映射、202 接收、增量 usage 回调、checkpoint stage 不倒退、同一 job 恢复、恢复期限延长，以及过期/次数耗尽后持久终态与 checkpoint 清理。`RUN_REDIS_E2E=true` 时 `ai-queue.service.integration.test.ts` 用真实 BullMQ/Redis 验证 UUID execution/reconcile，并证明前一任务仍持有 processing lease 时后一任务不会被 FastAPI 接收；默认 skip 不算真实 Redis 证据。fake DB/fetch 仍不证明真实 PostgREST 锁、RLS、迁移事务或 provider。
+API 测试另覆盖 AI 鉴权/owner/格式、idempotency、quota reserve/consume/release、Redis 投递丢失后重投、预算/ZDR/坏响应、objective grading、deadline、revision/operation replay 和三次 lease 恢复。0046–0048 覆盖显式 Undici `headersTimeout/bodyTimeout`、接收 timeout 与业务预算的分离、`AI_WORKER_TIMEOUT`/`AI_WORKER_UNREACHABLE` 映射、202 接收、增量 usage 回调、checkpoint stage 不倒退、同一 job 恢复、恢复期限延长，以及过期/次数耗尽后持久终态与 checkpoint 清理。`RUN_REDIS_E2E=true` 时 `ai-queue.service.integration.test.ts` 用真实 BullMQ/Redis 验证 UUID execution/reconcile，并证明前一任务仍持有 processing lease 时后一任务不会被 FastAPI 接收；默认 skip 不算真实 Redis 证据。fake DB/fetch 仍不证明真实 PostgREST 锁、RLS、迁移事务或 provider。
 
 ## 8. 文档测试
 
@@ -455,7 +455,7 @@ python3 scripts/smoke-material-ai-provider.py
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | 其它 AI 产物（未来） | 新 schema、parser/prompt/eval + API/RLS/jsdom/Playwright + 真实 provider gate；不得复用试卷 gate 推断质量 |
 | Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；每次关键发布另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
-| Materials AI 可恢复任务/知识图谱（0046–0048 候选） | Python 回调断线/checkpoint/usage spool/graph/Q&A + API timeout 分类/202/回调/同 job retry unit + 真实 Redis + 0007→latest/空库/lint + 双用户 RLS/权限/过期清理 + Materials/My Notes jsdom + fake-provider Chromium；发布前另跑真实 DeepSeek/MiMo 图谱、节点问答、来源引用、回调断线恢复与费用账本 gate，最后做登录用户生产 smoke |
+| Materials AI 可恢复任务/知识图谱（生产 0046–0048） | Python 回调断线/checkpoint/usage spool/graph/Q&A + API timeout 分类/202/回调/同 job retry unit + 真实 Redis + 0007→latest/空库/lint + 双用户 RLS/权限/过期清理 + Materials/My Notes jsdom + fake-provider Chromium；关键发布另跑真实 DeepSeek/MiMo 图谱、节点问答、来源引用、回调断线恢复与费用账本 gate，最后做登录用户生产 smoke |
 | nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 
@@ -480,6 +480,8 @@ python3 scripts/smoke-material-ai-provider.py
 2026-08-10 的安全/限流 Stage A 样本：PR #51 run `31367746106`、PR #52 run `31370961413` 与 main run `31371608883` 通过 docs/lint/typecheck、Web/API tests、build、真实 Redis Lua、0007→0040、空库/database lint、双用户 RLS/Storage 和 Chromium Playwright；Playwright 的供应商仍为 fake。plan `31368447660` 只列 0039–0040，protected run `31369657292` 保留 artifact `9055783205` 后应用到 0040。该 run 暴露的远端 stdin 假成功由 #52 回归修复；最终 plan `31372198037` 为空，protected run `31372888441` 以 artifact `9057062920` 再验证远端并激活 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5`。真实 Redis/nginx/Azure/OpenRouter/Fish/Courses gates 与公网 `deps.redis=ok`、auth/admin 401、注册 RateLimit headers 是独立生产证据；OpenRouter 的瞬时超时/429 均在切流前阻断，不能算成功测试。时间列撤权的未来 0044–0045 仍待 24 小时 go/no-go。
 
 2026-08-11 的 Materials AI 样本：PR #56 run `31462982923`、PR #57 run `31465041901`、main run `31465776658` 均通过 docs/lint/typecheck、104 个 API、105 个 Web/jsdom、25 个 Python AI 测试、真实 Redis、0007→0043、空库/lint、双用户 RLS/Storage、AI Docker 和 fake-provider Chromium Playwright。只读 plan `31465816321` 确认 0043/空 dry-run；protected run `31467153739` 创建 artifact `9092230348`，再跑 220 页资源 canary、真实 DeepSeek/MiMo 固定格式/视觉/注入/评分 suite、真实 Azure/OpenRouter/Courses gate和登录用户 Materials→Notes→Exam→grading→delete，最终激活 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`。更早 `31463661987` 的 workflow 假绿被服务器 image/Web/flag 和公网 404 独立检查识别，修复裸 `compose exec` heredoc stdin 后才重发；因此 Actions success 不能代替独立生产 smoke。
+
+2026-08-12 的可恢复任务/知识图谱样本：PR #59–#63 与 main run `31572476649` 通过 docs/lint/typecheck、API/Web/Python、真实 Redis、0007→0048、空库/lint、双用户 RLS/Storage、AI Docker 和 fake-provider Chromium；fake provider 不构成真实模型证据。只读 plan `31573329799` 确认远端 0048/up to date/空 dry-run；最终 protected run `31574116130` 创建加密恢复点并通过 2G canary、真实 DeepSeek/MiMo PDF/DOCX/PPTX/chart/injection/grading/graph/Q&A、真实 Azure/OpenRouter/Courses 及登录用户完整链路，激活 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`。独立公网/服务器复核确认同源 API/AI/Web、feature flag、Supabase/Redis/AI readiness 和匿名 401。前序 Gemma 429、磁盘 99%、2xx 正文 timeout 与 prewarm 500 均阻断候选并恢复旧应用，不能计作成功测试。
 
 ## 11. 新增测试约定
 

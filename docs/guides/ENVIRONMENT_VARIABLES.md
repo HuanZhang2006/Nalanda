@@ -38,7 +38,7 @@
 | `RATE_LIMIT_HMAC_SECRET` | 生产 0039–0040 必需 | **最高机密** | Redis service/health | 至少 32 bytes；只对 IP/email 派生 HMAC，不得与 Redis、JWT、备份或供应商 secret 复用。 |
 | `POINT_ABUSE_SCANNER_ENABLED` | 可选，默认启用（除显式 `false`） | 受限配置 | points scanner | Redis 已配置时是否周期扫描协同信号；CI Playwright 显式 false 避免后台不确定性。 |
 | `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | 可选，默认 300，最小 60 | 公开运维配置 | points scanner | 扫描周期；当前 Redis lock TTL 为 240 秒。 |
-| `AI_SERVICE_URL` | 生产 0041–0043 必需 | 内部配置 | AI internal client/health | FastAPI 内网基址，生产为 `http://ai:8000`；不可指向公网。 |
+| `AI_SERVICE_URL` | 生产 0041–0048 必需 | 内部配置 | AI internal client/health | FastAPI 内网基址，生产为 `http://ai:8000`；不可指向公网。 |
 | `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation/grading processor | worker 的 progress/usage/checkpoint/complete/fail 回调 API 内网基址，生产为 `http://api:3000/api`。 |
 | `AI_INTERNAL_TOKEN` | 生产必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
 | `FEATURE_MATERIAL_AI` | 安装默认 false；当前生产 true | 公开配置 | Materials AI API/Web | 总开关；部署安装后先保持 false，只在 readiness/canary/真实 gate 通过后开启。 |
@@ -107,7 +107,7 @@
 
 `OPENROUTER_ASSESSMENTS_PER_DAY=500` 是语义判分默认值；STT 独立使用 20/分钟、300/本地日和 5,000,000 micro-USD/月。修改本文或 `.env.example` 不会改写正在运行的服务器；0037–0038 已于 2026-08-04 通过受保护安装脚本原子写入 STT 非密钥配置并复用既有 secret。后续发布/轮换仍须单独核对容器内生效值且不得打印 key。
 
-## 4. FastAPI Materials AI 运行时变量（生产 0041–0043 + 0046 候选）
+## 4. FastAPI Materials AI 运行时变量（生产 0041–0048）
 
 来源模板：`apps/ai/.env.example`。本地使用进程私有环境；生产由受保护脚本生成 mode-600 `/opt/nalanda/.ai.env`。worker **不会**收到 service-role、Redis、Azure、JWT 或 Web key。
 

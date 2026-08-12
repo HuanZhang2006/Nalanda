@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库与应用当前到 0043，Materials AI 已通过真实 OpenRouter/ZDR、资源 canary 与受保护发布上线。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
+当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库与应用当前到 0048，Materials AI 试卷、可恢复任务与知识图谱已通过真实 OpenRouter/ZDR、资源 canary 与受保护发布上线。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
 
 ## 2. 前置条件
 
@@ -237,7 +237,7 @@ chmod 600 .env
 curl -fsS http://localhost:8000/health
 ```
 
-health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000` 与和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`。生成/评分接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与候选 “Organize knowledge points”。
+health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000` 与和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`。生成/评分接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与 “Organize knowledge points”。
 
 运行 Python 门禁：
 
@@ -270,7 +270,7 @@ curl -I http://localhost:5173
 9. 开启音频预热后选定单元：确认 manifest 从 pending 变 ready，当前题及后四词进入浏览器 Cache Storage；“下载单元音频”可续传、显示失败/配额暂停并可删除本地副本。浏览器即使授予 persistent storage，仍可能在存储压力下回收。
 10. 在开发者工具设 Offline 后连续完成至少两题，确认反馈立即出现且完成页显示等待同步；恢复网络后同一 attempt UUID 串行提交，刷新不会重复累计错误。完整 Web app shell/PWA 离线启动不在此功能范围。
 11. 开始包含拼写的学习/复习时分别验证：不勾选时行为不变；勾选限时并设 3 秒时，输入出现后倒计时并只自动提交一次；同时勾选翻译前测时，计时必须等语义回答通过后才开始。语义错误直接形成一次 spelling 错误，供应商超时/失败只显示可重试错误，不增加 wrong count。正确和错误结果都要同时显示英文拼写与分开的翻译。
-12. Materials 候选链路：上传无个人数据文件，创建试卷并确认内部 `/jobs` 在 provider 完成前已返回；生成知识图谱后确认节点按来源顺序、hover/detail 可读，节点提问只引用该节点来源。模拟 retryable failure 时 Resume 必须使用同一 job ID；超过 TTL 后返回稳定过期错误且 checkpoint/worker 目录最终清理。
+12. Materials 生产等价链路：上传无个人数据文件，创建试卷并确认内部 `/jobs` 在 provider 完成前已返回；生成知识图谱后确认节点按来源顺序、hover/detail 可读，节点提问只引用该节点来源。模拟 retryable failure 时 Resume 必须使用同一 job ID；超过 TTL 后返回稳定过期错误且 checkpoint/worker 目录最终清理。
 
 本地当日无法验证“两次不同日期复习即熟练”时，不要手改生产数据；使用一次性本地 Supabase RLS fixture，测试会按 profile 时区生成两个不同 `local_date`。
 
@@ -348,11 +348,11 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
 - production 模式必须显式设总开关，分享/市场还需各自子开关；
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移 0043，而不是停在旧 migration history；生产有证据到 0043，任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- 确认本地数据库已 reset 到仓库最新迁移 0048，而不是停在旧 migration history；生产有证据到 0048，任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
 
 ### Materials AI 一直 queued、readiness 失败或返回安全错误
 
-- 确认本地迁移已到 0043、Redis 在运行、API/worker 使用同一个 `AI_INTERNAL_TOKEN`，且 API 的 callback 为 `http://localhost:3000/api`。
+- 确认本地迁移已到 0048、Redis 在运行、API/worker 使用同一个 `AI_INTERNAL_TOKEN`，且 API 的 callback 为 `http://localhost:3000/api`。
 - `FEATURE_MATERIAL_AI=false` 是默认安全状态；只在 fake/真实 worker health 就绪后本地开启。`MATERIAL_AI_FAKE_PROVIDER=true` 只能用于非 production 自动化。
 - worker health 的 `openrouter/libreoffice/tempDisk/internalAuth` 会指出依赖；低于 512MiB 空间、单 job 超 1GiB、Office >120 秒都会失败并释放额度。
 - `PROMPT_INJECTION_REJECTED` 同时覆盖 malicious/uncertain；不要通过改 prompt 或前端忽略结果绕过。安全教材明确分类为 `benign_educational` 才继续。
@@ -388,8 +388,8 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前生产链路**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0043 RLS 与真实 OpenRouter/2G canary 发布门；这些门禁已用于 2026-08-11 发布。仍缺 ESLint/统一格式化、近生产规模 staging 和持续真实模型质量监控。
-- **目标**：开放 Knowledge list/Quiz/Knowledge graph、Notes 编辑/导出，并建立持续真实质量评测。
+- **当前生产链路**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0048 RLS 与真实 OpenRouter/2G canary 发布门；这些门禁已用于 2026-08-12 发布。仍缺 ESLint/统一格式化、近生产规模 staging 和持续真实模型质量监控。
+- **目标**：开放 Knowledge list/独立 Quiz、Notes 编辑/导出，并建立持续真实质量评测；Knowledge graph/节点问答已上线。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 
 在这些能力落地前，以仓库实际脚本和本文“当前实现”描述为准。

@@ -20,7 +20,7 @@ nalanda/
 ├─ apps/
 │  ├─ web/      React + Vite（生产前端，已落地）
 │  ├─ api/      NestJS 核心后端（已落地：health/me/auth）
-│  ├─ ai/       Python FastAPI Materials AI worker（生产 0041–0043）
+│  ├─ ai/       Python FastAPI Materials AI worker（生产 0041–0048）
 │  ├─ desktop/  Electron（目标；目录尚不存在）
 │  └─ mobile/   React Native（目标；目录尚不存在）
 ├─ packages/
@@ -45,7 +45,7 @@ nalanda/
 ## 4. 共享包
 
 ### packages/types
-纯类型，无运行时。Courses 与 0041 Materials AI 已由 Web/API 共用 camelCase 契约；`GeneratedExamV1`、job/quota/Notes/Exam attempt 不复用历史原型短字段，Nest 显式处理数据库 snake_case，FastAPI Pydantic 以 strict camelCase JSON 对齐。0046–0048 候选进一步共享 `GeneratedKnowledgeGraphV1`、node answer 和 resumable job fields；Knowledge list/独立 Quiz 仍是未来契约，候选 graph 在受保护发布前也不能从类型存在推断线上已接通。
+纯类型，无运行时。Courses 与 Materials AI 已由 Web/API 共用 camelCase 契约；`GeneratedExamV1`、job/quota/Notes/Exam attempt 不复用历史原型短字段，Nest 显式处理数据库 snake_case，FastAPI Pydantic 以 strict camelCase JSON 对齐。生产 0046–0048 进一步共享 `GeneratedKnowledgeGraphV1`、node answer 和 resumable job fields；Knowledge list/独立 Quiz 仍是未来契约。类型存在本身仍不能替代生产发布证据。
 
 ### packages/ui
 设计系统的「样式底座」：

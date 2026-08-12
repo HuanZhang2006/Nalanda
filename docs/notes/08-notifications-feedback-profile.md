@@ -4,7 +4,7 @@
 > - **内容**：记录通知面板、反馈和 Profile/Growth 的当前数据流与前端函数。
 > - **作用**：解释三个真实 Supabase 模块及其联动，并标明客户端字段与服务端字段的权限边界。
 > - **何时更新**：Profile 字段/权限、通知刷新方式、反馈状态机或徽章/等级规则变化时。
-> - **状态基线**：2026-08-11。生产总 history 已到 0043；Feedback 只读/新增和 points 日上限回执/通知已上线。
+> - **状态基线**：2026-08-12。生产总 history 已到 0048；Feedback 只读/新增和 points 日上限回执/通知已上线。
 
 > 文件：`...0004_notifications_feedback.sql`（表）、`...0006_*`（旧 points）、`...0007_*`（streak）、`...0008_security_points_ledger.sql`（敏感列与 points 账本）、`...0011_learning_courses.sql`（timezone 与课程徽章）、`...0039_security_integrity_rate_limit_points_abuse.sql`（生产 Feedback/points 收口）、`apps/web/src/legacy/{notifications,feedback,profile}.ts`、`apps/api/src/{learning,points}`。
 

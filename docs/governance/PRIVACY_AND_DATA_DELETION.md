@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-08-11。本文不是法律意见或已发布隐私政策；生产已到 0043，HMAC 化限流审计、points 审核/协同信号和 Materials AI 第一阶段已启用。Materials AI 只处理用户明确选择的 Materials 文件，使用私有解析缓存和 Notes，并在任务结束清理过程文件；逐账号同意、真实 ZDR/provider 和受保护发布门禁已经实现，但不替代正式第三方/跨境法律审查。STT 与既有 Speech 均不持久化用户 WAV，录音只在请求内存中转发并立即丢弃。
+> **状态基线：**2026-08-12。本文不是法律意见或已发布隐私政策；生产已到 0048，HMAC 化限流审计、points 审核/协同信号和 Materials AI 试卷/恢复/知识图谱已启用。Materials AI 只处理用户明确选择的 Materials 文件，使用私有解析缓存和 Notes，并在任务结束或恢复 TTL 到期清理过程文件；逐账号同意、真实 ZDR/provider 和受保护发布门禁已经实现，但不替代正式第三方/跨境法律审查。STT 与既有 Speech 均不持久化用户 WAV，录音只在请求内存中转发并立即丢弃。
 
 ## 1. 原则与责任
 
@@ -39,7 +39,7 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | Materials AI 解析/产物（生产 0041） | 私有 `ai_material_parse_cache`、`notes/note_materials/note_artifacts` | 同文件复用 DocumentIR；保存用户请求的完整试卷/答案/来源 | cache 随 material CASCADE；删除来源可保留到 Unfiled 或连结果删除；用户可删除 Notes |
 | 在线考试（生产 0041） | `exam_attempts/answers/operations`、浏览器 IndexedDB draft | deadline、草稿、成绩、AI feedback 和幂等重放 | note/Auth 删除 CASCADE；登出不让草稿跨账号提交；完整 DSAR/一键删除仍未实现 |
 | AI provider 计量（生产 0041） | `ai_provider_usage_events` | model/token/micro-USD/latency/request ID/ZDR/status | 不含 prompt/正文/答案/raw response；删除 Note/答卷后保留不可变 subject UUID 与成本事实，防止通过删除内容绕过预算；随 Auth 用户删除 CASCADE |
-| AI 恢复与知识图谱（0046–0048 候选） | DB `generation_job_checkpoints/exam_grading_checkpoints/knowledge_node_questions`，worker 0700 local checkpoint/usage spool，graph artifact | 断线或容器替换后恢复已验证生成/评分阶段、记录知识图谱及用户对所选节点的问题/答案 | DB checkpoint 有 owner/expiry，终态/TTL 清除；local 副本不备份且成功/终态/TTL 清除；Q&A 随 note/user CASCADE；event usage 不保存 prompt/正文/raw response |
+| AI 恢复与知识图谱（生产 0046–0048） | DB `generation_job_checkpoints/exam_grading_checkpoints/knowledge_node_questions`，worker 0700 local checkpoint/usage spool，graph artifact | 断线或容器替换后恢复已验证生成/评分阶段、记录知识图谱及用户对所选节点的问题/答案 | DB checkpoint 有 owner/expiry，终态/TTL 清除；local 副本不备份且成功/终态/TTL 清除；Q&A 随 note/user CASCADE；event usage 不保存 prompt/正文/raw response |
 | 支付数据 | 当前无 Stripe/订单表 | 未实现 | 未来仅保存必要 Stripe ID/状态，不保存卡号/CVC |
 | 限流/滥用审计（生产 0039） | 私有 Redis、`api_abuse_events` | 短时滑动窗口、分布式扫描锁、路由组/规则/桶级聚合 | IP/规范化邮箱只保存独立 secret 派生 HMAC；不保存原 IP、邮箱、正文或课程数据；DB 聚合默认 30 天，Redis key/AOF 是可重建运行副本 |
 | 运维数据 | 主机/容器/GitHub/Supabase 日志 | 部署和排障 | 普通日志不得记录原 IP/邮箱/正文/secret；当前仍缺统一导出和删除编排 |

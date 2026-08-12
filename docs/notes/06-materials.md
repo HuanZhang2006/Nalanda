@@ -84,16 +84,16 @@ and exists (select 1 from public.courses c
 - 列表分页 / 搜索 / 排序；更稳定的 PDF.js / Office 服务端转图。
 - 上传大小限制、类型白名单、进度条。
 
-### 8.1 Materials AI 试卷（生产 0041–0043）
+### 8.1 Materials AI 试卷与知识图谱（生产 0041–0048）
 
-每行新增 “Use AI” 二级菜单；生产 Generate test paper 可配置语言、难度、15–240 分钟、20–200 分、六类题型、答案详略和 focus；生产 Knowledge list/Quiz/Knowledge graph 仍显示 Coming soon。0046–0048 候选已把 “Organize knowledge points” 接为真实知识图谱入口，受保护发布完成后才可更新本段生产状态。首次按用户记录第三方/ZDR/私有 parse cache 同意。
+每行新增 “Use AI” 二级菜单；生产 Generate test paper 可配置语言、难度、15–240 分钟、20–200 分、六类题型、答案详略和 focus；“Organize knowledge points” 已是生产知识图谱入口，Knowledge list/独立 Quiz 仍显示 Coming soon。首次按用户记录第三方/ZDR/私有 parse cache 同意。
 
 API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/图片10MB，再创建短期 signed URL与 Postgres job/quota reservation；BullMQ 只投 UUID，FastAPI 解析并回调进度。页面每2秒轮询，后台退避到10秒，离开/刷新不取消。成功试卷落在同一 `courses.id` 的 My Notes；删除材料/科目可保留到 Unfiled 或同时删除 AI 结果，两者都取消任务、清 parse cache和过程文件。
 
-生产数据库与应用当前已到 0043。2026-08-11 的受保护发布通过真实 DeepSeek/MiMo、220 页 Office canary、登录用户生成/评分/删除、临时目录清理和独立公网 readiness 后开启 `FEATURE_MATERIAL_AI`。Storage 文件删除仍是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
+生产数据库与应用当前已到 0048。2026-08-12 的受保护 run `31574116130` 通过真实 DeepSeek/MiMo、2G Office canary、登录用户生成/评分/图谱/节点问答/删除、临时目录清理和独立公网 readiness 后激活 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` 并开启 `FEATURE_MATERIAL_AI`。Storage 文件删除仍是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
 
-### 8.2 可恢复长任务与知识图谱（0046–0048 候选，尚未上线）
+### 8.2 可恢复长任务与知识图谱（生产 0046–0048）
 
-候选 API 只等待 worker 202 接收，后续由内部认证 callback 持久化 progress、usage、checkpoint 与 terminal result，避免单个生成占用五分钟以上 HTTP。显式 Undici Agent 将 connect/accept/headers/body timeout 分开，响应头超时映射 `AI_WORKER_TIMEOUT`；用户可在 `resumeUntil` 前点击 Resume 继续同一 job。数据库 checkpoint 与 worker 0700 local checkpoint/usage spool 合并最高有效阶段，已完成 provider 阶段不重复调用，usage event UUID 不重复计费；终态或默认 24 小时 TTL 清理残留。
+生产 API 只等待 worker 202 接收，后续由内部认证 callback 持久化 progress、usage、checkpoint 与 terminal result，避免单个生成占用五分钟以上 HTTP。显式 Undici Agent 将 connect/accept/headers/body timeout 分开，响应头超时映射 `AI_WORKER_TIMEOUT`；用户可在 `resumeUntil` 前点击 Resume 继续同一 job。数据库 checkpoint 与 worker 0700 local checkpoint/usage spool 合并最高有效阶段，已完成 provider 阶段不重复调用，usage event UUID 不重复计费；终态或默认 24 小时 TTL 清理残留。
 
-“Organize knowledge points” 与试卷共用文件解析/两次注入审查/失败范围视觉恢复，随后生成 `GeneratedKnowledgeGraphV1`。节点按 sourceOrder 保留材料顺序并包含摘要、详细解释、关键点、例子、公式、常见误区、自测题、关键词和精确 source refs；边使用受限关系。My Notes 用现有字体/token 渲染 source-ordered graph，hover 显示摘要，点击显示完整 detail 并可针对该 node 提问。问答只获得所选节点、相邻节点和允许的 source blocks，问题含注入信号会拒绝。整个 Materials/My Notes 候选 UI 固定英文，不因全局中文 locale 混入中文文案；不扩大现有 React 迁移。
+“Organize knowledge points” 与试卷共用文件解析/两次注入审查/失败范围视觉恢复，随后生成 `GeneratedKnowledgeGraphV1`。节点按 sourceOrder 保留材料顺序并包含摘要、详细解释、关键点、例子、公式、常见误区、自测题、关键词和精确 source refs；边使用受限关系。My Notes 用现有字体/token 渲染 source-ordered graph，hover 显示摘要，点击显示完整 detail 并可针对该 node 提问。问答只获得所选节点、相邻节点和允许的 source blocks，问题含注入信号会拒绝。Materials/My Notes UI 固定英文，不因全局中文 locale 混入中文文案；本次未扩大现有 React 迁移。

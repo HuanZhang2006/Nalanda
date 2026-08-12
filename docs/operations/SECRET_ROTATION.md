@@ -30,7 +30,7 @@
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；Japan East 基础、持久队列、重复词复用与裁剪评分 gate 均已通过 |
 | `OPENROUTER_API_KEY` | GitHub `production` → API `.env` 与隔离 `.ai.env` | Courses 语义/STT；生产 Materials DeepSeek/MiMo | 否 | 一个源 secret、两类服务端消费者；必须跑各自真实 gate，fake 不得进入生产 |
-| `AI_INTERNAL_TOKEN` | GitHub `production` → API `.env` 与隔离 `.ai.env` | NestJS↔FastAPI 内部认证/回调 | 否 | 生产 0041–0043；独立 32-byte hex，两端必须原子切换 |
+| `AI_INTERNAL_TOKEN` | GitHub `production` → API `.env` 与隔离 `.ai.env` | NestJS↔FastAPI 内部认证/回调 | 否 | 生产 0041–0048；独立 32-byte hex，两端必须原子切换 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `MODERATION_ADMIN_USER_IDS` | API `.env` | Points signal/reward 审核 allowlist | 否 | 敏感授权配置；0039 兼容期为空才回退 Course Market allowlist |
 | `REDIS_PASSWORD` | GitHub `production` secret → `/opt/nalanda/.redis.env`；API `.env` 只持含密码的 `REDIS_URL` | 私有 Redis 与 Nest ioredis | 否 | 生产 0039；独立 32-byte hex，Redis 容器不接收其它 API secrets |
@@ -174,7 +174,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 泄露时立即替换两个值中受影响者并审计 `api_abuse_events`、429/503、注册和 provider 用量。Redis AOF 不是 points 事实库；不得通过删除 claim/ledger 来“同步”新窗口。
 
-## 11. Materials AI 内部 token（生产 0041–0043；0046–0048 候选双向回调）
+## 11. Materials AI 内部 token（生产 0041–0048 双向回调）
 
 `AI_INTERNAL_TOKEN` 是 API 与 FastAPI 双向内部调用的独立 32-byte hex；候选 202 协议中不仅保护 API→worker 接收，也保护 worker→API 的 progress、usage、checkpoint、complete/fail 回调。它不得等于 Redis password、HMAC、JWT、provider 或备份 key。GitHub `production` environment 保存输入，受保护安装脚本经 SSH stdin 同时原子写入 `/opt/nalanda/.env` 和隔离 `.ai.env`，两文件 mode 600，不打印值；0700 checkpoint/usage spool 只保存结果/计量 payload，不得保存 token/header。
 

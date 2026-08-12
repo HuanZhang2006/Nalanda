@@ -3,7 +3,7 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-11。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-08-12。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
@@ -11,10 +11,12 @@
 
 - 时间列撤权 contract 顺延为未来 0044–0045，只有 0039–0040 兼容 release 连续观察至少 24 小时且 go/no-go 记录通过后才能创建。
 
+## [0.12.0] - 2026-08-12
+
 ### Added
 
 - Materials 新增 “Organize knowledge points”：固定 DeepSeek 生成按来源顺序、带严格引用的 `GeneratedKnowledgeGraphV1`，My Notes 以交互图谱、hover 解释、点击详情呈现，并可对选定节点发起限定来源的问答。Knowledge list 与独立 Quiz 继续显示 Coming soon。
-- 追加候选迁移 0046–0048：`generation_job_checkpoints`、`exam_grading_checkpoints`、`knowledge_node_questions`、单调 usage `event_id`、可恢复 job 字段、知识图谱 artifact 约束、service-role-only 工作流和失败关闭权限断言。
+- 追加迁移 0046–0048：`generation_job_checkpoints`、`exam_grading_checkpoints`、`knowledge_node_questions`、单调 usage `event_id`、可恢复 job 字段、知识图谱 artifact 约束、service-role-only 工作流和失败关闭权限断言。
 - 真实 provider/public smoke 候选覆盖知识图谱、节点问答、来源顺序、ZDR、增量成本账本和级联删除；fake Playwright 扩展到试卷、评分、图谱和节点问答完整路径。
 
 ### Changed
@@ -42,6 +44,13 @@
 ### Security
 
 - 新 checkpoint 表不开放客户端读取；知识问答仅 owner 可读且不能由客户端写。所有新 RPC 撤销 `public/anon/authenticated` EXECUTE，问题和来源内容继续按不可信数据处理，不能改变模型、工具或 system prompt。
+
+### Release evidence
+
+- PR #59、#60、#61、#62 和 #63 依次完成主功能、Gemma 瞬时重试、磁盘/回滚加固、完整响应体 timeout 重试和 Courses 音频幂等瞬时重试；最终 main SHA 为 `3c095a55ced21cee11a1b3131dd2889ec1f70733`。
+- 独立只读 plan run `31573329799` 确认生产已到 0048、remote up to date 且 dry-run 为空。最终受保护 run `31574116130` 再创建加密恢复点、验证远端 history/lint，并完整通过质量、本地 Supabase、RLS/Storage、fake-provider Chromium、2G canary、真实 DeepSeek/MiMo/Azure/OpenRouter/Courses 与登录用户 Materials AI 门禁。
+- 不可变 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` 于 2026-08-12 激活，API/AI image 与 Web symlink 同源，`FEATURE_MATERIAL_AI=true`。真实 Materials suite 返回 graph nodes 3、progress events 55、grading 6；真实 Azure 返回 accuracy 98/pronunciation 98.8；Courses gate 返回 4 个生成/4 个复用、assessment 98.2 和中文 STT matched；登录用户完整链路返回 generation quota 3、grading quota 1、usage events 9、grounded node question succeeded、source/results deleted。独立公网复核：首页 200，`deps.supabase=ok/deps.redis=ok`，AI worker/queue ok，匿名 `/api/me`、`/api/profile/ai-quota` 和 points admin 均为 401；服务器仍有 9.8 GiB 可用空间。
+- 发布链没有掩盖失败：前序候选分别被一次 Gemma 429、主机磁盘 99%、Gemma 2xx 正文流 12 秒 timeout 和 Courses prewarm 上游 500 阻断并恢复旧应用。对应修复均先经独立测试与完整 CI；数据库保持 forward-fix，不把失败候选计作上线。
 
 ## [0.11.1] - 2026-08-11
 

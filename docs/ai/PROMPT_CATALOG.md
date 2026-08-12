@@ -3,7 +3,7 @@
 > **本文内容：**集中记录 Nalanda 当前生产、发布门禁和测试中所有发送给 AI/语音供应商的自然语言 prompt、动态输入模板、输出 schema、安全约束、模型、代码位置与版本边界；同时区分不属于 AI prompt 的浏览器对话框和题目字段。  
 > **作用：**作为全项目唯一的 prompt 人工维护入口，回答“每一环节实际给模型发送了什么”，并要求 prompt、代码、schema、评测和发布证据同步演进，避免在多个蓝图或实现笔记中维护互相冲突的副本。  
 > **何时更新：**任何 system/user prompt、模型、供应商、动态字段、schema、temperature/token/tool/reasoning/ZDR 参数、安全分类、版本号或真实评测样本变化时，必须与实现同一 PR 更新；新增 AI 能力必须先登记再启用。  
-> **状态基线：**2026-08-12。生产 Materials AI 使用固定 DeepSeek/MiMo 生成试卷/评分；Courses 翻译语义判定使用 Gemma，翻译语音输入使用 Fish Audio STT，发音合成与评分使用 Azure Speech。0046–0048 候选新增 Materials Knowledge graph 与节点问答 prompt，受保护发布完成前只可称候选；Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
+> **状态基线：**2026-08-12。生产 Materials AI 使用固定 DeepSeek/MiMo 生成试卷/评分/Knowledge graph 与节点问答；Courses 翻译语义判定使用 Gemma，翻译语音输入使用 Fish Audio STT，发音合成与评分使用 Azure Speech。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
 
 ## 1. 维护规则与范围
 
@@ -37,10 +37,10 @@ Catalog ID 是本文的稳定评审标识，不会发送给模型。当前代码
 | `MAT-EXAM-REVIEW-V1` | 试卷 groundedness/答案/引用语义复核 | DeepSeek | 有 | `exam_review_v1` | 生产 |
 | `MAT-EXAM-REPAIR-V1` | 最多一次结构化修复 | DeepSeek | 有 | `generated_exam_repair_v1` | 生产，按需 |
 | `MAT-EXAM-GRADE-V1` | 主观题批量评分 | DeepSeek | 有 | `exam_grading_v1` | 生产 |
-| `MAT-GRAPH-GENERATE-V1` | Materials 知识图谱生成 | DeepSeek | 有 | `generated_knowledge_graph_v1` | 0046–0048 候选 |
-| `MAT-GRAPH-REVIEW-V1` | 图谱 groundedness/详细度/顺序复核 | DeepSeek | 有 | `knowledge_graph_review_v1` | 0046–0048 候选 |
-| `MAT-GRAPH-REPAIR-V1` | 图谱最多一次结构化修复 | DeepSeek | 有 | `generated_knowledge_graph_repair_v1` | 0046–0048 候选，按需 |
-| `MAT-NODE-QUESTION-V1` | 所选知识节点问答 | DeepSeek | 有 | `knowledge_node_answer_v1` | 0046–0048 候选 |
+| `MAT-GRAPH-GENERATE-V1` | Materials 知识图谱生成 | DeepSeek | 有 | `generated_knowledge_graph_v1` | 生产 0046–0048 |
+| `MAT-GRAPH-REVIEW-V1` | 图谱 groundedness/详细度/顺序复核 | DeepSeek | 有 | `knowledge_graph_review_v1` | 生产 0046–0048 |
+| `MAT-GRAPH-REPAIR-V1` | 图谱最多一次结构化修复 | DeepSeek | 有 | `generated_knowledge_graph_repair_v1` | 生产 0046–0048，按需 |
+| `MAT-NODE-QUESTION-V1` | 所选知识节点问答 | DeepSeek | 有 | `knowledge_node_answer_v1` | 生产 0046–0048 |
 | `COURSE-TRANSLATION-JUDGE-V1` | 拼写前翻译语义判定 | `google/gemma-4-26b-a4b-it:free` | 有 | `translation_judgment` | 生产，非字面匹配才调用 |
 | `COURSE-TRANSLATION-STT-V1` | 中文翻译语音转文字 | `fish-audio/transcribe-1` | 无自然语言 prompt | 音频 + `language=zh` | 生产 |
 | `COURSE-TTS-V1` | 单词/短语发音合成 | Azure Speech | SSML，不是 LLM prompt | 音频 | 生产 |

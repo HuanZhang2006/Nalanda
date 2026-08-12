@@ -209,17 +209,19 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 2026-08-11 实际记录：只读 plan `31465816321` 确认生产已到 0043且 dry-run 为空；受保护 run `31467153739` 仍先创建 artifact `9092230348`，再验证 history/lint/空 dry-run。220 页 canary、真实 DeepSeek/MiMo、两次临时目录清理和登录用户生成/评分/删除均通过后，release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 才启用 flag。此前 `31463661987` 的绿色状态因 SSH heredoc stdin 被 `compose exec` 消耗而未真正切流，独立服务器/公网核验识别出假绿；当前 workflow 用显式 `</dev/null` helper 和回归测试防止复发。
 
-#### 0046–0048 可恢复任务与知识图谱候选顺序
+#### 0046–0048 可恢复任务与知识图谱发布顺序
 
-本节是尚未发布候选的门禁，不是生产记录：
+以下顺序已在 2026-08-12 的生产发布中执行，并继续作为同类变更门禁：
 
-1. 独立 plan 必须证明远端仍停在 0043，唯一待应用迁移为 0046、0047、0048；不得夹带未来时间列撤权 contract。0048 必须在 0007→latest 和空库两条路径断言表、constraint、RLS、trigger、精确 RPC signature/grant。
+1. 首次发布前的独立 plan 必须证明远端停在 0043且只待应用 0046、0047、0048；后续发布则必须证明远端已到 0048、dry-run 为空。两者都不得夹带未来时间列撤权 contract；0048 必须在 0007→latest 和空库两条路径断言表、constraint、RLS、trigger、精确 RPC signature/grant。
 2. 恢复点成功上传并完成解密/SHA 校验后才 apply。应用后核对旧 0041–0043 同步 worker RPC 仍存在，新应用可用 202 回调协议，上一不可变应用 release 仍可忽略新增表运行。
 3. 先保持 `FEATURE_MATERIAL_AI=false` 启动候选 API/AI；验证 explicit Undici transport timeout、内部 callback token、数据库 checkpoint、worker 本地 checkpoint/usage spool、TTL sweep 和 terminal cleanup。不得通过把所有错误统一延长到 20 分钟来掩盖不可达、响应头 timeout 或无 callback。
 4. 人工注入 API callback 断线：provider 已返回后终止 callback，确认同一 job/新 lease 从 `artifact_ready` 或 `answer_ready` 恢复、不再次调用 provider、event UUID 只写一条费用记录，完成后 DB/local checkpoint 均清除。再验证超过 TTL 的 Resume 返回稳定终态、释放 reservation 且不复活旧产物。
 5. 真实 DeepSeek/MiMo gate 分开验证试卷与知识图谱：节点按 source order，detail/例子/公式/误区/自测与 sourceBlockIds 通过 schema/引用校验；节点问答只能使用选中节点、相邻节点及允许来源，注入样本拒绝。fake provider、jsdom 和 Playwright 不构成该证据。
 6. 最后开启 flag，以登录临时用户完成 exam 与 knowledge graph 两条 Materials→queue→My Notes 路径、hover/click/node Q&A、同 job Resume、quota=实际成功调用数、provider usage、临时目录和测试数据清理。独立核对公网 Web、`deps.supabase=ok/deps.redis=ok`、AI readiness、未认证 401 和当前 release/image/Web symlink。
 7. 数据库仍只 forward-fix。应用异常先关闭 `FEATURE_MATERIAL_AI` 并恢复上一不可变 release；0046–0048 表保留。不得 drop checkpoint/usage rows，也不得手工把失败 job 改成成功或修改额度来“回滚”。
+
+实际记录：只读 plan `31573329799` 确认远端已到 0048且 dry-run 为空；受保护 run `31574116130` 创建并验证加密恢复点，再通过远端 history/lint、完整 CI、本地真实 Supabase/RLS、fake-provider Chromium、2G canary、真实 DeepSeek/MiMo/Azure/OpenRouter/Courses、登录用户 Materials AI 和独立公网/服务器复核。release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` 已激活。此前 Gemma 429、磁盘 99%、Gemma 正文 timeout 与 Courses prewarm 500 都在切流门禁中阻断并保留/恢复旧应用，数据库没有逆向迁移。
 
 ### 8.1 2026-07-21 安全与积分发布记录
 

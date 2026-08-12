@@ -3,7 +3,7 @@
 > **本文内容：**统一定义 points、credits、VIP、法币订单、退款、市场购买和创作者分成，并规定账本、幂等、Stripe 与 UI 边界。  
 > **作用：**作为产品、API、数据库、测试、客服和财务实现经济功能的规范；旧原型或蓝图与本文冲突时，以本文为目标规则并通过 ADR 管理变更。  
 > **何时更新：**奖励、等级、credits 获取/消耗、汇率/套餐、VIP 权益、Stripe 流程、退款/争议、分成/提现、税费或目标市场变化时；任何资金事故后立即复核。  
-> **状态基线：**2026-08-11。生产已验证 0008–0043；课程 +20、九级徽章、服务端权威学习事实，以及 points v2 的冻结自然日奖励决策、每日数量上限、owner receipt、人工 suppress/restore 和只标记协同检测均已上线。Course Market v1 继续只免费克隆，Materials AI 只使用 Free 双额度，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
+> **状态基线：**2026-08-12。生产已验证 0008–0048；课程 +20、九级徽章、服务端权威学习事实，以及 points v2 的冻结自然日奖励决策、每日数量上限、owner receipt、人工 suppress/restore 和只标记协同检测均已上线。Course Market v1 继续只免费克隆，Materials AI 只使用 Free 双额度，不接 credits/支付；商业账本、Stripe、VIP 与创作者结算仍未实现。
 
 ## 1. 规范用语和总原则
 
@@ -34,8 +34,8 @@
 - 除 points 外，没有订单、Payment、credit ledger、hold、市场购买、订阅、退款、Webhook、creator earning 或 payout 表/服务。
 - Course Market 的 publication/clone/report 表不是商业市场账本；卡片只显示“免费”，不会产生购买、销量分成、credits debit 或 creator payable。
 - 生产 0039 增加 `point_daily_windows/point_daily_award_claims/point_moderation_actions/point_abuse_signals`，并扩展 event state；内部表不开放 PostgREST 写入，service-role 也只能通过受控 SECURITY DEFINER 工作流改变事实。普通用户只能通过 owner-only receipt 读取自己的单次奖励决策。
-- 生产 0041–0043 Materials AI 不读取、冻结或消费 `profiles.credits`：所有用户默认 Free，按 Profile IANA 时区本地日分别有 10 次**成功**试卷生成和 10 次**成功**主观题评分。reservation 在成功时 consume，在注入拒绝/格式错误/取消/资源/模型/ZDR/坏 JSON/系统失败时 release；AI 试卷和考试不发 points、徽章或 VIP。
-- 0046–0048 候选中的知识图谱生成和节点问答与试卷共用同一类 `generation` Free 日额度：每个成功图谱或成功节点回答各消费 1 次；同一 job 在恢复期限内 Resume 不新增 reservation，也不重复消费。可恢复故障继续占原 reservation，过期、取消或不可恢复失败才 release。它们同样不发 points/徽章、不读取 credits；受保护发布前这只是候选规则而非线上承诺。
+- 生产 0041–0048 Materials AI 不读取、冻结或消费 `profiles.credits`：所有用户默认 Free，按 Profile IANA 时区本地日分别有 10 次**成功**生成和 10 次**成功**主观题评分。reservation 在成功时 consume，在注入拒绝/格式错误/取消/资源/模型/ZDR/坏 JSON/系统失败时 release；AI 试卷和考试不发 points、徽章或 VIP。
+- 知识图谱生成和节点问答与试卷共用同一类 `generation` Free 日额度：每个成功图谱或成功节点回答各消费 1 次；同一 job 在恢复期限内 Resume 不重复消费，retry 时按服务端事务重新建立且只在成功时提交 reservation。过期、取消或不可恢复失败 release。它们同样不发 points/徽章、不读取 credits。
 
 ### 2.2 发布限制
 
@@ -146,7 +146,7 @@ Credits 用于 Nalanda 内的 AI 生成和笔记市场数字内容。它不是�
 
 ### 4.3 AI 计费
 
-本节是未来收费规则。生产 0041–0043 Materials AI beta 只使用免费日额度和运营方全局美元预算，不创建 credit hold/commit/release 表，也不因模型成本变更扣用户余额。
+本节是未来收费规则。生产 0041–0048 Materials AI beta 只使用免费日额度和运营方全局美元预算，不创建 credit hold/commit/release 表，也不因模型成本变更扣用户余额。
 
 AI 请求在用户确认前展示 credits 价格/估算、产物、资料和可调整因素。请求流程必须是：
 

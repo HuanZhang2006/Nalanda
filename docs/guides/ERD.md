@@ -6,10 +6,10 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至生产 `20260811000043_verify_materials_ai_exam.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 已确认到 0043。时间列撤权 contract 顺延为未来 0044–0045，尚未创建。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至生产 0048 验证迁移的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 已确认到 0048。时间列撤权 contract 仍保留为未来 0044–0045 的独立工作。
 
-- **生产结构**：生产 0043 包含 0039–0040 安全/限流与 0041–0043 Materials AI/Notes/考试实体、事务和验证，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
-- **未实现目标**：Courses AI 文件导入、Knowledge list、独立 Quiz、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。仓库 0046–0048 候选已增加 Materials 知识图谱/节点问答和长任务恢复结构，但在受保护发布完成前不得描述为生产事实。
+- **生产结构**：生产 0048 包含 0039–0040 安全/限流、0041–0043 Materials AI/Notes/考试，以及 0046–0048 checkpoint/图谱/问答实体、事务和验证，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
+- **未实现目标**：Courses AI 文件导入、Knowledge list、独立 Quiz、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。
 
 ## 2. 当前 ERD
 
@@ -496,26 +496,26 @@ erDiagram
 
 `learned_at` 的唯一双考试投影条件、不会写入的事件、编辑撤销矩阵和代码/测试位置统一由 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节维护；ERD 只记录最终结构语义，不能把 `initial_*_passed`、复习日期、单项考试或前端正确状态解释为已学习。
 
-### 3.8 Materials AI、Notes 与在线考试（生产 0041–0043；0046–0048 候选）
+### 3.8 Materials AI、Notes、知识图谱与在线考试（生产 0041–0048）
 
 | 表 | 关键列 | 约束、关系与事实边界 |
 |---|---|---|
 | `ai_plans` | `code,generation_daily_limit,grading_daily_limit,active,timestamps` | 当前只种子 `free=10/10`；产品计划定义，不是 credits |
 | `ai_user_plans` | `user_id PK→auth.users CASCADE,plan_code,consent_version,consented_at,timestamps` | 现有/新用户都回填 Free；同意按用户和版本持久化 |
 | `ai_daily_usage` | `user_id,local_date,kind,plan_code,limit_count,reserved_count,consumed_count,timezone` | PK `(user_id,local_date,kind)`；`reserved+consumed<=limit`；本地日/时区在 reservation 时冻结 |
-| `generation_jobs` | owner/material/course/name/kind/status/stage/progress/settings/idempotency/fingerprint/consent/quota/lease/models/note/error/timestamps；候选增加 retryable/resume_until/checkpoint_stage/resume_count/accepted_at | `(user_id,idempotency_key)` 唯一；每用户至多一个 active；来源删除 SET NULL 但名称保留；候选 kind=`exam/knowledge_graph/knowledge_question`，短 HTTP 只确认 202 接收，checkpoint/reconciler 支持在期限内恢复同一 job |
+| `generation_jobs` | owner/material/course/name/kind/status/stage/progress/settings/idempotency/fingerprint/consent/quota/lease/models/note/error/timestamps；含 retryable/resume_until/checkpoint_stage/resume_count/accepted_at | `(user_id,idempotency_key)` 唯一；每用户至多一个 active；来源删除 SET NULL 但名称保留；kind=`exam/knowledge_graph/knowledge_question`，短 HTTP 只确认 202 接收，checkpoint/reconciler 支持在期限内恢复同一 job |
 | `generation_job_events` | `id,job_id,stage,progress,event_code,created_at` | job CASCADE；只保存阶段事实，不保存文件正文或 prompt |
-| `generation_job_checkpoints`（候选） | `job_id PK,user_id,stage,checkpoint_version,payload,expires_at,timestamps` | job/Auth CASCADE；stage 只允许 parsed/audited/document_ready/artifact_ready/answer_ready；完全 service-only，终态或 TTL 清理 |
-| `exam_grading_checkpoints`（候选） | `attempt_id PK,user_id,checkpoint_version,payload,expires_at,timestamps` | attempt/Auth CASCADE；只保存已验证评分结果用于 callback/容器故障恢复；完全 service-only，离开 grading 或 TTL 后清理 |
+| `generation_job_checkpoints` | `job_id PK,user_id,stage,checkpoint_version,payload,expires_at,timestamps` | job/Auth CASCADE；stage 只允许 parsed/audited/document_ready/artifact_ready/answer_ready；完全 service-only，终态或 TTL 清理 |
+| `exam_grading_checkpoints` | `attempt_id PK,user_id,checkpoint_version,payload,expires_at,timestamps` | attempt/Auth CASCADE；只保存已验证评分结果用于 callback/容器故障恢复；完全 service-only，离开 grading 或 TTL 后清理 |
 | `ai_material_parse_cache` | owner/material/source hash/parser/audit/vision versions/`canonical_document`/counts | material CASCADE；同文件+所有策略版本唯一；这是私有持久缓存，不是临时目录 |
-| `notes` | owner/course/job/title/kind/material_name/timestamps | course/job 删除 SET NULL；用户删除 CASCADE；生产 kind=`ai_exam`，候选增加 `ai_knowledge_graph` |
+| `notes` | owner/course/job/title/kind/material_name/timestamps | course/job 删除 SET NULL；用户删除 CASCADE；kind=`ai_exam|ai_knowledge_graph` |
 | `note_materials` | note/material/name/source hash | note CASCADE、material SET NULL；来源删除后仍保留快照名/hash |
-| `note_artifacts` | `note_id PK,schema_version,content,question_count,total_marks,node_count,edge_count,timestamps` | note CASCADE；生产 schema=`generated-exam.v1`，候选增加 `generated-knowledge-graph.v1`；kind-shape check 禁止把考试与图谱计数混写，owner 可见 |
+| `note_artifacts` | `note_id PK,schema_version,content,question_count,total_marks,node_count,edge_count,timestamps` | note CASCADE；schema=`generated-exam.v1|generated-knowledge-graph.v1`；kind-shape check 禁止把考试与图谱计数混写，owner 可见 |
 | `exam_attempts` | owner/note/number/status/revision/deadline/scores/grading reservation+lease/timestamps | `(user,note,attempt_number)` 唯一；note/user CASCADE；绝对期限、无限重考、主观评分可延期 |
 | `exam_attempt_answers` | `attempt_id,question_id,answer,awarded_marks,correct,feedback,updated_at` | PK `(attempt,question)`；attempt CASCADE；只由事务 RPC 写 |
 | `exam_attempt_operations` | `attempt_id,operation_id,operation_kind,response_payload,created_at` | PK 保证保存/提交/评分相同 UUID 重放返回第一次响应 |
-| `ai_provider_usage_events` | owner、不可变 job XOR attempt 审计 ID、purpose/provider/model/request ID/tokens/cost/duration/ZDR/status/error；候选增加 `event_id` | 只存计量元数据；候选 event UUID 唯一，断线重放不重复记账；job/attempt ID 故意不设内容生命周期 FK，使删除 Note/答卷不能抹掉成本或破坏预算；Auth owner 删除仍 CASCADE；不得保存 prompt、正文、答案或原始响应 |
-| `knowledge_node_questions`（候选） | `id PK→generation_jobs,user_id,note_id,node_id,question,answer,timestamps` | job/note/Auth CASCADE；问题 1–2000 字；owner 只读，创建/回答只经服务端工作流；答案必须引用该节点允许的 source blocks |
+| `ai_provider_usage_events` | owner、不可变 job XOR attempt 审计 ID、purpose/provider/model/request ID/tokens/cost/duration/ZDR/status/error、`event_id` | 只存计量元数据；event UUID 唯一，断线重放不重复记账；job/attempt ID 故意不设内容生命周期 FK，使删除 Note/答卷不能抹掉成本或破坏预算；Auth owner 删除仍 CASCADE；不得保存 prompt、正文、答案或原始响应 |
+| `knowledge_node_questions` | `id PK→generation_jobs,user_id,note_id,node_id,question,answer,timestamps` | job/note/Auth CASCADE；问题 1–2000 字；owner 只读，创建/回答只经服务端工作流；答案必须引用该节点允许的 source blocks |
 
 Postgres 是额度、任务、Notes、答卷和成绩的唯一事实源；BullMQ 只持有 UUID，不形成第二套状态。客户端不能直接写任何上述表，也不能执行工作流 RPC。
 
@@ -572,9 +572,9 @@ Postgres 是额度、任务、Notes、答卷和成绩的唯一事实源；BullMQ
 | `generation_jobs`, `generation_job_events` | 本人（event 经 job） | 无 | 无 | 无 |
 | `ai_material_parse_cache`, `ai_provider_usage_events`, `exam_attempt_operations` | 无客户端读取 | 无 | 无 | 无 |
 | `notes`, `note_materials`, `note_artifacts`, `exam_attempts`, `exam_attempt_answers` | 本人（子表经 owner parent） | 无 | 无 | 无 |
-| `generation_job_checkpoints`（候选） | 无客户端读取 | 无 | 无 | 无 |
-| `exam_grading_checkpoints`（候选） | 无客户端读取 | 无 | 无 | 无 |
-| `knowledge_node_questions`（候选） | 本人 | 无 | 无 | 无 |
+| `generation_job_checkpoints` | 无客户端读取 | 无 | 无 | 无 |
+| `exam_grading_checkpoints` | 无客户端读取 | 无 | 无 | 无 |
+| `knowledge_node_questions` | 本人 | 无 | 无 | 无 |
 
 迁移 0008 已修复 Profile 整行更新缺口。生产 0039 进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。第一阶段仍保留 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE grant，但值由 trigger 覆盖；观察至少 24 小时后的未来 0044–0045 才最终撤权。0041–0043 只新增 Materials AI。
 
@@ -640,8 +640,8 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPC | 不可变发布版本、免费独立克隆、限频举报与受审计隐藏/恢复 |
 | `_ai_create_user_plan` | Auth user AFTER INSERT | 为新用户幂等建立 Free plan；普通角色无 EXECUTE |
 | `ai_get_quota_summary`, `ai_create/claim/update/complete/fail/cancel_generation_job` | Materials AI service-only RPC | 原子 reservation、lease、stage/event、结果/缓存/usage、consume/release；崩溃租约三次后失败并退款 |
-| `ai_mark_generation_job_accepted`, `ai_record_generation_usage`, `ai_checkpoint_generation_job`, `ai_checkpoint_exam_grading`, `ai_retry_generation_job`, `ai_expire_generation_checkpoints`（候选） | Materials AI service-only RPC | 202 接收后续租、按 UUID 增量记费用、保存验证过的生成/评分阶段快照、同一 job 期限内重新排队，以及过期 checkpoint/残留清理；过期/重试耗尽必须持久终态并释放 reservation，不能先写后 RAISE 回滚清理 |
-| `ai_create_knowledge_question_job`（候选） | Knowledge Q&A service-only RPC | 校验 graph/note/node owner、原子预留 Free generation quota、建立幂等 job 与只读问答事实 |
+| `ai_mark_generation_job_accepted`, `ai_record_generation_usage`, `ai_checkpoint_generation_job`, `ai_checkpoint_exam_grading`, `ai_retry_generation_job`, `ai_expire_generation_checkpoints` | Materials AI service-only RPC | 202 接收后续租、按 UUID 增量记费用、保存验证过的生成/评分阶段快照、同一 job 期限内重新排队，以及过期 checkpoint/残留清理；过期/重试耗尽必须持久终态并释放 reservation，不能先写后 RAISE 回滚清理 |
+| `ai_create_knowledge_question_job` | Knowledge Q&A service-only RPC | 校验 graph/note/node owner、原子预留 Free generation quota、建立幂等 job 与只读问答事实 |
 | `ai_create_exam_attempt`, `ai_save_exam_answers`, `ai_submit_exam_attempt` | Exam service-only RPC | owner/deadline/revision/operation UUID 校验，服务端确定性客观判分与强制到期交卷 |
 | `ai_request/claim/complete/fail_exam_grading` | Grading service-only RPC | 主观题每日 reservation、lease、幂等评分、成功消费/失败释放；三次崩溃恢复为 `submitted_ungraded` |
 | `ai_delete_note`, `ai_delete_material`, `ai_delete_material_course` | 删除编排 service-only RPC | owner 校验、取消任务、清 cache，并按 keep/delete 保留到 Unfiled 或删 AI 结果 |
@@ -676,7 +676,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `learning_attempts_idempotency_idx UNIQUE(user_id,session_id,attempt_id)`（NULL 仅用于兼容旧/非普通答题事实）
 - `learning_speech_usage_user_rate_idx(user_id, kind, created_at DESC)`、`learning_speech_usage_budget_idx(created_at DESC)`、`learning_speech_usage_kind_rate_idx(kind,created_at DESC)`
 - `learning_audio_assets_queue_idx(priority DESC,next_attempt_at,created_at) WHERE status IN ('pending','processing')`
-- 候选 0046：`generation_jobs_resume_expiry_idx(resume_until) WHERE retryable`、`generation_job_checkpoints(expires_at)`、`exam_grading_checkpoints(expires_at)`、`ai_provider_usage_events UNIQUE(event_id)`、`knowledge_node_questions(note_id,created_at DESC)`。
+- 0046：`generation_jobs_resume_expiry_idx(resume_until) WHERE retryable`、`generation_job_checkpoints(expires_at)`、`exam_grading_checkpoints(expires_at)`、`ai_provider_usage_events UNIQUE(event_id)`、`knowledge_node_questions(note_id,created_at DESC)`。
 - `learning_spelling_translation_owner_created_idx(user_id,created_at DESC)`、`learning_spelling_translation_session_idx(session_id,word_id,expected_revision,completed_at DESC)`、`learning_spelling_translation_counted_quota_idx(user_id,quota_counted_at DESC) WHERE quota_counted`
 - `learning_word_progress_learned_idx(user_id, learned_at) WHERE learned_at IS NOT NULL`
 - `learning_review_schedules_owner_due_idx(user_id, due_date, status)`
@@ -692,7 +692,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 
 最终产品至少还需要通过新迁移明确设计以下领域，不能根据蓝图假设已经存在：
 
-- 结构化知识清单、独立 Quiz、知识图谱及通用版本；首版 `notes/generation_jobs/模拟试卷` 已在生产 0041–0043 实现；
+- 结构化知识清单、独立 Quiz 及通用图谱版本；首版 `notes/generation_jobs/模拟试卷/知识图谱` 已在生产 0041–0048 实现；
 - 通用笔记市场商品、credits 授权/购买关系、创作者分成；Courses 免费分享/市场快照已存在；
 - credits 钱包账本、余额投影和经过审批的管理员调整；points 账本已存在，但仍需反滥用上限、对账与运营工具；
 - VIP entitlement/订阅、订单、支付 intent、webhook 幂等记录、退款；

@@ -8,7 +8,7 @@
 
 当前已有信号：
 
-- `GET /api/health`：生产 0043 真实探测 Supabase、校验 HMAC 配置并执行 Redis PING；Supabase/Redis 任一失败 readiness 都是 503。`GET /api/health/ai` 检查 worker、队列和内部依赖，不以变量存在冒充 readiness；
+- `GET /api/health`：生产 0048 真实探测 Supabase、校验 HMAC 配置并执行 Redis PING；Supabase/Redis 任一失败 readiness 都是 503。`GET /api/health/ai` 检查 worker、队列和内部依赖，不以变量存在冒充 readiness；
 - FastAPI `GET /health`：实际检查 OpenRouter 配置、LibreOffice、临时磁盘和内部认证；production fake 明确失败。Materials AI 已于 2026-08-11 通过真实 provider/canary/登录用户 gate 后公开启用；health 本身不逐次调用真实模型；
 - deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase/deps.redis`，并检查公网 Web root；失败会回退上一 Web/API release；
 - API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
@@ -22,7 +22,7 @@
 - 0037 STT 输出 `learning_translation_voice_transcribed`，只含 provider/model/language、音频秒数、provider/API duration 与 usage/cost 数字；不得写 base64/WAV、transcript、word、课程翻译、用户 ID 或 key。数据库以 `learning_speech_usage.kind=translation_stt` 提供分钟/本地日/月预算事实；Web 另应统计录音启动/权限拒绝、空结果、迟到 transcript 丢弃和回填后实际提交率，但不能采集识别文本。
 - 生产 0039 输出 `rate_limited`、`rate_limit_degraded`、`rate_limit_audit_failed`、`redis_error`、`point_abuse_scan_completed/failed`；只含 route group/rule、HMAC actor、可选内部 user UUID、retry 秒数或聚合计数，不含原始 IP/email/正文。协同 signal 和 API abuse bucket 持久在 PostgreSQL，首版明确只有结构化日志，不接 webhook/pager。
 - 0041–0043 以 DB events/provider usage 提供 queue age、stage duration、lease retries、parse/visual recovery、schema repair、DeepSeek/MiMo duration/token/cost/ZDR、Notes save、grading 和 temp cleanup 信号；有界 provider 重试会把成功前每次 HTTP/空内容/截断/坏 JSON/schema 失败与最终成功分别作为脱敏 usage event 返回并计入预算，最终成功 duration 包含总等待。日志和发布 smoke 只能写 job/attempt UUID、文件类型/大小、范围计数和稳定 worker/provider purpose/error code，不写 signed URL、文件名之外正文、prompt、答案或 raw response。
-- 0046–0048 候选把 API→worker 改为 202 快速接收与持久 callback，并将 Node transport 分成 connect、30 秒 accept、20 分钟 headers/body 业务保护。需要分别观测 `AI_WORKER_TIMEOUT`、`AI_WORKER_UNREACHABLE`、callback 失败、checkpoint stage/age、resume count/expiry、usage spool age/replay、event UUID duplicate、剩余 job/attempt 预算与本地 spool 成本熔断、graph schema/source-order/citation 和节点问答延迟。2026-08-12 已定位的样本从 `14:41:32.182Z` 到 `14:46:34.078Z` 共 301.896 秒，属于 Undici 响应头 timeout，不是 worker OOM/宕机；该分类必须保留在回归与事故记录中。
+- 0046–0048 把 API→worker 改为 202 快速接收与持久 callback，并将 Node transport 分成 connect、30 秒 accept、20 分钟 headers/body 业务保护。需要分别观测 `AI_WORKER_TIMEOUT`、`AI_WORKER_UNREACHABLE`、callback 失败、checkpoint stage/age、resume count/expiry、usage spool age/replay、event UUID duplicate、剩余 job/attempt 预算与本地 spool 成本熔断、graph schema/source-order/citation 和节点问答延迟。2026-08-12 已定位的样本从 `14:41:32.182Z` 到 `14:46:34.078Z` 共 301.896 秒，属于 Undici 响应头 timeout，不是 worker OOM/宕机；该分类必须保留在回归与事故记录中。
 
 当前缺失：
 
@@ -45,10 +45,10 @@
 | Supabase Auth | 是 | API health 的 JWKS 探针、平台日志、注册错误 | 登录由浏览器直连；health 不执行真实登录 |
 | Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
 | Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
-| FastAPI Materials AI | 生产 0041–0043、worker 与 flag 已启用 | 真实依赖 `/health`、stage callback、provider usage、uvicorn log | 无持续真实质量/成本仪表盘；不得记录正文 |
-| Courses API | 功能迁移已启用至 0038，生产总 history 到 0043 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
+| FastAPI Materials AI | 生产 0041–0048、worker 与 flag 已启用 | 真实依赖 `/health`、stage callback、provider usage、uvicorn log | 无持续真实质量/成本仪表盘；不得记录正文 |
+| Courses API | 功能迁移已启用至 0038，生产总 history 到 0048 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
 | Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
-| OpenRouter 翻译前测 / Fish Audio STT | 两者功能迁移已启用至 0038，生产总 history 到 0043 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
+| OpenRouter 翻译前测 / Fish Audio STT | 两者功能迁移已启用至 0038，生产总 history 到 0048 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
 | Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
 | Redis 请求保护/BullMQ | 请求保护由生产 0039 启用；BullMQ 由生产 0041 启用 | PING readiness、`rate_*`/`redis_error`、BullMQ execution/reconcile、真实 CI Redis 测试 | 无集中 memory/AOF/eviction/queue depth 告警；Redis 不是 points/job/额度事实库 |
 | Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
@@ -216,7 +216,7 @@ tail -n 200 /var/log/nginx/error.log
 2. 检查日志、`/opt/nalanda/incoming`、`docker system df` 和 Docker layers 占用；保留事故证据后再清理。发布前门禁会清理同 SHA 半成品、超过 24 小时的 abandoned incoming，以及没有任何容器引用且不属于当前 `.deploy.env` 的 Nalanda image，并要求至少 6 GiB 可用空间；不得扩大成全服务器无差别删除。
 3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
 4. 若 AI 因磁盘水位 unhealthy 且 Compose 依赖阻止 API 恢复，先保存状态和日志，再用当前已审计配置执行 `docker compose --env-file .deploy.env up -d --no-deps api`，验证本机与公网 health/auth；这只恢复 API，不代表 AI 已恢复。释放空间后必须另验 AI `/health` 的 `tempDisk=ok`。
-5. 生产 0043 有 API、128 MiB Redis 容器/持久 volume，以及 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的单并发 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时关闭 Materials AI flag，保留既有 Notes/考试只读路径。
+5. 生产 0048 有 API、128 MiB Redis 容器/持久 volume，以及 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的单并发 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时关闭 Materials AI flag，保留既有 Notes/考试只读路径。
 
 ### 6.7 Materials AI / 在线考试
 

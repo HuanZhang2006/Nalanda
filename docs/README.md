@@ -5,7 +5,7 @@
 > - **作用**：避免“当前实现、最终蓝图、历史复盘、操作手册”相互覆盖或产生状态冲突。
 > - **何时更新**：新增、删除、重命名文档，或某类文档的负责人/权威范围变化时。
 
-最后核对：2026-08-12。生产事实仍到 0043；Materials AI 试卷生成与在线考试第一阶段已启用。仓库 0046–0048 候选新增可恢复长任务与知识图谱/节点问答，尚待 CI、真实 provider 与受保护发布。
+最后核对：2026-08-12。生产数据库与不可变应用已到 0048；Materials AI 试卷、在线考试、可恢复长任务、知识图谱与节点问答均已启用。Knowledge list 与独立 Quiz 仍未实现。
 
 ## 1. 事实来源优先级
 
@@ -73,7 +73,7 @@
 
 ADR 只记录已经做出的、影响多个模块或难以逆转的决策。开放问题保留在项目蓝图；决定后新增 ADR 并更新相关当前文档。
 
-最新已采用候选决策：[ADR-0013 Materials AI 异步回调、可恢复执行与知识图谱](adr/0013-materials-ai-async-callback-resume-and-knowledge-graph.md)；生产基线仍由 [ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) 对应的 0041–0043 release 提供。Accepted 表示架构决定已采用，不自动证明候选已部署；生产证据仍以架构、测试和发布记录为准。
+最新已部署决策：[ADR-0013 Materials AI 异步回调、可恢复执行与知识图谱](adr/0013-materials-ai-async-callback-resume-and-knowledge-graph.md)，对应 0046–0048；[ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) 仍定义 0041–0043 的基础链路。Accepted 本身不证明生产状态，部署证据仍以架构、测试和发布记录为准。
 
 ## 8. 实现笔记
 

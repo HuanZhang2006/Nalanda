@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-11。生产数据库/应用证据已到 0043；私有 Redis、nginx 分层限流与 Materials AI worker 均已上线。时间列撤权顺延为未来 0044–0045，仍须独立完成 0039–0040 的兼容观察/go-no-go。
+> - **状态基线**：2026-08-12。生产数据库/应用证据已到 0048；私有 Redis、nginx 分层限流、Materials AI 异步 worker、断点恢复与知识图谱均已上线。时间列撤权仍是未来 0044–0045 的独立工作。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -32,7 +32,7 @@
 外部：Azure Speech（生产）、OpenRouter Courses（生产）及 Materials DeepSeek/MiMo（生产）、Stripe（规划）
 ```
 
-> 生产 0043 使用「web 静态 + api + 私有 Redis + 内网 FastAPI AI」。Redis 是注册/写入限流、滥用聚合、扫描锁和只含 durable Postgres job UUID 的 BullMQ 投递依赖；Materials AI 使用独立 env/资源 cgroup，AI 容器没有宿主端口。
+> 生产 0048 使用「web 静态 + api + 私有 Redis + 内网 FastAPI AI」。Redis 是注册/写入限流、滥用聚合、扫描锁和只含 durable Postgres job UUID 的 BullMQ 投递依赖；Materials AI 使用独立 env/资源 cgroup，AI 容器没有宿主端口。
 
 ## 3. nginx 接入（隔离的关键）
 
@@ -237,6 +237,15 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 资源 canary 处理 220 页、366,412 字符：主进程峰值 106,778,624 bytes、Office 子进程 222,203,904 bytes、6.923 秒，无 OOM/邻站故障。真实 OpenRouter 固定 DeepSeek/MiMo suite 覆盖 PDF/DOCX/PPTX/chart、单个视觉失败范围、prompt injection 拒绝、安全教材放行、39 个进度事件和主观题评分；过程目录前后清理通过。
 - 既有真实 Japan East Azure、Gemma 翻译与 Courses API/Storage gate 继续通过。登录用户 Materials gate 得到 `generationJob=succeeded`、`grading=completed`、生成/评分 quota 各 1、5 条 provider usage、`sourceAndResultsDeleted=true` 和 `deps.supabase=ok/deps.ai=ok`。
 - 不可变 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 于 `2026-08-11T07:20:02Z` 激活。服务器只读复核确认 API/AI image、`.deploy.env` 和 Web symlink 同一 commit，AI/Redis healthy，`FEATURE_MATERIAL_AI=true`；独立公网复核为首页 200、Supabase/Redis health ok、AI worker/queue ok、匿名 me/quota 401。
+
+### 2026-08-12 · 0046–0048 可恢复任务与知识图谱生产激活
+
+- PR #59 实现 202 回调、双层 checkpoint/usage spool、同 job Resume、知识图谱/节点问答和 Materials/My Notes 英文 UI；PR #60–#63 依次补齐 Gemma 瞬时重试、生产磁盘/回滚清理、2xx 正文流 timeout 重试，以及 Courses 音频 prewarm/manifest 的窄范围幂等瞬时重试。最终 main SHA 为 `3c095a55ced21cee11a1b3131dd2889ec1f70733`。
+- 发布过程保留失败事实：一次 Gemma 429、主机磁盘达到 99%、一次 Gemma 响应正文 12 秒 timeout，以及一次 Courses prewarm 上游 500 分别阻断候选；旧应用均被保持或恢复。磁盘故障后的旧 API 用 `--no-deps` 单独恢复，随后只清理未引用 Nalanda 制品，避免影响共享主机其它服务。
+- [只读 plan `31573329799`](https://github.com/1590703336/Nalanda/actions/runs/31573329799) 确认远端已到 0048、dry-run 为空且未写库。[最终受保护 run `31574116130`](https://github.com/1590703336/Nalanda/actions/runs/31574116130) 再创建并验证加密恢复点、远端 history/lint，并通过质量、0007→latest、空库、双用户 RLS/Storage、fake-provider Chromium、2G canary与全部真实供应商/登录用户门禁。
+- 资源 canary 处理 220 页/366,412 字符，主/子进程峰值 106,954,752/221,970,432 bytes、6.587 秒。真实 Materials suite 返回 graph nodes 3、progress events 55、grading 6；真实 Azure 返回 accuracy 98/pronunciation 98.8，Gemma 为 3,032 ms/280 tokens；Courses gate 返回 4 个生成/4 个复用、assessment 98.2 和中文 STT matched；登录用户完整链路返回 generation quota 3、grading quota 1、usage events 9、grounded node question succeeded、source/results deleted。
+- 不可变 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` 于 2026-08-12 激活。独立服务器复核确认 API/AI image 和 Web symlink 同 SHA、AI/Redis healthy、`FEATURE_MATERIAL_AI=true`，根分区仍有 9.8 GiB 可用；独立公网复核为首页 200、Supabase/Redis health ok、AI worker/queue ok，匿名 me/quota/admin 均为 401。
+- 自动化 Chromium 使用 fake provider，只证明浏览器/队列契约；最终 workflow 中的 DeepSeek/MiMo/Azure/OpenRouter/Courses 是独立真实门禁，但仍只是时点证据，不替代持续供应商质量、成本和恢复成功率监控。
 
 ## 8. 运维速查
 
