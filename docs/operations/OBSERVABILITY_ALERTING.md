@@ -22,6 +22,7 @@
 - 0037 STT 输出 `learning_translation_voice_transcribed`，只含 provider/model/language、音频秒数、provider/API duration 与 usage/cost 数字；不得写 base64/WAV、transcript、word、课程翻译、用户 ID 或 key。数据库以 `learning_speech_usage.kind=translation_stt` 提供分钟/本地日/月预算事实；Web 另应统计录音启动/权限拒绝、空结果、迟到 transcript 丢弃和回填后实际提交率，但不能采集识别文本。
 - 生产 0039 输出 `rate_limited`、`rate_limit_degraded`、`rate_limit_audit_failed`、`redis_error`、`point_abuse_scan_completed/failed`；只含 route group/rule、HMAC actor、可选内部 user UUID、retry 秒数或聚合计数，不含原始 IP/email/正文。协同 signal 和 API abuse bucket 持久在 PostgreSQL，首版明确只有结构化日志，不接 webhook/pager。
 - 0041–0043 以 DB events/provider usage 提供 queue age、stage duration、lease retries、parse/visual recovery、schema repair、DeepSeek/MiMo duration/token/cost/ZDR、Notes save、grading 和 temp cleanup 信号；有界 provider 重试会把成功前每次 HTTP/空内容/截断/坏 JSON/schema 失败与最终成功分别作为脱敏 usage event 返回并计入预算，最终成功 duration 包含总等待。日志和发布 smoke 只能写 job/attempt UUID、文件类型/大小、范围计数和稳定 worker/provider purpose/error code，不写 signed URL、文件名之外正文、prompt、答案或 raw response。
+- 0046–0048 候选把 API→worker 改为 202 快速接收与持久 callback，并将 Node transport 分成 connect、30 秒 accept、20 分钟 headers/body 业务保护。需要分别观测 `AI_WORKER_TIMEOUT`、`AI_WORKER_UNREACHABLE`、callback 失败、checkpoint stage/age、resume count/expiry、usage spool age/replay、event UUID duplicate、剩余 job/attempt 预算与本地 spool 成本熔断、graph schema/source-order/citation 和节点问答延迟。2026-08-12 已定位的样本从 `14:41:32.182Z` 到 `14:46:34.078Z` 共 301.896 秒，属于 Undici 响应头 timeout，不是 worker OOM/宕机；该分类必须保留在回归与事故记录中。
 
 当前缺失：
 
@@ -77,6 +78,7 @@
 | 请求保护 | rate-limit decision latency、429/503、Redis availability/memory | Redis PING ≥99.9%；合法流量 429 误判需接近 0；noeviction/AOF 配置漂移为发布阻断 |
 | Points 完整性 | ledger/Profile projection、cap/审核 transition | projection 差异必须为 0；同 business key 只有一项首次 decision；协同 signal 只改变待审队列 |
 | Materials AI 生成 | 成功率、queue wait/stage/provider/总时延、引用/schema、成本 | 合法任务成功率 ≥95%；最旧 queued <5 分钟；schema/source 100%；单次预算硬门不得突破 |
+| Materials AI 恢复/图谱（候选） | accept/callback、BullMQ 槽占用、checkpoint/usage replay、resume expiry、graph/Q&A schema/source | accept p95<2秒；同一时刻只有一个生成/评分任务持有执行槽；callback backlog 最旧<1分钟；期限内恢复不重复 provider/费用，usage UUID 重复副作用为0；graph schema/source-order/citation 100% |
 | 在线考试 | draft revision、deadline submit、grading queue/额度 | 已确认保存 p95<1秒；过期最终必提交；相同 operation UUID 副作用为 0 |
 
 避免合成监控污染真实指标：使用专用账号/课程/文件前缀，测试后清理，并防止触发积分、通知和社区公开内容。生产合成写测试在具备幂等清理前不得自动开启。
@@ -107,7 +109,8 @@
 - Azure 估算月预算 ≥80%：P3，≥95%：P2 并评估熔断，超预算/持续 429：P2；provider 5xx/timeout >10% 持续 10 分钟：P2 并打开语音 circuit，文本学习保持；
 - OpenRouter provider 5xx/timeout/invalid-structure 合计 >10% 持续 10 分钟或 token/请求量异常超过 2 倍基线：P2，关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`，普通/限时拼写保持；语义错误率突然偏离固定 eval baseline：P2/P3，先停 feature 而不是放宽模型判定。429 若来自产品用户配额按信息/滥用调查，若来自供应商账户额度按 P2；
 - Fish Audio STT timeout/5xx/invalid/空 transcript >10% 持续 10 分钟、p95 >8 秒或月预算 ≥80%：P2/P3；先关闭依赖该能力的翻译语音入口并保留键盘输入，不得绕过 owner/revision 校验、改为浏览器直连或把识别文本自动提交。真实用户 CER/关键含义保留率低于评测基线时暂停入口并复核模型/语言提示。
-- Materials AI 最旧 queued >5 分钟、lease 连续三次恢复、worker restart ≥3/10min、temp orphan >1h、临时磁盘低于 512MiB、RSS/swap/cgroup OOM、provider/ZDR/schema/injection false-positive 异常：P2；同一真实门禁在有界重试后仍持续 `OPENROUTER_RATE_LIMIT` 也按 P2 保持 feature 关闭。跨用户/正文日志/ZDR 绕过或 quota/结果重复为 P1。先关闭 `FEATURE_MATERIAL_AI`，既有 Notes/考试保持只读，不通过放宽 ZDR、fallback、资源上限或直接改 job/quota 恢复。
+- Materials AI 最旧 queued >5 分钟、lease 连续三次恢复、worker restart ≥3/10min、temp orphan 超过配置 resume TTL、单并发槽已释放但 FastAPI 仍有多个 active job、临时磁盘低于 512MiB、RSS/swap/cgroup OOM、provider/ZDR/schema/injection false-positive 异常：P2；同一真实门禁在有界重试后仍持续 `OPENROUTER_RATE_LIMIT` 也按 P2 保持 feature 关闭。跨用户/正文日志/ZDR 绕过或 quota/结果重复为 P1。先关闭 `FEATURE_MATERIAL_AI`，既有 Notes/考试保持只读，不通过放宽 ZDR、fallback、资源上限或直接改 job/quota 恢复。
+- 候选回调模式中，accept >30 秒、callback 连续失败、DB checkpoint 与 worker local stage 倒退、usage spool 超过 5 分钟、同 event UUID 多条成本事实或 Resume 再次调用已完成 provider 阶段均按 P2；重复扣额度/费用或跨用户 checkpoint/Q&A 为 P1。到 TTL 才允许清理残留，不能为释放磁盘提前删除仍可恢复任务。
 - AI 月成本 ≥80% US$20 为 P3、≥95% P2；单次生成 >US$0.50 或评分 >US$0.05 必须由硬门阻断并释放用户 reservation。token/cost 账单差异和 unknown request ID 触发调查。
 - `learning_audio_assets` 最旧 pending 超过 15 分钟、processing lease 过期持续 5 分钟、generation failure >10% 或 ready metadata 对象 miss >1%：P2；minute/month quota 暂停按预算阈值分级，不通过提高并发绕过；
 - `learning_attempt_revision_conflict` 突增、同 session outbox 最旧项 >5 分钟或 replay 比例异常升高：P2/P3；先查网络/API/多设备，不手工推进 cursor；
@@ -174,6 +177,8 @@ tail -n 200 /var/log/nginx/error.log
 | Courses 统一 disabled/404 | flag/circuit 配置漂移或 release 回退 | 先查 production history、当前 image 与服务器 `.env`；不要开放客户端 RPC/表写 |
 | 课程可学但无发音/评分 | Azure flag/key/region/circuit/预算 | 按 error code 和 speech usage 判断；保持浏览器朗读降级 |
 | 翻译前测统一失败/很慢 | OpenRouter flag/key/model/timeout/额度或结构化输出 | 按稳定 error code 与脱敏 duration/token event 分层；供应商失败不记错，可先关闭翻译前测，不能把 key 下发浏览器或改为客户端自判 |
+| AI job 在约 300 秒统一失败并报 unreachable | 旧 API→worker 长 HTTP 的 Undici headers timeout | 核对错误 cause/duration、worker restart/OOM 和 stage；候选应返回 202 并由 callback 推进，timeout 映射为 `AI_WORKER_TIMEOUT`。不要盲目重跑导致 provider 重复费用 |
+| AI job 显示 Resume | provider/worker/callback 的可恢复失败 | 核对 `retryable/resumeUntil/checkpointStage/resumeCount` 与本地 spool age；期限内只调用 Resume 同一 job，过期后稳定失败并清理，不新建重复 job 绕过 quota |
 | 刷新后会话丢失/重复 | active unique/session RPC/API | 查同 user/course active 行、state queue/cursor、API 5xx；禁止前端造 progress |
 | 课程进度或 +20 异常 | progress/growth/fingerprint | 先确认生产迁移版本；0033+ 对账两个 `*_exam_passed_at`、两类 exam 的第一轮分数/`examPassed`/轮末确认/completed，确认 review 只改变 attempts/三组日期而不写 learned；再核对 `learned_at` check constraint、point business_key 与 source，必要时暂停 Courses 奖励写入 |
 | Course Market 课程消失 | publication status/审核 | 查 moderation actions 和管理员配置；不要仅凭举报数恢复/下架 |
@@ -219,6 +224,7 @@ tail -n 200 /var/log/nginx/error.log
 3. 磁盘/Office 问题检查容器 RSS/swap、cgroup OOM、`/tmp/nalanda-material-ai` orphan 和水位；关闭 flag 后只清理确认超过一小时且不属于 active job 的目录。
 4. 考试问题按 attempt/revision/operation UUID/deadline 对账；Redis 延迟任务丢失时下一次 API 请求必须强制到期提交。评分额度用完保留 `submitted_ungraded`，不能伪造 completed。
 5. 修复后使用无个人数据 fixture 验证一个完整生成、Notes、客观/主观评分、删除与临时目录清理；真实 provider smoke 与 fake Playwright 分开记录。
+6. 候选回调/恢复事故按 transport→accept→callback→DB checkpoint→local checkpoint/usage spool 五段排查。先确认 provider usage event UUID 是否已持久化，再决定是否重新执行某阶段；只有 checkpoint 明确缺失时才允许重做 provider。恢复成功后必须对账 provider request ID、唯一 event UUID、同一 job ID、quota consumed 一次及 terminal cleanup。
 
 ### 6.5 Courses / Azure / Course Market
 
@@ -270,7 +276,7 @@ Courses 另禁止记录：分享明文 token/token hash、完整词表/翻译、
 7. **数据保护**：备份年龄/大小/校验、恢复演练、RLS 安全测试、异常函数权限。
 8. **请求保护/Points**：Redis health/memory/AOF、decision latency、429/503/degraded、审计桶、pending signal 年龄、cap claim 与 ledger/Profile projection 差异。
 9. **发布**：Git SHA、deploy 时间、失败、变更前后错误率。
-10. **AI（启用后）**：队列深度/等待、任务成功/重试/超时、token/费用、模型/提示词版本、schema 合格率与质量评测。
+10. **AI**：队列深度/等待、202 accept、callback backlog、任务成功/重试/超时分类、checkpoint stage/age、resume expiry、usage spool/replay、唯一 event UUID、token/费用、模型/提示词版本、exam/graph/Q&A schema/引用与质量评测。
 11. **支付（启用后）**：webhook 延迟/失败/重放、订单与 Stripe 对账差异、退款、账本不平。
 
 ## 9. 值班与升级路径

@@ -4,7 +4,15 @@ import type { GeneratedExamV1 } from "@nalanda/types";
 import { FeatureFlagsService } from "../learning/feature-flags.service";
 import { AiQueueService } from "./ai-queue.service";
 import { AiRepository } from "./ai.repository";
-import { assertUuid, parseJobRequest, parseSaveAnswers, parseSubmit, requestFingerprint } from "./ai.dto";
+import {
+  assertUuid,
+  knowledgeQuestionFingerprint,
+  parseJobRequest,
+  parseKnowledgeQuestion,
+  parseSaveAnswers,
+  parseSubmit,
+  requestFingerprint,
+} from "./ai.dto";
 import { gradeObjective } from "./exam-grading";
 
 const SUPPORTED = new Set(["pdf", "docx", "pptx", "md", "markdown", "html", "htm", "txt", "json", "csv", "png", "jpg", "jpeg", "webp"]);
@@ -46,7 +54,7 @@ export class AiService {
     }
     const row = await this.repository.createJob(
       userId, materialId, request.idempotencyKey, requestFingerprint(materialId, request),
-      request.settings, request.consentVersion,
+      request.kind, request.settings, request.consentVersion,
     );
     await this.queue.enqueueGeneration(row.id).catch((error) => {
       this.logger.warn(`AI job ${row.id} persisted but immediate Redis dispatch failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -70,8 +78,40 @@ export class AiService {
     return this.repository.job(row);
   }
 
+  async retry(userId: string, idValue: string) {
+    this.enabled();
+    const row = await this.repository.retryJob(userId, assertUuid(idValue));
+    await this.queue.enqueueGeneration(row.id).catch((error) => {
+      this.logger.warn(`Resumable AI job ${row.id} persisted but immediate Redis dispatch failed: ${error instanceof Error ? error.message : "unknown"}`);
+    });
+    return this.repository.job(row, row.status === "queued" ? 1 : null);
+  }
+
   listNotes(userId: string) { return this.repository.listNotes(userId); }
   note(userId: string, idValue: string) { return this.repository.note(userId, assertUuid(idValue)); }
+
+  async createKnowledgeQuestion(userId: string, noteIdValue: string, nodeIdValue: string, input: unknown) {
+    this.enabled();
+    const noteId = assertUuid(noteIdValue, "noteId");
+    const nodeId = String(nodeIdValue || "").trim();
+    if (!nodeId || Array.from(nodeId).length > 80) {
+      throw new BadRequestException({ code: "INVALID_KNOWLEDGE_NODE", message: "Invalid knowledge point" });
+    }
+    const request = parseKnowledgeQuestion(input);
+    const row = await this.repository.createKnowledgeQuestion(
+      userId, noteId, nodeId, request.question, request.idempotencyKey,
+      knowledgeQuestionFingerprint(noteId, nodeId, request),
+    );
+    await this.queue.enqueueGeneration(row.id).catch((error) => {
+      this.logger.warn(`Knowledge question ${row.id} persisted but immediate Redis dispatch failed: ${error instanceof Error ? error.message : "unknown"}`);
+    });
+    return this.repository.knowledgeQuestion(userId, row.id);
+  }
+
+  knowledgeQuestion(userId: string, idValue: string) {
+    this.enabled();
+    return this.repository.knowledgeQuestion(userId, assertUuid(idValue));
+  }
   async deleteNote(userId: string, idValue: string) {
     await this.repository.deleteNote(userId, assertUuid(idValue));
     return { deleted: true };

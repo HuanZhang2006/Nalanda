@@ -8,6 +8,7 @@ URL to these internal-only contracts.
 from __future__ import annotations
 
 from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, HttpUrl, model_validator
 
@@ -71,6 +72,46 @@ class ProcessExamRequest(StrictModel):
     cache: ParseCacheInput | None = None
     callbackUrl: HttpUrl
     callbackToken: str = Field(min_length=16, max_length=500)
+
+
+class WorkerCallbacks(StrictModel):
+    baseUrl: HttpUrl
+    token: str = Field(min_length=16, max_length=500)
+    leaseToken: str = Field(min_length=1, max_length=100)
+
+
+class KnowledgeGraphSettings(StrictModel):
+    language: Literal["auto", "en", "zh"]
+    detail: Literal["comprehensive"] = "comprehensive"
+    focus: str = Field(max_length=200)
+
+
+class ProcessMaterialJobRequest(StrictModel):
+    jobId: str = Field(min_length=1, max_length=100)
+    kind: Literal["exam", "knowledge_graph", "knowledge_question"]
+    userId: str = Field(min_length=1, max_length=100)
+    material: MaterialSource | None = None
+    settings: ExamSettings | KnowledgeGraphSettings | None = None
+    cache: ParseCacheInput | None = None
+    callbacks: WorkerCallbacks
+    checkpoint: dict[str, Any] | None = None
+    budgetMicroUsd: int = Field(gt=0)
+    question: str | None = Field(default=None, max_length=2000)
+    nodeId: str | None = Field(default=None, max_length=80)
+    graph: dict[str, Any] | None = None
+    document: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def kind_shape(self):
+        if self.kind == "exam":
+            if self.material is None or not isinstance(self.settings, ExamSettings):
+                raise ValueError("exam requires material and exam settings")
+        elif self.kind == "knowledge_graph":
+            if self.material is None or not isinstance(self.settings, KnowledgeGraphSettings):
+                raise ValueError("knowledge graph requires material and graph settings")
+        elif not self.question or not self.nodeId or self.graph is None:
+            raise ValueError("knowledge question requires question, node and graph")
+        return self
 
 
 class DocumentBlock(StrictModel):
@@ -177,12 +218,67 @@ class GeneratedExam(StrictModel):
     sections: list[GeneratedSection] = Field(min_length=1, max_length=20)
 
 
+KnowledgeNodeKind = Literal[
+    "concept", "definition", "process", "formula", "example", "evidence",
+    "comparison", "method", "person", "event", "term",
+]
+KnowledgeEdgeRelation = Literal[
+    "sequence", "prerequisite", "part_of", "causes", "supports", "contrasts",
+    "applies_to", "example_of", "related",
+]
+
+
+class GeneratedKnowledgeNode(StrictModel):
+    id: str = Field(min_length=1, max_length=80)
+    title: str = Field(min_length=1, max_length=200)
+    kind: KnowledgeNodeKind
+    level: int = Field(ge=0, le=12)
+    sourceOrder: float = Field(ge=0)
+    summary: str = Field(min_length=1, max_length=1000)
+    explanation: str = Field(min_length=1, max_length=12000)
+    keyDetails: list[str] = Field(max_length=30)
+    examples: list[str] = Field(max_length=20)
+    formulas: list[str] = Field(max_length=20)
+    commonMisconceptions: list[str] = Field(max_length=20)
+    checkQuestions: list[str] = Field(max_length=20)
+    keywords: list[str] = Field(max_length=30)
+    sourceRefs: list[SourceRef] = Field(min_length=1, max_length=20)
+
+
+class GeneratedKnowledgeEdge(StrictModel):
+    id: str = Field(min_length=1, max_length=80)
+    from_: str = Field(alias="from", min_length=1, max_length=80)
+    to: str = Field(min_length=1, max_length=80)
+    relation: KnowledgeEdgeRelation
+    label: str = Field(max_length=200)
+    explanation: str = Field(max_length=2000)
+
+
+class GeneratedKnowledgeGraph(StrictModel):
+    schemaVersion: Literal["generated-knowledge-graph.v1"] = "generated-knowledge-graph.v1"
+    title: str = Field(min_length=1, max_length=160)
+    language: Literal["en", "zh"]
+    overview: str = Field(min_length=1, max_length=12000)
+    learningObjectives: list[str] = Field(max_length=30)
+    nodes: list[GeneratedKnowledgeNode] = Field(min_length=1, max_length=250)
+    edges: list[GeneratedKnowledgeEdge] = Field(max_length=1000)
+
+
+class KnowledgeNodeAnswer(StrictModel):
+    schemaVersion: Literal["knowledge-node-answer.v1"] = "knowledge-node-answer.v1"
+    answer: str = Field(min_length=1, max_length=12000)
+    keyPoints: list[str] = Field(max_length=30)
+    sourceRefs: list[SourceRef] = Field(min_length=1, max_length=20)
+    followUpQuestions: list[str] = Field(max_length=10)
+
+
 class ReviewResult(StrictModel):
     valid: bool
     issues: list[str] = Field(max_length=30)
 
 
 class UsageEvent(StrictModel):
+    eventId: str = Field(default_factory=lambda: str(uuid4()))
     purpose: Literal[
         "parse_audit",
         "visual_recovery",
@@ -191,6 +287,10 @@ class UsageEvent(StrictModel):
         "exam_repair",
         "exam_review",
         "exam_grading",
+        "knowledge_graph_generation",
+        "knowledge_graph_review",
+        "knowledge_graph_repair",
+        "knowledge_node_question",
     ]
     model: str
     requestId: str | None = None
@@ -217,6 +317,15 @@ class GradeExamRequest(StrictModel):
     attemptId: str
     questions: list[SubjectiveQuestion] = Field(min_length=1, max_length=100)
     language: Literal["en", "zh"]
+    callbacks: WorkerCallbacks | None = None
+    budgetMicroUsd: int | None = Field(default=None, gt=0)
+    checkpoint: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def async_job_requires_budget(self):
+        if self.callbacks is not None and self.budgetMicroUsd is None:
+            raise ValueError("asynchronous grading requires an accounting budget")
+        return self
 
 
 class GradedAnswer(StrictModel):
@@ -227,4 +336,9 @@ class GradedAnswer(StrictModel):
 
 
 class GradingResult(StrictModel):
+    results: list[GradedAnswer]
+
+
+class GradingWorkerResult(StrictModel):
+    subjectiveScore: float = Field(ge=0)
     results: list[GradedAnswer]

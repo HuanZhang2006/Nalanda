@@ -1,13 +1,14 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GeneratedExamAttempt, GeneratedNoteDetail, GeneratedNoteSummary } from "@nalanda/types";
+import type { GeneratedExamAttempt, GeneratedExamNoteDetail, GeneratedKnowledgeNoteDetail, GeneratedNoteSummary } from "@nalanda/types";
 import "fake-indexeddb/auto";
 
 const harness = vi.hoisted(() => ({
   courses: [{ id: "course-1", name: "Biology", code: "BIO" }],
   notes: vi.fn(), note: vi.fn(), attempts: vi.fn(), createAttempt: vi.fn(), saveAnswers: vi.fn(),
   submit: vi.fn(), attempt: vi.fn(), requestGrading: vi.fn(), deleteNote: vi.fn(),
+  askKnowledgeNode: vi.fn(), knowledgeQuestion: vi.fn(),
 }));
 
 vi.mock("../../lib/supabase", () => ({
@@ -32,6 +33,8 @@ vi.mock("./api", () => ({
     attempt: harness.attempt,
     requestGrading: harness.requestGrading,
     deleteNote: harness.deleteNote,
+    askKnowledgeNode: harness.askKnowledgeNode,
+    knowledgeQuestion: harness.knowledgeQuestion,
   },
 }));
 
@@ -40,11 +43,13 @@ import { NotesView } from "./NotesView";
 const summary: GeneratedNoteSummary = {
   id: "note-1", courseId: "course-1", courseName: "Biology", courseCode: "BIO", title: "Cells test paper",
   kind: "ai_exam", materialName: "cells.pdf", sourceDeleted: false, questionCount: 1, totalMarks: 10,
+  nodeCount: 0, edgeCount: 0,
   createdAt: "2026-08-10T00:00:00Z", updatedAt: "2026-08-10T00:00:00Z",
 };
 
-const detail: GeneratedNoteDetail = {
+const detail: GeneratedExamNoteDetail = {
   ...summary,
+  kind: "ai_exam",
   exam: {
     schemaVersion: "generated-exam.v1", title: "Cells test paper", language: "en", difficulty: "intermediate",
     durationMinutes: 30, totalMarks: 10, instructions: ["Answer every question."],
@@ -54,6 +59,21 @@ const detail: GeneratedNoteDetail = {
       explanation: "The membrane is selectively permeable.", rubric: ["Mentions control of movement"],
       sourceRefs: [{ blockId: "page-1:block-1", page: 1, slide: null, label: "Page 1" }],
     }] }],
+  },
+};
+
+const graphDetail: GeneratedKnowledgeNoteDetail = {
+  ...summary,
+  id: "graph-note", title: "Cell knowledge map", kind: "ai_knowledge_graph",
+  questionCount: 0, totalMarks: 0, nodeCount: 2, edgeCount: 1,
+  graph: {
+    schemaVersion: "generated-knowledge-graph.v1", title: "Cell knowledge map", language: "en",
+    overview: "A source-ordered map of cells and membranes.", learningObjectives: ["Explain membrane transport"],
+    nodes: [
+      { id: "cell", title: "Cell", kind: "concept", level: 0, sourceOrder: 1, summary: "The basic unit of life.", explanation: "Cells are the basic structural and functional units of living organisms.", keyDetails: ["Contains organized structures"], examples: ["Animal cell"], formulas: [], commonMisconceptions: [], checkQuestions: ["What makes a cell a unit of life?"], keywords: ["cell"], sourceRefs: [{ blockId: "b1", page: 1, slide: null, label: "Page 1" }] },
+      { id: "membrane", title: "Cell membrane", kind: "process", level: 1, sourceOrder: 2, summary: "Controls transport.", explanation: "The membrane selectively regulates movement into and out of a cell.", keyDetails: ["Selectively permeable"], examples: ["Diffusion"], formulas: [], commonMisconceptions: ["It is not completely sealed"], checkQuestions: ["How does transport work?"], keywords: ["membrane"], sourceRefs: [{ blockId: "b2", page: 1, slide: null, label: "Page 1" }] },
+    ],
+    edges: [{ id: "edge-1", from: "cell", to: "membrane", relation: "part_of", label: "has boundary", explanation: "The membrane is part of the cell." }],
   },
 };
 
@@ -103,6 +123,11 @@ describe("Materials AI My Notes and online exams", () => {
     }));
     harness.submit.mockResolvedValue(attempt("grading", 2)); harness.attempt.mockResolvedValue(attempt("completed", 3));
     harness.requestGrading.mockResolvedValue(attempt("grading", 3)); harness.deleteNote.mockResolvedValue({ deleted: true });
+    harness.askKnowledgeNode.mockResolvedValue({
+      id: "question-job", noteId: "graph-note", nodeId: "membrane", question: "Why is it selective?", status: "succeeded",
+      answer: { schemaVersion: "knowledge-node-answer.v1", answer: "Selective permeability controls which substances cross.", keyPoints: ["Transport is regulated"], sourceRefs: [{ blockId: "b2", page: 1, slide: null, label: "Page 1" }], followUpQuestions: ["What is diffusion?"] },
+      errorCode: null, errorMessage: null, createdAt: new Date().toISOString(), answeredAt: new Date().toISOString(),
+    });
     vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: () => "11111111-1111-4111-8111-111111111111" });
   });
 
@@ -197,5 +222,29 @@ describe("Materials AI My Notes and online exams", () => {
     expect(harness.submit).not.toHaveBeenCalled();
     expect((container.querySelector("textarea") as HTMLTextAreaElement).value).toBe("Server answer before deadline");
     expect(toast).toHaveBeenCalledWith("The deadline passed. Only answers synchronized before the deadline were submitted.");
+  });
+
+  it("renders a source-ordered interactive knowledge map and asks a selected node in English", async () => {
+    harness.note.mockResolvedValue(graphDetail);
+    harness.attempts.mockClear();
+    await settle(() => root.render(<NotesView userId="user-1" initialNoteId="graph-note" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={vi.fn()} />));
+    await settle(() => new Promise((resolve) => setTimeout(resolve, 0)));
+
+    expect(container.textContent).toContain("Knowledge map overview");
+    expect(container.textContent).toContain("Cell membrane");
+    expect(container.textContent).toContain("The basic unit of life");
+    expect(container.querySelector('[role="region"][aria-label="Interactive knowledge graph"]')).not.toBeNull();
+    expect(container.textContent).not.toMatch(/知识|来源|删除|提问/);
+    expect(harness.attempts).not.toHaveBeenCalled();
+
+    await settle(() => clickText(container, "Cell membrane"));
+    expect(container.textContent).toContain("Selectively permeable");
+    await settle(() => setValue(container.querySelector("textarea") as HTMLTextAreaElement, "Why is it selective?"));
+    await settle(() => clickText(container, "Ask this point"));
+    expect(harness.askKnowledgeNode).toHaveBeenCalledWith("graph-note", "membrane", {
+      idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      question: "Why is it selective?",
+    });
+    expect(container.textContent).toContain("Selective permeability controls which substances cross");
   });
 });

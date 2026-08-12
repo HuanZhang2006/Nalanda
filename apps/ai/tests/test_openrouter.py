@@ -323,3 +323,32 @@ async def test_openrouter_retries_empty_structured_output_and_preserves_its_cost
     assert route.call_count == 2
     assert [event.errorCode for event in usage] == ["AI_EMPTY_CONTENT", None]
     assert [event.costMicroUsd for event in usage] == [1, 2]
+
+
+@pytest.mark.asyncio
+async def test_fake_provider_emits_idempotent_usage_before_returning(monkeypatch):
+    monkeypatch.setenv("MATERIAL_AI_FAKE_PROVIDER", "true")
+    persisted = []
+
+    async def sink(event):
+        persisted.append(event)
+
+    result, usage = await OpenRouterClient(usage_sink=sink).structured(
+        purpose="parse_audit",
+        model=TEXT_MODEL,
+        schema_name="audit",
+        result_type=AuditResult,
+        system="fixed",
+        user_content="untrusted",
+        max_tokens=100,
+        fake_value={
+            "classification": "safe",
+            "rationale": "ok",
+            "failedRanges": [],
+            "injectionLocations": [],
+        },
+    )
+
+    assert result.classification == "safe"
+    assert persisted == usage
+    assert len(persisted[0].eventId) == 36

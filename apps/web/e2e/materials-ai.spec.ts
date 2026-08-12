@@ -15,8 +15,8 @@ async function signUp(page: Page, email: string, password: string) {
   await expect(page.locator(".brand-name")).toHaveText("Nalanda");
 }
 
-test("upload, queue, generate, take, grade, and retain a Materials AI exam", async ({ page }) => {
-  test.setTimeout(180_000);
+test("upload, queue, generate, take, grade, organize knowledge, and retain Materials AI results", async ({ page }) => {
+  test.setTimeout(240_000);
   const nonce = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   await signUp(page, `materials-ai-${nonce}@example.com`, `Nalanda-${nonce}!`);
   await page.locator('#nav [data-go="materials"]').click();
@@ -41,7 +41,7 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await materialRow.getByRole("button", { name: "Use AI" }).click();
   await expect(page.getByRole("button", { name: /Knowledge list.*Coming soon/ })).toBeDisabled();
   await expect(page.getByRole("button", { name: /Quiz.*Coming soon/ })).toBeDisabled();
-  await expect(page.getByRole("button", { name: /Knowledge graph.*Coming soon/ })).toBeDisabled();
+  await expect(page.getByRole("button", { name: /Organize knowledge points/ })).toBeEnabled();
   await page.getByRole("button", { name: /Generate test paper/ }).click();
 
   const settings = page.locator(".modal");
@@ -81,9 +81,28 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await expect(page.getByRole("heading", { name: "Your generated notes" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Demo" })).toBeVisible();
   await expect(page.getByText("Generated study test", { exact: true })).toBeVisible();
+
+  await page.locator('#nav [data-go="materials"]').click();
+  await expect(materialRow).toBeVisible();
+  await materialRow.getByRole("button", { name: "Use AI" }).click();
+  await page.getByRole("button", { name: /Organize knowledge points/ }).click();
+  const graphSettings = page.locator(".modal");
+  await expect(graphSettings.getByRole("heading", { name: "cells.txt" })).toBeVisible();
+  await graphSettings.getByRole("button", { name: "Generate", exact: true }).click();
+  const graphQueueRow = page.getByRole("region", { name: "AI generation queue" })
+    .locator(".list-row").filter({ hasText: "Knowledge map" }).first();
+  await expect(graphQueueRow.getByRole("button", { name: "Open result" })).toBeVisible({ timeout: 60_000 });
+  await graphQueueRow.getByRole("button", { name: "Open result" }).click();
+  await expect(page.getByRole("region", { name: "Interactive knowledge graph" })).toBeVisible();
+  await expect(page.getByText("Knowledge map overview", { exact: true })).toBeVisible();
+  await page.locator(".material-knowledge-node").first().click();
+  await page.getByPlaceholder("Ask a specific question…").fill("Explain this knowledge point in simpler terms.");
+  await page.getByRole("button", { name: "Ask this point" }).click();
+  await expect(page.getByText("Answer", { exact: true })).toBeVisible({ timeout: 60_000 });
+
   await page.locator('#nav [data-go="profile"]').click();
   await expect(page.getByRole("heading", { name: "Free Plan" })).toBeVisible();
-  await expect(page.getByText("Test paper generations remaining today").locator("..").locator(".stat-n")).toHaveText("9/10");
+  await expect(page.getByText("AI generations remaining today").locator("..").locator(".stat-n")).toHaveText("7/10");
   await expect(page.getByText("Subjective grading runs remaining today").locator("..").locator(".stat-n")).toHaveText("9/10");
 
   await page.locator('#nav [data-go="materials"]').click();
@@ -99,5 +118,6 @@ test("upload, queue, generate, take, grade, and retain a Materials AI exam", asy
   await page.locator('#nav [data-go="notes"]').click();
   await expect(page.getByRole("heading", { name: "Your generated notes" })).toBeVisible();
   await expect(page.getByText("Generated study test", { exact: true })).toBeHidden();
+  await expect(page.getByText("Knowledge map overview", { exact: true })).toBeHidden();
   await expect(page.getByRole("heading", { name: "Demo" })).toBeVisible();
 });

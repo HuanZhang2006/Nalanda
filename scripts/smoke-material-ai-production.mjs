@@ -115,14 +115,40 @@ async function waitForGrading(user, attemptId) {
   throw new Error("grading did not finish before the protected smoke deadline");
 }
 
-async function providerFacts(jobId, attemptId) {
-  const query = new URLSearchParams({
+async function waitForKnowledgeQuestion(user, questionId) {
+  const deadline = Date.now() + 5 * 60_000;
+  while (Date.now() < deadline) {
+    const question = await request("knowledge question status", `${apiOrigin}/knowledge-questions/${questionId}`, {
+      headers: authHeaders(user.token),
+    });
+    if (question.status === "succeeded") return question;
+    if (question.status === "failed" || question.status === "cancelled") {
+      throw new Error(`knowledge question ended with ${question.errorCode || question.status}`);
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+  }
+  throw new Error("knowledge question did not finish before the protected smoke deadline");
+}
+
+async function providerFacts(jobIds, attemptId) {
+  const generationQuery = new URLSearchParams({
     select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status",
-    or: `(job_id.eq.${jobId},attempt_id.eq.${attemptId})`,
+    job_id: `in.(${jobIds.join(",")})`,
     order: "id.asc",
   });
-  const rows = await request("provider usage facts", `${supabaseUrl}/rest/v1/ai_provider_usage_events?${query}`, { headers: adminHeaders });
-  assert.ok(rows.some((row) => row.job_id === jobId && row.model === "deepseek/deepseek-v4-flash-0731"));
+  const gradingQuery = new URLSearchParams({
+    select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status",
+    attempt_id: `eq.${attemptId}`,
+    order: "id.asc",
+  });
+  const [generationRows, gradingRows] = await Promise.all([
+    request("generation provider usage facts", `${supabaseUrl}/rest/v1/ai_provider_usage_events?${generationQuery}`, { headers: adminHeaders }),
+    request("grading provider usage facts", `${supabaseUrl}/rest/v1/ai_provider_usage_events?${gradingQuery}`, { headers: adminHeaders }),
+  ]);
+  const rows = [...generationRows, ...gradingRows];
+  assert.ok(rows.some((row) => row.job_id === jobIds[0] && row.model === "deepseek/deepseek-v4-flash-0731"));
+  assert.ok(rows.some((row) => row.job_id === jobIds[1] && row.purpose === "knowledge_graph_generation"));
+  assert.ok(rows.some((row) => row.job_id === jobIds[2] && row.purpose === "knowledge_node_question"));
   assert.ok(rows.some((row) => row.attempt_id === attemptId && row.purpose === "exam_grading"));
   assert.ok(rows.every((row) => row.zdr_enforced === true && row.status === "succeeded"));
   assert.ok(rows.every((row) => typeof row.provider_request_id === "string" && row.provider_request_id));
@@ -193,10 +219,34 @@ try {
   const completed = await waitForGrading(user, attempt.id);
   assert.ok(Number.isFinite(completed.totalScore));
 
+  const graphCreated = await request("public knowledge organization creation", `${apiOrigin}/materials/${source.material.id}/ai-jobs`, {
+    method: "POST", headers: authHeaders(user.token),
+    body: JSON.stringify({
+      idempotencyKey: randomUUID(), kind: "knowledge_graph", consentVersion: 1,
+      settings: { language: "en", detail: "comprehensive", focus: "" },
+    }),
+  });
+  const graphFinished = await waitForJob(user, graphCreated.id);
+  const graphNote = await request("generated knowledge note", `${apiOrigin}/notes/${graphFinished.noteId}`, {
+    headers: authHeaders(user.token),
+  });
+  assert.equal(graphNote.kind, "ai_knowledge_graph");
+  assert.ok(graphNote.graph.nodes.length > 0);
+  assert.ok(graphNote.graph.nodes.every((node, index, nodes) => index === 0 || node.sourceOrder >= nodes[index - 1].sourceOrder));
+  assert.ok(graphNote.graph.nodes.every((node) => node.explanation && node.sourceRefs.length));
+  const selectedNode = graphNote.graph.nodes[0];
+  const questionCreated = await request("grounded knowledge question creation", `${apiOrigin}/notes/${graphNote.id}/knowledge-nodes/${selectedNode.id}/questions`, {
+    method: "POST", headers: authHeaders(user.token),
+    body: JSON.stringify({ idempotencyKey: randomUUID(), question: "Explain this point in simpler terms." }),
+  });
+  const questionAnswered = await waitForKnowledgeQuestion(user, questionCreated.id);
+  assert.ok(questionAnswered.answer?.answer);
+  assert.ok(questionAnswered.answer.sourceRefs.every((ref) => selectedNode.sourceRefs.some((source) => source.blockId === ref.blockId)));
+
   const quota = await request("Free plan quota", `${apiOrigin}/profile/ai-quota`, { headers: authHeaders(user.token) });
   assert.deepEqual({ plan: quota.plan, generation: quota.generation.consumed, grading: quota.grading.consumed },
-    { plan: "free", generation: 1, grading: 1 });
-  const usageEvents = await providerFacts(created.id, attempt.id);
+    { plan: "free", generation: 3, grading: 1 });
+  const usageEvents = await providerFacts([created.id, graphCreated.id, questionCreated.id], attempt.id);
   await request("transactional source and result deletion", `${apiOrigin}/material-courses/${source.course.id}?aiResults=delete`, {
     method: "DELETE", headers: authHeaders(user.token),
   });
@@ -204,12 +254,17 @@ try {
     headers: authHeaders(user.token),
   }, [404]);
   assert.equal(noteAfterDelete.code, "NOTE_NOT_FOUND");
+  const graphAfterDelete = await request("deleted knowledge note verification", `${apiOrigin}/notes/${graphNote.id}`, {
+    headers: authHeaders(user.token),
+  }, [404]);
+  assert.equal(graphAfterDelete.code, "NOTE_NOT_FOUND");
   storagePaths.length = 0;
   console.log(JSON.stringify({
     ok: true,
     generationJob: "succeeded",
     grading: "completed",
-    quota: { generation: 1, grading: 1 },
+    quota: { generation: 3, grading: 1 },
+    knowledgeGraph: { renderedNodes: graphNote.graph.nodes.length, groundedQuestion: "succeeded" },
     usageEvents,
     sourceAndResultsDeleted: true,
     deps: { supabase: coreHealth.deps.supabase, ai: aiHealth.deps.worker },

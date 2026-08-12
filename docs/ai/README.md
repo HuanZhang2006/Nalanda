@@ -3,8 +3,9 @@
 > **本文内容：**汇总 Nalanda 的 AI 契约、质量、安全、评测、成本和发布治理文档。  
 > **作用：**把模型能力从原型演示提升为可衡量、可回归、可控成本的产品能力，并避免把配置或桩误报为真实 AI。  
 > **何时更新：**新增 AI 文档、模型/解析/评测/供应商/成本体系变化，或索引路径变化时。  
-> **状态基线：**2026-08-11；生产 0041–0043 已启用 Materials 试卷生成与主观题评分，FastAPI/BullMQ/OpenRouter 链路已通过真实门禁与受保护发布。Courses 文件 AI 导入仍未实现。Azure Speech adapter 是独立非生成式能力，已在生产启用。
+> **状态基线：**2026-08-12；生产 0041–0043 已启用 Materials 试卷生成与主观题评分。0046–0048 候选新增 202 callback、checkpoint/usage 恢复、知识图谱和节点问答，尚未形成真实供应商/生产证据。Courses 文件 AI 导入仍未实现。Azure Speech adapter 是独立非生成式能力，已在生产启用。
 
-- [AI 评测与成本治理](EVALUATION_AND_COST.md)：生产 Materials 试卷、Courses 后续文件导入、Azure Speech 边界、离线/在线质量、安全隐私、usage/cost、预算与发布门禁。
+- [AI 评测与成本治理](EVALUATION_AND_COST.md)：生产 Materials 试卷、候选 graph/Q&A/恢复链、Courses 后续文件导入、Azure Speech 边界、离线/在线质量、安全隐私、usage/cost、预算与发布门禁。
+- [AI Prompt 统一目录](PROMPT_CATALOG.md)：全项目唯一的 prompt 人工维护入口，包含生产 Materials/Courses 的完整 system/user 模板、动态字段、schema、语音供应商非 prompt 输入、测试门禁和未实现边界。
 
 任何真实 AI 上线还必须同时满足经济计费、隐私删除、内容审核、安全和第三方许可证要求。

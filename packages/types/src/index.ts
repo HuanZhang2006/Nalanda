@@ -68,6 +68,8 @@ export type AiGenerationStage =
   | "auditing"
   | "visualRecovery"
   | "generating"
+  | "organizing"
+  | "answering"
   | "reviewing"
   | "saving"
   | "succeeded"
@@ -107,6 +109,21 @@ export interface CreateAiExamJobRequest {
   settings: AiExamGenerationSettings;
 }
 
+export interface AiKnowledgeGraphGenerationSettings {
+  language: "auto" | "en" | "zh";
+  detail: "comprehensive";
+  focus: string;
+}
+
+export interface CreateAiKnowledgeGraphJobRequest {
+  idempotencyKey: string;
+  kind: "knowledge_graph";
+  consentVersion: number;
+  settings: AiKnowledgeGraphGenerationSettings;
+}
+
+export type CreateAiMaterialJobRequest = CreateAiExamJobRequest | CreateAiKnowledgeGraphJobRequest;
+
 export interface AiQuotaBucket {
   limit: number;
   consumed: number;
@@ -128,18 +145,88 @@ export interface AiGenerationJob {
   materialId: string | null;
   materialName: string;
   courseId: string | null;
-  kind: "exam";
+  kind: "exam" | "knowledge_graph" | "knowledge_question";
   status: AiGenerationStatus;
   stage: AiGenerationStage;
   progress: number;
   queuePosition: number | null;
-  settings: AiExamGenerationSettings;
+  settings: AiExamGenerationSettings | AiKnowledgeGraphGenerationSettings | Record<string, unknown>;
   errorCode: string | null;
   errorMessage: string | null;
   noteId: string | null;
+  retryable: boolean;
+  resumeUntil: string | null;
+  checkpointStage: string | null;
   createdAt: string;
   startedAt: string | null;
   finishedAt: string | null;
+}
+
+export interface GeneratedKnowledgeSourceRef {
+  blockId: string;
+  page: number | null;
+  slide: number | null;
+  label: string;
+}
+
+export type GeneratedKnowledgeNodeKind =
+  | "concept"
+  | "definition"
+  | "process"
+  | "formula"
+  | "example"
+  | "evidence"
+  | "comparison"
+  | "method"
+  | "person"
+  | "event"
+  | "term";
+
+export interface GeneratedKnowledgeNodeV1 {
+  id: string;
+  title: string;
+  kind: GeneratedKnowledgeNodeKind;
+  level: number;
+  sourceOrder: number;
+  summary: string;
+  explanation: string;
+  keyDetails: string[];
+  examples: string[];
+  formulas: string[];
+  commonMisconceptions: string[];
+  checkQuestions: string[];
+  keywords: string[];
+  sourceRefs: GeneratedKnowledgeSourceRef[];
+}
+
+export type GeneratedKnowledgeEdgeRelation =
+  | "sequence"
+  | "prerequisite"
+  | "part_of"
+  | "causes"
+  | "supports"
+  | "contrasts"
+  | "applies_to"
+  | "example_of"
+  | "related";
+
+export interface GeneratedKnowledgeEdgeV1 {
+  id: string;
+  from: string;
+  to: string;
+  relation: GeneratedKnowledgeEdgeRelation;
+  label: string;
+  explanation: string;
+}
+
+export interface GeneratedKnowledgeGraphV1 {
+  schemaVersion: "generated-knowledge-graph.v1";
+  title: string;
+  language: "en" | "zh";
+  overview: string;
+  learningObjectives: string[];
+  nodes: GeneratedKnowledgeNodeV1[];
+  edges: GeneratedKnowledgeEdgeV1[];
 }
 
 export interface GeneratedExamSourceRef {
@@ -187,17 +274,53 @@ export interface GeneratedNoteSummary {
   courseName: string;
   courseCode: string | null;
   title: string;
-  kind: "ai_exam";
+  kind: "ai_exam" | "ai_knowledge_graph";
   materialName: string;
   sourceDeleted: boolean;
   questionCount: number;
   totalMarks: number;
+  nodeCount: number;
+  edgeCount: number;
   createdAt: string;
   updatedAt: string;
 }
 
-export interface GeneratedNoteDetail extends GeneratedNoteSummary {
+export interface GeneratedExamNoteDetail extends GeneratedNoteSummary {
+  kind: "ai_exam";
   exam: GeneratedExamV1;
+}
+
+export interface GeneratedKnowledgeNoteDetail extends GeneratedNoteSummary {
+  kind: "ai_knowledge_graph";
+  graph: GeneratedKnowledgeGraphV1;
+}
+
+export type GeneratedNoteDetail = GeneratedExamNoteDetail | GeneratedKnowledgeNoteDetail;
+
+export interface CreateKnowledgeNodeQuestionRequest {
+  idempotencyKey: string;
+  question: string;
+}
+
+export interface KnowledgeNodeAnswerV1 {
+  schemaVersion: "knowledge-node-answer.v1";
+  answer: string;
+  keyPoints: string[];
+  sourceRefs: GeneratedKnowledgeSourceRef[];
+  followUpQuestions: string[];
+}
+
+export interface KnowledgeNodeQuestion {
+  id: string;
+  noteId: string;
+  nodeId: string;
+  question: string;
+  status: AiGenerationStatus;
+  answer: KnowledgeNodeAnswerV1 | null;
+  errorCode: string | null;
+  errorMessage: string | null;
+  createdAt: string;
+  answeredAt: string | null;
 }
 
 export type ExamAttemptStatus =

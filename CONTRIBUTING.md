@@ -5,6 +5,10 @@
 > **何时更新：**工具链、目录、CI 门禁、分支策略、数据库流程或评审责任变化时；发现本文命令无法执行时应立即更新。  
 > **状态基线：**2026-08-11；生产数据库已受保护发布到 0043，0039–0040 安全/限流 Stage A 已上线并处于兼容观察，0041–0043 Materials AI 第一阶段已上线。提交说明必须区分代码实现、本地或 fake 自动化、真实 Redis/Supabase/provider gate 与实际上线。
 
+任何 AI system/user prompt、模型输入模板、schema 或供应商指令参数变更，都必须在同一 PR 更新 [AI Prompt 统一目录](docs/ai/PROMPT_CATALOG.md)、对应运行时代码、版本与评测；不得只改文档或只改隐藏在代码中的字符串。
+
+长任务变更还必须证明：内部 HTTP 快速接收、每个 provider usage UUID 幂等、完成/失败前账本 flush、checkpoint 过期清理、换 lease 不重复调用已完成阶段，以及 fake/真实 provider 证据分开报告。仅延长 `AbortSignal` 或仅通过 jsdom 不满足完成定义。
+
 ## 1. 开始之前
 
 - Node.js 版本以 `.nvmrc` 和根 `package.json#engines` 为准（当前 Node 20+）。
