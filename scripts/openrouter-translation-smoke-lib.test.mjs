@@ -4,6 +4,7 @@ import {
   buildOpenRouterSmokeBody,
   isRetryableOpenRouterSmokeStatus,
   openRouterSmokeRetryDelay,
+  openRouterSmokeTransportReason,
   parseOpenRouterSmokePayload,
   parseRetryAfterMilliseconds,
   runOpenRouterSmokeRequest,
@@ -55,6 +56,8 @@ test("OpenRouter smoke retries only transient provider responses", () => {
     baseDelayMs: 1_000,
     maxDelayMs: 60_000,
   }), null);
+  assert.equal(openRouterSmokeTransportReason(new DOMException("slow body", "TimeoutError")), "timeout");
+  assert.equal(openRouterSmokeTransportReason(new TypeError("fetch failed")), "network");
 });
 
 test("OpenRouter smoke honors Retry-After and succeeds with the same request", async () => {
@@ -96,4 +99,44 @@ test("OpenRouter smoke keeps persistent and non-retryable failures fail-closed",
     maxDelayMs: 2,
     sleep: async () => {},
   }), /HTTP 401 after 1 attempts/);
+});
+
+test("OpenRouter smoke retries a timeout while consuming a successful response body", async () => {
+  const responseBody = JSON.stringify({ ok: true });
+  let calls = 0;
+  const retries = [];
+  const result = await runOpenRouterSmokeRequest(async () => {
+    calls += 1;
+    return new Response(responseBody, { status: 200 });
+  }, {
+    maxAttempts: 3,
+    baseDelayMs: 10,
+    maxDelayMs: 100,
+    maxElapsedMs: 1_000,
+    readBody: async (response) => {
+      if (calls === 1) throw new DOMException("body stalled", "TimeoutError");
+      return response.text();
+    },
+    sleep: async () => {},
+    onRetry: (value) => retries.push(value),
+  });
+  assert.equal(calls, 2);
+  assert.equal(result.body, responseBody);
+  assert.equal(result.attempts, 2);
+  assert.deepEqual(retries, [{ attempt: 1, delayMs: 10, reason: "timeout", status: null }]);
+});
+
+test("OpenRouter smoke stops retries that cannot fit the total time budget", async () => {
+  let clock = 0;
+  await assert.rejects(() => runOpenRouterSmokeRequest(async () => {
+    clock += 80;
+    throw new DOMException("slow", "TimeoutError");
+  }, {
+    maxAttempts: 5,
+    baseDelayMs: 25,
+    maxDelayMs: 100,
+    maxElapsedMs: 100,
+    now: () => clock,
+    sleep: async (delayMs) => { clock += delayMs; },
+  }), /total retry budget/);
 });
