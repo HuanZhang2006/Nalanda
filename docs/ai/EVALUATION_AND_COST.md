@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-15。生产数据库已到 0051，但不可变应用仍为此前稳定 release；仓库 0046–0051 候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。两次应用候选均在切流前失败并自动回退：第一次是 Luna/OpenAI-only 无 ZDR endpoint，第二次是真实试卷偶发违反总分机械约束。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-15。生产数据库已到 0051，但不可变应用仍为此前稳定 release；仓库 0046–0051 候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。三次应用候选均在切流前失败并自动回退：Luna/OpenAI-only 无 ZDR endpoint、真实试卷偶发违反总分机械约束，以及真实知识图缺少 level-0 root。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -22,6 +22,7 @@
 - 首次 DeepSeek 审查与解析器诊断取失败范围并集，只把这些页/slide/region 的渲染图发送 MiMo，拼接完整 IR 后再次审查；
 - 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters，关闭 reasoning/tool/Web/跨模型 fallback；同一模型按吞吐量优先、只在满足全部过滤器的 provider endpoint 间故障转移；
 - `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；允许一次结构化 repair，修复结果必须重复同一归一化/结构/语义门禁；
+- `GeneratedKnowledgeGraphV1` 保存前把模型的相对 hierarchy levels 以最小值归零，并在 worker 与数据库两层一致验证 pipeline `sourceMode`、level-0 root、节点/边唯一 ID、端点、来源顺序和引用；该机械步骤不改标题、解释、关系、引用或相对层级；
 - 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
 - 生产 0043 每任务 0700 临时目录在 `finally` 删除并清理一小时 orphan；0046–0051 候选仅在可恢复故障下保留验证过的 checkpoint/usage spool 到配置 TTL，成功、不可恢复失败、Delete/Cancel 或过期清理；持久 parse cache、DB checkpoint 与布局是分开的私有产品数据；
 - 生产 compose 已激活隔离 worker 与 flag；fake 自动化不证明真实供应商质量，真实门禁也只是时点证据，不替代持续质量/成本监控。
@@ -59,6 +60,8 @@ provider usage 只留 model、token、micro-USD、latency、request ID、用途�
 2026-08-14 的后续真实 chart 门禁暴露出首轮分类器会因纯图片尚未提取而返回 `uncertain`，旧执行顺序在 MiMo 前误报注入。`material-safety-audit.v2` 的回归集分别覆盖：解析器隔离范围可进入恢复、模型漏填 failed range 仍恢复、未知范围拒绝、正文/focus 确定性信号拒绝、恢复后严格复审。fake 单测只能证明控制流；发布仍必须用无个人数据 chart 和图片内恶意指令样本分别证明正常视觉可恢复、视觉注入在第二次审查被拒绝。
 
 2026-08-15 的候选 run `31834895278` 已通过完整 CI 和 220 页资源 canary，但固定安全教材的真实试卷有一次以 `AI_EXAM_VALIDATION_FAILED` 阻断切流并回退。随后在相同无个人数据 fixture 上做三次脱敏阶段诊断：一次正常、一次复现 5 题各 5 分但请求总分为 20 且 repair 仍未改正、一次正常；另观察到一次 reviewer 同时返回 `valid=true` 与非空 issues。向前修复只确定性处理可证明的机械约束（请求元数据、重复 ID、marks 合计），不改题干/答案/引用；非空 reviewer issues 继续触发修复。真实重发通过前不能把这一修复称为生产上线。
+
+同日 main run `31838779292` 证明上述试卷归一化已通过真实 provider fixture，随后登录生产 smoke 的知识图在 `artifact_ready` 后被完成 RPC 拒绝为 SQLSTATE `22023`。脱敏 checkpoint 断言显示 artifact 为 3 nodes/2 valid edges、唯一 ID/端点/引用均正常，但 `roots=0`；worker 的 DocumentIR validator 漏掉了数据库已有的 root 约束。候选未切 Web并自动回退。向前修复将 graph 层级机械归零并补齐本地/数据库契约对照测试；完成回调的永久结构/路由拒绝也会进入明确终态，不再伪装成可恢复 callback outage。新的真实发布门禁通过前仍不能称为生产上线。
 
 ### 2.2 Luna 原文件候选闭环
 

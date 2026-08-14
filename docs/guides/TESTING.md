@@ -490,6 +490,8 @@ python3 scripts/smoke-material-ai-provider.py
 
 2026-08-15 的向前修复 PR #68 run `31834010315` 与 main run `31834895278` 通过 63 个 Python、127 个 API、113 个 Web 测试，以及真实 Redis、0007→0051、空库/lint、双用户 RLS/Storage、fake Chromium 和 220 页 canary。真实 chart 在 `material-safety-audit.v2` 下通过视觉恢复，但固定安全教材的试卷一次因 marks 合计漂移返回 `AI_EXAM_VALIDATION_FAILED`，候选 release 自动回退；三次同 fixture 脱敏诊断确认该结果具有供应商随机性且 repair 可能重复错误。新增回归以服务端设置规范机械元数据/ID/marks，并让复核 issues 优先于矛盾 valid 标记；仍必须由新的真实 provider run 和独立生产检查证明修复生效。
 
+随后 PR #69 完整 CI 与 main run `31838779292` 的本地数据库/RLS/fake Chromium、真实 provider fixture、220 页 canary和 Azure/Courses gate通过，但登录生产 smoke 的知识图产生 3 nodes/2 valid edges 且没有 level-0 root。数据库完成 RPC 以 `22023` 拒绝，job 停在 `saving`，15 分钟 smoke 超时后候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 自动回退且未切 Web。回归现在覆盖：DocumentIR/native graph level 机械归零、root/sourceMode 与 DB contract 对齐、checkpoint 恢复后仍归一化、永久 result/routing 拒绝进入终态，以及 lost lease 返回 409；新真实 run 前仍不得报告应用上线。
+
 ## 11. 新增测试约定
 
 1. 测试名描述用户行为/安全属性，不只写函数名。

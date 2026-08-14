@@ -260,7 +260,8 @@ diagrams, timelines, procedures, humanities sources, and technical reference mat
 Create atomic nodes detailed enough for learning: a concise summary plus a self-contained
 explanation, key details, examples, formulas where present, common misconceptions, check
 questions, and keywords. Preserve the source's teaching/reading sequence using ascending
-sourceOrder; use level to express hierarchy without replacing source order. Split overloaded
+sourceOrder; use level to express hierarchy without replacing source order. Always include at
+least one level-0 root and direct hierarchy edges consistently with node levels. Split overloaded
 ideas, but merge exact duplicates. Every node must cite exact supplied block IDs and may contain
 only claims supported by those blocks. Connect nodes with typed, directed edges that explain the
 relationship. Include prerequisite and part-of structure only when supported, and use sequence
@@ -268,7 +269,7 @@ edges to retain important source ordering. Do not invent missing content. Return
 GeneratedKnowledgeGraphV1 JSON schema.
 ```
 
-User message：`UNTRUSTED_SOURCE_JSON\n{"settings":<language/detail/focus>,"sourceBlocks":<DocumentIR blocks without source bytes>}`。输出包含 title/language/overview/learningObjectives、1–250 个有 sourceOrder/level/detail/sourceRefs 的 nodes 和最多 1000 条受限关系 edges。确定性 validator 检查 ID、端点、递增来源顺序和 block 引用。
+User message：`UNTRUSTED_SOURCE_JSON\n{"settings":<language/detail/focus>,"sourceBlocks":<DocumentIR blocks without source bytes>}`。输出包含 title/language/overview/learningObjectives、1–250 个有 sourceOrder/level/detail/sourceRefs 的 nodes 和最多 1000 条受限关系 edges。运行时版本为 `knowledge-graph.v2`；保存前将模型返回的相对 level 以最小值归零，再确定性检查 `sourceMode=document_ir`、level-0 root、唯一 ID、端点、递增来源顺序和 block 引用。归零不改节点内容、关系、引用或相对层级。
 
 `MAT-GRAPH-REVIEW-V1` 的 system prompt（原文）：
 
@@ -341,7 +342,7 @@ present, misconceptions, self-check questions, keywords, and an original page/sl
 record locator. Return only strict GeneratedKnowledgeGraphV1 JSON.
 ```
 
-User content 是 `UNTRUSTED SETTINGS JSON\n<KnowledgeGraphSettings JSON>` 与完整原文件。validator 检查根节点、唯一 ID、sourceOrder、level/层级边方向、端点、关系和原文件 locator；ELK 布局只负责显示，不是语义 validator。
+User content 是 `UNTRUSTED SETTINGS JSON\n<KnowledgeGraphSettings JSON>` 与完整原文件。运行时版本为 `knowledge-graph-native-file.v2`；同样先将相对 level 归零，再由 validator 检查根节点、唯一 ID、sourceOrder、level/层级边方向、端点、关系和原文件 locator；ELK 布局只负责显示，不是语义 validator。
 
 ### 4.4 `MAT-NATIVE-REPAIR-V1`
 

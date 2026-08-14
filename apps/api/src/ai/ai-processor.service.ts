@@ -1,6 +1,7 @@
-import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
+import { BadRequestException, ConflictException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { GeneratedExamV1 } from "@nalanda/types";
+import { SupabaseRequestError } from "../learning/supabase-admin.service";
 import { AiInternalClientService, AiWorkerError } from "./ai-internal-client.service";
 import { AiRepository, type DbRow } from "./ai.repository";
 import { gradeObjective } from "./exam-grading";
@@ -21,11 +22,68 @@ const RETRYABLE_CODES = new Set([
   "OPENROUTER_ZDR_UNAVAILABLE",
 ]);
 
+function databaseResultContractRejected(error: unknown) {
+  if (!(error instanceof SupabaseRequestError) || !error.body || typeof error.body !== "object") {
+    return false;
+  }
+  const code = "code" in error.body ? String((error.body as { code: unknown }).code) : "";
+  return code === "22023" || code === "23514";
+}
+
+function databaseErrorMessage(error: unknown) {
+  if (!(error instanceof SupabaseRequestError) || !error.body || typeof error.body !== "object") {
+    return "";
+  }
+  return "message" in error.body ? String((error.body as { message: unknown }).message) : "";
+}
+
+function databaseLeaseRejected(error: unknown) {
+  return /(?:JOB|GRADING)_LEASE_LOST|(?:JOB|EXAM_ATTEMPT)_NOT_FOUND/.test(
+    databaseErrorMessage(error),
+  );
+}
+
+function databaseRoutingRejected(error: unknown) {
+  return databaseErrorMessage(error).includes("AI_PROVIDER_ROUTING_VIOLATION");
+}
+
 @Injectable()
 export class AiProcessorService {
   private readonly logger = new Logger(AiProcessorService.name);
 
   constructor(private readonly repository: AiRepository, private readonly worker: AiInternalClientService) {}
+
+  private async settleMaterialCompletionRejection(
+    jobId: string,
+    leaseToken: string,
+    kind: unknown,
+    error: unknown,
+  ) {
+    if (databaseLeaseRejected(error)) {
+      throw new ConflictException({ code: "JOB_CANCELLED", message: "The AI job lease is no longer active" });
+    }
+    const code = databaseRoutingRejected(error)
+      ? "AI_PROVIDER_ROUTING_VIOLATION"
+      : databaseResultContractRejected(error)
+        ? kind === "knowledge_graph"
+          ? "AI_KNOWLEDGE_GRAPH_VALIDATION_FAILED"
+          : kind === "knowledge_question"
+            ? "AI_KNOWLEDGE_ANSWER_VALIDATION_FAILED"
+            : "AI_EXAM_VALIDATION_FAILED"
+        : null;
+    if (!code) throw error;
+    this.logger.warn(JSON.stringify({ event: "ai_result_contract_rejected", jobId, code }));
+    await this.repository.failJob(
+      jobId,
+      leaseToken,
+      code,
+      code === "AI_PROVIDER_ROUTING_VIOLATION"
+        ? "The provider route did not satisfy the locked AI policy"
+        : "The generated result did not pass the storage contract",
+      false,
+    );
+    return { completed: false, failed: true } as const;
+  }
 
   private async budget(kind: "generation" | "grading", alreadySpentMicroUsd = 0) {
     const spent = await this.repository.monthlyProviderCostMicroUsd();
@@ -177,10 +235,23 @@ export class AiProcessorService {
     }
     const value = result as DbRow;
     if (value.kind === "knowledge_question") {
-      await this.repository.completeKnowledgeQuestion(jobId, leaseToken, value.answer);
+      try {
+        await this.repository.completeKnowledgeQuestion(jobId, leaseToken, value.answer);
+      } catch (error) {
+        return this.settleMaterialCompletionRejection(
+          jobId,
+          leaseToken,
+          value.kind,
+          error,
+        );
+      }
       return { completed: true };
     }
-    await this.repository.completeMaterialJob(jobId, leaseToken, value);
+    try {
+      await this.repository.completeMaterialJob(jobId, leaseToken, value);
+    } catch (error) {
+      return this.settleMaterialCompletionRejection(jobId, leaseToken, value.kind, error);
+    }
     return { completed: true };
   }
 
@@ -273,10 +344,27 @@ export class AiProcessorService {
       throw new BadRequestException({ code: "INVALID_AI_RESULT", message: "Invalid grading result" });
     }
     const value = result as DbRow;
-    await this.repository.completeGrading(
-      attemptId, leaseToken, Number(value.subjectiveScore || 0),
-      Array.isArray(value.results) ? value.results : [], [],
-    );
+    try {
+      await this.repository.completeGrading(
+        attemptId, leaseToken, Number(value.subjectiveScore || 0),
+        Array.isArray(value.results) ? value.results : [], [],
+      );
+    } catch (error) {
+      if (databaseLeaseRejected(error)) {
+        throw new ConflictException({ code: "JOB_CANCELLED", message: "The grading lease is no longer active" });
+      }
+      if (!databaseResultContractRejected(error) && !databaseRoutingRejected(error)) throw error;
+      const code = databaseRoutingRejected(error)
+        ? "AI_PROVIDER_ROUTING_VIOLATION"
+        : "AI_GRADING_VALIDATION_FAILED";
+      this.logger.warn(JSON.stringify({
+        event: "ai_grading_result_contract_rejected",
+        attemptId,
+        code,
+      }));
+      await this.repository.failGrading(attemptId, leaseToken, []);
+      return { completed: false, failed: true };
+    }
     return { completed: true };
   }
 
