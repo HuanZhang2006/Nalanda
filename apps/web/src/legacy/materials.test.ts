@@ -89,9 +89,9 @@ describe("资料错误处理", () => {
     mountMaterials(root); await flush(16);
 
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
-    await flush(8);
-    const choices = document.querySelectorAll("[data-ai-choice]");
-    expect(choices).toHaveLength(4);
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll("[data-ai-choice]")).toHaveLength(4);
+    });
     expect(document.querySelectorAll("[data-ai-choice]:disabled")).toHaveLength(2);
     expect(document.body.textContent).toContain("Organize knowledge points");
     expect(document.body.textContent).toContain("Coming soon");
@@ -100,9 +100,7 @@ describe("资料错误处理", () => {
     expect(document.querySelector("[data-ai-error]")?.textContent).toContain("Confirm AI processing consent");
     (document.querySelector("#ai-consent") as HTMLInputElement).click();
     click(document.querySelector("[data-ai-submit]"));
-    await flush(20);
-
-    expect(created).toHaveLength(1);
+    await vi.waitFor(() => expect(created).toHaveLength(1));
     expect(created[0]).toMatchObject({
       idempotencyKey: "11111111-1111-4111-8111-111111111111", kind: "exam", consentVersion: 1,
       pipeline: "luna_native_file_v1",
@@ -130,7 +128,9 @@ describe("资料错误处理", () => {
     mountMaterials(root); await flush(16);
 
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
-    await flush(8);
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-ai-choice="exam"]')).not.toBeNull();
+    });
     click(document.querySelector('[data-ai-choice="exam"]'));
     expect(document.querySelector("#ai-consent")).not.toBeNull();
     click(document.querySelector("[data-ai-submit]"));
@@ -169,12 +169,14 @@ describe("资料错误处理", () => {
     expect(root.textContent).not.toMatch(/上传|资料库|新建科目/);
 
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
-    await flush(8);
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-ai-choice="knowledge_graph"]')).not.toBeNull();
+    });
     click(document.querySelector('[data-ai-choice="knowledge_graph"]'));
     expect(document.body.textContent).toContain("Build a comprehensive knowledge map in source order");
     expect(document.body.textContent).not.toMatch(/知识点|取消|语言/);
     click(document.querySelector("[data-ai-submit]"));
-    await flush(20);
+    await vi.waitFor(() => expect(created).toHaveLength(1));
     expect(created[0]).toEqual({
       idempotencyKey: "11111111-1111-4111-8111-111111111111",
       kind: "knowledge_graph",
