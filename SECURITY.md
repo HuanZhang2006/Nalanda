@@ -54,6 +54,7 @@
 
 - 候选代码已移除 API 对长时间 worker response headers 的依赖：202 接收后只允许持有内部 token 的 worker 回调。provider usage 先写 0600/0700 本地 spool，再幂等写账本；已验证断点可能在 TTL 内包含私有 DocumentIR/产物，禁止备份、日志输出或跨 job 复用。
 - 知识节点提问只由 API 从 owner 的 Note 读取 graph/DocumentIR；浏览器不能提交模型、key、source blocks 或回调地址。问题、focus、文件文本与图片一律是不可信数据，确定性信号和两次安全审查继续失败关闭。
+- DocumentIR 首轮审查只可把局限在解析器已声明 failure 范围的 `uncertain` 送入隔离视觉恢复；已解析文本/focus 的确定性信号、未知位置或 `malicious` 立即拒绝。视觉内容拼回后必须再次严格审查，最终 `uncertain/malicious` 绝不进入图谱或试卷生成。该规则避免把“尚未读取”误当成“已确认恶意”，但不把不可见内容提前标为安全。
 - 候选 Delete/Cancel 先在数据库原子结算额度并进入 `deleting`，再由带内部 token 的 worker cancel/purge 清 HTTPX、Office 进程组、checkpoint、usage spool 和 0700 目录；usage 未持久落账或清理未确认时不得硬删/从 UI 隐藏。
 
 仓库的 0008 migration 已关闭最初三项 P0：
