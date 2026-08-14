@@ -42,6 +42,8 @@
 | `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation/grading processor | worker 的 progress/usage/checkpoint/complete/fail 回调 API 内网基址，生产为 `http://api:3000/api`。 |
 | `AI_INTERNAL_TOKEN` | 生产必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
 | `FEATURE_MATERIAL_AI` | 安装默认 false；当前生产 true | 公开配置 | Materials AI API/Web | 总开关；部署安装后先保持 false，只在 readiness/canary/真实 gate 通过后开启。 |
+| `FEATURE_MATERIAL_AI_LUNA` | 0049–0051 候选；安装/回滚默认 false | 公开配置 | Materials AI API/Web | `luna_native_file_v1` 独立开关；只有真实 OpenAI endpoint、原文件与资源门禁通过后才开启，不影响显式旧流水线。 |
+| `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` | 候选，`pdf,png` | 受限配置 | API capabilities/create + AI worker validation | 真实逐格式门禁通过的 Luna 原文件扩展名 allowlist；API 与 worker 必须一致，不能为“让 UI 可选”而加入未经验证的格式。 |
 | `MATERIAL_AI_MONTHLY_BUDGET_USD` | 可选，20 | 受限配置 | AI processor | provider usage 成功费用达到全局月预算后停止新调用。 |
 | `MATERIAL_AI_GENERATION_MAX_COST_USD` | 可选，0.50 | 受限配置 | generation processor | 单次生成费用硬门；超限不保存结果并释放用户 quota reservation。 |
 | `MATERIAL_AI_GRADING_MAX_COST_USD` | 可选，0.05 | 受限配置 | grading processor | 单次主观题评分费用硬门。 |
@@ -107,7 +109,7 @@
 
 `OPENROUTER_ASSESSMENTS_PER_DAY=500` 是语义判分默认值；STT 独立使用 20/分钟、300/本地日和 5,000,000 micro-USD/月。修改本文或 `.env.example` 不会改写正在运行的服务器；0037–0038 已于 2026-08-04 通过受保护安装脚本原子写入 STT 非密钥配置并复用既有 secret。后续发布/轮换仍须单独核对容器内生效值且不得打印 key。
 
-## 4. FastAPI Materials AI 运行时变量（生产 0041–0043 + 0046 候选）
+## 4. FastAPI Materials AI 运行时变量（生产 0041–0043 + 0046–0051 候选）
 
 来源模板：`apps/ai/.env.example`。本地使用进程私有环境；生产由受保护脚本生成 mode-600 `/opt/nalanda/.ai.env`。worker **不会**收到 service-role、Redis、Azure、JWT 或 Web key。
 
@@ -115,28 +117,28 @@
 |---|---|---|---|
 | `NODE_ENV` | production 必需 | 公开配置 | production 明确拒绝 fake provider readiness。 |
 | `AI_INTERNAL_TOKEN` | 必需 | **最高机密** | 与 API 相同的内部请求/回调认证 token。 |
-| `OPENROUTER_API_KEY` | 必需 | **最高机密** | DeepSeek/MiMo 服务端调用；不写数据库、日志、响应或 Web。 |
+| `OPENROUTER_API_KEY` | 必需 | **最高机密** | DeepSeek/MiMo/Luna 服务端调用；不写数据库、日志、响应或 Web。 |
 | `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | 公开配置 | 固定 provider 基址。 |
 | `SUPABASE_URL` | 必需 | 公开配置 | 只用于把允许下载的 signed URL host 限制到本项目；worker没有 service-role。 |
 | `MATERIAL_AI_ALLOWED_STORAGE_HOSTS` | 可选补充 | 受限配置 | 逗号分隔额外允许 host；生产通常为空，禁止宽泛通配。 |
 | `PUBLIC_APP_URL` | `https://nalanda.online` | 公开配置 | OpenRouter `HTTP-Referer` 标识。 |
 | `MATERIAL_AI_FAKE_PROVIDER` | false | 测试配置 | pytest/Playwright 的确定性 adapter；production true 会使 readiness 失败。 |
-| `MATERIAL_AI_TEMP_ROOT` | `/tmp/nalanda-material-ai` | 受限路径 | 0700 job 临时目录根；候选会短期保存 usage spool 与验证后的 resume checkpoint，终态或 TTL 清除。 |
+| `MATERIAL_AI_TEMP_ROOT` | `/tmp/nalanda-material-ai` | 受限路径 | 0700 job 临时目录根；短期保存 usage spool 与验证后的 resume checkpoint；成功/失败/取消/删除或 TTL 清除，usage 未落账时不得提前删除 spool。 |
 | `MATERIAL_AI_TEMP_MIN_FREE_BYTES` | 536870912 | 受限配置 | 创建和解析过程中低于 512MiB 失败关闭。 |
 | `MATERIAL_AI_JOB_TEMP_LIMIT_BYTES` | 1073741824 | 受限配置 | 单任务临时空间 1GiB 硬上限。 |
 | `MATERIAL_AI_MAX_CHARACTERS` | 400000 | 受限配置 | 规范化 DocumentIR 文本上限。 |
 | `MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS` | 120 | 受限配置 | DOCX/PPTX 全量低优先级渲染硬超时。 |
-| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 一次结构化 OpenRouter 操作（包括全部重试与退避）的共享 wall-clock 上限；候选 Nest 仅等待 30 秒接收，不等待完整任务。 |
+| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 一次结构化 OpenRouter 操作（包括全部重试与退避）的共享 wall-clock 上限；Nest 只等待短 202 接收，不等待完整任务。 |
 | `MATERIAL_AI_JOB_TIMEOUT_SECONDS` | **候选**，1200 | 受限配置 | 一次 Materials 生成/知识图任务的总执行预算；到期保存既有 durable checkpoint、释放运行槽并允许期限内续跑。 |
 | `MATERIAL_AI_GRADING_TIMEOUT_SECONDS` | **候选**，240 | 受限配置 | 一次主观题批量评分的总执行预算；防止后台任务无限占用单并发 worker。 |
 | `MATERIAL_AI_PROVIDER_MAX_ATTEMPTS` | 4 | 受限配置 | 同一固定模型请求的最大有界尝试次数，限制 1–10；仅网络错误及 408/429/502/503/504 可重试。 |
 | `MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS` | 2 | 受限配置 | 指数退避起点，限制 0–60 秒；不会改变 model、ZDR 或同模型 provider failover 策略。 |
 | `MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS` | 60 | 受限配置 | 单次退避上限，限制 0–300 秒；数值型 `Retry-After` 优先且不得提前请求，超过上限则该任务失败并释放额度。 |
 | `MATERIAL_AI_GENERATION_MAX_TOKENS` | 30000 | 成本配置 | 试卷生成/一次 repair 最大 completion tokens。 |
-| `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS` | **候选**，30000 | 成本配置 | 知识图谱生成/repair 最大 completion tokens。 |
+| `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS` | **候选**，30000 | 成本配置 | 知识图谱生成/repair 最大 completion tokens，DocumentIR 与 Luna 共用上限。 |
 | `MATERIAL_AI_RESUME_TTL_SECONDS` | **候选**，86400 | 受限配置 | worker orphan 与本地 checkpoint/spool 的保留期限；需和 API 一致。 |
 
-模型 ID不是用户变量：代码固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，变更需 ADR、评测、成本和隐私复审。有界重试始终复用完全相同的模型与严格 schema；请求不提供其它 `models`，所以不存在跨模型 fallback。`sort="throughput"` 与 `allow_fallbacks=true` 只让该模型按吞吐量优先在仍满足 ZDR、拒绝数据收集与参数支持过滤器的 provider endpoint 间故障转移；401/402/403、ZDR 不可用和坏请求不会由应用重试。重试上限耗尽后返回稳定供应商错误，生成/评分额度 reservation 释放，用户可稍后重新提交。
+模型 ID不是用户变量：旧流水线固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`；Luna 固定 `openai/gpt-5.6-luna`。Luna 请求固定 `provider.only=["openai"]`、`allow_fallbacks=false`、ZDR/拒绝数据收集/严格 schema/no tools，并核对响应真实 upstream；路由不符时即使已记 usage 也拒绝保存产物。旧流水线的同模型 provider 故障转移语义保持不变。任何模型或路由变更均需 ADR、评测、成本和隐私复审。
 
 ## 5. 数据库迁移运维变量
 

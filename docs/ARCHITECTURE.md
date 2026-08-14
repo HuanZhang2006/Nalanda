@@ -8,7 +8,7 @@
 
 最后核对：2026-08-11。生产数据库与不可变应用已受保护发布到 0043：帖子/Feedback/Schedule 完整性、points 日上限/审核/协同信号、Redis 限流，以及 Materials 文件生成试卷、私有 Notes、在线考试和 Free 双额度均已启用。当前 release 为 `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`，API/AI/Web 同源且 `FEATURE_MATERIAL_AI=true`。时间列撤权 contract 顺延为未来 0044–0045，仍必须等兼容应用从 `2026-08-10T09:35:34Z` 起在线观察至少 24 小时并通过 go/no-go。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
-2026-08-12 候选代码（尚未部署）追加 0046–0048：Materials AI 的生成/评分内部调用改为 202 接收 + 持久回调，增加数据库/worker 双层断点、增量 usage ledger、知识点图谱和节点问答。以下带“候选”的段落描述当前分支，不改变上述生产事实。
+2026-08-14 候选代码（尚未部署）包含 0046–0051：0046–0048 将生成/评分改为 202 接收 + 持久回调并增加双层断点、增量 usage、知识点图谱和节点问答；0049–0051 增加 Luna 原文件流水线、provider provenance、可确认清理的任务删除/清空及私有跨设备图布局。以下带“候选”的段落描述当前分支，不改变上述生产事实。
 
 ---
 
@@ -176,6 +176,14 @@ Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责�
 
 Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，仍为 Coming soon。候选 `GeneratedKnowledgeGraphV1` 是新的真实契约：节点按 source order，带层级、详细解释、例子/公式/误区/自测与严格引用；edge 有受限关系类型。节点问答只使用所选节点、相邻节点及这两类节点引用到的 source blocks，答案不能越过该来源并集。当前候选仍不含 embeddings、pgvector、Notes 编辑、导出、credits 或支付。
 
+### 6.2 Luna 原文件与任务清理候选（0049–0051）
+
+创建 job 时 Web 必须显式发送 `pipeline`。`GET /api/materials/:id/ai-capabilities` 只把通过真实逐格式门禁且由 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` 允许的格式标为 Luna 可用；默认候选 allowlist 为 PDF/PNG。`luna_native_file_v1` 下载私有 Storage 原字节后校验声明大小、MIME 与 SHA-256，以 inline base64 发送给固定 `openai/gpt-5.6-luna`：PDF 使用 `type:file` + `file-parser.native`，图片使用 `image_url`。该路径不调用解析器、OCR、LibreOffice、DocumentIR 或 parse cache，也不使用会产生远端 workspace 留存的 Files API。每次请求强制 `provider.only=["openai"]`、`allow_fallbacks=false`、ZDR、deny data collection、require parameters、strict schema、no tools/Web；usage 先落库，实际上游不是 OpenAI 时完成事务拒绝产物但保留成本证据。
+
+知识图画布动态加载 React Flow 与 ELK，按 level 建立从左到右泳道并用 sourceOrder 约束同层顺序；关联边弱化为虚线。节点拖动结束及自动布局后执行碰撞消解，位置/viewport 保存到 owner 私有 `knowledge_graph_layouts`。artifact 改版时只复用仍存在的 node ID，revision 冲突由 Web 拉取最新布局、合并非重叠节点后重试。详情永远在画布外：桌面右侧、移动端下方，hover/focus 临时预览，click 固定，Esc 解除。
+
+删除任务先由 service-role 事务锁行并进入 `deleting/cleaning`：queued 释放 reservation，已被 worker 接受的 processing consume 一次，终态不回退历史额度。BullMQ 删除待投递项后调用 worker cancel/purge；worker 取消 HTTPX await 和 Office 进程组，先重放 usage spool，再删除 0700 目录/checkpoint。只有 worker 返回 `purged=true` 才硬删 job/events/checkpoint；worker 不可达时 reconciler 重试，UI 保持 Cleaning up。provider usage 的 job UUID 是非 FK 审计引用，任务删除后仍保留。
+
 ## 7. 数据库与 Storage
 
 ### 7.1 当前表
@@ -194,7 +202,7 @@ Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，�
 | 分享市场 | `learning_course_shares`, `learning_course_publications`, `learning_course_reports`, `learning_course_moderation_actions` |
 | 课程徽章/语音配额 | `badge_definitions`, `user_badge_awards`, `learning_speech_usage` |
 | Materials AI 计划/额度 | `ai_plans`, `ai_user_plans`, `ai_daily_usage` |
-| Materials AI 任务/缓存 | 生产：`generation_jobs`, `generation_job_events`, `ai_material_parse_cache`, `ai_provider_usage_events`；0046 候选增加 `generation_job_checkpoints`, `exam_grading_checkpoints`, `knowledge_node_questions` 与 usage `event_id` |
+| Materials AI 任务/缓存 | 生产：`generation_jobs`, `generation_job_events`, `ai_material_parse_cache`, `ai_provider_usage_events`；0046–0051 候选增加 checkpoints、`knowledge_node_questions`、usage `event_id`/upstream/pipeline、job cleanup 状态与 `knowledge_graph_layouts` |
 | 私有 Notes/来源 | `notes`, `note_materials`, `note_artifacts` |
 | 在线考试 | `exam_attempts`, `exam_attempt_answers`, `exam_attempt_operations` |
 
@@ -212,7 +220,7 @@ Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，�
 - `point_entries` 只允许用户读取自己的条目；客户端不能直接写，`point_event_states` 及 0039 新增的 claim/moderation/signal/audit 表对客户端完全隐藏。service-role 只经受控函数形成奖励和审核转换。
 - `learning_*` 私有表只允许 owner 读，客户端不能写内容、会话、尝试、progress、日程、徽章或奖励；评判事实表甚至不授予 owner SELECT。写入经 API 调用撤销了 `public/anon/authenticated` 权限的 service-role RPC。
 - 分享/出版物/举报/审核表不向匿名 PostgREST 开放。匿名分享和市场读取只能经过 API 返回转义、脱敏快照；出版快照由 trigger 保持不可变。
-- 生产 0041–0043 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage 与 operation 幂等表无客户端访问。0046–0048 候选进一步使 checkpoint 完全服务端私有，知识问答仅 owner SELECT、无客户端 INSERT/UPDATE/DELETE；所有新 RPC 均只授予 service role。provider usage 的 job/attempt UUID 是不可变审计引用，新增 event UUID 防止断线回放重复计费。
+- 生产 0041–0043 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage 与 operation 幂等表无客户端访问。0046–0051 候选进一步使 checkpoint 完全服务端私有，知识问答仅 owner SELECT、图布局仅 owner SELECT 且不能直写；所有创建/删除/清理/布局/usage/completion RPC 均只授予 service role。provider usage 的 job/attempt UUID 是不可变审计引用，新增 event UUID 防止断线回放重复计费。
 
 ### 7.3 已关闭项与剩余数据完整性边界
 
@@ -271,7 +279,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 
 ## 10. 当前优先风险
 
-- 0046–0048 尚未在真实 Supabase/生产应用，长任务恢复和图谱只能称为候选实现；必须由 CI migration/RLS、真实 OpenRouter 与公网 smoke 关闭门禁。
+- 0046–0051 尚未在真实 Supabase/生产应用，长任务恢复、图谱和 Luna 只能称为候选实现；必须由 CI migration/RLS、真实 OpenRouter/OpenAI 与公网 smoke 关闭门禁。
 - TTL 内 worker checkpoint 会包含私有 DocumentIR/已验证产物。目录权限、磁盘水位、sweeper 和“不得备份/记录正文”属于安全控制；主机被攻破时它仍是敏感数据。
 - prompt injection 检测无法数学上保证绝对正确；节点问题同样是不可信数据。任何模型输出都必须通过 schema、引用和产品约束，且不得获得工具/Web。
 

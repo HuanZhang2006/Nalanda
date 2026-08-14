@@ -27,8 +27,8 @@ test("every remote compose exec detaches stdin from the activation heredoc", asy
   );
   assert.equal(
     (withoutHelper.match(/compose_exec_no_stdin /g) ?? []).length,
-    5,
-    "Redis, two AI cleanup checks, and two feature-flag checks must use the helper",
+    7,
+    "Redis, two AI cleanup checks, and four feature-flag checks must use the helper",
   );
 
   const verificationOffset = script.indexOf("compose_exec_no_stdin redis");

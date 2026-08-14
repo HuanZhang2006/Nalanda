@@ -6,6 +6,11 @@ test("Materials AI real-provider gate covers fixed formats, ZDR evidence, inject
   const source = await readFile("scripts/smoke-material-ai-provider.py", "utf8");
   assert.match(source, /deepseek\/deepseek-v4-flash-0731/);
   assert.match(source, /xiaomi\/mimo-v2\.5/);
+  assert.match(source, /openai\/gpt-5\.6-luna/);
+  assert.match(source, /luna_native_file_v1/);
+  assert.match(source, /upstreamProvider.*OpenAI/s);
+  assert.match(source, /sourceMode.*native_file/s);
+  assert.match(source, /native pipeline unexpectedly created DocumentIR/);
   for (const fixture of ["pdf", "docx", "pptx", "chart", "malicious", "educational"]) {
     assert.match(source, new RegExp(`"${fixture}"`));
   }

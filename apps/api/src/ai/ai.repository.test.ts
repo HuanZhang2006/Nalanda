@@ -31,4 +31,34 @@ describe("Materials AI repository resume boundary", () => {
       p_job_id: JOB,
     });
   });
+
+  it("never returns provisional grading facts while an exam is in progress", () => {
+    const repository = new AiRepository({} as any);
+    const exam = {
+      schemaVersion: "generated-exam.v1", sourceMode: "native_file", title: "Private key",
+      language: "en", difficulty: "mixed", durationMinutes: 30, totalMarks: 20, instructions: [],
+      sections: [{ id: "s1", title: "Section", instructions: "", questions: [{
+        id: "q1", type: "single_choice", prompt: "Choose one", marks: 20, options: ["A", "B"],
+        correctOptionIndexes: [1], acceptedAnswers: [], modelAnswer: "B", explanation: "Because B.",
+        rubric: ["Choose B"], sourceRefs: [{ blockId: "", page: 1, slide: null, label: "Page 1" }],
+      }] }],
+    };
+    const base = {
+      attempt: {
+        id: "attempt", note_id: "note", status: "in_progress", revision: 1,
+        deadline_at: new Date(Date.now() + 60_000).toISOString(), submitted_at: null,
+        completed_at: null, objective_score: 0, objective_marks: 0, total_score: null, total_marks: 20,
+      },
+      note: {}, artifact: { content: exam },
+      answers: [{ question_id: "q1", answer: 1, awarded_marks: 20, correct: true, feedback: "Correct" }],
+    };
+
+    const drafting = repository.attemptResponse(base as any);
+    expect(drafting.results).toEqual([]);
+    expect(JSON.stringify(drafting.exam)).not.toMatch(/correctOptionIndexes|acceptedAnswers|modelAnswer|explanation|rubric/);
+    const completed = repository.attemptResponse({
+      ...base, attempt: { ...base.attempt, status: "completed", submitted_at: new Date().toISOString() },
+    } as any);
+    expect(completed.results).toEqual([{ questionId: "q1", awardedMarks: 20, correct: true, feedback: "Correct" }]);
+  });
 });

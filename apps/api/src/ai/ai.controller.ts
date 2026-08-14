@@ -1,5 +1,5 @@
 import {
-  Body, Controller, Delete, Get, Headers, Param, Patch, Post, Query, UnauthorizedException, UseGuards,
+  Body, Controller, Delete, Get, Headers, Param, Patch, Post, Put, Query, UnauthorizedException, UseGuards,
 } from "@nestjs/common";
 import { timingSafeEqual } from "node:crypto";
 import type { AuthUser } from "../auth/supabase.guard";
@@ -28,6 +28,11 @@ export class AiController {
     return this.ai.createJob(user.id, id, body);
   }
 
+  @Get("materials/:id/ai-capabilities")
+  capabilities(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.ai.capabilities(user.id, id);
+  }
+
   @Get("ai-jobs")
   jobs(@CurrentUser() user: AuthUser, @Query("limit") limit?: string) { return this.ai.listJobs(user.id, limit); }
 
@@ -36,6 +41,12 @@ export class AiController {
 
   @Post("ai-jobs/:id/cancel")
   cancel(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.cancel(user.id, id); }
+
+  @Delete("ai-jobs/:id")
+  deleteJob(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.deleteJob(user.id, id); }
+
+  @Post("ai-jobs/clear-history")
+  clearHistory(@CurrentUser() user: AuthUser) { return this.ai.clearJobHistory(user.id); }
 
   @Post("ai-jobs/:id/retry")
   retry(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.retry(user.id, id); }
@@ -48,6 +59,16 @@ export class AiController {
 
   @Get("notes/:id")
   note(@CurrentUser() user: AuthUser, @Param("id") id: string) { return this.ai.note(user.id, id); }
+
+  @Get("notes/:id/knowledge-graph-layout")
+  knowledgeGraphLayout(@CurrentUser() user: AuthUser, @Param("id") id: string) {
+    return this.ai.knowledgeGraphLayout(user.id, id);
+  }
+
+  @Put("notes/:id/knowledge-graph-layout")
+  saveKnowledgeGraphLayout(
+    @CurrentUser() user: AuthUser, @Param("id") id: string, @Body() body: unknown,
+  ) { return this.ai.saveKnowledgeGraphLayout(user.id, id, body); }
 
   @Post("notes/:id/knowledge-nodes/:nodeId/questions")
   createKnowledgeQuestion(

@@ -5,7 +5,7 @@
 > **何时更新：**认证/授权、RLS、上传、AI、支付、部署拓扑或第三方处理者变化时；发现或修复高风险问题时；至少每季度复核一次。  
 > **状态基线：**2026-08-11。生产受保护发布证据已到 0043；字段收口、points 上限/审核/协同信号、Redis 限流和 Materials AI 第一阶段均已上线。时间列最终撤权 contract 顺延为未来 0044–0045，仍须等待兼容应用至少 24 小时并通过 go/no-go。本文明确区分代码、测试与上线状态。
 
-> **Unreleased 安全变更：**0046–0048 候选为 Materials AI 增加 service-role-only checkpoint/usage/知识问答工作流、幂等成本事件和 24 小时恢复 TTL；生产仍未应用，必须以 CI RLS 与受保护发布证据为准。
+> **Unreleased 安全变更：**0046–0051 候选增加 service-role-only checkpoint/usage/知识问答/任务清理/图谱布局工作流、Luna 原文件流水线、真实 upstream 审计和 24 小时恢复 TTL；生产仍未应用，必须以 CI RLS、真实 OpenAI gate 与受保护发布证据为准。
 
 ## 1. 支持范围
 
@@ -47,12 +47,14 @@
 | OpenRouter 翻译前测 | API 从 owner session/word 推导参考翻译；同 UUID/revision 租约与幂等；用户答案只存 hash；新表/RPC service-role-only；生产真实 gate 已通过 | fake/单次真实 smoke 都不是持续语义质量证明，模型输出不能直接改成长事实 |
 | API 其它能力 | health、register、me；旧业务多数直连 Supabase | Courses AI 文件导入、支付、钱包和通用管理后台安全控制尚不存在 |
 | Materials AI | 生产 0041–0043 为 owner-only Nest API、service-role 事务、Postgres durable job、BullMQ UUID 投递和内网 token FastAPI；OpenRouter 固定 ZDR 模型与 strict schema | 注入分类、ZDR、结构化输出或单次真实门禁都不能提供数学上的绝对安全保证 |
+| Luna 原文件（候选） | inline base64、不使用 Files API；PDF native parser；固定 Luna + OpenAI-only/no fallback；响应 upstream 与 usage ledger 双重验证；独立 flag/格式 allowlist | 模型“支持 file”不等于每种 Office/文本格式已通过真实门禁；不能自动转换或降级 |
 | 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
 
 ## 4. 已修复控制与开放风险
 
 - 候选代码已移除 API 对长时间 worker response headers 的依赖：202 接收后只允许持有内部 token 的 worker 回调。provider usage 先写 0600/0700 本地 spool，再幂等写账本；已验证断点可能在 TTL 内包含私有 DocumentIR/产物，禁止备份、日志输出或跨 job 复用。
 - 知识节点提问只由 API 从 owner 的 Note 读取 graph/DocumentIR；浏览器不能提交模型、key、source blocks 或回调地址。问题、focus、文件文本与图片一律是不可信数据，确定性信号和两次安全审查继续失败关闭。
+- 候选 Delete/Cancel 先在数据库原子结算额度并进入 `deleting`，再由带内部 token 的 worker cancel/purge 清 HTTPX、Office 进程组、checkpoint、usage spool 和 0700 目录；usage 未持久落账或清理未确认时不得硬删/从 UI 隐藏。
 
 仓库的 0008 migration 已关闭最初三项 P0：
 
@@ -77,6 +79,7 @@
 11. OpenRouter 翻译前测会在用户显式开启后转发当前英文、参考翻译与用户键入译文；仍须完成并持续复核其留存/训练/跨境/子处理者条款。模型误判是教学风险；供应商失败或非法结构化输出不得累计错误，语义基线失败应关闭最窄 flag。
 12. Materials AI 会将解析后的完整文件内容送 DeepSeek，并把失败页/区域图像送 MiMo；只有用户逐账号接受版本化第三方处理说明后才能创建任务。`malicious/uncertain` 注入必须拒绝，主题/文件/答案均作为不可信数据隔离；不能把模型分类当唯一防线或通过 fallback 路由绕过 ZDR。
 13. FastAPI 每任务 0700 临时目录和 `finally`/orphan 清理只处理过程文件；`ai_material_parse_cache` 与生成 Notes 是经告知的持久私有数据。Storage 对象删除是 best effort，失败必须告警/重试，不能只依赖数据库级联声明完全删除。
+14. Luna 会把用户选择的原文件直接发给 OpenRouter/OpenAI；不运行本地文本提取并不减少第三方看到完整文件的隐私影响。必须保持逐账号同意、ZDR/deny collection、OpenAI-only 与 no tools/Web；不支持格式保持禁用。
 
 ## 5. 数据与密钥分级
 
@@ -100,7 +103,7 @@
 - 上传同时校验扩展名、MIME、magic bytes、大小和页数；对象名由服务端生成；目标阶段增加恶意文件扫描与隔离区。
 - HTML/Markdown/AI 输出渲染必须净化；社区正文、文件名和模型文本一律视为不可信输入，防 XSS、公式/URL 注入和提示词注入。
 - AI 服务只接收完成授权的资料，服务间鉴权，不记录原始课件或完整 prompt；供应商训练/留存条款须经过审批。
-- Materials AI worker 只允许 project signed Storage host，禁止工具/Web，固定 provider/model/schema，限制 Office zip expansion/页数/字符/图像/CPU/内存/pids/临时磁盘；FastAPI 422 也不得回显含 signed URL/token 的 payload。
+- Materials AI worker 只允许 project signed Storage host，禁止工具/Web，固定 provider/model/schema。DocumentIR 路径限制 Office zip expansion/页数/字符/图像/资源；Luna 路径只校验并发送原始字节，禁止调用提取器、OCR、转换器或 Files API，并验证实际 upstream。FastAPI 422 也不得回显 signed URL/token/payload。
 - 语义翻译评判的 reference 只能从当前 owner session/word 推导；答案正文仅内存转发，数据库/日志只留 hash 与非正文计量；provider 输出必须过结构校验并经权威事务转换，不能直接信任。
 - Speech reference 只能由当前 owner 的 word/session 得到；限制 WAV magic/codec/采样率/声道/位深/大小/时长，录音仅内存转发且不得进入 DB、Storage、日志或备份。
 - 公开分享/市场只返回脱敏、转义快照；token 只存哈希；撤销/克隆在同一事务重查 active。举报数量不得自动下架，管理员处置必须写审计事实。
@@ -119,7 +122,7 @@
 6. 生产变更先在隔离环境验证，支付使用 Stripe test mode；
 7. 高风险已知问题关闭后，才能启用相应功能 flag。
 
-当前 workflow 执行 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI RLS 与 fake-provider Playwright。生产迁移仍先只读 plan，再受保护 apply/加密恢复点/远端验证；Materials AI 每次关键 provider/parser/prompt 变更仍需固定 PDF/DOCX/PPTX/chart/injection/grading 的真实 DeepSeek/MiMo ZDR gate和2G资源 canary。这些单次门禁不替代持续质量、供应商条款、监控或人工评审。
+当前 workflow 执行 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI RLS 与 fake-provider Playwright。生产迁移仍先只读 plan，再受保护 apply/加密恢复点/远端验证；0046–0051 还必须真实验证 Luna 的 OpenAI upstream、PDF native parser、原始字节、逐格式能力、注入拒绝、取消残留和费用审计，且先保持子开关关闭。这些单次门禁不替代持续质量、供应商条款、监控或人工评审。
 
 ## 8. 安全事件响应
 

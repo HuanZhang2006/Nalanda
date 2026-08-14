@@ -1,6 +1,6 @@
 import { BadRequestException, Injectable, Logger, ServiceUnavailableException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
-import type { GeneratedExamV1 } from "@nalanda/types";
+import type { GeneratedExamV1, SaveKnowledgeGraphLayoutRequest } from "@nalanda/types";
 import { FeatureFlagsService } from "../learning/feature-flags.service";
 import { AiQueueService } from "./ai-queue.service";
 import { AiRepository } from "./ai.repository";
@@ -17,6 +17,10 @@ import { gradeObjective } from "./exam-grading";
 
 const SUPPORTED = new Set(["pdf", "docx", "pptx", "md", "markdown", "html", "htm", "txt", "json", "csv", "png", "jpg", "jpeg", "webp"]);
 const IMAGE = new Set(["png", "jpg", "jpeg", "webp"]);
+const LUNA_MODEL = "openai/gpt-5.6-luna";
+const MAX_GRAPH_LAYOUT_COORDINATE = 100_000;
+const MAX_GRAPH_LAYOUT_NODES = 250;
+const MAX_GRAPH_NODE_ID_LENGTH = 80;
 const extension = (name: string) => name.split(".").pop()?.toLowerCase() || "";
 
 @Injectable()
@@ -30,6 +34,45 @@ export class AiService {
   ) {}
 
   private enabled() { this.flags.materialAi(); }
+
+  private nativeExtensions() {
+    // Only formats proven by the protected real-provider gate belong here.
+    // Additional raw formats remain available through Document IR until an
+    // operator explicitly extends this allowlist after a format-specific gate.
+    const configured = process.env.MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS || "pdf,png";
+    return new Set(configured.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
+  }
+
+  private capabilityRows(material: Record<string, any>) {
+    const ext = extension(String(material.name || ""));
+    const nativeEnabled = this.flags.materialAiLunaEnabled();
+    const nativeAvailable = nativeEnabled && this.nativeExtensions().has(ext);
+    return [
+      {
+        pipeline: "luna_native_file_v1" as const,
+        available: nativeAvailable,
+        default: nativeAvailable,
+        model: LUNA_MODEL,
+        provider: "OpenAI",
+        reasonCode: nativeAvailable ? null : nativeEnabled ? "AI_LUNA_FORMAT_NOT_VERIFIED" : "AI_LUNA_DISABLED",
+      },
+      {
+        pipeline: "document_ir_v1" as const,
+        available: true,
+        default: !nativeAvailable,
+        model: "deepseek/deepseek-v4-flash-0731",
+        provider: "OpenRouter routed ZDR provider",
+        reasonCode: null,
+      },
+    ];
+  }
+
+  async capabilities(userId: string, materialIdValue: string) {
+    this.enabled();
+    const materialId = assertUuid(materialIdValue, "materialId");
+    const material = await this.repository.ownedMaterial(userId, materialId);
+    return { materialId, capabilities: this.capabilityRows(material) };
+  }
 
   async quota(userId: string) { return this.repository.quota(userId); }
 
@@ -52,9 +95,18 @@ export class AiService {
     if (size <= 0 || size > max) {
       throw new BadRequestException({ code: "AI_FILE_SIZE_UNSUPPORTED", message: `This file must be no larger than ${IMAGE.has(ext) ? 10 : 25} MB` });
     }
+    const selected = this.capabilityRows(material).find((row) => row.pipeline === request.pipeline);
+    if (!selected?.available) {
+      throw new BadRequestException({
+        code: selected?.reasonCode || "AI_PIPELINE_UNAVAILABLE",
+        message: request.pipeline === "luna_native_file_v1"
+          ? "Luna native-file processing is not available for this format"
+          : "The selected AI pipeline is unavailable",
+      });
+    }
     const row = await this.repository.createJob(
       userId, materialId, request.idempotencyKey, requestFingerprint(materialId, request),
-      request.kind, request.settings, request.consentVersion,
+      request.kind, request.settings, request.consentVersion, request.pipeline,
     );
     await this.queue.enqueueGeneration(row.id).catch((error) => {
       this.logger.warn(`AI job ${row.id} persisted but immediate Redis dispatch failed: ${error instanceof Error ? error.message : "unknown"}`);
@@ -75,7 +127,31 @@ export class AiService {
   async cancel(userId: string, idValue: string) {
     this.enabled();
     const row = await this.repository.cancelJob(userId, assertUuid(idValue));
+    await this.queue.removeGeneration(row.id).catch(() => undefined);
+    await this.queue.enqueueCleanup(row.id).catch((error) => {
+      this.logger.warn(`AI cleanup ${row.id} persisted but immediate Redis dispatch failed: ${error instanceof Error ? error.message : "unknown"}`);
+    });
     return this.repository.job(row);
+  }
+
+  async deleteJob(userId: string, idValue: string) {
+    this.enabled();
+    const row = await this.repository.deleteJob(userId, assertUuid(idValue));
+    await this.queue.removeGeneration(row.id).catch(() => undefined);
+    await this.queue.enqueueCleanup(row.id).catch((error) => {
+      this.logger.warn(`AI delete ${row.id} persisted but immediate cleanup dispatch failed: ${error instanceof Error ? error.message : "unknown"}`);
+    });
+    return { jobId: row.id, status: "cleaning" as const, quotaConsumed: Boolean(row.deletion_quota_consumed) };
+  }
+
+  async clearJobHistory(userId: string) {
+    this.enabled();
+    const rows = await this.repository.clearJobHistory(userId);
+    await Promise.all(rows.map(async (row) => {
+      await this.queue.removeGeneration(row.id).catch(() => undefined);
+      await this.queue.enqueueCleanup(row.id).catch(() => undefined);
+    }));
+    return { requested: rows.length, deleted: 0, cleaning: rows.length };
   }
 
   async retry(userId: string, idValue: string) {
@@ -115,6 +191,53 @@ export class AiService {
   async deleteNote(userId: string, idValue: string) {
     await this.repository.deleteNote(userId, assertUuid(idValue));
     return { deleted: true };
+  }
+
+  knowledgeGraphLayout(userId: string, noteIdValue: string) {
+    this.enabled();
+    return this.repository.getKnowledgeGraphLayout(userId, assertUuid(noteIdValue, "noteId"));
+  }
+
+  saveKnowledgeGraphLayout(userId: string, noteIdValue: string, input: unknown) {
+    this.enabled();
+    if (!input || typeof input !== "object" || Array.isArray(input)) {
+      throw new BadRequestException({ code: "INVALID_GRAPH_LAYOUT", message: "Invalid graph layout" });
+    }
+    const body = input as Record<string, unknown>;
+    const positions = Array.isArray(body.positions) ? body.positions : [];
+    const viewport = body.viewport as Record<string, unknown> | undefined;
+    if (typeof body.artifactVersion !== "string" || !/^[0-9a-f]{64}$/.test(body.artifactVersion)
+        || !Number.isSafeInteger(body.expectedRevision) || Number(body.expectedRevision) < 0
+        || positions.length > MAX_GRAPH_LAYOUT_NODES || !viewport
+        || ![viewport.x, viewport.y, viewport.zoom].every((value) => typeof value === "number" && Number.isFinite(value))
+        || Math.abs(Number(viewport.x)) > MAX_GRAPH_LAYOUT_COORDINATE
+        || Math.abs(Number(viewport.y)) > MAX_GRAPH_LAYOUT_COORDINATE
+        || Number(viewport.zoom) < 0.1 || Number(viewport.zoom) > 4) {
+      throw new BadRequestException({ code: "INVALID_GRAPH_LAYOUT", message: "Invalid graph layout" });
+    }
+    const nodeIds = new Set<string>();
+    const value: SaveKnowledgeGraphLayoutRequest = {
+      artifactVersion: body.artifactVersion,
+      expectedRevision: Number(body.expectedRevision),
+      positions: positions.map((position) => {
+        if (!position || typeof position !== "object" || Array.isArray(position)) {
+          throw new BadRequestException({ code: "INVALID_GRAPH_LAYOUT", message: "Invalid node position" });
+        }
+        const row = position as Record<string, unknown>;
+        if (typeof row.nodeId !== "string" || !row.nodeId || Array.from(row.nodeId).length > MAX_GRAPH_NODE_ID_LENGTH
+            || nodeIds.has(row.nodeId)
+            || typeof row.x !== "number" || typeof row.y !== "number"
+            || !Number.isFinite(row.x) || !Number.isFinite(row.y)
+            || Math.abs(row.x) > MAX_GRAPH_LAYOUT_COORDINATE
+            || Math.abs(row.y) > MAX_GRAPH_LAYOUT_COORDINATE) {
+          throw new BadRequestException({ code: "INVALID_GRAPH_LAYOUT", message: "Invalid node position" });
+        }
+        nodeIds.add(row.nodeId);
+        return { nodeId: row.nodeId, x: row.x, y: row.y };
+      }),
+      viewport: { x: Number(viewport.x), y: Number(viewport.y), zoom: Number(viewport.zoom) },
+    };
+    return this.repository.saveKnowledgeGraphLayout(userId, assertUuid(noteIdValue, "noteId"), value);
   }
 
   async deleteMaterial(userId: string, idValue: string, results: string | undefined) {

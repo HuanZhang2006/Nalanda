@@ -19,8 +19,8 @@
 | Redis 集成 | 真实 Redis 7.4 验证 Lua 滑动窗口并发原子性、过期和 token lock；未显式开启时只跳过这两项，不得称为 Redis E2E | 本地/CI Redis | `RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 RATE_LIMIT_HMAC_SECRET=<32+ bytes> pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | OpenRouter 供应商 smoke | 文本脚本验证 structured 语义判分；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应 | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
-| FastAPI 自动测试 | ruff + pytest 覆盖格式解析、DocumentIR、失败范围视觉恢复、注入、schema、清理和 internal auth | 否；provider fake | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
-| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest/FastAPI，对一次性 Supabase + 真 Redis + provider fake 运行 Courses 与 Materials→生成→Notes→考试→评分→删除 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
+| FastAPI 自动测试 | ruff + pytest 覆盖 DocumentIR、Luna 原始字节、provider 锁、注入、schema、checkpoint/cancel/purge 和 internal auth | 否；provider fake | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
+| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest/FastAPI，对一次性 Supabase + 真 Redis + provider fake 运行 Courses，以及 Materials→双流水线→250 节点图→任务删除/清历史→整卷考试 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
 重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；只有启用 `RUN_REDIS_E2E=true` 的两项测试会连接真实 Redis；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest、本地 Supabase 和真实 Redis，但 Azure/OpenRouter 都是 fake。真实 provider smoke 证明当前 key/model/endpoint/structured response，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
 
@@ -77,8 +77,9 @@ pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 | `apps/web/src/App.auth.test.ts` | 登录会话切换、登出/登录 loading 复位与认证错误恢复 |
 | `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、9 个导航模块、Create、退出、resize listener 重挂与跨账号清理 |
 | `apps/web/src/legacy/account-modules.test.ts` | 通知未读/已读、错误处理、反馈提交、Profile 加载/编辑/壳同步 |
-| `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功；Materials AI 菜单全英文、知识图谱创建、同一 job Resume 与队列状态恢复 |
-| `apps/web/src/features/material-ai/NotesView.test.tsx` | Demo/真实 Notes 分组、Materials course 同步、考试 deadline、500ms 草稿、未同步阻止提交、到期 fallback、评分与删除；知识图谱按来源顺序渲染、hover 详情、节点选择与基于该节点的问答 |
+| `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功；Materials AI 全英文菜单、capabilities/显式 pipeline、知识图谱创建、Resume、Delete/Clear 二次确认、cleaning 与队列恢复 |
+| `apps/web/src/features/material-ai/NotesView.test.tsx` | Demo/真实 Notes 分组、Materials course 同步、考试 deadline、500ms 纯草稿、交卷前不返回/显示答案、统一交卷评分与删除；知识图 inspector、节点问答与布局 API |
+| `apps/web/src/features/material-ai/KnowledgeGraphCanvas.test.ts` | ELK 左到右层级、sourceOrder、节点不重叠、循环/孤立/空图、250 节点、拖动碰撞、viewport 与 revision merge |
 | `apps/web/src/features/material-ai/examDraftStore.test.ts` | IndexedDB 草稿按 user/attempt 隔离与清理 |
 | `apps/web/src/features/material-ai/errorText.test.ts` | 稳定 AI/provider/security error code 的统一中英文显示 |
 | `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
@@ -202,6 +203,7 @@ git check-ignore .env.rls.local
 - 0015–0016 的 snapshot/七参数 attempt/单元与单词 prepare/claim/finish/quota RPC 均不能由 anon/authenticated 执行，普通用户不能读写 `learning_audio_assets`；
 - 同 attempt UUID 的并发请求只追加一个事实/一次 wrong_count 并重放首次响应；相同 revision 的不同 answer 只有一项提交，另一项返回 revision conflict；旧五参数 RPC 仍会推进 revision，支持应用回滚；
 - 两个用户相同规范化词集合得到相同 20 个 cache key 且不重复建任务；错误 owner 不能 prepare 他人 word；并发 claim 只有一个全局租约，配额暂停不会消耗生成重试次数；
+- Materials AI 候选 0046–0051：普通客户端不能执行 v2 create/usage/checkpoint/complete/delete/clear/layout RPC，不能读取内部 checkpoint/provider usage；双用户 job、Note、布局隔离；queued/processing/delete 竞争只结算一次额度；删除 job 后 usage ledger 保留；layout revision 冲突与 artifact 版本变化只复用仍存在 node 位置；
 - 测试答题候补池、低于/达到朗读 `PronScore` 阈值时 recognition 候补项的加入/移除、认词候补轮完成后才能推进，以及同日本地日期去重、两次不同本地日期三能力熟练、错误/复习次数、schedule 完成且不创建普通 task；
 - 九级徽章的达标持久发放、20 词课程 +20、规范化词集合指纹防删除/克隆重复奖励；
 - 分享 token hash、撤销后事务克隆失败、匿名 PostgREST 拒绝、市场快照不可变、独立零进度克隆/禁止再传播、举报事务。
@@ -299,6 +301,9 @@ FEATURE_COURSE_MARKET_ENABLED=true \
 FEATURE_PRONUNCIATION_ENABLED=true \
 FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
 FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
+FEATURE_MATERIAL_AI=true \
+FEATURE_MATERIAL_AI_LUNA=true \
+MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png \
 AZURE_SPEECH_FAKE=true \
 OPENROUTER_FAKE=true \
 REDIS_URL=redis://127.0.0.1:6379/14 \
@@ -354,7 +359,7 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG、页/块引用、Office 全量渲染、只对失败 slide/region 做视觉补全、加密 PDF、损坏/zip bomb、字符/临时空间上限、外链图片不抓取、malicious/uncertain 拒绝、benign educational、试卷/知识图谱 schema 与引用验证、来源顺序、节点及相邻节点来源问答、202 快速接收、20 分钟总预算的可恢复超时、后台评分意外异常、回调鉴权、finally 与配置 TTL 清理。专项故障测试还模拟“provider 已成功但 API 回调不可用”：先落本地 validated checkpoint/usage spool，新 lease 恢复后不得再次调用 provider，usage event 与最终结果重放成功后才删除任务目录。它使用 fake OpenRouter，不证明真实模型质量或供应商可用性。
+当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力。
 
 启动带开发配置的 `uvicorn` 后：
 
@@ -364,7 +369,7 @@ curl -fsS http://localhost:8000/health
 
 内部生成/评分路由需要 token、短期 Storage URL 和回调，不提供无认证 curl 示例，避免泄漏。真实固定 fixture gate 使用 `python3 scripts/smoke-material-ai-provider.py`，必须由受保护环境提供 OpenRouter 与临时 Supabase fixture；它不等于浏览器/RLS E2E。
 
-API 测试另覆盖 AI 鉴权/owner/格式、idempotency、quota reserve/consume/release、Redis 投递丢失后重投、预算/ZDR/坏响应、objective grading、deadline、revision/operation replay 和三次 lease 恢复。0046–0048 候选还覆盖显式 Undici `headersTimeout/bodyTimeout`、接收 timeout 与业务预算的分离、`AI_WORKER_TIMEOUT`/`AI_WORKER_UNREACHABLE` 映射、202 接收、增量 usage 回调、checkpoint stage 不倒退、同一 job 恢复、恢复期限延长，以及过期/次数耗尽后持久终态与 checkpoint 清理。`RUN_REDIS_E2E=true` 时 `ai-queue.service.integration.test.ts` 用真实 BullMQ/Redis 验证 UUID execution/reconcile，并证明前一任务仍持有 processing lease 时后一任务不会被 FastAPI 接收；默认 skip 不算真实 Redis 证据。fake DB/fetch 仍不证明真实 PostgREST 锁、RLS、迁移事务或 provider。
+API 测试另覆盖 AI 鉴权/owner/格式、pipeline capabilities、idempotency、quota reserve/consume/release、Redis 重投、预算/ZDR/坏响应、纯草稿与统一交卷、deadline/revision/operation replay。0046–0051 候选覆盖显式 Undici timeout 分类与短 202、增量 usage、checkpoint stage、同 job 恢复、queued/processing/delete/callback 竞态、cleanup reconciler、Clear 只删终态、provider 审计保留，以及布局 owner/version/revision/坐标验证。`RUN_REDIS_E2E=true` 时 BullMQ 测试使用真实 Redis；默认 skip 不算真实 Redis 证据，fake DB/fetch 仍不证明真实 PostgREST 锁、RLS、迁移事务或 provider。
 
 ## 8. 文档测试
 
@@ -413,7 +418,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 python3 scripts/smoke-material-ai-provider.py
 ```
 
-`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。默认 `pnpm test` 的外部 RLS suite 仍 skip，但 workflow 显式运行升级、RLS 和浏览器套件。生产发布先运行基础真实 Azure 和真实 OpenRouter structured smoke；新 API readiness/auth 通过后，再由 `scripts/smoke-learning-audio-production.mjs` 创建临时用户，验证首次队列生成、private Storage、第二用户重复词零新增 claim、未经 VAD/静音裁剪的固定 WAV 原字节评分，以及真实 Courses API 的规范化完全匹配、同 UUID 重放和权威拼写提交，清理成功后才切 Web symlink。非字面语义由前一个真实 OpenRouter smoke 单独验证；CI fake 不能代替该结果，真实 provider gate 也不能代替 RLS/Playwright。
+`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。Luna 发布还必须在子开关关闭时用固定无个人数据 PDF/图片逐格式证明实际 provider=OpenAI、PDF native parser、原始 SHA-256、不转换、严格 schema、注入拒绝和取消无残留；不支持格式继续留在 allowlist 外。fake CI、旧 DeepSeek/MiMo gate、真实 Luna gate、登录用户 smoke 与公网 health 是互不替代的证据。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
@@ -455,7 +460,7 @@ python3 scripts/smoke-material-ai-provider.py
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | 其它 AI 产物（未来） | 新 schema、parser/prompt/eval + API/RLS/jsdom/Playwright + 真实 provider gate；不得复用试卷 gate 推断质量 |
 | Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；每次关键发布另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
-| Materials AI 可恢复任务/知识图谱（0046–0048 候选） | Python 回调断线/checkpoint/usage spool/graph/Q&A + API timeout 分类/202/回调/同 job retry unit + 真实 Redis + 0007→latest/空库/lint + 双用户 RLS/权限/过期清理 + Materials/My Notes jsdom + fake-provider Chromium；发布前另跑真实 DeepSeek/MiMo 图谱、节点问答、来源引用、回调断线恢复与费用账本 gate，最后做登录用户生产 smoke |
+| Materials AI 图谱/生命周期/Luna（0046–0051 候选） | ELK/React Flow unit + Materials/My Notes jsdom + Python 原始字节/provider lock/cancel/checkpoint + API delete/clear/202/layout/整卷批改 + 真实 Redis + 0007→latest/空库/lint/RLS + fake Chromium 250 节点/移动端/任务清理；发布前另跑真实 DeepSeek/MiMo 和 Luna OpenAI-only PDF/图片/逐格式/注入/取消/usage gate、2G canary与登录用户 smoke |
 | nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 

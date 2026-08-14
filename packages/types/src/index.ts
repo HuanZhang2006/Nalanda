@@ -55,15 +55,18 @@ export interface GenerateRequest {
 
 export type AiPlanCode = "free";
 export type AiQuotaKind = "generation" | "grading";
+export type AiPipeline = "document_ir_v1" | "luna_native_file_v1";
 export type AiGenerationStatus =
   | "queued"
   | "processing"
+  | "deleting"
   | "succeeded"
   | "failed"
   | "cancelled";
 export type AiGenerationStage =
   | "queued"
   | "validating"
+  | "preparingSource"
   | "extracting"
   | "auditing"
   | "visualRecovery"
@@ -72,6 +75,7 @@ export type AiGenerationStage =
   | "answering"
   | "reviewing"
   | "saving"
+  | "cleaning"
   | "succeeded"
   | "failed"
   | "cancelled";
@@ -105,6 +109,7 @@ export interface AiExamGenerationSettings {
 export interface CreateAiExamJobRequest {
   idempotencyKey: string;
   kind: "exam";
+  pipeline: AiPipeline;
   consentVersion: number;
   settings: AiExamGenerationSettings;
 }
@@ -118,6 +123,7 @@ export interface AiKnowledgeGraphGenerationSettings {
 export interface CreateAiKnowledgeGraphJobRequest {
   idempotencyKey: string;
   kind: "knowledge_graph";
+  pipeline: AiPipeline;
   consentVersion: number;
   settings: AiKnowledgeGraphGenerationSettings;
 }
@@ -146,6 +152,8 @@ export interface AiGenerationJob {
   materialName: string;
   courseId: string | null;
   kind: "exam" | "knowledge_graph" | "knowledge_question";
+  pipeline: AiPipeline;
+  model: string;
   status: AiGenerationStatus;
   stage: AiGenerationStage;
   progress: number;
@@ -162,11 +170,67 @@ export interface AiGenerationJob {
   finishedAt: string | null;
 }
 
+export interface AiPipelineCapability {
+  pipeline: AiPipeline;
+  available: boolean;
+  default: boolean;
+  model: string;
+  provider: string;
+  reasonCode: string | null;
+}
+
+export interface AiMaterialCapabilities {
+  materialId: string;
+  capabilities: AiPipelineCapability[];
+}
+
+export interface AiJobDeleteResult {
+  jobId: string;
+  status: "deleted" | "cleaning";
+  quotaConsumed: boolean;
+}
+
+export interface AiJobClearResult {
+  requested: number;
+  deleted: number;
+  cleaning: number;
+}
+
+export interface KnowledgeGraphNodePosition {
+  nodeId: string;
+  x: number;
+  y: number;
+}
+
+export interface KnowledgeGraphViewport {
+  x: number;
+  y: number;
+  zoom: number;
+}
+
+export interface KnowledgeGraphLayout {
+  noteId: string;
+  artifactVersion: string;
+  revision: number;
+  positions: KnowledgeGraphNodePosition[];
+  viewport: KnowledgeGraphViewport;
+  updatedAt: string | null;
+}
+
+export interface SaveKnowledgeGraphLayoutRequest {
+  artifactVersion: string;
+  expectedRevision: number;
+  positions: KnowledgeGraphNodePosition[];
+  viewport: KnowledgeGraphViewport;
+}
+
 export interface GeneratedKnowledgeSourceRef {
   blockId: string;
   page: number | null;
   slide: number | null;
   label: string;
+  locatorKind?: "block" | "page" | "slide" | "section" | "image" | "record" | "unknown";
+  locatorIndex?: number | null;
 }
 
 export type GeneratedKnowledgeNodeKind =
@@ -221,6 +285,7 @@ export interface GeneratedKnowledgeEdgeV1 {
 
 export interface GeneratedKnowledgeGraphV1 {
   schemaVersion: "generated-knowledge-graph.v1";
+  sourceMode?: "document_ir" | "native_file";
   title: string;
   language: "en" | "zh";
   overview: string;
@@ -234,6 +299,8 @@ export interface GeneratedExamSourceRef {
   page: number | null;
   slide: number | null;
   label: string;
+  locatorKind?: "block" | "page" | "slide" | "section" | "image" | "record" | "unknown";
+  locatorIndex?: number | null;
 }
 
 export interface GeneratedExamQuestionV1 {
@@ -259,6 +326,7 @@ export interface GeneratedExamSectionV1 {
 
 export interface GeneratedExamV1 {
   schemaVersion: "generated-exam.v1";
+  sourceMode?: "document_ir" | "native_file";
   title: string;
   language: "en" | "zh";
   difficulty: AiExamGenerationSettings["difficulty"];
@@ -275,6 +343,8 @@ export interface GeneratedNoteSummary {
   courseCode: string | null;
   title: string;
   kind: "ai_exam" | "ai_knowledge_graph";
+  pipeline: AiPipeline;
+  model: string;
   materialName: string;
   sourceDeleted: boolean;
   questionCount: number;
@@ -315,6 +385,7 @@ export interface KnowledgeNodeQuestion {
   noteId: string;
   nodeId: string;
   question: string;
+  pipeline: AiPipeline;
   status: AiGenerationStatus;
   answer: KnowledgeNodeAnswerV1 | null;
   errorCode: string | null;
