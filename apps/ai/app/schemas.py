@@ -80,6 +80,12 @@ class WorkerCallbacks(StrictModel):
     leaseToken: str = Field(min_length=1, max_length=100)
 
 
+class CancelMaterialJobRequest(StrictModel):
+    leaseToken: str | None = Field(default=None, min_length=1, max_length=100)
+    callbackBaseUrl: HttpUrl
+    callbackToken: str = Field(min_length=16, max_length=500)
+
+
 class KnowledgeGraphSettings(StrictModel):
     language: Literal["auto", "en", "zh"]
     detail: Literal["comprehensive"] = "comprehensive"
@@ -89,6 +95,7 @@ class KnowledgeGraphSettings(StrictModel):
 class ProcessMaterialJobRequest(StrictModel):
     jobId: str = Field(min_length=1, max_length=100)
     kind: Literal["exam", "knowledge_graph", "knowledge_question"]
+    pipeline: Literal["document_ir_v1", "luna_native_file_v1"] = "document_ir_v1"
     userId: str = Field(min_length=1, max_length=100)
     material: MaterialSource | None = None
     settings: ExamSettings | KnowledgeGraphSettings | None = None
@@ -180,10 +187,12 @@ QuestionType = Literal["single_choice", "multiple_choice", "true_false", "fill_b
 
 
 class SourceRef(StrictModel):
-    blockId: str
+    blockId: str = ""
     page: int | None = None
     slide: int | None = None
     label: str
+    locatorKind: Literal["block", "page", "slide", "section", "image", "record", "unknown"] = "block"
+    locatorIndex: int | None = None
 
 
 class GeneratedQuestion(StrictModel):
@@ -209,6 +218,7 @@ class GeneratedSection(StrictModel):
 
 class GeneratedExam(StrictModel):
     schemaVersion: Literal["generated-exam.v1"] = "generated-exam.v1"
+    sourceMode: Literal["document_ir", "native_file"] = "document_ir"
     title: str = Field(min_length=1, max_length=160)
     language: Literal["en", "zh"]
     difficulty: Literal["introductory", "intermediate", "advanced", "mixed"]
@@ -256,6 +266,7 @@ class GeneratedKnowledgeEdge(StrictModel):
 
 class GeneratedKnowledgeGraph(StrictModel):
     schemaVersion: Literal["generated-knowledge-graph.v1"] = "generated-knowledge-graph.v1"
+    sourceMode: Literal["document_ir", "native_file"] = "document_ir"
     title: str = Field(min_length=1, max_length=160)
     language: Literal["en", "zh"]
     overview: str = Field(min_length=1, max_length=12000)
@@ -302,6 +313,8 @@ class UsageEvent(StrictModel):
     zdrEnforced: bool = True
     status: Literal["succeeded", "failed"]
     errorCode: str | None = None
+    upstreamProvider: str | None = None
+    upstreamEndpoint: str | None = None
 
 
 class SubjectiveQuestion(StrictModel):
@@ -317,6 +330,7 @@ class GradeExamRequest(StrictModel):
     attemptId: str
     questions: list[SubjectiveQuestion] = Field(min_length=1, max_length=100)
     language: Literal["en", "zh"]
+    pipeline: Literal["document_ir_v1", "luna_native_file_v1"] = "document_ir_v1"
     callbacks: WorkerCallbacks | None = None
     budgetMicroUsd: int | None = Field(default=None, gt=0)
     checkpoint: dict[str, Any] | None = None

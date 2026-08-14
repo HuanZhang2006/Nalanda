@@ -13,12 +13,19 @@
 
 ### Added
 
+- 追加候选迁移 0049–0051：为 job/Note 增加显式 `pipeline`，为成本事件记录实际 upstream provider/endpoint，新增 `deleting` 清理状态、私有 `knowledge_graph_layouts`、任务删除/清空/取消清理事务、Luna 完成路由门和精确权限断言；旧签名继续保留用于数据库先行和应用回滚。
+- 新增 `luna_native_file_v1`：固定 `openai/gpt-5.6-luna`、`provider.only=["openai"]`、无 fallback、ZDR/deny collection/require parameters、禁用工具/Web，并以内联 base64 原文件处理已通过门禁 allowlist 的 PDF/图片。它不调用确定性解析、OCR、LibreOffice、DocumentIR 或 parse cache，且不会使用具有远端留存语义的 Files API。
+- 知识图改为动态 React Flow + ELK 分层画布，支持平移、缩放、拖动/键盘移动节点、适应视图、自动整理、无重叠碰撞消解、外部 hover/click 详情和带 revision 的跨设备布局保存；fake-provider Chromium 路径加入 250 节点及活动删除夹具。
+- AI 队列增加逐条 Delete 与 Clear history 的应用内确认；worker 使用可取消 task registry/Office 进程组并在确认 usage spool 落账后清理 0700 目录。
 - Materials 新增 “Organize knowledge points”：固定 DeepSeek 生成按来源顺序、带严格引用的 `GeneratedKnowledgeGraphV1`，My Notes 以交互图谱、hover 解释、点击详情呈现，并可对选定节点发起限定来源的问答。Knowledge list 与独立 Quiz 继续显示 Coming soon。
 - 追加候选迁移 0046–0048：`generation_job_checkpoints`、`exam_grading_checkpoints`、`knowledge_node_questions`、单调 usage `event_id`、可恢复 job 字段、知识图谱 artifact 约束、service-role-only 工作流和失败关闭权限断言。
 - 真实 provider/public smoke 候选覆盖知识图谱、节点问答、来源顺序、ZDR、增量成本账本和级联删除；fake Playwright 扩展到试卷、评分、图谱和节点问答完整路径。
 
 ### Changed
 
+- 在线考试的选择与草稿保存不再判分或返回任何答案/解析；只有整卷二次确认提交或到期自动交卷后，服务端才在同一提交事务内批改全部客观题，并把主观题合并为一次模型评分。`in_progress` 响应强制 `results=[]`。
+- Luna Note 的节点问答会在来源仍存在时重新附原文件；来源删除后只使用持久图谱、选中节点和邻接关系。Luna 试卷主观评分继续使用 Luna/OpenAI，但不重复发送源材料。
+- 清理额度规则统一：queued 删除释放 reservation；worker 已接收的 processing 删除/Cancel 消耗一次；历史删除不回退额度、不删除 My Notes，并保留 provider usage 审计。
 - API→FastAPI 生成与评分改为 30 秒内返回 202，后续由内部 token 回调 progress/usage/checkpoint/complete/fail；兼容同步路由暂留供旧应用回退和直接 provider gate 使用。
 - BullMQ 单并发槽现在持有到 Postgres 终态或 lease 到期，不会因 FastAPI 的 202 提前把 backlog 塞进进程内存；worker 以 1200/240 秒限制生成/评分总执行时间，生成超时可从 durable checkpoint 续跑。
 - 可恢复错误在默认 24 小时内复用同一 job。数据库保存阶段 checkpoint，worker 0700 目录另保存已验证结果和 usage spool；成功、非重试终态和过期均清理，重试重新预留、成功才消费 Free quota。
@@ -27,6 +34,9 @@
 
 ### Fixed
 
+- 修复旧知识图卡片和详情互相覆盖、节点不可移动/缩放、详情常驻遮挡、同类字段重复显示，以及 artifact 更新后全部布局坐标丢失的问题；旧节点坐标按 ID 复用，新节点重新布局，revision 冲突会合并后重试。
+- 修复已成功/失败任务无法清除、活动任务删除只改 UI 不真正中断、清理前记录提前消失的问题；记录只有在 worker 确认取消请求、usage spool 与临时目录均处理后才最终删除。
+- 修复答题草稿响应可能提前携带判分结果的问题；服务端序列化现在对所有 `in_progress` 尝试剥离答案字段并强制空结果。
 - Courses 音频预热、manifest 与单词音频准备现在只对可安全重放的 Supabase 408/425/429/5xx、连接失败和响应体超时做三次有限重试；最终失败统一返回带重试提示的 503，而不是无信息 500。Supabase REST/Storage 的响应正文读取也纳入 20 秒 transport 边界，发布失败会输出仅含 route、错误类别、上游 HTTP/稳定 code 的脱敏 API 日志，不记录数据库正文或用户内容。
 - 真实 Courses 音频发布 gate 对幂等 prewarm/manifest 增加三次有限瞬时重试，并在同一超时边界内消费 JSON/音频正文；401/403/契约错误仍立即失败。这样一次可重试的上游 500 不再直接回滚已通过 DeepSeek/MiMo、Azure 和 Gemma 的候选，同时持续失败仍阻断切流并保留诊断日志。
 - 真实 Gemma 发布门禁不再把交互 API 的 12 秒 SLA 当作整次 release smoke 的预算：每次尝试使用独立 30 秒上限、全部尝试共享 180 秒硬预算，并在同一重试边界内读取完整响应体。这样即使 2xx 响应头已到但正文流超时，也会以同一固定模型有限重试，而不会让 `DOMException TimeoutError` 逃逸并误触发无诊断回滚；坏 JSON/坏语义、永久 HTTP 状态和预算耗尽仍失败关闭。

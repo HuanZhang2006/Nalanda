@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-11。生产数据库/应用证据已到 0043；私有 Redis、nginx 分层限流与 Materials AI worker 均已上线。时间列撤权顺延为未来 0044–0045，仍须独立完成 0039–0040 的兼容观察/go-no-go。
+> - **状态基线**：2026-08-14。生产数据库/应用证据仍到 0043；0046–0051 的异步恢复、知识图、任务清理与 Luna 原文件是待验证候选，不是生产事实。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -29,7 +29,7 @@
     ├─ web/   前端静态产物（宿主机 nginx 直接托管）
     └─ .env   后端密钥（仅服务器持有）
 宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
-外部：Azure Speech（生产）、OpenRouter Courses（生产）及 Materials DeepSeek/MiMo（生产）、Stripe（规划）
+外部：Azure Speech（生产）、OpenRouter Courses（生产）及 Materials DeepSeek/MiMo（生产）；Luna/OpenAI（候选）、Stripe（规划）
 ```
 
 > 生产 0043 使用「web 静态 + api + 私有 Redis + 内网 FastAPI AI」。Redis 是注册/写入限流、滥用聚合、扫描锁和只含 durable Postgres job UUID 的 BullMQ 投递依赖；Materials AI 使用独立 env/资源 cgroup，AI 容器没有宿主端口。
@@ -68,8 +68,8 @@ server {
 3. **生产迁移（仅新增 migration）**：仅由 owner 手动开启 → environment/branch gate → history/dry-run → 加密恢复点 → `db push` → 远端验证；失败阻断应用。
 4. **构建**：Web 注入公开 Supabase 配置；API/AI image 都标为同一 `<git-sha>`，服务器不构建。
 5. **磁盘/SSH**：使用预先核验的 known_hosts；上传前删除同 SHA 半成品和超过 24 小时的 abandoned incoming，只清理没有容器引用且不属于当前 `.deploy.env` 的 Nalanda image。可用空间不足 6 GiB 时阻断，再上传到 `/opt/nalanda/incoming/<sha>/`；其它项目镜像不在清理范围。
-6. **真实供应商/资源 gate**：既有 Azure/Courses OpenRouter gate之外，Materials AI 用固定 PDF/DOCX/PPTX/chart/injection/safe-course/grading 调真实 DeepSeek/MiMo，验证 ZDR/引用/费用/只恢复失败范围；近上限 Office canary 验证 RSS/swap/temp disk/邻站。任一失败触发 rollback、flag 保持 false。
-7. **激活**：安装 Redis/HMAC/internal token与隔离 `.ai.env`，验证 Redis PING/AOF/私网、FastAPI/OpenRouter/LibreOffice/temp disk/internal auth、API Supabase/Redis/AI readiness；门禁后才开启 flag并切 Web，再做公网登录用户完整链路。
+6. **真实供应商/资源 gate**：既有 Azure/Courses/DeepSeek/MiMo gate之外，Luna 候选以固定 PDF/图片和逐格式样本验证 OpenAI upstream、PDF native parser、原始字节、strict schema、注入拒绝、费用和取消清理；Office canary 继续覆盖旧 pipeline。任一失败保持 Luna 子开关关闭。
+7. **激活**：安装 Redis/HMAC/internal token与隔离 `.ai.env`，先保持 `FEATURE_MATERIAL_AI_LUNA=false` 验证 readiness/旧流水线；真实 Luna 与私有登录 smoke 通过后才单独开启子开关，再切 Web并做公网完整链路。
 8. **应用回退**：任一激活后 smoke 失败即恢复上一 Web symlink 与不可变 API image；Redis/AI 分开尽力恢复，上一 API 必须以 `--no-deps` 启动并独立验证，不能因可选 AI unhealthy 扩大为公网 502。失败候选由 EXIT trap 与兜底步骤清除；数据库不自动逆向。
 
 Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档开头字段和相对链接校验。完整覆盖和 RLS E2E 命令见 [测试指南](../guides/TESTING.md)。
@@ -81,7 +81,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - **production-database environment**：`SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF`、`DB_BACKUP_ENCRYPTION_KEY` 和用于 Ref 交叉确认的 `VITE_SUPABASE_URL`。
 - **服务器 `/opt/nalanda/.env`**：Supabase secret、Courses/分享/市场/语音 flags、`PUBLIC_ORIGIN` 与供应商 key/region/配额——只在服务器，不进 Web/仓库；当前文件权限 600，Courses、分享、市场、发音、音频预热和翻译前测 flags 已开启，Azure/OpenRouter fake=false；受保护步骤只更新 OpenRouter 域变量。TTS 限制为默认 20 次/分钟、500,000 字符/月、最小 3.1 秒间隔，synthesis version 1。
 - **第一阶段 security secrets**：`production` environment 的 `REDIS_PASSWORD` 与 `RATE_LIMIT_HMAC_SECRET` 必须独立随机生成，经 stdin 原子安装到 mode-600 `.redis.env` 与 API `.env`；Redis 容器只拿密码，不拿 Supabase/provider/HMAC。
-- **Materials AI secrets**：`OPENROUTER_API_KEY` 与独立 32-byte `AI_INTERNAL_TOKEN` 经 stdin 原子写入 API/AI env；AI env 不含 service-role、Redis、Azure 或 Web key。总开关安装后默认 false，只有 readiness/canary/真实 provider/登录用户 smoke 全部通过才原子改为 true。
+- **Materials AI secrets**：`OPENROUTER_API_KEY` 与独立 32-byte `AI_INTERNAL_TOKEN` 经 stdin 原子写入 API/AI env；AI env 不含 service-role、Redis、Azure 或 Web key。总开关与 Luna 子开关安装/回滚都默认 false；格式 allowlist 只来自真实 gate。
 - CI 用**独立部署密钥**而非 root 密码登录。
 
 `production-database` 已限制为只允许 `main`，所需四个发布 Secrets 已于 2026-07-21 配置。当前私有仓库套餐不支持 required reviewer，因此数据库发布只允许 owner 分两次人工发起 plan/apply 并留存复核记录；升级套餐后应把 reviewer 门禁补回 GitHub Environment。
@@ -238,6 +238,12 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 既有真实 Japan East Azure、Gemma 翻译与 Courses API/Storage gate 继续通过。登录用户 Materials gate 得到 `generationJob=succeeded`、`grading=completed`、生成/评分 quota 各 1、5 条 provider usage、`sourceAndResultsDeleted=true` 和 `deps.supabase=ok/deps.ai=ok`。
 - 不可变 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 于 `2026-08-11T07:20:02Z` 激活。服务器只读复核确认 API/AI image、`.deploy.env` 和 Web symlink 同一 commit，AI/Redis healthy，`FEATURE_MATERIAL_AI=true`；独立公网复核为首页 200、Supabase/Redis health ok、AI worker/queue ok、匿名 me/quota 401。
 
+### 2026-08-14 · 0046–0051 候选（尚未发布）
+
+- 候选把长任务改为快速 202 + callback/checkpoint/usage spool，新增 ELK/React Flow 图谱、跨设备布局、任务 Delete/Clear、统一交卷批改和 `luna_native_file_v1`。本节不构成 CI、真实 provider 或上线证据。
+- 生产仍停在 0043，因此独立 migration plan 预期只列已有仓库文件 0046–0051；0044–0045 缺号是被延后的 contract，不得补造。apply 前必须创建并验证新的加密恢复点。
+- 候选 release 先以两个 Materials flags 关闭部署；真实 DeepSeek/MiMo、真实 Luna/OpenAI-only/native PDF、2G canary、登录用户双 pipeline/delete/layout/exam smoke 全部通过后，才按总开关→Luna 子开关顺序激活。最终证据需补 PR/main/protected run、artifact、release、服务器与公网核验。
+
 ## 8. 运维速查
 
 ```bash
@@ -255,5 +261,5 @@ docker system df
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 完成 0039–0040 的 24 小时观测与 go/no-go，再单独发布未来 0044–0045 时间列撤权 contract；Materials AI 进入持续质量/成本/资源观察，Stripe Webhook 仍属于后续能力。
+- 先完成 0046–0051 的 CI、真实 OpenAI gate 与受保护发布；0039–0040 的最终时间列撤权仍需另行 go/no-go 并单独创建未来 0044–0045 contract。Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。

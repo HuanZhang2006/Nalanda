@@ -7,7 +7,7 @@ from httpx import Response
 
 from app import openrouter
 from app.errors import PipelineError
-from app.openrouter import TEXT_MODEL, OpenRouterClient
+from app.openrouter import LUNA_MODEL, TEXT_MODEL, OpenRouterClient
 from app.schemas import AuditResult
 
 
@@ -66,6 +66,80 @@ async def test_openrouter_requires_strict_schema_zdr_and_no_tools(monkeypatch):
     assert len(usage) == 1
     assert usage[0].requestId == "request-1"
     assert usage[0].costMicroUsd == 2
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_luna_locks_openai_disables_fallback_and_accounts_routing_violation(monkeypatch):
+    monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    persisted = []
+
+    async def persist(event):
+        persisted.append(event)
+
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=Response(200, json={
+            "id": "luna-wrong-provider",
+            "provider": "NotOpenAI",
+            "provider_endpoint": "wrong-endpoint",
+            "choices": [{"message": {"content": json.dumps({
+                "classification": "safe", "rationale": "ok",
+                "failedRanges": [], "injectionLocations": [],
+            })}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7, "cost": 0.000003},
+        })
+    )
+
+    with pytest.raises(PipelineError) as caught:
+        await OpenRouterClient(usage_sink=persist).structured(
+            purpose="safety_audit", model=LUNA_MODEL, schema_name="native_audit",
+            result_type=AuditResult, system="fixed", user_content=[
+                {"type": "text", "text": "untrusted"},
+                {"type": "file", "file": {"filename": "x.pdf", "file_data": "data:application/pdf;base64,AA=="}},
+            ], max_tokens=100, provider_only=["openai"], allow_fallbacks=False,
+            plugins=[{"id": "file-parser", "pdf": {"engine": "native"}}],
+        )
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["model"] == LUNA_MODEL
+    assert body["provider"]["only"] == ["openai"]
+    assert body["provider"]["allow_fallbacks"] is False
+    assert body["provider"]["zdr"] is True
+    assert body["provider"]["data_collection"] == "deny"
+    assert body["provider"]["require_parameters"] is True
+    assert body["plugins"] == [{"id": "file-parser", "pdf": {"engine": "native"}}]
+    assert caught.value.code == "AI_PROVIDER_ROUTING_VIOLATION"
+    assert len(persisted) == 1
+    assert persisted[0].upstreamProvider == "NotOpenAI"
+    assert persisted[0].upstreamEndpoint == "wrong-endpoint"
+    assert persisted[0].costMicroUsd == 3
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_luna_canonicalizes_verified_openai_provider_name(monkeypatch):
+    monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=Response(200, json={
+            "id": "luna-openai-provider", "provider": "openai", "provider_endpoint": "openai-primary",
+            "choices": [{"message": {"content": json.dumps({
+                "classification": "safe", "rationale": "ok",
+                "failedRanges": [], "injectionLocations": [],
+            })}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7, "cost": 0.000003},
+        })
+    )
+
+    _result, usage = await OpenRouterClient().structured(
+        purpose="safety_audit", model=LUNA_MODEL, schema_name="native_audit",
+        result_type=AuditResult, system="fixed", user_content="untrusted",
+        max_tokens=100, provider_only=["openai"], allow_fallbacks=False,
+    )
+
+    assert usage[0].upstreamProvider == "OpenAI"
+    assert usage[0].upstreamEndpoint == "openai-primary"
 
 
 @pytest.mark.asyncio

@@ -158,4 +158,18 @@ export class AiInternalClientService implements OnApplicationShutdown {
       ACCEPT_BUDGET_MS,
     );
   }
+
+  cancelGeneration(jobId: string, leaseToken?: string | null) {
+    const callbackBaseUrl = `${(process.env.AI_CALLBACK_BASE_URL || "http://api:3000/api").replace(/\/$/, "")}/internal/ai-jobs/${jobId}`;
+    return this.post<{ accepted: boolean; purged: boolean }>(
+      `/internal/materials/jobs/${encodeURIComponent(jobId)}/cancel`,
+      {
+        leaseToken: leaseToken || null,
+        callbackBaseUrl,
+        callbackToken: process.env.AI_INTERNAL_TOKEN,
+      },
+      30_000,
+      30_000,
+    );
+  }
 }

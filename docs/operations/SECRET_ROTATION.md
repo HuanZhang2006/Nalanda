@@ -29,8 +29,8 @@
 | 服务器 SSH authorized key | 服务器 | 接受 CI/管理员连接 | 公钥 | 当前使用 |
 | GitHub 账号/token | GitHub | 仓库与 Actions 管理 | 否 | 平台管理，未写入仓库 |
 | `AZURE_SPEECH_KEY` | API `.env` / 生产 `/opt/nalanda/.env` | Courses 持久 TTS worker 与 pronunciation assessment | 否 | 生产当前使用；Japan East 基础、持久队列、重复词复用与裁剪评分 gate 均已通过 |
-| `OPENROUTER_API_KEY` | GitHub `production` → API `.env` 与隔离 `.ai.env` | Courses 语义/STT；生产 Materials DeepSeek/MiMo | 否 | 一个源 secret、两类服务端消费者；必须跑各自真实 gate，fake 不得进入生产 |
-| `AI_INTERNAL_TOKEN` | GitHub `production` → API `.env` 与隔离 `.ai.env` | NestJS↔FastAPI 内部认证/回调 | 否 | 生产 0041–0043；独立 32-byte hex，两端必须原子切换 |
+| `OPENROUTER_API_KEY` | GitHub `production` → API `.env` 与隔离 `.ai.env` | Courses 语义/STT；Materials DeepSeek/MiMo；候选 Luna/OpenAI | 否 | 一个源 secret、多条服务端能力；每条分别跑真实 gate，fake 不得进入生产 |
+| `AI_INTERNAL_TOKEN` | GitHub `production` → API `.env` 与隔离 `.ai.env` | NestJS↔FastAPI 接收、回调、cancel/purge | 否 | 生产 0041–0043；0046–0051 候选扩展清理；独立 32-byte hex，两端必须原子切换 |
 | `COURSE_MARKET_ADMIN_USER_IDS` | API `.env` | Course Market 审核授权 | 否 | 敏感授权配置，不是 secret，但变更按权限轮换审计 |
 | `MODERATION_ADMIN_USER_IDS` | API `.env` | Points signal/reward 审核 allowlist | 否 | 敏感授权配置；0039 兼容期为空才回退 Course Market allowlist |
 | `REDIS_PASSWORD` | GitHub `production` secret → `/opt/nalanda/.redis.env`；API `.env` 只持含密码的 `REDIS_URL` | 私有 Redis 与 Nest ioredis | 否 | 生产 0039；独立 32-byte hex，Redis 容器不接收其它 API secrets |
@@ -174,13 +174,13 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 泄露时立即替换两个值中受影响者并审计 `api_abuse_events`、429/503、注册和 provider 用量。Redis AOF 不是 points 事实库；不得通过删除 claim/ledger 来“同步”新窗口。
 
-## 11. Materials AI 内部 token（生产 0041–0043；0046–0048 候选双向回调）
+## 11. Materials AI 内部 token（生产 0041–0043；0046–0051 候选双向回调与清理）
 
 `AI_INTERNAL_TOKEN` 是 API 与 FastAPI 双向内部调用的独立 32-byte hex；候选 202 协议中不仅保护 API→worker 接收，也保护 worker→API 的 progress、usage、checkpoint、complete/fail 回调。它不得等于 Redis password、HMAC、JWT、provider 或备份 key。GitHub `production` environment 保存输入，受保护安装脚本经 SSH stdin 同时原子写入 `/opt/nalanda/.env` 和隔离 `.ai.env`，两文件 mode 600，不打印值；0700 checkpoint/usage spool 只保存结果/计量 payload，不得保存 token/header。
 
 1. 保持 `FEATURE_MATERIAL_AI=false`，生成新 token 并更新 GitHub secret；
 2. 经受保护 installer 写入两个 env，在同一维护窗口 force-recreate `ai` 与 `api`，避免一半新一半旧；
-3. 验证 FastAPI health `internalAuth=ok`、`/api/health/ai`、错误 token 401，以及合法内部 accept/progress/usage/checkpoint/complete/fail；用无个人数据故障 fixture 证明 callback 中断后旧 token 不会被本地 spool 保存，新 token 下可按唯一 event UUID 重放并完成；
+3. 验证 FastAPI health `internalAuth=ok`、`/api/health/ai`、错误 token 401，以及合法内部 accept/progress/usage/checkpoint/complete/fail/cancel/purge；用无个人数据故障 fixture 证明 callback 中断后旧 token 不会被本地 spool 保存，新 token 下可按唯一 event UUID 重放并完成；
 4. 检查 Actions/容器日志、shell history、artifact 无 token；记录 UTC/负责人/新 secret 指纹而非值；
 5. 泄露时立即关闭 Materials AI、轮换、取消 active leases并由 reconciler 安全重投，核查异常 callback/job 状态。不得为恢复可用性移除内部认证。
 
@@ -203,16 +203,16 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 
 ## 13. OpenRouter key（生产当前使用）
 
-`OPENROUTER_API_KEY` 由 NestJS 的 Courses 能力和隔离 Materials AI worker 复用；浏览器、共享类型、数据库、日志和 smoke 输出均不得包含它。生产在 GitHub `production` environment 保存源 secret，服务器 API `.env` 与 worker `.ai.env` 都为 mode 600；worker 不获得 service-role/Redis/Azure。仓库脚本拒绝非法形状并原子保留其它变量。
+`OPENROUTER_API_KEY` 由 NestJS 的 Courses 能力和隔离 Materials AI worker 复用；候选 worker 还用它调用固定 Luna，但 key、provider/model 选择权仍不进入浏览器。生产在 GitHub `production` environment 保存源 secret，服务器 API `.env` 与 worker `.ai.env` 都为 mode 600；worker 不获得 service-role/Redis/Azure。仓库脚本拒绝非法形状并原子保留其它变量。
 
 计划轮换：
 
 1. 在 OpenRouter 控制台创建新 key，记录 key ID/指纹、额度和 UTC 时间，不复制完整值到 ticket。
-2. 暂时关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` 和 `FEATURE_MATERIAL_AI`；普通拼写、既有 Notes 与客观考试仍可用。
+2. 暂时关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`、`FEATURE_MATERIAL_AI_LUNA` 和 `FEATURE_MATERIAL_AI`；普通拼写、既有 Notes 与客观考试仍可用。
 3. 安全更新 GitHub `production` secret；经受控部署分别原子更新 API 与 Materials AI env，确认 `OPENROUTER_FAKE=false`、`MATERIAL_AI_FAKE_PROVIDER=false`。不得把 key 放在参数或日志。
 4. 用无个人数据 fixture 分别执行 structured 文本判分 gate 和“Azure 合成苹果 WAV → 待激活 Nalanda STT API”gate；只记录 model/耗时/usage/布尔断言，不打印输入、transcript 或响应正文。任一失败都不激活待发布 release。
 5. 在待激活 image 运行 `smoke-openrouter-translation.mjs`，用固定合成样本验证指定 model 的 structured JSON：语义近义回答为 true、无关回答为 false。再经真实 Courses API 验证同 UUID replay 不再次调用 provider、正确翻译后的权威 spelling attempt 与临时用户清理。
-6. 用固定 PDF/DOCX/PPTX/chart/injection/safe-course/grading suite 验证 DeepSeek/MiMo strict schema、ZDR、只发送失败范围、引用和成本，再观察 provider error/latency/token/STT/AI usage；逐个重新启用 feature。
+6. 用固定 PDF/DOCX/PPTX/chart/injection/safe-course/grading suite 验证 DeepSeek/MiMo strict schema、ZDR、只发送失败范围、引用和成本；再用 Luna PDF/图片门禁验证 inline 原始字节、PDF native parser、实际 OpenAI upstream、no fallback 和取消清理。先恢复总开关，最后单独恢复 Luna 子开关；逐个观察 provider error/latency/token/STT/AI usage。
 7. 撤销旧 key 并重复两类真实 smoke。若失败，保持功能关闭，不把 key 下发 Web 或改成客户端自行判分/识别。
 
 泄露时立即关闭全部 OpenRouter feature、撤销 key、核查 usage/账单、GitHub/服务器/Actions 访问与 API/AI 日志。数据库没有 provider prompt/raw response，但私有 parse cache/Notes 仍按用户数据处理。模型或 base URL 变化不是普通 key 轮换，必须独立评测并更新 ADR/成本文档。

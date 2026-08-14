@@ -20,27 +20,34 @@
 .material-knowledge-intro{margin-bottom:18px}
 .material-knowledge-intro p{line-height:1.7;margin:8px 0 14px}
 .material-knowledge-layout{grid-template-columns:minmax(0,1fr) 340px;align-items:start;gap:22px}
-.material-knowledge-scroll{overflow:auto;min-height:520px;background:var(--card-2)}
-.material-knowledge-canvas{position:relative;min-height:100%;background-image:radial-gradient(var(--border) 1px,transparent 1px);background-size:22px 22px}
-.material-knowledge-edges{position:absolute;inset:0;overflow:visible;pointer-events:none}
-.material-knowledge-edges line{stroke:var(--accent);stroke-width:1.5;opacity:.52}
-.material-knowledge-edges marker path{fill:var(--accent)}
-.material-knowledge-node{position:absolute;width:176px;min-height:78px;padding:10px 12px;text-align:left;border:1px solid var(--border-strong);border-radius:12px;background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm);cursor:pointer;transition:transform .16s ease,border-color .16s ease,box-shadow .16s ease;z-index:2}
-.material-knowledge-node>b,.material-knowledge-node>span{display:block}
-.material-knowledge-node>span:not(.eyebrow):not(.material-knowledge-hover){font-size:11.5px;color:var(--ink-soft);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:4px}
-.material-knowledge-node:hover,.material-knowledge-node:focus-visible,.material-knowledge-node.selected{transform:translateY(-2px);border-color:var(--accent);box-shadow:var(--shadow-sm)}
-.material-knowledge-node:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
-.material-knowledge-hover{display:none;position:absolute;left:0;top:calc(100% + 8px);width:280px;max-height:190px;overflow:auto;padding:12px;border:1px solid var(--border-strong);border-radius:12px;background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm);font-size:12px;line-height:1.55;z-index:10}
-.material-knowledge-hover>b{display:block;margin-bottom:5px}
-.material-knowledge-node:hover .material-knowledge-hover,.material-knowledge-node:focus-visible .material-knowledge-hover{display:block}
 .material-knowledge-detail h2{font-size:22px;margin:14px 0 8px}
 .material-knowledge-detail>p{line-height:1.68}
 .material-knowledge-list{margin-top:14px}
 .material-knowledge-list ul{margin:6px 0 0;padding-left:20px;color:var(--ink-soft);line-height:1.6}
 .material-knowledge-sources{display:flex;gap:6px;flex-wrap:wrap;margin-top:16px}
 .material-knowledge-sources .eyebrow{width:100%}
+.material-flow-shell{height:clamp(520px,68vh,760px);min-width:0;overflow:hidden;background:var(--card-2)}
+.material-flow-loading{min-height:520px;display:grid;place-items:center;color:var(--ink-soft)}
+.material-flow-shell .react-flow__viewport{transition:none}
+.material-flow-shell .react-flow__node-default{width:196px;min-height:76px;padding:0;border:1px solid var(--border-strong);border-radius:12px;background:var(--card);color:var(--ink);box-shadow:var(--shadow-sm);overflow:hidden}
+.material-flow-shell .react-flow__node-default:hover,.material-flow-shell .react-flow__node-default:focus-visible,.material-flow-shell .react-flow__node-default.selected{border-color:var(--accent);box-shadow:var(--shadow-sm)}
+.material-flow-shell .react-flow__node-default:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+.material-flow-node-content{display:flex;width:100%;min-height:74px;flex-direction:column;align-items:flex-start;justify-content:center;gap:5px;padding:10px 12px;border:0;background:transparent;color:inherit;text-align:left;font:inherit;cursor:pointer}
+.material-flow-node-content>span{color:var(--accent);font-size:10px;font-weight:750;letter-spacing:.14em;text-transform:uppercase}
+.material-flow-node-content>b{display:-webkit-box;overflow:hidden;font-size:13px;line-height:1.35;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.material-flow-shell .react-flow__edge-path{stroke:var(--accent);stroke-width:1.5}
+.material-flow-shell .react-flow__edge.association .react-flow__edge-path{opacity:.42}
+.material-flow-shell .react-flow__edge.hierarchy .react-flow__edge-path{opacity:.72}
+.material-flow-shell .react-flow__edge-text{fill:var(--ink-soft);font-size:9px}
+.material-flow-shell .react-flow__edge-textbg{fill:var(--card);fill-opacity:.9}
+.material-flow-shell .react-flow__controls{border:1px solid var(--border);border-radius:10px;box-shadow:var(--shadow-sm);overflow:hidden}
+.material-flow-shell .react-flow__controls-button{border-color:var(--border);background:var(--card);color:var(--ink)}
+.material-flow-shell .react-flow__controls-button:hover{background:var(--card-2)}
+.material-flow-shell .react-flow__controls-button svg{fill:currentColor}
+.material-knowledge-placeholder{min-height:170px;display:flex;flex-direction:column;justify-content:center}
 @media(max-width:800px){
   .material-ai-note-layout,.material-ai-exam-layout,.material-knowledge-layout{grid-template-columns:1fr}
   .material-ai-sticky{position:static}
-  .material-knowledge-scroll{min-height:430px}
+  .material-flow-shell{height:480px}
+  .material-knowledge-detail{position:static}
 }

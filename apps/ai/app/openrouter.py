@@ -18,6 +18,7 @@ from .schemas import UsageEvent
 T = TypeVar("T", bound=BaseModel)
 TEXT_MODEL = "deepseek/deepseek-v4-flash-0731"
 VISION_MODEL = "xiaomi/mimo-v2.5"
+LUNA_MODEL = "openai/gpt-5.6-luna"
 
 
 def fake_enabled() -> bool:
@@ -59,10 +60,18 @@ class OpenRouterClient:
         user_content: str | list[dict[str, Any]],
         max_tokens: int,
         fake_value: dict[str, Any] | None = None,
+        provider_only: list[str] | None = None,
+        allow_fallbacks: bool = True,
+        plugins: list[dict[str, Any]] | None = None,
     ) -> tuple[T, list[UsageEvent]]:
         if fake_enabled():
             if fake_value is None:
                 raise PipelineError("FAKE_FIXTURE_MISSING", "The fake provider fixture is incomplete", 500)
+            # Deterministic browser-only cancellation fixture. Keeping the
+            # delay inside the fake adapter makes cancellation exercise a real
+            # in-flight await without slowing normal unit or Playwright jobs.
+            if "playwright-active-delete" in json.dumps(user_content):
+                await asyncio.sleep(8)
             parsed = result_type.model_validate(fake_value)
             event = UsageEvent(
                     purpose=purpose,
@@ -75,6 +84,8 @@ class OpenRouterClient:
                     durationMs=1,
                     zdrEnforced=True,
                     status="succeeded",
+                    upstreamProvider="OpenAI" if model == LUNA_MODEL else "fake",
+                    upstreamEndpoint="fake",
             )
             await self._emit(event)
             return parsed, [event]
@@ -112,6 +123,11 @@ class OpenRouterClient:
                 "allow_fallbacks": True,
             },
         }
+        if provider_only:
+            payload["provider"]["only"] = provider_only
+            payload["provider"]["allow_fallbacks"] = allow_fallbacks
+        if plugins:
+            payload["plugins"] = plugins
         started = self._now()
         deadline = started + self.timeout
         response: httpx.Response | None = None
@@ -185,6 +201,13 @@ class OpenRouterClient:
                         ) from exc
                     succeeded = self._usage(purpose, model, response, started, "succeeded", None)
                     await self._emit(succeeded)
+                    if provider_only and succeeded.upstreamProvider not in {"OpenAI", "openai"}:
+                        raise PipelineError(
+                            "AI_PROVIDER_ROUTING_VIOLATION",
+                            "The AI provider did not use the required OpenAI endpoint",
+                            502,
+                            [*[item.model_dump() for item in failed_events], succeeded.model_dump()],
+                        )
                     return parsed, [*failed_events, succeeded]
 
                 code = self._provider_error_code(response.status_code)
@@ -310,6 +333,14 @@ class OpenRouterClient:
             except Exception:
                 body = {}
         usage = body.get("usage") if isinstance(body.get("usage"), dict) else {}
+        raw_provider = body.get("provider")
+        upstream_provider = raw_provider if isinstance(raw_provider, str) and raw_provider else None
+        if upstream_provider and upstream_provider.casefold() == "openai":
+            # Persist one canonical value so the database completion gate is
+            # case-stable while still rejecting every non-OpenAI provider.
+            upstream_provider = "OpenAI"
+        raw_endpoint = body.get("provider_endpoint") or body.get("endpoint")
+        upstream_endpoint = raw_endpoint if isinstance(raw_endpoint, str) and raw_endpoint else None
         raw_cost = usage.get("cost")
         try:
             cost_micro = max(0, round(float(raw_cost) * 1_000_000)) if raw_cost is not None else None
@@ -329,4 +360,6 @@ class OpenRouterClient:
             zdrEnforced=True,
             status=status,
             errorCode=error_code,
+            upstreamProvider=upstream_provider,
+            upstreamEndpoint=upstream_endpoint,
         )

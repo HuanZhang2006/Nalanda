@@ -45,7 +45,7 @@ nalanda/
 ## 4. 共享包
 
 ### packages/types
-纯类型，无运行时。Courses 与 0041 Materials AI 已由 Web/API 共用 camelCase 契约；`GeneratedExamV1`、job/quota/Notes/Exam attempt 不复用历史原型短字段，Nest 显式处理数据库 snake_case，FastAPI Pydantic 以 strict camelCase JSON 对齐。0046–0048 候选进一步共享 `GeneratedKnowledgeGraphV1`、node answer 和 resumable job fields；Knowledge list/独立 Quiz 仍是未来契约，候选 graph 在受保护发布前也不能从类型存在推断线上已接通。
+纯类型，无运行时。Courses 与 Materials AI 由 Web/API 共用 camelCase 契约，Nest 显式转换数据库 snake_case，FastAPI Pydantic 使用 strict camelCase JSON。0046–0051 候选进一步共享 `GeneratedKnowledgeGraphV1`、node answer、resumable/deleting job、`AiPipeline`、capabilities 和 layout revision；Knowledge list/独立 Quiz 仍是未来契约，不能从类型存在推断线上已接通。
 
 ### packages/ui
 设计系统的「样式底座」：

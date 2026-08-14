@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import type {
   AiExamGenerationSettings,
   AiKnowledgeGraphGenerationSettings,
+  AiPipeline,
   CreateAiMaterialJobRequest,
   CreateKnowledgeNodeQuestionRequest,
   ExamAnswerInput,
@@ -14,6 +15,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const LANGUAGES = new Set(["auto", "en", "zh"]);
 const DIFFICULTIES = new Set(["introductory", "intermediate", "advanced", "mixed"]);
 const ANSWER_DETAILS = new Set(["concise", "detailed"]);
+const PIPELINES = new Set<AiPipeline>(["document_ir_v1", "luna_native_file_v1"]);
 const COUNT_KEYS = ["singleChoice", "multipleChoice", "trueFalse", "fillBlank", "shortAnswer", "essay"] as const;
 
 function invalid(code: string, message: string, fieldErrors?: Record<string, string>): never {
@@ -28,9 +30,11 @@ export function assertUuid(value: unknown, field = "id"): string {
 export function parseJobRequest(input: unknown): CreateAiMaterialJobRequest {
   if (!input || typeof input !== "object" || Array.isArray(input)) invalid("INVALID_AI_JOB", "Invalid AI job request");
   const body = input as Record<string, unknown>;
+  const pipeline: AiPipeline = body.pipeline == null ? "document_ir_v1" : body.pipeline as AiPipeline;
   const settings = body.settings as Record<string, unknown> | undefined;
   const fieldErrors: Record<string, string> = {};
   if (body.kind !== "exam" && body.kind !== "knowledge_graph") fieldErrors.kind = "Choose an available AI action";
+  if (!PIPELINES.has(pipeline)) fieldErrors.pipeline = "Choose an available AI pipeline";
   if (typeof body.idempotencyKey !== "string" || !UUID.test(body.idempotencyKey)) fieldErrors.idempotencyKey = "Must be a UUID";
   if (!Number.isSafeInteger(body.consentVersion) || Number(body.consentVersion) < 1) fieldErrors.consentVersion = "AI processing consent is required";
   if (!settings || Array.isArray(settings)) fieldErrors.settings = "Settings are required";
@@ -43,6 +47,7 @@ export function parseJobRequest(input: unknown): CreateAiMaterialJobRequest {
     return {
       idempotencyKey: String(body.idempotencyKey),
       kind: "knowledge_graph",
+      pipeline,
       consentVersion: Number(body.consentVersion),
       settings: {
         language: settings!.language as AiKnowledgeGraphGenerationSettings["language"],
@@ -76,6 +81,7 @@ export function parseJobRequest(input: unknown): CreateAiMaterialJobRequest {
   return {
     idempotencyKey: String(body.idempotencyKey),
     kind: "exam",
+    pipeline,
     consentVersion: Number(body.consentVersion),
     settings: {
       language: settings!.language as AiExamGenerationSettings["language"],
@@ -90,7 +96,9 @@ export function parseJobRequest(input: unknown): CreateAiMaterialJobRequest {
 }
 
 export function requestFingerprint(materialId: string, request: CreateAiMaterialJobRequest) {
-  return createHash("sha256").update(JSON.stringify({ materialId, kind: request.kind, settings: request.settings })).digest("hex");
+  return createHash("sha256").update(JSON.stringify({
+    materialId, kind: request.kind, pipeline: request.pipeline, settings: request.settings,
+  })).digest("hex");
 }
 
 export function parseKnowledgeQuestion(input: unknown): CreateKnowledgeNodeQuestionRequest {

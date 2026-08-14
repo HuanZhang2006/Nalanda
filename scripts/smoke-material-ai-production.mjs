@@ -10,6 +10,7 @@ const storagePaths = [];
 assert.match(supabaseUrl, /^https:\/\/[a-z0-9-]+\.supabase\.co$/, "SUPABASE_URL is invalid");
 assert.ok(serviceKey, "SUPABASE_SERVICE_ROLE_KEY is required");
 assert.equal(process.env.FEATURE_MATERIAL_AI, "true", "Materials AI must be enabled for the public smoke");
+assert.equal(process.env.FEATURE_MATERIAL_AI_LUNA, "true", "Luna native-file processing must be enabled for the public smoke");
 assert.notEqual(process.env.MATERIAL_AI_FAKE_PROVIDER, "true", "production smoke refuses the fake provider");
 
 const adminHeaders = {
@@ -83,6 +84,43 @@ async function createSource(user) {
   return { course: course[0], material: material[0] };
 }
 
+function fixedPdf(text) {
+  const escaped = text.replaceAll("\\", "\\\\").replaceAll("(", "\\(").replaceAll(")", "\\)");
+  const stream = `BT /F1 12 Tf 72 720 Td (${escaped}) Tj ET`;
+  const objects = [
+    "1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n",
+    "2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n",
+    "3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>\nendobj\n",
+    `4 0 obj\n<< /Length ${Buffer.byteLength(stream)} >>\nstream\n${stream}\nendstream\nendobj\n`,
+    "5 0 obj\n<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>\nendobj\n",
+  ];
+  let value = "%PDF-1.4\n";
+  const offsets = [0];
+  for (const object of objects) { offsets.push(Buffer.byteLength(value)); value += object; }
+  const xref = Buffer.byteLength(value);
+  value += `xref\n0 6\n0000000000 65535 f \n${offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n `).join("\n")}\n`;
+  value += `trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(value);
+}
+
+async function createNativeSource(user, course) {
+  const content = fixedPdf("Working memory supports current tasks. Retrieval practice strengthens durable recall.");
+  const storagePath = `${user.id}/${randomUUID()}.pdf`;
+  storagePaths.push(storagePath);
+  await request("private native PDF upload", `${supabaseUrl}/storage/v1/object/materials/${storagePath}`, {
+    method: "POST", headers: { ...authHeaders(user.token), "Content-Type": "application/pdf", "x-upsert": "false" },
+    body: content,
+  });
+  const material = await request("native material record creation", `${supabaseUrl}/rest/v1/materials`, {
+    method: "POST", headers: { ...authHeaders(user.token), Prefer: "return=representation" },
+    body: JSON.stringify({
+      course_id: course.id, name: "release-smoke.pdf", type: "pdf",
+      size_bytes: content.length, storage_path: storagePath,
+    }),
+  });
+  return material[0];
+}
+
 async function waitForJob(user, jobId) {
   const deadline = Date.now() + 15 * 60_000;
   while (Date.now() < deadline) {
@@ -130,14 +168,14 @@ async function waitForKnowledgeQuestion(user, questionId) {
   throw new Error("knowledge question did not finish before the protected smoke deadline");
 }
 
-async function providerFacts(jobIds, attemptId) {
+async function providerFacts(jobIds, attemptId, lunaJobIds) {
   const generationQuery = new URLSearchParams({
-    select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status",
+    select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status,pipeline,upstream_provider,upstream_endpoint",
     job_id: `in.(${jobIds.join(",")})`,
     order: "id.asc",
   });
   const gradingQuery = new URLSearchParams({
-    select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status",
+    select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status,pipeline,upstream_provider,upstream_endpoint",
     attempt_id: `eq.${attemptId}`,
     order: "id.asc",
   });
@@ -146,13 +184,26 @@ async function providerFacts(jobIds, attemptId) {
     request("grading provider usage facts", `${supabaseUrl}/rest/v1/ai_provider_usage_events?${gradingQuery}`, { headers: adminHeaders }),
   ]);
   const rows = [...generationRows, ...gradingRows];
-  assert.ok(rows.some((row) => row.job_id === jobIds[0] && row.model === "deepseek/deepseek-v4-flash-0731"));
-  assert.ok(rows.some((row) => row.job_id === jobIds[1] && row.purpose === "knowledge_graph_generation"));
-  assert.ok(rows.some((row) => row.job_id === jobIds[2] && row.purpose === "knowledge_node_question"));
-  assert.ok(rows.some((row) => row.attempt_id === attemptId && row.purpose === "exam_grading"));
-  assert.ok(rows.every((row) => row.zdr_enforced === true && row.status === "succeeded"));
-  assert.ok(rows.every((row) => typeof row.provider_request_id === "string" && row.provider_request_id));
-  assert.ok(rows.every((row) => Number.isSafeInteger(row.total_tokens) && Number.isSafeInteger(row.cost_micro_usd)));
+  const succeeded = (predicate) => rows.some((row) => row.status === "succeeded" && predicate(row));
+  assert.ok(succeeded((row) => row.job_id === jobIds[0] && row.purpose === "safety_audit"));
+  assert.ok(succeeded((row) => row.job_id === jobIds[0] && row.purpose === "exam_generation"));
+  assert.ok(succeeded((row) => row.job_id === jobIds[1] && row.purpose === "knowledge_graph_generation"));
+  assert.ok(succeeded((row) => row.job_id === jobIds[2] && row.purpose === "knowledge_node_question"));
+  assert.ok(succeeded((row) => row.job_id === jobIds[3] && row.purpose === "knowledge_graph_generation"));
+  assert.ok(succeeded((row) => row.job_id === jobIds[4] && row.purpose === "knowledge_node_question"));
+  assert.ok(succeeded((row) => row.attempt_id === attemptId && row.purpose === "exam_grading"));
+  assert.ok(rows.every((row) => row.zdr_enforced === true));
+  assert.ok(rows.every((row) => row.status === "succeeded" || row.status === "failed"));
+  const succeededRows = rows.filter((row) => row.status === "succeeded");
+  assert.ok(succeededRows.every((row) => typeof row.provider_request_id === "string" && row.provider_request_id));
+  assert.ok(succeededRows.every((row) => Number.isSafeInteger(row.total_tokens) && Number.isSafeInteger(row.cost_micro_usd)));
+  const lunaRows = rows.filter((row) => lunaJobIds.includes(row.job_id) || row.attempt_id === attemptId);
+  assert.ok(lunaRows.length > 0);
+  assert.ok(lunaRows.every((row) => row.pipeline === "luna_native_file_v1"));
+  assert.ok(lunaRows.every((row) => row.model === "openai/gpt-5.6-luna"));
+  const succeededLunaRows = lunaRows.filter((row) => row.status === "succeeded");
+  assert.ok(succeededLunaRows.every((row) => row.upstream_provider === "OpenAI"));
+  assert.ok(succeededLunaRows.every((row) => typeof row.upstream_endpoint === "string" && row.upstream_endpoint));
   return rows.length;
 }
 
@@ -179,10 +230,15 @@ try {
 
   const user = await createUser();
   const source = await createSource(user);
-  const created = await request("public generation creation", `${apiOrigin}/materials/${source.material.id}/ai-jobs`, {
+  const nativeMaterial = await createNativeSource(user, source.course);
+  const capabilities = await request("native-file capabilities", `${apiOrigin}/materials/${nativeMaterial.id}/ai-capabilities`, {
+    headers: authHeaders(user.token),
+  });
+  assert.ok(capabilities.capabilities.some((entry) => entry.pipeline === "luna_native_file_v1" && entry.available && entry.default));
+  const created = await request("public native generation creation", `${apiOrigin}/materials/${nativeMaterial.id}/ai-jobs`, {
     method: "POST", headers: authHeaders(user.token),
     body: JSON.stringify({
-      idempotencyKey: randomUUID(), kind: "exam", consentVersion: 1,
+      idempotencyKey: randomUUID(), kind: "exam", pipeline: "luna_native_file_v1", consentVersion: 1,
       settings: {
         language: "en", difficulty: "mixed", durationMinutes: 30, totalMarks: 20,
         questionCounts: { singleChoice: 4, multipleChoice: 0, trueFalse: 0, fillBlank: 0, shortAnswer: 1, essay: 0 },
@@ -192,8 +248,11 @@ try {
   });
   const finished = await waitForJob(user, created.id);
   assert.ok(finished.noteId);
+  assert.equal(finished.pipeline, "luna_native_file_v1");
+  assert.equal(finished.model, "openai/gpt-5.6-luna");
   const note = await request("generated note", `${apiOrigin}/notes/${finished.noteId}`, { headers: authHeaders(user.token) });
   assert.equal(note.courseId, source.course.id);
+  assert.equal(note.pipeline, "luna_native_file_v1");
   assert.equal(note.exam.sections.flatMap((section) => section.questions).length, 5);
 
   let attempt = await request("timed attempt creation", `${apiOrigin}/notes/${note.id}/exam-attempts`, {
@@ -223,6 +282,7 @@ try {
     method: "POST", headers: authHeaders(user.token),
     body: JSON.stringify({
       idempotencyKey: randomUUID(), kind: "knowledge_graph", consentVersion: 1,
+      pipeline: "document_ir_v1",
       settings: { language: "en", detail: "comprehensive", focus: "" },
     }),
   });
@@ -243,10 +303,50 @@ try {
   assert.ok(questionAnswered.answer?.answer);
   assert.ok(questionAnswered.answer.sourceRefs.every((ref) => selectedNode.sourceRefs.some((source) => source.blockId === ref.blockId)));
 
+  const nativeGraphCreated = await request("public native knowledge organization", `${apiOrigin}/materials/${nativeMaterial.id}/ai-jobs`, {
+    method: "POST", headers: authHeaders(user.token),
+    body: JSON.stringify({
+      idempotencyKey: randomUUID(), kind: "knowledge_graph", pipeline: "luna_native_file_v1", consentVersion: 1,
+      settings: { language: "en", detail: "comprehensive", focus: "" },
+    }),
+  });
+  const nativeGraphFinished = await waitForJob(user, nativeGraphCreated.id);
+  const nativeGraphNote = await request("native knowledge note", `${apiOrigin}/notes/${nativeGraphFinished.noteId}`, {
+    headers: authHeaders(user.token),
+  });
+  assert.equal(nativeGraphNote.pipeline, "luna_native_file_v1");
+  assert.equal(nativeGraphNote.model, "openai/gpt-5.6-luna");
+  assert.ok(nativeGraphNote.graph.nodes.length > 0);
+  const layout = await request("knowledge graph layout", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-graph-layout`, {
+    headers: authHeaders(user.token),
+  });
+  const savedLayout = await request("knowledge graph layout save", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-graph-layout`, {
+    method: "PUT", headers: authHeaders(user.token),
+    body: JSON.stringify({
+      artifactVersion: layout.artifactVersion, expectedRevision: layout.revision,
+      positions: [{ nodeId: nativeGraphNote.graph.nodes[0].id, x: 24, y: 48 }],
+      viewport: { x: 3, y: 5, zoom: 1.2 },
+    }),
+  });
+  assert.equal(savedLayout.revision, 1);
+  const nativeNode = nativeGraphNote.graph.nodes[0];
+  const nativeQuestionCreated = await request("native grounded question creation", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-nodes/${nativeNode.id}/questions`, {
+    method: "POST", headers: authHeaders(user.token),
+    body: JSON.stringify({ idempotencyKey: randomUUID(), question: "Explain this native-file point simply." }),
+  });
+  const nativeQuestionAnswered = await waitForKnowledgeQuestion(user, nativeQuestionCreated.id);
+  assert.equal(nativeQuestionAnswered.pipeline, "luna_native_file_v1");
+  assert.ok(nativeQuestionAnswered.answer?.answer);
+
   const quota = await request("Free plan quota", `${apiOrigin}/profile/ai-quota`, { headers: authHeaders(user.token) });
   assert.deepEqual({ plan: quota.plan, generation: quota.generation.consumed, grading: quota.grading.consumed },
-    { plan: "free", generation: 3, grading: 1 });
-  const usageEvents = await providerFacts([created.id, graphCreated.id, questionCreated.id], attempt.id);
+    { plan: "free", generation: 5, grading: 1 });
+  const trackedJobs = [created.id, graphCreated.id, questionCreated.id, nativeGraphCreated.id, nativeQuestionCreated.id];
+  const usageEvents = await providerFacts(trackedJobs, attempt.id, [created.id, nativeGraphCreated.id, nativeQuestionCreated.id]);
+  const cleared = await request("terminal AI history cleanup", `${apiOrigin}/ai-jobs/clear-history`, {
+    method: "POST", headers: authHeaders(user.token), body: "{}",
+  });
+  assert.ok(cleared.requested >= 3 && cleared.cleaning >= 3);
   await request("transactional source and result deletion", `${apiOrigin}/material-courses/${source.course.id}?aiResults=delete`, {
     method: "DELETE", headers: authHeaders(user.token),
   });
@@ -258,13 +358,17 @@ try {
     headers: authHeaders(user.token),
   }, [404]);
   assert.equal(graphAfterDelete.code, "NOTE_NOT_FOUND");
+  const nativeGraphAfterDelete = await request("deleted native knowledge note verification", `${apiOrigin}/notes/${nativeGraphNote.id}`, {
+    headers: authHeaders(user.token),
+  }, [404]);
+  assert.equal(nativeGraphAfterDelete.code, "NOTE_NOT_FOUND");
   storagePaths.length = 0;
   console.log(JSON.stringify({
     ok: true,
     generationJob: "succeeded",
     grading: "completed",
-    quota: { generation: 3, grading: 1 },
-    knowledgeGraph: { renderedNodes: graphNote.graph.nodes.length, groundedQuestion: "succeeded" },
+    quota: { generation: 5, grading: 1 },
+    knowledgeGraph: { renderedNodes: graphNote.graph.nodes.length, nativeNodes: nativeGraphNote.graph.nodes.length, groundedQuestion: "succeeded" },
     usageEvents,
     sourceAndResultsDeleted: true,
     deps: { supabase: coreHealth.deps.supabase, ai: aiHealth.deps.worker },
