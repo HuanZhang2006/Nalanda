@@ -777,7 +777,7 @@ begin
   where note.id = p_note_id and note.user_id = p_user_id
     and note.kind = 'ai_knowledge_graph';
   if not found then raise exception 'KNOWLEDGE_NOTE_NOT_FOUND' using errcode = 'P0002'; end if;
-  v_version := encode(digest(v_artifact.content::text, 'sha256'), 'hex');
+  v_version := encode(extensions.digest(v_artifact.content::text, 'sha256'), 'hex');
   -- Return prior coordinates across artifact versions. The client keeps only
   -- positions for node IDs that still exist and auto-lays out new nodes.
   select * into v_layout from public.knowledge_graph_layouts
@@ -835,7 +835,7 @@ begin
   where note.id = p_note_id and note.user_id = p_user_id
     and note.kind = 'ai_knowledge_graph' for update of note;
   if not found then raise exception 'KNOWLEDGE_NOTE_NOT_FOUND' using errcode = 'P0002'; end if;
-  v_version := encode(digest(v_artifact.content::text, 'sha256'), 'hex');
+  v_version := encode(extensions.digest(v_artifact.content::text, 'sha256'), 'hex');
   if v_version <> p_artifact_version then
     raise exception 'GRAPH_ARTIFACT_CHANGED' using errcode = 'P0001';
   end if;
