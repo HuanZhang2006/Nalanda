@@ -1,4 +1,5 @@
 import base64
+import copy
 from pathlib import Path
 
 import pytest
@@ -12,7 +13,9 @@ from app.pipeline import (
     enforce_audit,
     enforce_pre_recovery_audit,
     generate_knowledge_graph,
+    normalize_exam_invariants,
     recover_visuals,
+    review_result_issues,
     validate_exam,
     validate_knowledge_graph,
 )
@@ -126,6 +129,13 @@ async def test_luna_native_pipeline_sends_exact_original_bytes_and_never_calls_d
 
     async def capture(self, **kwargs):
         captured.append(kwargs)
+        if kwargs["purpose"] == "exam_generation":
+            drifted = copy.deepcopy(kwargs["fake_value"])
+            drifted["totalMarks"] = 25
+            for section in drifted["sections"]:
+                for question in section["questions"]:
+                    question["marks"] = 5
+            kwargs["fake_value"] = drifted
         return await original_structured(self, **kwargs)
 
     monkeypatch.setattr(pipeline, "download_material", fake_download)
@@ -139,6 +149,13 @@ async def test_luna_native_pipeline_sends_exact_original_bytes_and_never_calls_d
     assert result["sourceMode"] == "native_file"
     assert result["parserVersion"] == "none"
     assert result["document"] is None
+    assert result["promptVersion"] == pipeline.NATIVE_EXAM_PROMPT_VERSION
+    assert result["totalMarks"] == 20
+    assert sum(
+        question["marks"]
+        for section in result["exam"]["sections"]
+        for question in section["questions"]
+    ) == 20
     assert [call["purpose"] for call in captured] == ["safety_audit", "exam_generation"]
     for call in captured:
         assert call["model"] == pipeline.LUNA_MODEL
@@ -556,6 +573,122 @@ def test_exam_validator_enforces_counts_marks_and_real_source_ids():
     assert validate_exam(exam, settings, {"b1"}) == []
     exam.sections[0].questions[0].sourceRefs[0].blockId = "made-up"
     assert any("invalid source" in issue for issue in validate_exam(exam, settings, {"b1"}))
+
+
+def test_exam_invariants_are_normalized_without_changing_question_content():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=30,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+    exam = GeneratedExam.model_validate(pipeline._fake_exam(settings, "b1"))
+    second_section = exam.sections[0].model_copy(deep=True)
+    second_section.questions = second_section.questions[3:]
+    exam.sections[0].questions = exam.sections[0].questions[:3]
+    second_section.id = exam.sections[0].id
+    exam.sections.append(second_section)
+    questions = [question for section in exam.sections for question in section.questions]
+    original_prompts = [question.prompt for question in questions]
+    for question in questions:
+        question.marks = 5
+    questions[1].id = questions[0].id
+    exam.durationMinutes = 45
+    exam.difficulty = "advanced"
+    exam.totalMarks = 25
+    exam.language = "zh"
+
+    normalized = normalize_exam_invariants(exam, settings)
+    normalized_questions = [
+        question for section in normalized.sections for question in section.questions
+    ]
+
+    assert sum(question.marks for question in normalized_questions) == 20
+    assert [question.marks for question in normalized_questions] == [4, 4, 4, 4, 4]
+    assert len({question.id for question in normalized_questions}) == 5
+    assert [section.id for section in normalized.sections] == ["section-1", "section-2"]
+    assert normalized.durationMinutes == 30
+    assert normalized.difficulty == "mixed"
+    assert normalized.totalMarks == 20
+    assert normalized.language == "en"
+    assert [question.prompt for question in normalized_questions] == original_prompts
+    assert [question.marks for question in questions] == [5, 5, 5, 5, 5]
+
+
+@pytest.mark.parametrize(
+    ("valid", "issues", "expected"),
+    [
+        (True, [], []),
+        (False, ["incorrect answer"], ["incorrect answer"]),
+        (True, ["inconsistent reviewer defect"], ["inconsistent reviewer defect"]),
+        (False, [], ["semantic review failed"]),
+    ],
+)
+def test_review_result_issues_fails_closed_on_inconsistent_provider_output(valid, issues, expected):
+    assert review_result_issues(pipeline.ReviewResult(valid=valid, issues=issues)) == expected
+
+
+@pytest.mark.asyncio
+async def test_marks_only_provider_drift_is_normalized_before_semantic_review():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=30,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+    purposes: list[str] = []
+
+    class MarksDriftClient:
+        async def structured(self, *, purpose, result_type, **_kwargs):
+            purposes.append(purpose)
+            if purpose == "exam_generation":
+                value = pipeline._fake_exam(settings, "t1-b1")
+                for question in value["sections"][0]["questions"]:
+                    question["marks"] = 5
+                value["totalMarks"] = 25
+            elif purpose == "exam_review":
+                value = {"valid": True, "issues": []}
+            else:
+                raise AssertionError(f"marks-only drift must not require repair: {purpose}")
+            return result_type.model_validate(value), [UsageEvent(
+                purpose=purpose,
+                model=pipeline.TEXT_MODEL,
+                requestId=f"test-{purpose}",
+                promptTokens=1,
+                completionTokens=1,
+                totalTokens=2,
+                costMicroUsd=1,
+                durationMs=1,
+                zdrEnforced=True,
+                status="succeeded",
+            )]
+
+    usage = []
+    exam = await pipeline.generate_exam(MarksDriftClient(), document("Source"), settings, usage)
+
+    assert purposes == ["exam_generation", "exam_review"]
+    assert sum(question.marks for section in exam.sections for question in section.questions) == 20
+    assert [event.purpose for event in usage] == purposes
 
 
 @pytest.mark.asyncio

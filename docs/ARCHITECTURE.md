@@ -163,7 +163,8 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
   → 只把诊断与审查失败范围交给 MiMo
   → 拼接完整 DocumentIR 并再次安全审查
   → DeepSeek 按版本化 prompt 生成 GeneratedExamV1 或 GeneratedKnowledgeGraphV1
-  → schema/题数或节点/边、答案/解释、来源验证（最多一次修复）
+  → 试卷按服务端设置确定性归一化元数据、重复 ID 与可行的 marks 分配
+  → schema/题数或节点/边、答案/解释、来源与语义验证（最多一次修复）
   → 单事务保存 Notes 并 consume；失败/cancel 则 release
 ```
 
@@ -175,7 +176,7 @@ Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责�
 
 ### 6.1 契约边界
 
-公开 Web/Nest 契约统一来自 `@nalanda/types` 的 camelCase `GeneratedExamV1`；Nest 显式转换数据库 snake_case，Python Pydantic 使用同一 camelCase JSON 与 `extra="forbid"`。考试 session 会删除答案、解析、rubric 和 accepted answer，只给作答所需字段；生成者自己的 Notes detail 仍可查看完整答案，这是自学产品而不是防作弊考试系统。
+公开 Web/Nest 契约统一来自 `@nalanda/types` 的 camelCase `GeneratedExamV1`；Nest 显式转换数据库 snake_case，Python Pydantic 使用同一 camelCase JSON 与 `extra="forbid"`。试卷生成后会用服务端请求设置覆盖机械元数据、规范重复 ID，并在题数与每题 1–100 分边界可满足时按模型相对权重稳定调整 marks；该步骤不更改题干、答案、解释、rubric 或来源，之后仍需完整结构和语义门禁。考试 session 会删除答案、解析、rubric 和 accepted answer，只给作答所需字段；生成者自己的 Notes detail 仍可查看完整答案，这是自学产品而不是防作弊考试系统。
 
 Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，仍为 Coming soon。候选 `GeneratedKnowledgeGraphV1` 是新的真实契约：节点按 source order，带层级、详细解释、例子/公式/误区/自测与严格引用；edge 有受限关系类型。节点问答只使用所选节点、相邻节点及这两类节点引用到的 source blocks，答案不能越过该来源并集。当前候选仍不含 embeddings、pgvector、Notes 编辑、导出、credits 或支付。
 
