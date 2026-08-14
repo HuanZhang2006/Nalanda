@@ -55,6 +55,8 @@ provider usage 只留 model、token、micro-USD、latency、request ID、用途�
 
 2026-08-11 生产 gate 处理固定 PDF/DOCX/PPTX/chart，chart 仅恢复 1 个视觉范围，确认恶意注入拒绝、安全教材放行、39 个进度事件和评分；220 页/366,412 字符 canary 的主/子进程峰值约 101.8/211.9 MiB。登录用户 smoke 完成生成、评分、双额度、usage、来源与结果删除及临时目录清理。该样本集不覆盖真实用户所有复杂课件或攻击方式，持续评测仍是必需项。
 
+2026-08-14 的后续真实 chart 门禁暴露出首轮分类器会因纯图片尚未提取而返回 `uncertain`，旧执行顺序在 MiMo 前误报注入。`material-safety-audit.v2` 的回归集分别覆盖：解析器隔离范围可进入恢复、模型漏填 failed range 仍恢复、未知范围拒绝、正文/focus 确定性信号拒绝、恢复后严格复审。fake 单测只能证明控制流；发布仍必须用无个人数据 chart 和图片内恶意指令样本分别证明正常视觉可恢复、视觉注入在第二次审查被拒绝。
+
 ### 2.2 Luna 原文件候选闭环
 
 `luna_native_file_v1` 固定 `openai/gpt-5.6-luna`，并要求 `provider.only=["openai"]`、`allow_fallbacks=false`、ZDR、拒绝数据收集、strict schema 和 no tools/Web。worker 从 private Storage 下载后只校验 MIME、大小与 SHA-256；不得运行 parser/OCR/LibreOffice/DocumentIR/parse cache。PDF 使用 inline `type:file` 与 `file-parser.native`，图片使用 inline `image_url`；不使用会形成远端持久文件的 Files API。响应中的真实 upstream 必须为 OpenAI，usage 事件持久记录 provider/endpoint/pipeline；路由违规已发生的成本仍落账，但产物不得保存。
