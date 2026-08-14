@@ -210,7 +210,7 @@ class OpenRouterClient:
                         )
                     return parsed, [*failed_events, succeeded]
 
-                code = self._provider_error_code(response.status_code)
+                code = self._provider_error_code(response)
                 event = self._usage(purpose, model, response, attempt_started, "failed", code)
                 await self._emit(event)
                 failed_events.append(event)
@@ -291,9 +291,30 @@ class OpenRouterClient:
         return status_code in (408, 429, 502, 503, 504)
 
     @staticmethod
-    def _provider_error_code(status_code: int) -> str:
-        if status_code in (400, 404):
+    def _provider_error_code(response: httpx.Response) -> str:
+        status_code = response.status_code
+        error_text = ""
+        try:
+            body = response.json()
+            error = body.get("error") if isinstance(body, dict) else None
+            if isinstance(error, dict):
+                error_text = " ".join(
+                    str(value)
+                    for key, value in error.items()
+                    if key in {"code", "message", "type"}
+                    and isinstance(value, (str, int))
+                ).casefold()
+        except (TypeError, ValueError):
+            pass
+        if status_code in (400, 404) and any(
+            marker in error_text
+            for marker in ("zdr", "zero data retention", "data retention policy")
+        ):
             return "OPENROUTER_ZDR_UNAVAILABLE"
+        if status_code == 400:
+            return "OPENROUTER_BAD_REQUEST"
+        if status_code == 404:
+            return "OPENROUTER_MODEL_UNAVAILABLE"
         if status_code == 429:
             return "OPENROUTER_RATE_LIMIT"
         if status_code == 402:

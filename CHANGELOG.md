@@ -3,7 +3,7 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-11。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，不得据此声称生产已启用。
+> **状态基线：**2026-08-14。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
@@ -33,6 +33,9 @@
 - Materials 与 My Notes 在本阶段固定全英文并保持既有 class/token/字体/动画；不扩大为全站 React 或视觉迁移。
 
 ### Fixed
+
+- 真实发布 run `31824832947` 暴露出 Luna 的 OpenAI-only 与 ZDR 组合当前无可路由 endpoint；原发布正确自动恢复旧 Web/API，但会阻断已经通过的 DocumentIR/图谱/任务/考试改进。向前修复把真实门禁拆为必须通过的旧流水线和实时 Luna ZDR catalog 决策：只有 first-party OpenAI ZDR endpoint 存在才开启 Luna，否则稳定返回 `OPENROUTER_ZDR_UNAVAILABLE`、保持子开关 false并继续让用户显式使用 DocumentIR，绝不关闭 ZDR、改用 Azure或允许 fallback。
+- 修复 OpenRouter adapter 将所有 HTTP 400/404 都误报为 `OPENROUTER_ZDR_UNAVAILABLE` 的过宽分类；现在只有响应明确包含 ZDR/Zero Data Retention 证据才使用该 code，普通坏请求和模型不可用分别为 `OPENROUTER_BAD_REQUEST`、`OPENROUTER_MODEL_UNAVAILABLE`，仍不记录 provider 原始正文。
 
 - 修复旧知识图卡片和详情互相覆盖、节点不可移动/缩放、详情常驻遮挡、同类字段重复显示，以及 artifact 更新后全部布局坐标丢失的问题；旧节点坐标按 ID 复用，新节点重新布局，revision 冲突会合并后重试。
 - 修复已成功/失败任务无法清除、活动任务删除只改 UI 不真正中断、清理前记录提前消失的问题；记录只有在 worker 确认取消请求、usage spool 与临时目录均处理后才最终删除。

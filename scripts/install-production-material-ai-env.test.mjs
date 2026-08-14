@@ -14,6 +14,7 @@ test("Materials AI installer separates worker secrets and starts the public feat
     "FEATURE_MATERIAL_AI=true",
     "FEATURE_MATERIAL_AI_LUNA=true",
     "MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png,jpg,jpeg,webp",
+    "MATERIAL_AI_LUNA_DISABLED_REASON_CODE=stale",
     "AI_INTERNAL_TOKEN=stale",
     "",
   ].join("\n"), { mode: 0o600 });
@@ -30,6 +31,8 @@ test("Materials AI installer separates worker secrets and starts the public feat
   assert.match(api, /^FEATURE_MATERIAL_AI=false$/m);
   assert.match(api, /^FEATURE_MATERIAL_AI_LUNA=false$/m);
   assert.match(api, /^MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png$/m);
+  assert.match(api, /^MATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED$/m);
+  assert.doesNotMatch(api, /^MATERIAL_AI_LUNA_DISABLED_REASON_CODE=stale$/m);
   assert.match(api, /^AI_SERVICE_URL=http:\/\/ai:8000$/m);
   assert.match(api, /^MATERIAL_AI_RESUME_TTL_SECONDS=86400$/m);
   assert.match(api, new RegExp(`^AI_INTERNAL_TOKEN=${token}$`, "m"));
