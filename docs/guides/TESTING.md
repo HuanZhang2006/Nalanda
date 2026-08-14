@@ -359,7 +359,7 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
+当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。试卷回归另覆盖请求元数据、重复 section/question ID、错误 marks 合计的确定性归一化，确认不改题目内容，并验证 reviewer 的非空 issues 不会被矛盾的 `valid=true` 掩盖。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
 
 启动带开发配置的 `uvicorn` 后：
 
@@ -487,6 +487,8 @@ python3 scripts/smoke-material-ai-provider.py
 2026-08-11 的 Materials AI 样本：PR #56 run `31462982923`、PR #57 run `31465041901`、main run `31465776658` 均通过 docs/lint/typecheck、104 个 API、105 个 Web/jsdom、25 个 Python AI 测试、真实 Redis、0007→0043、空库/lint、双用户 RLS/Storage、AI Docker 和 fake-provider Chromium Playwright。只读 plan `31465816321` 确认 0043/空 dry-run；protected run `31467153739` 创建 artifact `9092230348`，再跑 220 页资源 canary、真实 DeepSeek/MiMo 固定格式/视觉/注入/评分 suite、真实 Azure/OpenRouter/Courses gate和登录用户 Materials→Notes→Exam→grading→delete，最终激活 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`。更早 `31463661987` 的 workflow 假绿被服务器 image/Web/flag 和公网 404 独立检查识别，修复裸 `compose exec` heredoc stdin 后才重发；因此 Actions success 不能代替独立生产 smoke。
 
 2026-08-14 的 0049–0051发布先由 PR #66 run `31821614332` 和 main run `31822630770` 完成完整 fake/local 门禁，只读 plan `31822702349` 仅列 0049–0051。apply run `31824832947` 成功创建恢复点、应用并验证这三条迁移，随后 220 页 canary 通过；真实 Luna PDF gate 返回 `OPENROUTER_ZDR_UNAVAILABLE`，旧 Web/API 自动恢复且 Luna/Materials AI 保持关闭。该 run 是“数据库发布成功、应用发布失败并回退”的证据，不能写成 Luna 上线。公开 ZDR catalog 同时证明当时只有 Azure/Azure EU endpoint；向前修复必须在合规不可用时发布 DocumentIR 功能但保持 Luna false。
+
+2026-08-15 的向前修复 PR #68 run `31834010315` 与 main run `31834895278` 通过 63 个 Python、127 个 API、113 个 Web 测试，以及真实 Redis、0007→0051、空库/lint、双用户 RLS/Storage、fake Chromium 和 220 页 canary。真实 chart 在 `material-safety-audit.v2` 下通过视觉恢复，但固定安全教材的试卷一次因 marks 合计漂移返回 `AI_EXAM_VALIDATION_FAILED`，候选 release 自动回退；三次同 fixture 脱敏诊断确认该结果具有供应商随机性且 repair 可能重复错误。新增回归以服务端设置规范机械元数据/ID/marks，并让复核 issues 优先于矛盾 valid 标记；仍必须由新的真实 provider run 和独立生产检查证明修复生效。
 
 ## 11. 新增测试约定
 
