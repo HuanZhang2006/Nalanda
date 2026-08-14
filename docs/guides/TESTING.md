@@ -359,7 +359,7 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力。
+当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
 
 启动带开发配置的 `uvicorn` 后：
 
