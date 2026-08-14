@@ -42,8 +42,9 @@
 | `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation/grading processor | worker 的 progress/usage/checkpoint/complete/fail 回调 API 内网基址，生产为 `http://api:3000/api`。 |
 | `AI_INTERNAL_TOKEN` | 生产必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
 | `FEATURE_MATERIAL_AI` | 安装默认 false；当前生产 true | 公开配置 | Materials AI API/Web | 总开关；部署安装后先保持 false，只在 readiness/canary/真实 gate 通过后开启。 |
-| `FEATURE_MATERIAL_AI_LUNA` | 0049–0051 候选；安装/回滚默认 false | 公开配置 | Materials AI API/Web | `luna_native_file_v1` 独立开关；只有真实 OpenAI endpoint、原文件与资源门禁通过后才开启，不影响显式旧流水线。 |
+| `FEATURE_MATERIAL_AI_LUNA` | 安装/回滚默认 false | 公开配置 | Materials AI API/Web | `luna_native_file_v1` 独立开关；只有实时 ZDR catalog 和真实原文件 gate 都证明 first-party OpenAI endpoint 可用后才开启，不影响显式旧流水线。 |
 | `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` | 候选，`pdf,png` | 受限配置 | API capabilities/create + AI worker validation | 真实逐格式门禁通过的 Luna 原文件扩展名 allowlist；API 与 worker 必须一致，不能为“让 UI 可选”而加入未经验证的格式。 |
+| `MATERIAL_AI_LUNA_DISABLED_REASON_CODE` | `AI_LUNA_DISABLED`；生产门禁可设 `OPENROUTER_ZDR_UNAVAILABLE` | 公开运维配置 | Materials AI capabilities/create | 子开关关闭时给前端的稳定原因；只接受这两个值，不能由客户端设置，也不能替代 feature flag。 |
 | `MATERIAL_AI_MONTHLY_BUDGET_USD` | 可选，20 | 受限配置 | AI processor | provider usage 成功费用达到全局月预算后停止新调用。 |
 | `MATERIAL_AI_GENERATION_MAX_COST_USD` | 可选，0.50 | 受限配置 | generation processor | 单次生成费用硬门；超限不保存结果并释放用户 quota reservation。 |
 | `MATERIAL_AI_GRADING_MAX_COST_USD` | 可选，0.05 | 受限配置 | grading processor | 单次主观题评分费用硬门。 |

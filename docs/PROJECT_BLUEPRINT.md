@@ -6,9 +6,9 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-08-11。生产已受保护发布到 0043；0039–0040 安全第一阶段仍在兼容观察，0041–0043 Materials AI 第一阶段已上线。时间列撤权 contract 顺延为未来 0044–0045，必须在至少观察至 `2026-08-11T09:35:34Z` 并通过 go/no-go 后另行追加。
+最后核对：2026-08-14。生产数据库已受保护应用到 0051；0049–0051 的首次应用候选因 Luna/OpenAI 无 ZDR endpoint 自动回退，旧 Web/API 已恢复，不能把数据库迁移成功写成应用/Luna 上线。0039–0040 安全第一阶段和既有 0041–0043 Materials AI 数据仍保留；时间列撤权 contract 继续独立占用未来 0044–0045 的逻辑序列，不与 0046–0051 改写历史。
 
-2026-08-14 代码候选已占用 0046–0051：0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；0049–0051 实现 Luna 原文件、可取消清理、provider provenance 和跨设备图布局。它尚未发布，0044–0045 仍保留给独立的时间列 contract，二者不能合并或改写历史。
+2026-08-14 代码与数据库已占用 0046–0051：0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；0049–0051 实现 Luna 原文件、可取消清理、provider provenance 和跨设备图布局。数据库已应用，应用仍需成功的不可变 release；Luna 另受实时 ZDR/OpenAI 门禁约束。0044–0045 仍保留给独立的时间列 contract，二者不能合并或改写历史。
 
 ---
 
@@ -41,7 +41,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 仍为 mock/未实现：Home 聚合、独立 AI Create、知识清单、独立 Quiz、Note Market；My Notes 历史硬数据保留在 Demo 分组。
 - 已上线：Materials AI 第一阶段的 Generate test paper、私有 Notes、在线考试和主观题评分。未发布候选另完成知识点梳理、交互图谱/节点问答以及长任务断点续跑；在受保护发布完成前不得标为上线。
 - 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；pgvector/RAG、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。生产 Redis 同时用于 API 限流、审计聚合、协同扫描锁和 BullMQ UUID 投递。
-- 安全基线进展：生产已应用 0008–0043，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 与 Materials AI 私有写入/RPC/传播、幂等 operation、配额和结果事实均通过双用户 RLS 与发布断言。
+- 安全基线进展：生产已应用 0008–0051，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 与 Materials AI 私有写入/RPC/传播、幂等 operation、配额、布局和任务清理事实均通过双用户 RLS 与发布断言；新应用仍以独立 release 证据判定。
 - 已上线待观察：0039–0040 与兼容应用于 `2026-08-10T09:35:34Z` 激活；未来 0044–0045 在 24 小时观察和 go/no-go 完成前不得撤销兼容时间列 grant。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
@@ -248,7 +248,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 验收结果：PR/main 完整 CI、真实固定 provider suite、220 页近上限资源 canary、只读 plan/加密恢复点/远端验证、flag 关闭 readiness、登录生产用户完整链路和独立公网复核均通过；同一幂等键/operation 不重复额度/结果，失败释放 reservation，任务前后临时目录清理。持续质量、成本、真实复杂文件和 prompt injection 误报率仍需监控。
 
-### 阶段 B+：可恢复长任务、知识点图谱与 Luna 原文件（当前候选）
+### 阶段 B+：可恢复长任务、知识点图谱与 Luna 原文件（数据库已发布，应用向前修复中）
 
 - API/worker 采用 202 接收与持久回调，显式 Undici timeout 只保护 transport，不再持有最长 20 分钟 HTTP 响应。
 - provider usage 按 UUID 增量持久；数据库 checkpoint 与 worker 0700 本地结果共同支持默认 24 小时 Resume，同一 job、重新预留、成功才 consume。
@@ -258,7 +258,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - job 支持应用内二次确认的 Delete/Clear history；活动清理必须等 worker 取消网络/Office、落账 usage 并删除临时目录后才消失，已接收任务按规则 consume 一次。
 - 能力矩阵允许用户显式选择 DocumentIR 或 `luna_native_file_v1`。Luna 只对真实门禁 allowlist 开放，以 inline 原字节、固定模型和 OpenAI-only/ZDR/no-fallback 处理，不静默转换或降级。
 
-验收尚未完成：0046–0051 空库/升级/RLS、fake Chromium、真实 DeepSeek/MiMo 与 Luna/OpenAI 原文件门禁、2G canary、只读 plan、恢复点、生产登录 smoke 和独立公网核验。
+验收进度：0046–0051 空库/升级/RLS、fake Chromium、只读 plan、恢复点、生产 apply、2G canary和旧 DeepSeek/MiMo 路径已完成。真实 Luna/OpenAI 原文件门禁确认当前无 first-party OpenAI ZDR endpoint，因此必须保持 Luna false；仍需完成 DocumentIR 新应用 release、生产登录 smoke 和独立公网核验。未来只有 catalog 合规并跑完 PDF/图片真实门禁后，Luna 才能从“已实现但不可用”改为上线。
 
 ### 阶段 C：四类产物与学习闭环
 

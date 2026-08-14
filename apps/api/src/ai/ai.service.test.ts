@@ -64,6 +64,14 @@ describe("Materials AI public service boundary", () => {
         { pipeline: "document_ir_v1", available: true, default: true },
       ],
     });
+    process.env.MATERIAL_AI_LUNA_DISABLED_REASON_CODE = "OPENROUTER_ZDR_UNAVAILABLE";
+    await expect(service.capabilities(USER, MATERIAL)).resolves.toMatchObject({
+      capabilities: [
+        { pipeline: "luna_native_file_v1", available: false, default: false, reasonCode: "OPENROUTER_ZDR_UNAVAILABLE" },
+        { pipeline: "document_ir_v1", available: true, default: true },
+      ],
+    });
+    delete process.env.MATERIAL_AI_LUNA_DISABLED_REASON_CODE;
     flags.materialAiLunaEnabled.mockReturnValue(true);
     await expect(service.capabilities(USER, MATERIAL)).resolves.toMatchObject({
       capabilities: [

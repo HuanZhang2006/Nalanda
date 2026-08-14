@@ -5,7 +5,9 @@ import test from "node:test";
 test("Materials AI production smoke uses public auth, exam grading, knowledge graph Q&A, and cleanup", async () => {
   const source = await readFile("scripts/smoke-material-ai-production.mjs", "utf8");
   assert.match(source, /FEATURE_MATERIAL_AI.*"true"/);
-  assert.match(source, /FEATURE_MATERIAL_AI_LUNA.*"true"/);
+  assert.match(source, /MATERIAL_AI_EXPECT_LUNA_ENABLED/);
+  assert.match(source, /FEATURE_MATERIAL_AI_LUNA/);
+  assert.match(source, /OPENROUTER_ZDR_UNAVAILABLE/);
   assert.match(source, /MATERIAL_AI_FAKE_PROVIDER.*"true"/);
   assert.match(source, /ai-capabilities/);
   assert.match(source, /pipeline: "luna_native_file_v1"/);

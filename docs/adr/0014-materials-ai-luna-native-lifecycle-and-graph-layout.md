@@ -48,7 +48,8 @@
 ## 当前实现与目标差距
 
 - **当前候选：**共享契约、0049–0051、Nest/API/worker、React Flow + ELK、Delete/Clear、整卷批改、fake/单元与真实 gate 脚本已进入仓库候选分支。
-- **生产：**仍到 0043；Luna 子开关未启用，PDF/PNG 之外的格式也不得声称支持。
+- **生产数据库：**0049–0051 已由 run `31824832947` 于 2026-08-14 应用并验证；同 run 的应用候选因 Luna/OpenAI 无 ZDR endpoint 自动回退，旧应用恢复且子开关未启用。
+- **运行决定：**发布门禁读取官方 ZDR endpoint catalog；没有 first-party OpenAI 时可发布 DocumentIR、图谱/任务/考试修复，但必须令 Luna capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`。这不是 pipeline fallback，用户仍显式选择实际可用的 DocumentIR。
 - **目标：**完整 CI 证明空库/升级/RLS/Redis/Playwright/Docker，再以真实 OpenAI 逐格式验证、2G canary、登录用户 smoke 和独立公网检查完成受保护发布。
 
 ## 验证与复审

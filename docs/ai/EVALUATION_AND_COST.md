@@ -63,6 +63,8 @@ Luna 顺序固定为原文件安全审查→原文件生成→本地 schema/题�
 
 真实 Luna 门禁至少按 PDF、图片和每个候选扩展名分别记录：原始 SHA-256、wire MIME/sourceMode、actual provider/endpoint、native parser、schema 通过率、注入拒绝/安全教材误杀、source locator 支持、token/费用、P50/P95、取消/超时残留。试卷与图谱要分开评测；图谱另测 250 节点层级/顺序/交叉边，考试只在整卷提交后批改，主观题一次合并评分。fake provider 不计入模型质量或格式支持证据。
 
+2026-08-14 真实发布 run `31824832947` 的 2G canary 通过，但首个 Luna PDF 试卷在安全审查前即失败为 `OPENROUTER_ZDR_UNAVAILABLE`；应用自动回退且未启用 Luna。随后读取 OpenRouter 官方 `/api/v1/endpoints/zdr`，同一模型只有 Azure/Azure EU，未包含 first-party OpenAI。因为本架构同时要求 OpenAI-only 与 ZDR，这一状态必须解释为“能力不可用”，不能删去 ZDR、改 provider 或把 `data_collection=deny` 冒充 ZDR。后续发布每次重新读取 catalog；只有 OpenAI ZDR endpoint 出现并完成真实 PDF/图片全门禁后才开放。
+
 ### 2.3 Courses 文件导入的目标闭环（未实现）
 
 目标输入：PDF、DOC/DOCX、JSON、Markdown、HTML 和受控图片。文件先进入按用户隔离的 quarantine，服务端检查扩展名、MIME、magic bytes、大小/页数/像素、压缩炸弹和恶意内容，再解析/OCR；浏览器不能把原文直接送供应商，也不能让模型使用 service-role 或任意网络工具。
