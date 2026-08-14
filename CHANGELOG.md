@@ -34,6 +34,7 @@
 
 ### Fixed
 
+- 修复真实 DocumentIR 发布门禁中试卷模型偶发返回“题数正确、单题分值合法，但合计分值不等于用户设置”的 `AI_EXAM_VALIDATION_FAILED`。`exam-generate.v3` 与 `exam-native-file.v2` 现在先用服务端设置确定性归一化语言、难度、时长、总分、重复 section/question ID，并在可行范围内按原相对权重稳定重分配单题分值；题数、答案、语义和引用仍由原 validator/DeepSeek 复核严格把关。复核结果若 `issues` 非空不再因 `valid=true` 被忽略。
 - 修复真实 DocumentIR chart 门禁把“解析器已隔离、尚待视觉恢复的纯图片范围”误判为整份文件 prompt injection，并在 MiMo 恢复前返回 `PROMPT_INJECTION_REJECTED`。`material-safety-audit.v2` 只允许没有确定性注入信号、且所有不确定位置均属于解析器失败范围的首轮 `uncertain` 进入隔离恢复；未知范围、已解析文本/focus 信号和 `malicious` 仍立即拒绝，恢复后的完整 DocumentIR 仍以严格二次审查失败关闭。
 - 真实发布 run `31824832947` 暴露出 Luna 的 OpenAI-only 与 ZDR 组合当前无可路由 endpoint；原发布正确自动恢复旧 Web/API，但会阻断已经通过的 DocumentIR/图谱/任务/考试改进。向前修复把真实门禁拆为必须通过的旧流水线和实时 Luna ZDR catalog 决策：只有 first-party OpenAI ZDR endpoint 存在才开启 Luna，否则稳定返回 `OPENROUTER_ZDR_UNAVAILABLE`、保持子开关 false并继续让用户显式使用 DocumentIR，绝不关闭 ZDR、改用 Azure或允许 fallback。
 - 修复 OpenRouter adapter 将所有 HTTP 400/404 都误报为 `OPENROUTER_ZDR_UNAVAILABLE` 的过宽分类；现在只有响应明确包含 ZDR/Zero Data Retention 证据才使用该 code，普通坏请求和模型不可用分别为 `OPENROUTER_BAD_REQUEST`、`OPENROUTER_MODEL_UNAVAILABLE`，仍不记录 provider 原始正文。
