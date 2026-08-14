@@ -23,6 +23,7 @@ from pptx import Presentation
 TEXT_MODEL = "deepseek/deepseek-v4-flash-0731"
 VISION_MODEL = "xiaomi/mimo-v2.5"
 LUNA_MODEL = "openai/gpt-5.6-luna"
+ZDR_ENDPOINTS_URL = "https://openrouter.ai/api/v1/endpoints/zdr"
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "").rstrip("/")
 SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_ROLE_KEY", "")
 WORKER_URL = os.environ.get("MATERIAL_AI_WORKER_URL", "http://ai:8000").rstrip("/")
@@ -265,6 +266,29 @@ def assert_usage(result: dict, expect_vision: bool) -> None:
 def provider_failure_count(result: dict) -> int:
     usage = result.get("usageEvents")
     return sum(1 for event in usage if isinstance(event, dict) and event.get("status") == "failed")
+
+
+def luna_zdr_providers() -> list[str]:
+    """Return live ZDR providers for Luna without exposing endpoint metadata."""
+
+    with httpx.Client(timeout=30) as client:
+        response = client.get(ZDR_ENDPOINTS_URL)
+    require(response.is_success, f"OpenRouter ZDR catalog failed: HTTP {response.status_code}")
+    try:
+        payload = response.json()
+    except (json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError("OpenRouter ZDR catalog returned invalid JSON") from error
+    rows = payload.get("data") if isinstance(payload, dict) else None
+    require(isinstance(rows, list), "OpenRouter ZDR catalog returned no endpoint list")
+    return sorted({
+        str(row.get("provider_name"))
+        for row in rows
+        if isinstance(row, dict)
+        and row.get("model_id") == LUNA_MODEL
+        and row.get("status") == 0
+        and isinstance(row.get("provider_name"), str)
+        and row.get("provider_name")
+    })
 
 
 def assert_luna_usage(result: dict, required_purpose: str) -> None:
@@ -547,9 +571,17 @@ def main() -> None:
             process_fixture("educational", fixtures["educational"])
             reject_injection(fixtures["malicious"])
             knowledge = process_knowledge_graph(fixtures["pdf"])
-            native_exam = process_native(fixtures["pdf"], "exam")
-            native_knowledge = process_native(fixtures["chart"], "knowledge_graph")
-            reject_native_injection(fixtures["native_malicious"])
+            luna_providers = luna_zdr_providers()
+            luna_available = any(provider.casefold() == "openai" for provider in luna_providers)
+            allow_luna_disabled = os.environ.get("MATERIAL_AI_ALLOW_LUNA_DISABLED") == "true"
+            require(
+                luna_available or allow_luna_disabled,
+                "Luna has no first-party OpenAI Zero Data Retention endpoint",
+            )
+            native_exam = process_native(fixtures["pdf"], "exam") if luna_available else None
+            native_knowledge = process_native(fixtures["chart"], "knowledge_graph") if luna_available else None
+            if luna_available:
+                reject_native_injection(fixtures["native_malicious"])
             grading = grade_subjective()
         require(len(progress_events) > started_progress, "worker progress callbacks were not emitted")
         print(json.dumps({
@@ -563,9 +595,12 @@ def main() -> None:
             "educationalSecurityContentAllowed": True,
             "gradingScore": grading["subjectiveScore"],
             "knowledgeGraphNodes": knowledge["nodeCount"],
-            "nativeExamQuestions": native_exam["questionCount"],
-            "nativeKnowledgeGraphNodes": native_knowledge["nodeCount"],
-            "nativePromptInjectionRejected": True,
+            "lunaAvailable": luna_available,
+            "lunaReasonCode": None if luna_available else "OPENROUTER_ZDR_UNAVAILABLE",
+            "lunaZdrProviders": luna_providers,
+            "nativeExamQuestions": native_exam["questionCount"] if native_exam else 0,
+            "nativeKnowledgeGraphNodes": native_knowledge["nodeCount"] if native_knowledge else 0,
+            "nativePromptInjectionRejected": True if luna_available else None,
             "progressEvents": len(progress_events) - started_progress,
         }, separators=(",", ":")))
     finally:

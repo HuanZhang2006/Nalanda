@@ -418,7 +418,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 python3 scripts/smoke-material-ai-provider.py
 ```
 
-`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。Luna 发布还必须在子开关关闭时用固定无个人数据 PDF/图片逐格式证明实际 provider=OpenAI、PDF native parser、原始 SHA-256、不转换、严格 schema、注入拒绝和取消无残留；不支持格式继续留在 allowlist 外。fake CI、旧 DeepSeek/MiMo gate、真实 Luna gate、登录用户 smoke 与公网 health 是互不替代的证据。
+`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。Luna 发布还必须在子开关关闭时先读取 OpenRouter 官方 ZDR endpoint catalog；catalog 没有 Luna + first-party OpenAI 时，门禁只能产生 `OPENROUTER_ZDR_UNAVAILABLE` 并保持子开关 false。只有 catalog 合规后，才继续用固定无个人数据 PDF/图片逐格式证明实际 provider=OpenAI、PDF native parser、原始 SHA-256、不转换、严格 schema、注入拒绝和取消无残留；不支持格式继续留在 allowlist 外。fake CI、旧 DeepSeek/MiMo gate、真实 Luna gate、登录用户 smoke 与公网 health 是互不替代的证据。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
@@ -485,6 +485,8 @@ python3 scripts/smoke-material-ai-provider.py
 2026-08-10 的安全/限流 Stage A 样本：PR #51 run `31367746106`、PR #52 run `31370961413` 与 main run `31371608883` 通过 docs/lint/typecheck、Web/API tests、build、真实 Redis Lua、0007→0040、空库/database lint、双用户 RLS/Storage 和 Chromium Playwright；Playwright 的供应商仍为 fake。plan `31368447660` 只列 0039–0040，protected run `31369657292` 保留 artifact `9055783205` 后应用到 0040。该 run 暴露的远端 stdin 假成功由 #52 回归修复；最终 plan `31372198037` 为空，protected run `31372888441` 以 artifact `9057062920` 再验证远端并激活 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5`。真实 Redis/nginx/Azure/OpenRouter/Fish/Courses gates 与公网 `deps.redis=ok`、auth/admin 401、注册 RateLimit headers 是独立生产证据；OpenRouter 的瞬时超时/429 均在切流前阻断，不能算成功测试。时间列撤权的未来 0044–0045 仍待 24 小时 go/no-go。
 
 2026-08-11 的 Materials AI 样本：PR #56 run `31462982923`、PR #57 run `31465041901`、main run `31465776658` 均通过 docs/lint/typecheck、104 个 API、105 个 Web/jsdom、25 个 Python AI 测试、真实 Redis、0007→0043、空库/lint、双用户 RLS/Storage、AI Docker 和 fake-provider Chromium Playwright。只读 plan `31465816321` 确认 0043/空 dry-run；protected run `31467153739` 创建 artifact `9092230348`，再跑 220 页资源 canary、真实 DeepSeek/MiMo 固定格式/视觉/注入/评分 suite、真实 Azure/OpenRouter/Courses gate和登录用户 Materials→Notes→Exam→grading→delete，最终激活 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`。更早 `31463661987` 的 workflow 假绿被服务器 image/Web/flag 和公网 404 独立检查识别，修复裸 `compose exec` heredoc stdin 后才重发；因此 Actions success 不能代替独立生产 smoke。
+
+2026-08-14 的 0049–0051发布先由 PR #66 run `31821614332` 和 main run `31822630770` 完成完整 fake/local 门禁，只读 plan `31822702349` 仅列 0049–0051。apply run `31824832947` 成功创建恢复点、应用并验证这三条迁移，随后 220 页 canary 通过；真实 Luna PDF gate 返回 `OPENROUTER_ZDR_UNAVAILABLE`，旧 Web/API 自动恢复且 Luna/Materials AI 保持关闭。该 run 是“数据库发布成功、应用发布失败并回退”的证据，不能写成 Luna 上线。公开 ZDR catalog 同时证明当时只有 Azure/Azure EU endpoint；向前修复必须在合规不可用时发布 DocumentIR 功能但保持 Luna false。
 
 ## 11. 新增测试约定
 

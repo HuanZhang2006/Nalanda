@@ -983,8 +983,8 @@ jobs:
             # fresh protected activation.
             if [[ -f "$root/.env" ]]; then
               rollback_api_env="$(mktemp "$root/.env.rollback.XXXXXX")"
-              awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA)=/' "$root/.env" > "$rollback_api_env"
-              printf 'FEATURE_MATERIAL_AI=false\nFEATURE_MATERIAL_AI_LUNA=false\n' >> "$rollback_api_env"
+              awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA|MATERIAL_AI_LUNA_DISABLED_REASON_CODE)=/' "$root/.env" > "$rollback_api_env"
+              printf 'FEATURE_MATERIAL_AI=false\nFEATURE_MATERIAL_AI_LUNA=false\nMATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED\n' >> "$rollback_api_env"
               chmod 600 "$rollback_api_env"
               mv "$rollback_api_env" "$root/.env"
             fi
@@ -1179,18 +1179,43 @@ jobs:
           # rendering, single-range MiMo recovery, strict DeepSeek output,
           # injection refusal, educational-security allowance, and grading.
           docker rm -f nalanda-material-ai-smoke >/dev/null 2>&1 || true
-          if ! docker run --rm --name nalanda-material-ai-smoke \
+          provider_gate_output=""
+          if ! provider_gate_output="$(docker run --rm --name nalanda-material-ai-smoke \
             --network nalanda_default \
             --env-file "$root/.env" \
             --env-file "$root/.ai.env" \
+            -e MATERIAL_AI_ALLOW_LUNA_DISABLED=true \
             -e MATERIAL_AI_WORKER_URL=http://ai:8000 \
             -e MATERIAL_AI_SMOKE_CALLBACK_HOST=nalanda-material-ai-smoke \
             --entrypoint python \
             -v "$incoming/smoke-material-ai-provider.py:/tmp/smoke-material-ai-provider.py:ro" \
-            "nalanda-ai:$sha" /tmp/smoke-material-ai-provider.py; then
+            "nalanda-ai:$sha" /tmp/smoke-material-ai-provider.py)"; then
             rollback_application "real Materials AI provider gate failed" || true
             exit 1
           fi
+          provider_gate_facts="$(python3 -c '
+          import json, sys
+          value=json.load(sys.stdin)
+          assert value.get("ok") is True
+          enabled=value.get("lunaAvailable")
+          assert isinstance(enabled, bool)
+          reason=value.get("lunaReasonCode") or "none"
+          print(str(enabled).lower(), reason)
+          ' <<< "$provider_gate_output")" || {
+            rollback_application "real Materials AI provider gate returned invalid evidence" || true
+            exit 1
+          }
+          read -r luna_enabled luna_reason <<< "$provider_gate_facts"
+          if [[ "$luna_enabled" == "false" && "$luna_reason" != "OPENROUTER_ZDR_UNAVAILABLE" ]]; then
+            rollback_application "Luna provider gate failed for an unreviewed reason" || true
+            exit 1
+          fi
+          if [[ "$luna_enabled" != "true" && "$luna_enabled" != "false" ]]; then
+            rollback_application "Luna provider gate returned an invalid activation decision" || true
+            exit 1
+          fi
+          echo "Materials AI provider gate: $provider_gate_output"
+          echo "Luna activation decision: enabled=$luna_enabled reason=$luna_reason"
           if compose_exec_no_stdin ai \
             sh -ec 'find /tmp/nalanda-material-ai -mindepth 1 -maxdepth 1 -type d -name "job-*" -print -quit | grep -q .'; then
             rollback_application "Materials AI temporary job directory was not cleaned" || true
@@ -1260,11 +1285,18 @@ jobs:
             exit 1
           fi
 
-          # All private gates passed. Flip only the reviewed feature flag and
-          # recreate the API so no request observes a half-updated process.
+          # All private gates passed. Document IR may activate independently;
+          # Luna remains closed if the live ZDR catalog has no first-party
+          # OpenAI endpoint. No alternate provider or silent pipeline fallback
+          # is permitted.
           enabled_env="$(mktemp "$root/.env.material-ai-enabled.XXXXXX")"
-          awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA)=/' "$root/.env" > "$enabled_env"
-          printf 'FEATURE_MATERIAL_AI=true\nFEATURE_MATERIAL_AI_LUNA=true\n' >> "$enabled_env"
+          awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA|MATERIAL_AI_LUNA_DISABLED_REASON_CODE)=/' "$root/.env" > "$enabled_env"
+          printf 'FEATURE_MATERIAL_AI=true\nFEATURE_MATERIAL_AI_LUNA=%s\n' "$luna_enabled" >> "$enabled_env"
+          if [[ "$luna_enabled" == "true" ]]; then
+            printf 'MATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED\n' >> "$enabled_env"
+          else
+            printf 'MATERIAL_AI_LUNA_DISABLED_REASON_CODE=%s\n' "$luna_reason" >> "$enabled_env"
+          fi
           chmod 600 "$enabled_env"
           mv "$enabled_env" "$root/.env"
           if ! docker compose --env-file "$next_env" -f "$next_compose" up -d --force-recreate api; then
@@ -1281,8 +1313,8 @@ jobs:
             rollback_application "Materials AI feature flag was not active" || true
             exit 1
           fi
-          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI_LUNA)" != "true" ]]; then
-            rollback_application "Luna native-file feature flag was not active" || true
+          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI_LUNA)" != "$luna_enabled" ]]; then
+            rollback_application "Luna native-file feature flag did not match the provider gate" || true
             exit 1
           fi
           if ! docker run --rm \
@@ -1302,6 +1334,7 @@ jobs:
             --env-file "$root/.env" \
             --env-file "$root/.ai.env" \
             -e SMOKE_API_ORIGIN=http://127.0.0.1:8411/api \
+            -e MATERIAL_AI_EXPECT_LUNA_ENABLED="$luna_enabled" \
             --entrypoint node \
             -v "$incoming/smoke-material-ai-production.mjs:/tmp/smoke-material-ai-production.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-material-ai-production.mjs; then

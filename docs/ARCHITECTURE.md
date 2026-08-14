@@ -180,6 +180,8 @@ Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，�
 
 创建 job 时 Web 必须显式发送 `pipeline`。`GET /api/materials/:id/ai-capabilities` 只把通过真实逐格式门禁且由 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` 允许的格式标为 Luna 可用；默认候选 allowlist 为 PDF/PNG。`luna_native_file_v1` 下载私有 Storage 原字节后校验声明大小、MIME 与 SHA-256，以 inline base64 发送给固定 `openai/gpt-5.6-luna`：PDF 使用 `type:file` + `file-parser.native`，图片使用 `image_url`。该路径不调用解析器、OCR、LibreOffice、DocumentIR 或 parse cache，也不使用会产生远端 workspace 留存的 Files API。每次请求强制 `provider.only=["openai"]`、`allow_fallbacks=false`、ZDR、deny data collection、require parameters、strict schema、no tools/Web；usage 先落库，实际上游不是 OpenAI 时完成事务拒绝产物但保留成本证据。
 
+受保护发布还读取 OpenRouter 的实时 ZDR endpoint catalog。只有 catalog 同时包含 Luna、`provider_name=OpenAI` 且 endpoint 可用时，才允许把 `FEATURE_MATERIAL_AI_LUNA` 从 false 改为 true；否则保持原文件能力关闭、以 `OPENROUTER_ZDR_UNAVAILABLE` 返回原因，并让用户显式使用 DocumentIR。2026-08-14 的真实门禁与 catalog 均显示 Luna 当时只有 Azure/Azure EU ZDR endpoint，first-party OpenAI 不满足 ZDR；发布不得关闭 ZDR、改用 Azure、允许 fallback 或自动选择旧流水线来伪造 Luna 成功。
+
 知识图画布动态加载 React Flow 与 ELK，按 level 建立从左到右泳道并用 sourceOrder 约束同层顺序；关联边弱化为虚线。节点拖动结束及自动布局后执行碰撞消解，位置/viewport 保存到 owner 私有 `knowledge_graph_layouts`。artifact 改版时只复用仍存在的 node ID，revision 冲突由 Web 拉取最新布局、合并非重叠节点后重试。详情永远在画布外：桌面右侧、移动端下方，hover/focus 临时预览，click 固定，Esc 解除。
 
 删除任务先由 service-role 事务锁行并进入 `deleting/cleaning`：queued 释放 reservation，已被 worker 接受的 processing consume 一次，终态不回退历史额度。BullMQ 删除待投递项后调用 worker cancel/purge；worker 取消 HTTPX await 和 Office 进程组，先重放 usage spool，再删除 0700 目录/checkpoint。只有 worker 返回 `purged=true` 才硬删 job/events/checkpoint；worker 不可达时 reconciler 重试，UI 保持 Cleaning up。provider usage 的 job UUID 是非 FK 审计引用，任务删除后仍保留。

@@ -78,7 +78,7 @@
 | 请求保护 | rate-limit decision latency、429/503、Redis availability/memory | Redis PING ≥99.9%；合法流量 429 误判需接近 0；noeviction/AOF 配置漂移为发布阻断 |
 | Points 完整性 | ledger/Profile projection、cap/审核 transition | projection 差异必须为 0；同 business key 只有一项首次 decision；协同 signal 只改变待审队列 |
 | Materials AI 生成 | 成功率、queue wait/stage/provider/总时延、引用/schema、成本 | 合法任务成功率 ≥95%；最旧 queued <5 分钟；schema/source 100%；单次预算硬门不得突破 |
-| Materials AI 恢复/图谱/Luna（候选） | accept/callback、checkpoint/usage、delete cleanup、pipeline/upstream、graph/layout/Q&A schema/source | accept p95<2秒；callback backlog<1分钟；期限内恢复不重复 provider/费用；deleting p95<30秒且残留为0；Luna upstream 100% OpenAI、PDF native 100%；usage UUID重复副作用为0；graph schema/source-order/citation 100% |
+| Materials AI 恢复/图谱/Luna | accept/callback、checkpoint/usage、delete cleanup、pipeline/upstream、graph/layout/Q&A schema/source、ZDR catalog decision | accept p95<2秒；callback backlog<1分钟；期限内恢复不重复 provider/费用；deleting p95<30秒且残留为0；Luna 开启时 upstream 100% OpenAI、PDF native 100%；无 OpenAI ZDR endpoint 时 flag 100% 保持 false 且 reason 稳定；usage UUID重复副作用为0；graph schema/source-order/citation 100% |
 | 在线考试 | draft revision、deadline submit、grading queue/额度 | 已确认保存 p95<1秒；过期最终必提交；相同 operation UUID 副作用为 0 |
 
 避免合成监控污染真实指标：使用专用账号/课程/文件前缀，测试后清理，并防止触发积分、通知和社区公开内容。生产合成写测试在具备幂等清理前不得自动开启。
@@ -110,7 +110,7 @@
 - OpenRouter provider 5xx/timeout/invalid-structure 合计 >10% 持续 10 分钟或 token/请求量异常超过 2 倍基线：P2，关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`，普通/限时拼写保持；语义错误率突然偏离固定 eval baseline：P2/P3，先停 feature 而不是放宽模型判定。429 若来自产品用户配额按信息/滥用调查，若来自供应商账户额度按 P2；
 - Fish Audio STT timeout/5xx/invalid/空 transcript >10% 持续 10 分钟、p95 >8 秒或月预算 ≥80%：P2/P3；先关闭依赖该能力的翻译语音入口并保留键盘输入，不得绕过 owner/revision 校验、改为浏览器直连或把识别文本自动提交。真实用户 CER/关键含义保留率低于评测基线时暂停入口并复核模型/语言提示。
 - Materials AI 最旧 queued >5 分钟、lease 连续三次恢复、worker restart ≥3/10min、temp orphan 超过配置 resume TTL、单并发槽已释放但 FastAPI 仍有多个 active job、临时磁盘低于 512MiB、RSS/swap/cgroup OOM、provider/ZDR/schema/injection false-positive 异常：P2；同一真实门禁在有界重试后仍持续 `OPENROUTER_RATE_LIMIT` 也按 P2 保持 feature 关闭。跨用户/正文日志/ZDR 绕过或 quota/结果重复为 P1。先关闭 `FEATURE_MATERIAL_AI`，既有 Notes/考试保持只读，不通过放宽 ZDR、fallback、资源上限或直接改 job/quota 恢复。
-- 候选回调模式中，accept >30 秒、callback 连续失败、checkpoint stage 倒退、usage spool >5 分钟、同 event UUID 多条成本事实或 Resume 再次调用已完成 provider 阶段均按 P2；deleting >5 分钟、cleanup 重试增长、purge 后目录/checkpoint/spool 残留也为 P2。Luna 实际 upstream 非 OpenAI、发生自动 fallback/转换/非 native PDF、路由违规结果被保存，或重复扣额度/跨用户布局/Q&A 为 P1；先关闭 Luna 子开关，不通过放宽路由恢复。
+- 回调模式中，accept >30 秒、callback 连续失败、checkpoint stage 倒退、usage spool >5 分钟、同 event UUID 多条成本事实或 Resume 再次调用已完成 provider 阶段均按 P2；deleting >5 分钟、cleanup 重试增长、purge 后目录/checkpoint/spool 残留也为 P2。OpenRouter catalog 无 first-party OpenAI ZDR endpoint 时 Luna flag 被打开属于 P1；Luna 实际 upstream 非 OpenAI、发生自动 fallback/转换/非 native PDF、路由违规结果被保存，或重复扣额度/跨用户布局/Q&A 同样为 P1。先关闭 Luna 子开关，不通过放宽路由恢复。
 - AI 月成本 ≥80% US$20 为 P3、≥95% P2；单次生成 >US$0.50 或评分 >US$0.05 必须由硬门阻断并释放用户 reservation。token/cost 账单差异和 unknown request ID 触发调查。
 - `learning_audio_assets` 最旧 pending 超过 15 分钟、processing lease 过期持续 5 分钟、generation failure >10% 或 ready metadata 对象 miss >1%：P2；minute/month quota 暂停按预算阈值分级，不通过提高并发绕过；
 - `learning_attempt_revision_conflict` 突增、同 session outbox 最旧项 >5 分钟或 replay 比例异常升高：P2/P3；先查网络/API/多设备，不手工推进 cursor；

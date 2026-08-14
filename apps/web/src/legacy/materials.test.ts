@@ -11,6 +11,14 @@ const capabilities = {
   ],
 };
 
+const compliantDisabledCapabilities = {
+  materialId: "m1",
+  capabilities: [
+    { pipeline: "luna_native_file_v1", available: false, default: false, model: "openai/gpt-5.6-luna", provider: "OpenAI", reasonCode: "OPENROUTER_ZDR_UNAVAILABLE" },
+    { pipeline: "document_ir_v1", available: true, default: true, model: "deepseek/deepseek-v4-flash-0731", provider: "OpenRouter routed ZDR provider", reasonCode: null },
+  ],
+};
+
 describe("资料错误处理", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -108,6 +116,39 @@ describe("资料错误处理", () => {
     });
     expect(localStorage.getItem("nalanda-material-ai-consent-v1:u1")).toBe("1");
     expect(toast).toHaveBeenCalledWith("Test paper generation queued", "check");
+  });
+
+  it("keeps Document IR selectable and explains when no compliant Luna endpoint exists", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/materials/m1/ai-capabilities")) {
+        return new Response(JSON.stringify(compliantDisabledCapabilities), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
+        plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
+        generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+        grading: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.includes("/api/ai-jobs")) return new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+    const root = document.createElement("div"); document.body.appendChild(root);
+    initMaterials(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
+    mountMaterials(root); await flush(16);
+
+    click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
+    await vi.waitFor(() => expect(document.querySelector('[data-ai-choice="exam"]')).not.toBeNull());
+    click(document.querySelector('[data-ai-choice="exam"]'));
+
+    const luna = document.querySelector<HTMLInputElement>('input[value="luna_native_file_v1"]');
+    const documentIr = document.querySelector<HTMLInputElement>('input[value="document_ir_v1"]');
+    expect(luna?.disabled).toBe(true);
+    expect(documentIr?.checked).toBe(true);
+    expect(document.body.textContent).toContain("No OpenAI Zero Data Retention endpoint is currently available");
+    expect(document.body.textContent).toContain("Document IR remains available");
   });
 
   it("requires the versioned disclosure independently for each account", async () => {

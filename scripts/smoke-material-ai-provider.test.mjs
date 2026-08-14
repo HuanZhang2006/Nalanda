@@ -7,6 +7,9 @@ test("Materials AI real-provider gate covers fixed formats, ZDR evidence, inject
   assert.match(source, /deepseek\/deepseek-v4-flash-0731/);
   assert.match(source, /xiaomi\/mimo-v2\.5/);
   assert.match(source, /openai\/gpt-5\.6-luna/);
+  assert.match(source, /api\/v1\/endpoints\/zdr/);
+  assert.match(source, /MATERIAL_AI_ALLOW_LUNA_DISABLED/);
+  assert.match(source, /OPENROUTER_ZDR_UNAVAILABLE/);
   assert.match(source, /luna_native_file_v1/);
   assert.match(source, /upstreamProvider.*OpenAI/s);
   assert.match(source, /sourceMode.*native_file/s);

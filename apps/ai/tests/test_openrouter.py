@@ -236,7 +236,10 @@ async def test_openrouter_does_not_retry_non_retryable_zdr_failure(monkeypatch):
     sleep = AsyncMock()
     monkeypatch.setattr(openrouter.asyncio, "sleep", sleep)
     route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
-        return_value=Response(400, json={"error": {"code": 400}})
+        return_value=Response(400, json={"error": {
+            "code": 400,
+            "message": "No Zero Data Retention endpoint matches the requested provider routing policy",
+        }})
     )
 
     with pytest.raises(PipelineError) as caught:
@@ -253,6 +256,39 @@ async def test_openrouter_does_not_retry_non_retryable_zdr_failure(monkeypatch):
     assert caught.value.code == "OPENROUTER_ZDR_UNAVAILABLE"
     assert route.call_count == 1
     sleep.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@respx.mock
+@pytest.mark.parametrize(
+    ("status", "expected"),
+    [(400, "OPENROUTER_BAD_REQUEST"), (404, "OPENROUTER_MODEL_UNAVAILABLE")],
+)
+async def test_openrouter_does_not_misreport_unrelated_client_errors_as_zdr(
+    monkeypatch, status, expected
+):
+    monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=Response(status, json={"error": {
+            "code": status,
+            "message": "The requested model or parameter is invalid",
+        }})
+    )
+
+    with pytest.raises(PipelineError) as caught:
+        await OpenRouterClient().structured(
+            purpose="parse_audit",
+            model=TEXT_MODEL,
+            schema_name="audit",
+            result_type=AuditResult,
+            system="fixed",
+            user_content="untrusted",
+            max_tokens=100,
+        )
+
+    assert caught.value.code == expected
+    assert route.call_count == 1
 
 
 @pytest.mark.asyncio
