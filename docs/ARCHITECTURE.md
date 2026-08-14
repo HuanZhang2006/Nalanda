@@ -159,12 +159,15 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
   → BullMQ 仅调度 job UUID；reconciler 补投
   → FastAPI DocumentIR 确定性解析
   → DeepSeek 文本完整性/注入审查
+  → 仅允许局限于解析器 failure 范围的首轮不确定性进入隔离恢复
   → 只把诊断与审查失败范围交给 MiMo
   → 拼接完整 DocumentIR 并再次安全审查
   → DeepSeek 按版本化 prompt 生成 GeneratedExamV1 或 GeneratedKnowledgeGraphV1
   → schema/题数或节点/边、答案/解释、来源验证（最多一次修复）
   → 单事务保存 Notes 并 consume；失败/cancel 则 release
 ```
+
+首轮审查不是安全豁免：`material-safety-audit.v2` 仅在没有确定性正文/focus 注入信号、所有报告位置均属于解析器声明的失败范围时，暂缓处置 `uncertain` 并进入视觉恢复。解析器失败范围始终触发恢复，即使模型漏回 `failedRanges`；缺少可渲染区域则失败。恢复结果拼回后必须通过严格二次审查，任何 `uncertain/malicious` 仍以 `PROMPT_INJECTION_REJECTED` 终止。
 
 Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责投递。候选实现把 `parsed/audited/document_ready/artifact_ready/answer_ready` 保存到有 TTL 的私有数据库 checkpoint；worker 在同一 0700 目录保留更高阶段的短期恢复副本和 usage spool。API 回调短时中断时，下一 lease 先补记成本并恢复已验证结果，不重复付费阶段。成功/非重试终态立即清目录，默认 24 小时到期由数据库 reconciler 与 worker sweeper 双向清理。
 
