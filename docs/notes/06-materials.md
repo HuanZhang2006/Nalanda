@@ -86,14 +86,18 @@ and exists (select 1 from public.courses c
 
 ### 8.1 Materials AI 试卷（生产 0041–0043）
 
-每行新增 “Use AI” 二级菜单；生产 Generate test paper 可配置语言、难度、15–240 分钟、20–200 分、六类题型、答案详略和 focus；生产 Knowledge list/Quiz/Knowledge graph 仍显示 Coming soon。0046–0048 候选已把 “Organize knowledge points” 接为真实知识图谱入口，受保护发布完成后才可更新本段生产状态。首次按用户记录第三方/ZDR/私有 parse cache 同意。
+每行新增 “Use AI” 二级菜单；生产 Generate test paper 可配置语言、难度、15–240 分钟、20–200 分、六类题型、答案详略和 focus；生产 Knowledge list/Quiz/Knowledge graph 仍显示 Coming soon。0046–0051 候选已把 “Organize knowledge points” 接为真实知识图谱入口并增加 Luna pipeline，受保护发布完成后才可更新本段生产状态。首次按用户记录第三方/ZDR/私有 parse cache 同意。
 
 API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/图片10MB，再创建短期 signed URL与 Postgres job/quota reservation；BullMQ 只投 UUID，FastAPI 解析并回调进度。页面每2秒轮询，后台退避到10秒，离开/刷新不取消。成功试卷落在同一 `courses.id` 的 My Notes；删除材料/科目可保留到 Unfiled 或同时删除 AI 结果，两者都取消任务、清 parse cache和过程文件。
 
 生产数据库与应用当前已到 0043。2026-08-11 的受保护发布通过真实 DeepSeek/MiMo、220 页 Office canary、登录用户生成/评分/删除、临时目录清理和独立公网 readiness 后开启 `FEATURE_MATERIAL_AI`。Storage 文件删除仍是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
 
-### 8.2 可恢复长任务与知识图谱（0046–0048 候选，尚未上线）
+### 8.2 可恢复长任务、知识图谱与 Luna（0046–0051 候选，尚未上线）
 
 候选 API 只等待 worker 202 接收，后续由内部认证 callback 持久化 progress、usage、checkpoint 与 terminal result，避免单个生成占用五分钟以上 HTTP。显式 Undici Agent 将 connect/accept/headers/body timeout 分开，响应头超时映射 `AI_WORKER_TIMEOUT`；用户可在 `resumeUntil` 前点击 Resume 继续同一 job。数据库 checkpoint 与 worker 0700 local checkpoint/usage spool 合并最高有效阶段，已完成 provider 阶段不重复调用，usage event UUID 不重复计费；终态或默认 24 小时 TTL 清理残留。
 
-“Organize knowledge points” 与试卷共用文件解析/两次注入审查/失败范围视觉恢复，随后生成 `GeneratedKnowledgeGraphV1`。节点按 sourceOrder 保留材料顺序并包含摘要、详细解释、关键点、例子、公式、常见误区、自测题、关键词和精确 source refs；边使用受限关系。My Notes 用现有字体/token 渲染 source-ordered graph，hover 显示摘要，点击显示完整 detail 并可针对该 node 提问。问答只获得所选节点、相邻节点和允许的 source blocks，问题含注入信号会拒绝。整个 Materials/My Notes 候选 UI 固定英文，不因全局中文 locale 混入中文文案；不扩大现有 React 迁移。
+“Organize knowledge points” 的旧 pipeline 与试卷共用解析/审查/失败范围视觉恢复；Luna pipeline 直接校验并 inline 发送原始文件，不运行 parser/OCR/DocumentIR、不使用 Files API，固定 OpenAI-only/no fallback。两者都生成 `GeneratedKnowledgeGraphV1`，节点按 sourceOrder 与 level 排列并包含详细解释、关键点、例子、公式、误区、自测和来源。
+
+My Notes 动态加载 React Flow + ELK：支持画布 pan/zoom、节点拖动、fit/auto arrange、键盘移动、250 节点与移动端；初始布局和拖动保存都做碰撞消解。图中只显示类型/标题，hover/聚焦临时在画布外 inspector 显示详情，点击固定并允许 node Q&A，`Esc` 取消；坐标/viewport 按 user/note/artifact version/revision 跨设备保存。整个 Materials/My Notes 候选 UI 固定英文并复用原有字体/token。
+
+队列每行可 Delete，标题区可 Clear history；两者应用内二次确认。queued 删除释放额度，worker accepted 后删除/兼容 Cancel 消费一次；活动行保持 “Cleaning up…” 到 worker 确认 HTTPX/Office/checkpoint/spool/0700 目录均清理。Clear 只删 terminal，不删 active、既有 Notes 或 provider usage。在线考试选择/输入只保存草稿且 `results=[]`，整卷 Submit 二次确认后统一批改，主观题合并一次 AI 评分；到期交卷走相同路径。

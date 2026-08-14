@@ -74,6 +74,7 @@ test("upload, queue, generate, take, grade, organize knowledge, and retain Mater
   await autosaved;
   await expect(page.getByText("Saving…")).toBeHidden();
   await page.getByRole("button", { name: "Submit paper" }).click();
+  await page.getByRole("dialog").getByRole("button", { name: "Submit paper", exact: true }).click();
   await expect(page.getByText("Grading completed.")).toBeVisible({ timeout: 60_000 });
   await expect(page.getByText("Answer and explanation").first()).toBeVisible();
 
@@ -88,6 +89,7 @@ test("upload, queue, generate, take, grade, organize knowledge, and retain Mater
   await page.getByRole("button", { name: /Organize knowledge points/ }).click();
   const graphSettings = page.locator(".modal");
   await expect(graphSettings.getByRole("heading", { name: "cells.txt" })).toBeVisible();
+  await graphSettings.getByLabel(/Topic focus/).fill("playwright-250-node-layout");
   await graphSettings.getByRole("button", { name: "Generate", exact: true }).click();
   const graphQueueRow = page.getByRole("region", { name: "AI generation queue" })
     .locator(".list-row").filter({ hasText: "Knowledge map" }).first();
@@ -95,14 +97,74 @@ test("upload, queue, generate, take, grade, organize knowledge, and retain Mater
   await graphQueueRow.getByRole("button", { name: "Open result" }).click();
   await expect(page.getByRole("region", { name: "Interactive knowledge graph" })).toBeVisible();
   await expect(page.getByText("Knowledge map overview", { exact: true })).toBeVisible();
-  await page.locator(".material-knowledge-node").first().click();
+  const graphNodes = page.locator(".react-flow__node");
+  await expect(graphNodes).toHaveCount(250);
+  const firstNode = graphNodes.first();
+  const firstNodeId = await firstNode.getAttribute("data-id");
+  const box = await firstNode.boundingBox();
+  expect(firstNodeId).toBeTruthy();
+  expect(box).toBeTruthy();
+  const layoutSaved = page.waitForResponse((response) => response.request().method() === "PUT"
+    && response.url().includes("/knowledge-graph-layout") && response.ok());
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box!.x + box!.width / 2 + 90, box!.y + box!.height / 2 + 45, { steps: 8 });
+  await page.mouse.up();
+  const layoutResponse = await layoutSaved;
+  const savedLayout = await layoutResponse.json();
+  expect(savedLayout.positions.some((position: { nodeId: string }) => position.nodeId === firstNodeId)).toBe(true);
+  await page.locator(".material-flow-node-content").first().click();
   await page.getByPlaceholder("Ask a specific question…").fill("Explain this knowledge point in simpler terms.");
   await page.getByRole("button", { name: "Ask this point" }).click();
   await expect(page.getByText("Answer", { exact: true })).toBeVisible({ timeout: 60_000 });
 
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.locator(".material-flow-node-content").first().click();
+  const mobileCanvas = await page.getByRole("region", { name: "Interactive knowledge graph" }).boundingBox();
+  const mobileInspector = await page.locator(".material-knowledge-detail").boundingBox();
+  expect(mobileCanvas).toBeTruthy();
+  expect(mobileInspector).toBeTruthy();
+  expect(mobileInspector!.y).toBeGreaterThanOrEqual(mobileCanvas!.y + mobileCanvas!.height);
+  await page.setViewportSize({ width: 1280, height: 720 });
+
+  await page.locator('#nav [data-go="materials"]').click();
+  const examHistoryRow = page.getByRole("region", { name: "AI generation queue" })
+    .locator(".list-row").filter({ hasText: "Test paper" }).first();
+  await examHistoryRow.getByRole("button", { name: "Delete task" }).click();
+  const terminalDelete = page.waitForResponse((response) => response.request().method() === "DELETE"
+    && response.url().includes("/api/ai-jobs/") && response.ok());
+  await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+  await terminalDelete;
+  await expect(examHistoryRow).toBeHidden({ timeout: 30_000 });
+
+  await materialRow.getByRole("button", { name: "Use AI" }).click();
+  await page.getByRole("button", { name: /Organize knowledge points/ }).click();
+  const activeSettings = page.locator(".modal");
+  await activeSettings.getByLabel(/Topic focus/).fill("playwright-active-delete");
+  await activeSettings.getByRole("button", { name: "Generate", exact: true }).click();
+  const graphRows = page.getByRole("region", { name: "AI generation queue" })
+    .locator(".list-row").filter({ hasText: "Knowledge map" });
+  const activeRow = graphRows.first();
+  await expect(activeRow).toContainText(/Validating|Safety review|Organizing knowledge points/, { timeout: 30_000 });
+
+  await page.getByRole("button", { name: "Clear history" }).click();
+  const cleared = page.waitForResponse((response) => response.request().method() === "POST"
+    && response.url().endsWith("/api/ai-jobs/clear-history") && response.ok());
+  await page.getByRole("dialog").getByRole("button", { name: "Clear history", exact: true }).click();
+  await cleared;
+  await expect(graphRows).toHaveCount(1, { timeout: 30_000 });
+  await expect(activeRow).toBeVisible();
+
+  await activeRow.getByRole("button", { name: "Delete task" }).click();
+  const activeDelete = page.waitForResponse((response) => response.request().method() === "DELETE"
+    && response.url().includes("/api/ai-jobs/") && response.ok());
+  await page.getByRole("dialog").getByRole("button", { name: "Delete", exact: true }).click();
+  await activeDelete;
+  await expect(graphRows).toHaveCount(0, { timeout: 30_000 });
+
   await page.locator('#nav [data-go="profile"]').click();
   await expect(page.getByRole("heading", { name: "Free Plan" })).toBeVisible();
-  await expect(page.getByText("AI generations remaining today").locator("..").locator(".stat-n")).toHaveText("7/10");
+  await expect(page.getByText("AI generations remaining today").locator("..").locator(".stat-n")).toHaveText("6/10");
   await expect(page.getByText("Subjective grading runs remaining today").locator("..").locator(".stat-n")).toHaveText("9/10");
 
   await page.locator('#nav [data-go="materials"]').click();

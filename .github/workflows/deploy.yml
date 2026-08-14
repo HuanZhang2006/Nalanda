@@ -78,8 +78,15 @@ jobs:
 
       - name: Install Materials AI native test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress fonts-dejavu-core fonts-noto-cjk util-linux
+          apt_network=(
+            -o Acquire::Retries=4
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+          )
+          sudo timeout --signal=TERM 600s apt-get "${apt_network[@]}" update
+          sudo timeout --signal=TERM 600s apt-get "${apt_network[@]}" -o DPkg::Lock::Timeout=60 \
+            install -y --no-install-recommends \
+            libreoffice-writer libreoffice-impress fonts-dejavu-core fonts-noto-cjk util-linux
 
       - name: Detect and protect migration changes
         id: migration_changes
@@ -271,6 +278,7 @@ jobs:
             printf 'OPENROUTER_API_KEY=sk-or-v1-%064d\n' 3
             printf 'SUPABASE_URL=https://fixture.supabase.co\n'
             printf 'MATERIAL_AI_FAKE_PROVIDER=false\n'
+            printf 'MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png\n'
           } > "$fixture/.ai.env"
           {
             printf 'REDIS_URL=redis://:%064d@redis:6379/0\n' 0
@@ -487,6 +495,8 @@ jobs:
           FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
           FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
           FEATURE_MATERIAL_AI=true \
+          FEATURE_MATERIAL_AI_LUNA=true \
+          MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png \
           AZURE_SPEECH_FAKE=true \
           OPENROUTER_FAKE=true \
           MATERIAL_AI_FAKE_PROVIDER=true \
@@ -973,8 +983,8 @@ jobs:
             # fresh protected activation.
             if [[ -f "$root/.env" ]]; then
               rollback_api_env="$(mktemp "$root/.env.rollback.XXXXXX")"
-              awk '!/^FEATURE_MATERIAL_AI=/' "$root/.env" > "$rollback_api_env"
-              printf 'FEATURE_MATERIAL_AI=false\n' >> "$rollback_api_env"
+              awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA)=/' "$root/.env" > "$rollback_api_env"
+              printf 'FEATURE_MATERIAL_AI=false\nFEATURE_MATERIAL_AI_LUNA=false\n' >> "$rollback_api_env"
               chmod 600 "$rollback_api_env"
               mv "$rollback_api_env" "$root/.env"
             fi
@@ -1228,6 +1238,10 @@ jobs:
             rollback_application "Materials AI candidate did not start behind its closed feature flag" || true
             exit 1
           fi
+          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI_LUNA)" != "false" ]]; then
+            rollback_application "Luna native-file candidate did not start behind its closed feature flag" || true
+            exit 1
+          fi
           if ! assert_ai_health http://127.0.0.1:8411/api/health/ai; then
             docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 ai api || true
             rollback_application "API-to-worker readiness failed" || true
@@ -1249,8 +1263,8 @@ jobs:
           # All private gates passed. Flip only the reviewed feature flag and
           # recreate the API so no request observes a half-updated process.
           enabled_env="$(mktemp "$root/.env.material-ai-enabled.XXXXXX")"
-          awk '!/^FEATURE_MATERIAL_AI=/' "$root/.env" > "$enabled_env"
-          printf 'FEATURE_MATERIAL_AI=true\n' >> "$enabled_env"
+          awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA)=/' "$root/.env" > "$enabled_env"
+          printf 'FEATURE_MATERIAL_AI=true\nFEATURE_MATERIAL_AI_LUNA=true\n' >> "$enabled_env"
           chmod 600 "$enabled_env"
           mv "$enabled_env" "$root/.env"
           if ! docker compose --env-file "$next_env" -f "$next_compose" up -d --force-recreate api; then
@@ -1265,6 +1279,10 @@ jobs:
           fi
           if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI)" != "true" ]]; then
             rollback_application "Materials AI feature flag was not active" || true
+            exit 1
+          fi
+          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI_LUNA)" != "true" ]]; then
+            rollback_application "Luna native-file feature flag was not active" || true
             exit 1
           fi
           if ! docker run --rm \

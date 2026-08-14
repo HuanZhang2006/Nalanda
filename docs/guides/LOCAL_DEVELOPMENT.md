@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库与应用当前到 0043，Materials AI 已通过真实 OpenRouter/ZDR、资源 canary 与受保护发布上线。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
+当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库与应用当前到 0043；0046–0051 的知识图、恢复、Luna 原文件与任务清理仍是候选，必须经完整 CI、真实 OpenAI 门禁和受保护发布后才可称为生产能力。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
 
 ## 2. 前置条件
 
@@ -151,6 +151,8 @@ FEATURE_PRONUNCIATION_ENABLED=false
 FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=false
 FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=false
 FEATURE_MATERIAL_AI=false
+FEATURE_MATERIAL_AI_LUNA=false
+MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png
 AI_SERVICE_URL=http://localhost:8000
 AI_CALLBACK_BASE_URL=http://localhost:3000/api
 AI_INTERNAL_TOKEN=<same-local-32-byte-secret-as-worker>
@@ -237,7 +239,9 @@ chmod 600 .env
 curl -fsS http://localhost:8000/health
 ```
 
-health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000` 与和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`。生成/评分接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与候选 “Organize knowledge points”。
+health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000` 与和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`。生成/评分/cancel-purge 接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 总开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与 “Organize knowledge points”。Luna 还需单独打开 `FEATURE_MATERIAL_AI_LUNA`，且 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` 只能列入已完成真实格式门禁的扩展名。
+
+Luna 本地验证必须显式选择 `luna_native_file_v1`：worker 校验 Storage 下载的原始字节、MIME、大小与 SHA-256 后，以 inline base64 发送，不运行解析器/OCR/DocumentIR，也不使用 OpenRouter Files API。PDF 请求必须带 `file-parser.native`，provider 必须实际为 OpenAI；如果响应路由不符，usage 仍落账但产物被拒绝。fake provider 只能证明编排和 UI，不能证明上述供应商事实。
 
 运行 Python 门禁：
 
@@ -350,13 +354,15 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 - sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
 - 确认本地数据库已 reset 到仓库最新迁移 0043，而不是停在旧 migration history；生产有证据到 0043，任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
 
-### Materials AI 一直 queued、readiness 失败或返回安全错误
+### Materials AI 一直 queued、deleting、readiness 失败或返回安全错误
 
-- 确认本地迁移已到 0043、Redis 在运行、API/worker 使用同一个 `AI_INTERNAL_TOKEN`，且 API 的 callback 为 `http://localhost:3000/api`。
+- 生产基线确认到 0043；若验证候选 Luna/图谱/删除生命周期，本地必须 reset 到仓库最新 0051。Redis 应在运行，API/worker 使用同一个 `AI_INTERNAL_TOKEN`，API callback 为 `http://localhost:3000/api`。
 - `FEATURE_MATERIAL_AI=false` 是默认安全状态；只在 fake/真实 worker health 就绪后本地开启。`MATERIAL_AI_FAKE_PROVIDER=true` 只能用于非 production 自动化。
 - worker health 的 `openrouter/libreoffice/tempDisk/internalAuth` 会指出依赖；低于 512MiB 空间、单 job 超 1GiB、Office >120 秒都会失败并释放额度。
 - `PROMPT_INJECTION_REJECTED` 同时覆盖 malicious/uncertain；不要通过改 prompt 或前端忽略结果绕过。安全教材明确分类为 `benign_educational` 才继续。
 - Redis 丢消息时 Postgres job 仍在，reconciler 会补投；同一用户已有 active job 返回 `AI_JOB_ACTIVE`。不要手工改数据库状态或 quota。
+- `deleting` 表示数据库已结算额度但 worker 尚未确认取消请求、Office 子进程、0700 目录、checkpoint 与 usage spool 全部清理；reconciler 会重试。不得从 UI 提前隐藏或直接删表伪造成功。
+- Luna 不可选时先查 `/api/materials/:id/ai-capabilities` 的禁用原因；总开关、Luna 子开关和扩展名 allowlist 三者都必须允许。系统不得自动转旧流水线，也不得为未通过真实门禁的格式扩大 allowlist。
 
 ### 翻译前测返回禁用、超时或配额错误
 
@@ -388,8 +394,8 @@ API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/a
 
 - **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
 - **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前生产链路**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0043 RLS 与真实 OpenRouter/2G canary 发布门；这些门禁已用于 2026-08-11 发布。仍缺 ESLint/统一格式化、近生产规模 staging 和持续真实模型质量监控。
-- **目标**：开放 Knowledge list/Quiz/Knowledge graph、Notes 编辑/导出，并建立持续真实质量评测。
+- **当前生产链路**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0043 RLS 与真实 OpenRouter/2G canary 发布门；这些门禁已用于 2026-08-11 发布。0046–0051 候选又覆盖 250 节点图谱、任务 delete/clear、整卷批改和 Luna native-file；本地 fake/单元通过仍不能替代尚待执行的真实 OpenAI/生产 gate。
+- **目标**：完成 0046–0051 受保护发布，再开放 Knowledge list/Quiz、Notes 编辑/导出，并建立持续真实质量评测。
 - **目标**：提供一键清理测试数据和隔离测试账号的脚本。
 
 在这些能力落地前，以仓库实际脚本和本文“当前实现”描述为准。

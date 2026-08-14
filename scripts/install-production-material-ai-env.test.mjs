@@ -12,6 +12,8 @@ test("Materials AI installer separates worker secrets and starts the public feat
     "SUPABASE_SERVICE_ROLE_KEY=service-secret",
     "AZURE_SPEECH_KEY=azure-secret",
     "FEATURE_MATERIAL_AI=true",
+    "FEATURE_MATERIAL_AI_LUNA=true",
+    "MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png,jpg,jpeg,webp",
     "AI_INTERNAL_TOKEN=stale",
     "",
   ].join("\n"), { mode: 0o600 });
@@ -26,6 +28,8 @@ test("Materials AI installer separates worker secrets and starts the public feat
   const api = await readFile(join(root, ".env"), "utf8");
   const worker = await readFile(join(root, ".ai.env"), "utf8");
   assert.match(api, /^FEATURE_MATERIAL_AI=false$/m);
+  assert.match(api, /^FEATURE_MATERIAL_AI_LUNA=false$/m);
+  assert.match(api, /^MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png$/m);
   assert.match(api, /^AI_SERVICE_URL=http:\/\/ai:8000$/m);
   assert.match(api, /^MATERIAL_AI_RESUME_TTL_SECONDS=86400$/m);
   assert.match(api, new RegExp(`^AI_INTERNAL_TOKEN=${token}$`, "m"));
@@ -33,6 +37,7 @@ test("Materials AI installer separates worker secrets and starts the public feat
   assert.match(worker, new RegExp(`^OPENROUTER_API_KEY=${key}$`, "m"));
   assert.match(worker, new RegExp(`^AI_INTERNAL_TOKEN=${token}$`, "m"));
   assert.match(worker, /^SUPABASE_URL=https:\/\/fixture\.supabase\.co$/m);
+  assert.match(worker, /^MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png$/m);
   assert.match(worker, /^MATERIAL_AI_PROVIDER_MAX_ATTEMPTS=4$/m);
   assert.match(worker, /^MATERIAL_AI_JOB_TIMEOUT_SECONDS=1200$/m);
   assert.match(worker, /^MATERIAL_AI_GRADING_TIMEOUT_SECONDS=240$/m);

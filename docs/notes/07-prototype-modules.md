@@ -20,7 +20,7 @@
 | 模块 | 状态 | 说明 / 接真后端要补 |
 |---|---|---|
 | **Home 首页** | 🟡 mock | 仪表盘（欢迎语/统计卡/课程进度/最近笔记/动态）；可接真实「今日任务 + 积分 + 最近活动」 |
-| **Notes 笔记库 + 详情** | 🟡 混合 | 生产 0041–0043 已有 Materials 真实试卷、在线考试和历史；旧硬数据保留为 Demo。知识清单/独立测验仍 mock；0046–0048 候选已接真实 source-ordered graph、hover/click detail 与 node Q&A，尚未生产发布 |
+| **Notes 笔记库 + 详情** | 🟡 混合 | 生产 0041–0043 已有 Materials 试卷、在线考试和历史；旧硬数据保留为 Demo。知识清单/独立测验仍 mock；0046–0051 候选已接 source-ordered React Flow/ELK graph、外置详情、布局保存与 node Q&A，尚未生产发布 |
 | **Create 创作流** | 🟡 mock | 选资料 → 勾产物 → 生成；接 Materials 资料 → AI 微服务异步生成 → 落库 |
 | **Market / Note Market** | 🟡 mock | 笔记卡片/购买弹窗；未来依赖上架/购买、credits 账本和创作者分成 |
 | **Market / Course Market** | ✅ 生产真后端 | 英语词表不可变版本、举报、免费克隆；不接 credits/支付，见 [11](11-learning-courses.md) |

@@ -30,12 +30,14 @@ cleanup() { rm -f "$api_temporary" "$ai_temporary"; }
 trap cleanup EXIT
 
 awk '
-  !/^(FEATURE_MATERIAL_AI|AI_SERVICE_URL|AI_CALLBACK_BASE_URL|AI_INTERNAL_TOKEN|MATERIAL_AI_MONTHLY_BUDGET_USD|MATERIAL_AI_GENERATION_MAX_COST_USD|MATERIAL_AI_GRADING_MAX_COST_USD|MATERIAL_AI_RESUME_TTL_SECONDS)=/
+  !/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA|MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS|AI_SERVICE_URL|AI_CALLBACK_BASE_URL|AI_INTERNAL_TOKEN|MATERIAL_AI_MONTHLY_BUDGET_USD|MATERIAL_AI_GENERATION_MAX_COST_USD|MATERIAL_AI_GRADING_MAX_COST_USD|MATERIAL_AI_RESUME_TTL_SECONDS)=/
 ' "$api_env" > "$api_temporary"
 {
   # The candidate always starts closed. Protected activation turns this on
   # only after worker readiness, resource canary, and real-provider smoke.
   printf 'FEATURE_MATERIAL_AI=false\n'
+  printf 'FEATURE_MATERIAL_AI_LUNA=false\n'
+  printf 'MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png\n'
   printf 'AI_SERVICE_URL=http://ai:8000\n'
   printf 'AI_CALLBACK_BASE_URL=http://api:3000/api\n'
   printf 'AI_INTERNAL_TOKEN=%s\n' "$internal_token"
@@ -53,6 +55,7 @@ awk '
   printf 'SUPABASE_URL=%s\n' "$supabase_url"
   printf 'PUBLIC_APP_URL=https://nalanda.online\n'
   printf 'MATERIAL_AI_FAKE_PROVIDER=false\n'
+  printf 'MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png\n'
   printf 'MATERIAL_AI_TEMP_ROOT=/tmp/nalanda-material-ai\n'
   printf 'MATERIAL_AI_TEMP_MIN_FREE_BYTES=536870912\n'
   printf 'MATERIAL_AI_JOB_TEMP_LIMIT_BYTES=1073741824\n'

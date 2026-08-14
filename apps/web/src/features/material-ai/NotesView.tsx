@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import type {
   ExamAnswerInput,
   GeneratedExamAttempt,
@@ -32,6 +32,7 @@ const english = (englishText: string, _chineseText: string) => englishText;
 const formatEnglishDateTime = (value: string) => new Intl.DateTimeFormat("en-US", {
   dateStyle: "medium", timeStyle: "short",
 }).format(new Date(value));
+const KnowledgeGraphCanvas = lazy(() => import("./KnowledgeGraphCanvas"));
 
 export function NotesView(props: Props) {
   const l = english;
@@ -167,18 +168,12 @@ function KnowledgeGraphView({ noteId, graph, toast }: {
   toast: Props["toast"];
 }) {
   const ordered = [...graph.nodes].sort((a, b) => a.sourceOrder - b.sourceOrder || a.id.localeCompare(b.id));
-  const [selectedId, setSelectedId] = useState(ordered[0]?.id || "");
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [pinnedId, setPinnedId] = useState<string | null>(null);
   const [question, setQuestion] = useState("");
   const [questionJob, setQuestionJob] = useState<KnowledgeNodeQuestion | null>(null);
   const [asking, setAsking] = useState(false);
-  const selected = ordered.find((node) => node.id === selectedId) || ordered[0];
-  const maxLevel = Math.max(0, ...ordered.map((node) => node.level));
-  const width = Math.max(900, 260 + maxLevel * 220);
-  const height = Math.max(360, ordered.length * 118 + 50);
-  const position = new Map(ordered.map((node, index) => [node.id, {
-    x: 28 + Math.min(node.level, 10) * 210,
-    y: 24 + index * 118,
-  }]));
+  const selected = ordered.find((node) => node.id === selectedId) || null;
 
   useEffect(() => {
     if (!questionJob || !["queued", "processing"].includes(questionJob.status)) return;
@@ -194,7 +189,7 @@ function KnowledgeGraphView({ noteId, graph, toast }: {
   }, [questionJob, toast]);
 
   const ask = async () => {
-    if (!selected || !question.trim() || asking) return;
+    if (!selected || pinnedId !== selected.id || !question.trim() || asking) return;
     setAsking(true); setQuestionJob(null);
     try {
       const job = await materialsAiApi.askKnowledgeNode(noteId, selected.id, {
@@ -206,54 +201,41 @@ function KnowledgeGraphView({ noteId, graph, toast }: {
     } finally { setAsking(false); }
   };
 
-  if (!selected) return <div className="card card-pad muted">This knowledge map has no renderable points.</div>;
+  if (!ordered.length) return <div className="card card-pad muted">This knowledge map has no renderable points.</div>;
   return <>
     <div className="card card-pad material-knowledge-intro"><div className="eyebrow">Knowledge map overview</div><p>{graph.overview}</p>
       {!!graph.learningObjectives.length && <div className="row gap-8 wrap-flex">{graph.learningObjectives.map((item, index) => <span className="chip chip-outline" key={index}>{item}</span>)}</div>}
     </div>
     <div className="grid material-knowledge-layout">
-      <div className="card material-knowledge-scroll" role="region" aria-label="Interactive knowledge graph">
-        <div className="material-knowledge-canvas" style={{ width, height }}>
-          <svg className="material-knowledge-edges" width={width} height={height} aria-hidden="true">
-            <defs><marker id="knowledge-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" /></marker></defs>
-            {graph.edges.map((edge) => {
-              const from = position.get(edge.from); const to = position.get(edge.to);
-              if (!from || !to) return null;
-              return <g key={edge.id}><line x1={from.x + 176} y1={from.y + 39} x2={to.x} y2={to.y + 39} markerEnd="url(#knowledge-arrow)" />
-                <title>{edge.label || edge.relation}: {edge.explanation}</title></g>;
-            })}
-          </svg>
-          {ordered.map((node, index) => {
-            const point = position.get(node.id)!;
-            return <button type="button" key={node.id} className={`material-knowledge-node ${selected.id === node.id ? "selected" : ""}`}
-              style={{ left: point.x, top: point.y }} onClick={() => { setSelectedId(node.id); setQuestionJob(null); }}>
-              <span className="eyebrow">{index + 1} · {node.kind.replaceAll("_", " ")}</span><b>{node.title}</b><span>{node.summary}</span>
-              <span className="material-knowledge-hover" role="tooltip"><b>{node.title}</b>{node.explanation}</span>
-            </button>;
-          })}
-        </div>
-      </div>
-      <aside className="card card-pad material-ai-sticky material-knowledge-detail">
-        <div className="row between gap-8"><span className="chip chip-accent">Point {ordered.indexOf(selected) + 1}</span><span className="chip chip-tag">Level {selected.level}</span></div>
-        <h2 className="serif">{selected.title}</h2><p>{selected.explanation}</p>
-        <KnowledgeNodeList title="Key details" values={selected.keyDetails} />
-        <KnowledgeNodeList title="Examples" values={selected.examples} />
-        <KnowledgeNodeList title="Formulas" values={selected.formulas} />
-        <KnowledgeNodeList title="Common misconceptions" values={selected.commonMisconceptions} />
-        <KnowledgeNodeList title="Check yourself" values={selected.checkQuestions} />
-        <div className="divider" />
-        <div className="eyebrow">Ask about this knowledge point</div>
-        <p className="muted" style={{ fontSize: 12 }}>Each successful answer uses one daily free AI generation. Your question cannot change the model, tools, or safety rules.</p>
-        <textarea className="search material-ai-answer" maxLength={2000} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a specific question…" />
-        <button className="btn btn-primary" disabled={asking || !question.trim()} style={{ width: "100%", marginTop: 8 }} onClick={() => void ask()}>{asking ? "Queuing…" : "Ask this point"}</button>
-        {questionJob && <div className={`course-feedback ${questionJob.status === "failed" ? "wrong" : ""}`} style={{ marginTop: 12 }}>
-          {questionJob.status === "succeeded" && questionJob.answer ? <><b>Answer</b><p>{questionJob.answer.answer}</p>
-            <KnowledgeNodeList title="Key points" values={questionJob.answer.keyPoints} />
-            <KnowledgeNodeList title="Follow-up questions" values={questionJob.answer.followUpQuestions} /></>
-            : questionJob.status === "failed" ? `${questionJob.errorCode || "AI_QUESTION_FAILED"} · ${questionJob.errorMessage || "The answer could not be generated."}`
-              : "Preparing a grounded answer…"}
-        </div>}
-        <div className="material-knowledge-sources"><div className="eyebrow">Sources</div>{selected.sourceRefs.map((ref) => <span className="chip chip-outline" key={`${ref.blockId}-${ref.label}`}>{ref.label || ref.blockId}</span>)}</div>
+      <Suspense fallback={<div className="card material-flow-loading">Preparing the interactive map…</div>}>
+        <KnowledgeGraphCanvas noteId={noteId} graph={graph} pinnedId={pinnedId} toast={toast} onInspect={(nodeId, pinned) => {
+          if (nodeId !== selectedId) setQuestionJob(null);
+          setSelectedId(nodeId); setPinnedId(pinned && nodeId ? nodeId : null);
+        }} />
+      </Suspense>
+      <aside className="card card-pad material-ai-sticky material-knowledge-detail" aria-live="polite">
+        {!selected ? <div className="material-knowledge-placeholder"><div className="eyebrow">Knowledge point details</div><p className="muted">Hover or focus a node to preview it. Click a node to keep its details open and ask a question.</p></div> : <>
+          <div className="row between gap-8"><span className="chip chip-accent">Point {ordered.indexOf(selected) + 1}</span><span className="chip chip-tag">Level {selected.level}</span></div>
+          <h2 className="serif">{selected.title}</h2><p>{selected.explanation}</p>
+          <KnowledgeNodeList title="Key details" values={selected.keyDetails} />
+          <KnowledgeNodeList title="Examples" values={selected.examples} />
+          <KnowledgeNodeList title="Formulas" values={selected.formulas} />
+          <KnowledgeNodeList title="Common misconceptions" values={selected.commonMisconceptions} />
+          <KnowledgeNodeList title="Check yourself" values={selected.checkQuestions} />
+          {pinnedId === selected.id ? <><div className="divider" />
+            <div className="eyebrow">Ask about this knowledge point</div>
+            <p className="muted" style={{ fontSize: 12 }}>Each successful answer uses one daily free AI generation. Your question cannot change the model, tools, or safety rules.</p>
+            <textarea className="search material-ai-answer" maxLength={2000} value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="Ask a specific question…" />
+            <button className="btn btn-primary" disabled={asking || !question.trim()} style={{ width: "100%", marginTop: 8 }} onClick={() => void ask()}>{asking ? "Queuing…" : "Ask this point"}</button>
+            {questionJob && <div className={`course-feedback ${questionJob.status === "failed" ? "wrong" : ""}`} style={{ marginTop: 12 }}>
+              {questionJob.status === "succeeded" && questionJob.answer ? <><b>Answer</b><p>{questionJob.answer.answer}</p>
+                <KnowledgeNodeList title="Key points" values={questionJob.answer.keyPoints} />
+                <KnowledgeNodeList title="Follow-up questions" values={questionJob.answer.followUpQuestions} /></>
+                : questionJob.status === "failed" ? `${questionJob.errorCode || "AI_QUESTION_FAILED"} · ${questionJob.errorMessage || "The answer could not be generated."}`
+                  : "Preparing a grounded answer…"}
+            </div>}</> : <p className="muted" style={{ fontSize: 12 }}>Click this node to keep it open and ask a question.</p>}
+          <div className="material-knowledge-sources"><div className="eyebrow">Sources</div>{selected.sourceRefs.map((ref, index) => <span className="chip chip-outline" key={`${ref.blockId}-${ref.locatorKind}-${ref.locatorIndex}-${index}`}>{ref.label || ref.blockId || "Source file"}</span>)}</div>
+        </>}
       </aside>
     </div>
   </>;
@@ -293,6 +275,8 @@ function ExamSession({ userId, note, initial, onExit, toast }: {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState("");
+  const [submitConfirmOpen, setSubmitConfirmOpen] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [now, setNow] = useState(Date.now());
   const attemptRef = useRef(attempt); const answersRef = useRef(answers); const dirtyRef = useRef(dirty); const savingRef = useRef<Promise<boolean> | null>(null);
   useEffect(() => { attemptRef.current = attempt; }, [attempt]);
@@ -382,16 +366,22 @@ function ExamSession({ userId, note, initial, onExit, toast }: {
   const update = (questionId: string, value: ExamAnswerInput["value"]) => {
     setAnswers((current) => ({ ...current, [questionId]: value })); dirtyRef.current = true; setDirty(true);
   };
-  const submit = async () => {
+  const prepareSubmit = async () => {
     if (!await saveNow()) {
       toast(l("Your latest answers are still only on this device. Reconnect before submitting.", "最新答案仍只保存在此设备，请联网同步后再提交。"));
       return;
     }
     if (attemptRef.current.status !== "in_progress") { setAttempt(await materialsAiApi.attempt(attemptRef.current.id)); return; }
+    setSubmitConfirmOpen(true);
+  };
+  const confirmSubmit = async () => {
+    if (submitting) return;
+    setSubmitting(true);
     try {
       const next = await materialsAiApi.submit(attemptRef.current.id, { operationId: crypto.randomUUID(), expectedRevision: attemptRef.current.revision });
-      setAttempt(next); dirtyRef.current = false; setDirty(false); await deleteDraft(userId, next.id);
+      setAttempt(next); dirtyRef.current = false; setDirty(false); setSubmitConfirmOpen(false); await deleteDraft(userId, next.id);
     } catch (failure) { toast(materialAiErrorText(failure, l("Submission failed.", "提交失败。"), l)); }
+    finally { setSubmitting(false); }
   };
   const retryGrade = async () => {
     try { setAttempt(await materialsAiApi.requestGrading(attempt.id, { operationId: crypto.randomUUID(), expectedRevision: attempt.revision })); }
@@ -429,8 +419,19 @@ function ExamSession({ userId, note, initial, onExit, toast }: {
       result={resultMap.get(question.id)} full={fullMap.get(question.id)} />)}</main>
       <aside className="card card-pad material-ai-sticky"><div className="eyebrow">{l("Progress", "进度")}</div><div className="stat-n">{Object.values(answers).filter((value) => value !== null && value !== "" && (!Array.isArray(value) || value.length)).length}/{questions.length}</div>
         <p className="muted" style={{ fontSize: 12.5 }}>{l("Answers auto-save after 500 ms and on blur. An offline draft stays isolated to this account.", "答案会在 500ms 后及失焦时自动保存；离线草稿按账号隔离。")}</p>
-        {attempt.status === "in_progress" && <button className="btn btn-primary mt-16" style={{ width: "100%" }} onClick={() => void submit()}>{l("Submit paper", "提交试卷")}</button>}
+        {attempt.status === "in_progress" && <button className="btn btn-primary mt-16" style={{ width: "100%" }} onClick={() => void prepareSubmit()}>{l("Submit paper", "提交试卷")}</button>}
       </aside></div>
+    {submitConfirmOpen && <div className="scrim" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !submitting) setSubmitConfirmOpen(false); }}>
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="material-exam-submit-title">
+        <div className="modal-pad"><div className="eyebrow">Final submission</div><h2 className="serif" id="material-exam-submit-title">Submit the entire paper?</h2>
+          <p className="muted">Your answers will be locked. Nalanda grades all objective questions together and then sends all subjective answers in one grading request. Answers and explanations appear only after submission.</p>
+          <div className="row gap-8" style={{ justifyContent: "flex-end", marginTop: 18 }}>
+            <button className="btn" type="button" disabled={submitting} onClick={() => setSubmitConfirmOpen(false)}>Keep working</button>
+            <button className="btn btn-primary" type="button" disabled={submitting} onClick={() => void confirmSubmit()}>{submitting ? "Submitting…" : "Submit paper"}</button>
+          </div>
+        </div>
+      </div>
+    </div>}
   </div>;
 }
 

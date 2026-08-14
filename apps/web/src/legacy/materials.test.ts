@@ -3,6 +3,14 @@ import { setLocale } from "../i18n";
 import { click, createSupabaseMock, flush } from "../test/supabase-mock";
 import { initMaterials, mountMaterials } from "./materials";
 
+const capabilities = {
+  materialId: "m1",
+  capabilities: [
+    { pipeline: "luna_native_file_v1", available: true, default: true, model: "openai/gpt-5.6-luna", provider: "OpenAI", reasonCode: null },
+    { pipeline: "document_ir_v1", available: true, default: false, model: "deepseek/deepseek-v4-flash-0731", provider: "OpenRouter routed ZDR provider", reasonCode: null },
+  ],
+};
+
 describe("资料错误处理", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -20,6 +28,7 @@ describe("资料错误处理", () => {
   it("Storage 删除/签名失败时不伪造数据库成功", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
+      if (url.includes("/api/materials/m1/ai-capabilities")) return new Response(JSON.stringify(capabilities), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/api/ai-jobs")) return Promise.resolve(new Response("[]", { status: 200 }));
       if (url.includes("/api/profile/ai-quota")) return Promise.resolve(new Response(JSON.stringify({
         plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
@@ -57,6 +66,7 @@ describe("资料错误处理", () => {
     vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: () => "11111111-1111-4111-8111-111111111111" });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.includes("/api/materials/m1/ai-capabilities")) return new Response(JSON.stringify(capabilities), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
         plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
         generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
@@ -79,8 +89,9 @@ describe("资料错误处理", () => {
     mountMaterials(root); await flush(16);
 
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
-    const choices = document.querySelectorAll("[data-ai-choice]");
-    expect(choices).toHaveLength(4);
+    await vi.waitFor(() => {
+      expect(document.querySelectorAll("[data-ai-choice]")).toHaveLength(4);
+    });
     expect(document.querySelectorAll("[data-ai-choice]:disabled")).toHaveLength(2);
     expect(document.body.textContent).toContain("Organize knowledge points");
     expect(document.body.textContent).toContain("Coming soon");
@@ -89,11 +100,10 @@ describe("资料错误处理", () => {
     expect(document.querySelector("[data-ai-error]")?.textContent).toContain("Confirm AI processing consent");
     (document.querySelector("#ai-consent") as HTMLInputElement).click();
     click(document.querySelector("[data-ai-submit]"));
-    await flush(20);
-
-    expect(created).toHaveLength(1);
+    await vi.waitFor(() => expect(created).toHaveLength(1));
     expect(created[0]).toMatchObject({
       idempotencyKey: "11111111-1111-4111-8111-111111111111", kind: "exam", consentVersion: 1,
+      pipeline: "luna_native_file_v1",
       settings: { durationMinutes: 60, totalMarks: 100, answerDetail: "detailed" },
     });
     expect(localStorage.getItem("nalanda-material-ai-consent-v1:u1")).toBe("1");
@@ -104,6 +114,7 @@ describe("资料错误处理", () => {
     localStorage.setItem("nalanda-material-ai-consent-v1:u1", "1");
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
       const url = String(input);
+      if (url.includes("/api/materials/m1/ai-capabilities")) return new Response(JSON.stringify(capabilities), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
         plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
         generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
@@ -117,6 +128,9 @@ describe("资料错误处理", () => {
     mountMaterials(root); await flush(16);
 
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-ai-choice="exam"]')).not.toBeNull();
+    });
     click(document.querySelector('[data-ai-choice="exam"]'));
     expect(document.querySelector("#ai-consent")).not.toBeNull();
     click(document.querySelector("[data-ai-submit]"));
@@ -131,6 +145,7 @@ describe("资料错误处理", () => {
     vi.stubGlobal("crypto", { ...globalThis.crypto, randomUUID: () => "11111111-1111-4111-8111-111111111111" });
     vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
       const url = String(input);
+      if (url.includes("/api/materials/m1/ai-capabilities")) return new Response(JSON.stringify(capabilities), { status: 200, headers: { "Content-Type": "application/json" } });
       if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
         plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
         generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
@@ -154,14 +169,18 @@ describe("资料错误处理", () => {
     expect(root.textContent).not.toMatch(/上传|资料库|新建科目/);
 
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
+    await vi.waitFor(() => {
+      expect(document.querySelector('[data-ai-choice="knowledge_graph"]')).not.toBeNull();
+    });
     click(document.querySelector('[data-ai-choice="knowledge_graph"]'));
     expect(document.body.textContent).toContain("Build a comprehensive knowledge map in source order");
     expect(document.body.textContent).not.toMatch(/知识点|取消|语言/);
     click(document.querySelector("[data-ai-submit]"));
-    await flush(20);
+    await vi.waitFor(() => expect(created).toHaveLength(1));
     expect(created[0]).toEqual({
       idempotencyKey: "11111111-1111-4111-8111-111111111111",
       kind: "knowledge_graph",
+      pipeline: "luna_native_file_v1",
       consentVersion: 1,
       settings: { language: "auto", detail: "comprehensive", focus: "" },
     });
@@ -223,6 +242,58 @@ describe("资料错误处理", () => {
     expect(root.textContent).toContain("Ready");
     click(root.querySelector('[data-mat="openAiNote"]'));
     expect(openNote).toHaveBeenCalledWith("note-1");
+  });
+
+  it("requires in-app confirmation, interrupts one active job, and clears only terminal history", async () => {
+    const active = { id: "job-active", materialId: "m1", materialName: "Week 1.pdf", courseId: "c1", kind: "exam",
+      pipeline: "luna_native_file_v1", model: "openai/gpt-5.6-luna", status: "processing", stage: "generating", progress: 70,
+      queuePosition: null, settings: {}, errorCode: null, errorMessage: null, noteId: null, retryable: false,
+      resumeUntil: null, checkpointStage: "native_audited", createdAt: "2026-08-10T00:00:00Z",
+      startedAt: "2026-08-10T00:00:01Z", finishedAt: null };
+    const finished = { ...active, id: "job-finished", status: "succeeded", stage: "succeeded", progress: 100,
+      noteId: "note-1", finishedAt: "2026-08-10T00:03:00Z" };
+    let jobs = [active, finished];
+    const deleted: string[] = [];
+    let clearCalls = 0;
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL, init: RequestInit = {}) => {
+      const url = String(input);
+      if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
+        plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
+        generation: { limit: 10, consumed: 0, reserved: 1, remaining: 9 }, grading: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+      if (url.endsWith("/api/ai-jobs/job-active") && init.method === "DELETE") {
+        deleted.push("job-active"); jobs = [{ ...active, status: "deleting", stage: "cleaning" }, finished];
+        return new Response(JSON.stringify({ jobId: "job-active", status: "cleaning", quotaConsumed: true }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.endsWith("/api/ai-jobs/clear-history") && init.method === "POST") {
+        clearCalls += 1; jobs = jobs.filter((job) => job.status === "deleting");
+        return new Response(JSON.stringify({ requested: 1, deleted: 0, cleaning: 1 }), { status: 200, headers: { "Content-Type": "application/json" } });
+      }
+      if (url.includes("/api/ai-jobs")) return new Response(JSON.stringify(jobs), { status: 200, headers: { "Content-Type": "application/json" } });
+      return new Response("{}", { status: 200, headers: { "Content-Type": "application/json" } });
+    }));
+    const root = document.createElement("div"); document.body.appendChild(root);
+    initMaterials(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
+    mountMaterials(root); await flush(20);
+
+    click(root.querySelector('[data-mat="deleteAiJob"][data-id="job-active"]'));
+    expect(document.body.textContent).toContain("One free generation is consumed");
+    click(document.querySelector('[data-cf="no"]'));
+    expect(deleted).toEqual([]);
+
+    click(root.querySelector('[data-mat="deleteAiJob"][data-id="job-active"]'));
+    click(document.querySelector('[data-cf="yes"]'));
+    await flush(16);
+    expect(deleted).toEqual(["job-active"]);
+    await vi.waitFor(() => expect(root.textContent).toContain("Cleaning up…"));
+
+    click(root.querySelector('[data-mat="clearAiHistory"]'));
+    expect(document.body.textContent).toContain("Active tasks are not affected");
+    click(document.querySelector('[data-cf="yes"]'));
+    await flush(16);
+    await vi.waitFor(() => expect(clearCalls).toBe(1));
+    await vi.waitFor(() => expect(root.querySelector('[data-mat="clearAiHistory"]')).toBeNull());
+    expect(root.textContent).toContain("Cleaning up…");
   });
 
   it("stops persistent AI polling when the Materials route unmounts", async () => {

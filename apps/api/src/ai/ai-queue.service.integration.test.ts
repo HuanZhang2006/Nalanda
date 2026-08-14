@@ -6,9 +6,12 @@ const redisDescribe = process.env.RUN_REDIS_E2E === "true" ? describe : describe
 
 redisDescribe("Materials AI BullMQ with real Redis", () => {
   const id = randomUUID();
-  const processor = { generation: vi.fn().mockResolvedValue(undefined), grading: vi.fn(), timeout: vi.fn() };
+  const processor = {
+    generation: vi.fn().mockResolvedValue(undefined), grading: vi.fn(), cleanup: vi.fn(), timeout: vi.fn(),
+  };
   const repository = {
     dispatchableGenerationJobs: vi.fn().mockResolvedValue([]),
+    deletingGenerationJobs: vi.fn().mockResolvedValue([]),
     dispatchableGradingAttempts: vi.fn().mockResolvedValue([]),
     overdueExamAttempts: vi.fn().mockResolvedValue([]),
     generationExecutionState: vi.fn().mockResolvedValue({ status: "succeeded", lease_expires_at: null }),
