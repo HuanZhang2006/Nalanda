@@ -3,7 +3,7 @@ import { Queue, Worker, type ConnectionOptions } from "bullmq";
 import { AiProcessorService } from "./ai-processor.service";
 import { AiRepository } from "./ai.repository";
 
-type AiQueueData = { kind: "generation" | "grading" | "timeout"; id: string };
+type AiQueueData = { kind: "generation" | "grading" | "cleanup" | "timeout"; id: string };
 
 function connectionFromUrl(raw: string): ConnectionOptions {
   const url = new URL(raw);
@@ -47,6 +47,7 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
         await this.processor.grading(job.data.id);
         await this.holdExecutionSlot("grading", job.data.id);
       }
+      else if (job.data.kind === "cleanup") await this.processor.cleanup(job.data.id);
       else await this.processor.timeout(job.data.id);
     }, { connection, concurrency: 1, lockDuration: 15 * 60_000 });
     this.worker.on("error", (error) => this.logger.error(`Materials AI queue error: ${error.message}`));
@@ -76,6 +77,14 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
 
   enqueueGeneration(id: string) { return this.add("generation", id); }
   enqueueGrading(id: string) { return this.add("grading", id); }
+  enqueueCleanup(id: string) { return this.add("cleanup", id); }
+
+  async removeGeneration(id: string) {
+    const job = await this.queue?.getJob(`generation-${id}`);
+    if (!job) return;
+    const state = await job.getState();
+    if (state !== "active") await job.remove();
+  }
   enqueueTimeout(id: string, deadlineAt: string) {
     return this.add("timeout", id, Math.max(0, new Date(deadlineAt).getTime() - Date.now()));
   }
@@ -108,13 +117,15 @@ export class AiQueueService implements OnApplicationBootstrap, OnApplicationShut
   async reconcile() {
     if (!this.queue) return;
     try {
-      const [jobs, attempts, overdue] = await Promise.all([
-        this.repository.dispatchableGenerationJobs(), this.repository.dispatchableGradingAttempts(),
+      const [jobs, cleanups, attempts, overdue] = await Promise.all([
+        this.repository.dispatchableGenerationJobs(), this.repository.deletingGenerationJobs(),
+        this.repository.dispatchableGradingAttempts(),
         this.repository.overdueExamAttempts(),
       ]);
       await this.repository.expireGenerationCheckpoints();
       await Promise.all([
         ...jobs.map((id) => this.enqueueGeneration(id)),
+        ...cleanups.map((id) => this.enqueueCleanup(id)),
         ...attempts.map((id) => this.enqueueGrading(id)),
         ...overdue.map((id) => this.add("timeout", id)),
       ]);

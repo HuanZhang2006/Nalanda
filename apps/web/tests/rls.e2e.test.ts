@@ -1364,6 +1364,158 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     }))).toEqual([]);
   }, 60_000);
 
+  it("验证 Luna 路由门禁、跨设备图布局和删除清理的额度/审计原子性", async () => {
+    const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
+      const result = await admin.rpc(name, args);
+      expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
+      return result.data as T;
+    };
+    const course = await a.from("courses").insert({ code: "LUNA", name: "Luna RLS" }).select("id").single();
+    expect(course.error).toBeNull();
+    const material = await a.from("materials").insert({
+      course_id: course.data!.id, name: "native.pdf", type: "pdf", size_bytes: 256,
+      storage_path: `${aId}/native.pdf`,
+    }).select("id").single();
+    expect(material.error).toBeNull();
+    const graphSettings = { language: "en", detail: "comprehensive", focus: "" };
+    const createNative = (fingerprint: string) => rpc<any[]>("ai_create_generation_job", {
+      p_user_id: aId, p_material_id: material.data!.id, p_idempotency_key: randomUUID(),
+      p_request_fingerprint: fingerprint.repeat(64), p_kind: "knowledge_graph",
+      p_settings: graphSettings, p_consent_version: 1, p_pipeline: "luna_native_file_v1",
+    });
+
+    expect((await a.rpc("ai_create_generation_job", {
+      p_user_id: aId, p_material_id: material.data!.id, p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "1".repeat(64), p_kind: "knowledge_graph",
+      p_settings: graphSettings, p_consent_version: 1, p_pipeline: "luna_native_file_v1",
+    })).error).not.toBeNull();
+    expect((await a.rpc("ai_save_knowledge_graph_layout", {
+      p_user_id: aId, p_note_id: randomUUID(), p_artifact_version: "a".repeat(64),
+      p_expected_revision: 0, p_positions: [], p_viewport: { x: 0, y: 0, zoom: 1 },
+    })).error).not.toBeNull();
+    expect((await a.from("knowledge_graph_layouts").insert({
+      note_id: randomUUID(), user_id: aId, artifact_version: "a".repeat(64),
+    })).error).not.toBeNull();
+
+    const quotaBefore = await rpc<any>("ai_get_quota_summary", { p_user_id: aId });
+    const nativeJob = (await createNative("2"))[0];
+    const lease = randomUUID();
+    await rpc("ai_claim_generation_job", { p_job_id: nativeJob.id, p_lease_token: lease, p_lease_seconds: 900 });
+    await rpc("ai_mark_generation_job_accepted", { p_job_id: nativeJob.id, p_lease_token: lease });
+    const providerEvent = (purpose: string) => ({
+      eventId: randomUUID(), purpose, model: "openai/gpt-5.6-luna",
+      requestId: `rls-${purpose}`, promptTokens: 10, completionTokens: 5, totalTokens: 15,
+      costMicroUsd: 7, durationMs: 12, zdrEnforced: true, status: "succeeded",
+      upstreamProvider: "OpenAI", upstreamEndpoint: "openai-primary",
+    });
+    const graph = {
+      schemaVersion: "generated-knowledge-graph.v1", sourceMode: "native_file",
+      title: "Native knowledge map", language: "en", overview: "Native file overview.",
+      learningObjectives: ["Explain the root."],
+      nodes: [{
+        id: "root", title: "Root", kind: "concept", level: 0, sourceOrder: 0,
+        summary: "Root summary", explanation: "Detailed native-file explanation.",
+        keyDetails: ["Detail"], examples: [], formulas: [], commonMisconceptions: [],
+        checkQuestions: ["What is the root?"], keywords: ["root"],
+        sourceRefs: [{ blockId: "", page: 1, slide: null, label: "Page 1", locatorKind: "page", locatorIndex: 1 }],
+      }],
+      edges: [],
+    };
+    const completionArgs = {
+      p_job_id: nativeJob.id, p_lease_token: lease, p_source_sha256: "3".repeat(64),
+      p_parser_version: "none", p_audit_version: "luna-native-audit.v1",
+      p_prompt_version: "knowledge-graph-native-file.v1", p_source_mode: "native_file",
+      p_canonical_document: null, p_block_count: 0, p_visual_region_count: 0,
+      p_title: graph.title, p_schema_version: graph.schemaVersion, p_artifact: graph,
+      p_primary_count: 1, p_secondary_count: 0,
+    };
+    await rpc("ai_record_generation_usage_v2", {
+      p_job_id: nativeJob.id, p_lease_token: lease, p_event: providerEvent("safety_audit"),
+    });
+    expect((await admin.rpc("ai_complete_material_generation_job_v2", completionArgs)).error?.message)
+      .toContain("AI_PROVIDER_ROUTING_VIOLATION");
+    await rpc("ai_record_generation_usage_v2", {
+      p_job_id: nativeJob.id, p_lease_token: lease, p_event: providerEvent("knowledge_graph_generation"),
+    });
+    const noteId = await rpc<string>("ai_complete_material_generation_job_v2", completionArgs);
+    expect((await admin.from("notes").select("pipeline,generation_model").eq("id", noteId).single()).data)
+      .toEqual({ pipeline: "luna_native_file_v1", generation_model: "openai/gpt-5.6-luna" });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation.consumed)
+      .toBe(quotaBefore.generation.consumed + 1);
+
+    const initialLayout = await rpc<any>("ai_get_knowledge_graph_layout", { p_user_id: aId, p_note_id: noteId });
+    expect(initialLayout).toMatchObject({ noteId, revision: 0, positions: [] });
+    const savedLayout = await rpc<any>("ai_save_knowledge_graph_layout", {
+      p_user_id: aId, p_note_id: noteId, p_artifact_version: initialLayout.artifactVersion,
+      p_expected_revision: 0, p_positions: [{ nodeId: "root", x: 24, y: 48 }],
+      p_viewport: { x: 3, y: 5, zoom: 1.2 },
+    });
+    expect(savedLayout).toMatchObject({ revision: 1, positions: [{ nodeId: "root", x: 24, y: 48 }] });
+    expect((await a.from("knowledge_graph_layouts").select("revision,positions").eq("note_id", noteId).single()).data)
+      .toMatchObject({ revision: 1, positions: [{ nodeId: "root", x: 24, y: 48 }] });
+    expect((await b.from("knowledge_graph_layouts").select("note_id").eq("note_id", noteId)).data).toEqual([]);
+    expect((await admin.rpc("ai_get_knowledge_graph_layout", { p_user_id: bId, p_note_id: noteId })).error?.message)
+      .toContain("KNOWLEDGE_NOTE_NOT_FOUND");
+    expect((await admin.rpc("ai_save_knowledge_graph_layout", {
+      p_user_id: aId, p_note_id: noteId, p_artifact_version: initialLayout.artifactVersion,
+      p_expected_revision: 0, p_positions: [], p_viewport: { x: 0, y: 0, zoom: 1 },
+    })).error?.message).toContain("GRAPH_LAYOUT_REVISION_CONFLICT");
+
+    const deletingJob = (await rpc<any[]>("ai_create_generation_job", {
+      p_user_id: aId, p_material_id: material.data!.id, p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "4".repeat(64), p_kind: "exam",
+      p_settings: { language: "en", difficulty: "mixed", durationMinutes: 30, totalMarks: 20,
+        questionCounts: { singleChoice: 5, multipleChoice: 0, trueFalse: 0, fillBlank: 0, shortAnswer: 0, essay: 0 },
+        answerDetail: "detailed", focus: "" },
+      p_consent_version: 1, p_pipeline: "document_ir_v1",
+    }))[0];
+    const deletingLease = randomUUID();
+    await rpc("ai_claim_generation_job", { p_job_id: deletingJob.id, p_lease_token: deletingLease, p_lease_seconds: 900 });
+    await rpc("ai_mark_generation_job_accepted", { p_job_id: deletingJob.id, p_lease_token: deletingLease });
+    const deletingUsageId = randomUUID();
+    await rpc("ai_record_generation_usage_v2", {
+      p_job_id: deletingJob.id, p_lease_token: deletingLease,
+      p_event: { eventId: deletingUsageId, purpose: "parse_audit", model: "deepseek/deepseek-v4-flash-0731",
+        requestId: "rls-delete-usage", promptTokens: 5, completionTokens: 2, totalTokens: 7,
+        costMicroUsd: 3, durationMs: 5, zdrEnforced: true, status: "succeeded",
+        upstreamProvider: "Fixture", upstreamEndpoint: "fixture-primary" },
+    });
+    const deletingRows = await rpc<any[]>("ai_delete_generation_job", { p_user_id: aId, p_job_id: deletingJob.id });
+    expect(deletingRows[0]).toMatchObject({ status: "deleting", deletion_quota_consumed: true });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation.consumed)
+      .toBe(quotaBefore.generation.consumed + 2);
+    await rpc("ai_finalize_generation_job_cleanup", { p_job_id: deletingJob.id });
+    expect((await admin.from("generation_jobs").select("id").eq("id", deletingJob.id)).data).toEqual([]);
+    expect((await admin.from("ai_provider_usage_events").select("event_id,job_id")
+      .eq("event_id", deletingUsageId).single()).data).toEqual({ event_id: deletingUsageId, job_id: deletingJob.id });
+
+    const queuedDeleteJob = (await createNative("5"))[0];
+    const queuedDeleteRows = await rpc<any[]>("ai_delete_generation_job", {
+      p_user_id: aId, p_job_id: queuedDeleteJob.id,
+    });
+    expect(queuedDeleteRows[0]).toMatchObject({
+      status: "deleting", deletion_previous_status: "queued", deletion_quota_consumed: false,
+    });
+    expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation.consumed)
+      .toBe(quotaBefore.generation.consumed + 2);
+    await rpc("ai_finalize_generation_job_cleanup", { p_job_id: queuedDeleteJob.id });
+
+    // Terminal-history purge must be allowed alongside a new active task. Only
+    // cleaning that originated from queued/processing occupies the active slot.
+    const activeDuringClear = (await createNative("6"))[0];
+    const historyRows = await rpc<any[]>("ai_clear_generation_history", { p_user_id: aId });
+    expect(historyRows.some((row) => row.id === nativeJob.id && row.status === "deleting")).toBe(true);
+    expect((await admin.from("generation_jobs").select("status").eq("id", activeDuringClear.id).single()).data)
+      .toEqual({ status: "queued" });
+    for (const row of historyRows) await rpc("ai_finalize_generation_job_cleanup", { p_job_id: row.id });
+    expect((await admin.from("generation_jobs").select("id").eq("id", nativeJob.id)).data).toEqual([]);
+    expect((await a.from("notes").select("id").eq("id", noteId)).data).toEqual([{ id: noteId }]);
+    expect((await a.from("knowledge_graph_layouts").select("note_id").eq("note_id", noteId)).data)
+      .toEqual([{ note_id: noteId }]);
+    await rpc("ai_delete_generation_job", { p_user_id: aId, p_job_id: activeDuringClear.id });
+    await rpc("ai_finalize_generation_job_cleanup", { p_job_id: activeDuringClear.id });
+  }, 60_000);
+
   it("验证学习课程隔离、候补池、跨日熟练、复习日程、徽章和 +20 指纹幂等", async () => {
     const courseId = randomUUID();
     const unitId = randomUUID();

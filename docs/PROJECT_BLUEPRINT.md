@@ -8,7 +8,7 @@
 
 最后核对：2026-08-11。生产已受保护发布到 0043；0039–0040 安全第一阶段仍在兼容观察，0041–0043 Materials AI 第一阶段已上线。时间列撤权 contract 顺延为未来 0044–0045，必须在至少观察至 `2026-08-11T09:35:34Z` 并通过 go/no-go 后另行追加。
 
-2026-08-12 代码候选已占用 0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；它尚未发布，0044–0045 仍保留给独立的时间列 contract，二者不能合并或改写历史。
+2026-08-14 代码候选已占用 0046–0051：0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；0049–0051 实现 Luna 原文件、可取消清理、provider provenance 和跨设备图布局。它尚未发布，0044–0045 仍保留给独立的时间列 contract，二者不能合并或改写历史。
 
 ---
 
@@ -248,14 +248,17 @@ NestJS API（业务边界、配额、订单、任务、管理）
 
 验收结果：PR/main 完整 CI、真实固定 provider suite、220 页近上限资源 canary、只读 plan/加密恢复点/远端验证、flag 关闭 readiness、登录生产用户完整链路和独立公网复核均通过；同一幂等键/operation 不重复额度/结果，失败释放 reservation，任务前后临时目录清理。持续质量、成本、真实复杂文件和 prompt injection 误报率仍需监控。
 
-### 阶段 B+：可恢复长任务与知识点图谱（当前候选）
+### 阶段 B+：可恢复长任务、知识点图谱与 Luna 原文件（当前候选）
 
 - API/worker 采用 202 接收与持久回调，显式 Undici timeout 只保护 transport，不再持有最长 20 分钟 HTTP 响应。
 - provider usage 按 UUID 增量持久；数据库 checkpoint 与 worker 0700 本地结果共同支持默认 24 小时 Resume，同一 job、重新预留、成功才 consume。
 - Materials 开放 Organize knowledge points；My Notes 渲染 source-ordered graph、hover/detail、节点来源约束问答。Knowledge list 和独立 Quiz 继续禁用。
 - Materials/My Notes 保持英文和原有视觉；不把本阶段扩大成全站 React/i18n 重写。
+- 图谱使用 React Flow + ELK，提供无重叠分层、pan/zoom、拖动/键盘、外部详情和 revision 跨设备保存；考试只有整卷提交/超时后才统一批改。
+- job 支持应用内二次确认的 Delete/Clear history；活动清理必须等 worker 取消网络/Office、落账 usage 并删除临时目录后才消失，已接收任务按规则 consume 一次。
+- 能力矩阵允许用户显式选择 DocumentIR 或 `luna_native_file_v1`。Luna 只对真实门禁 allowlist 开放，以 inline 原字节、固定模型和 OpenAI-only/ZDR/no-fallback 处理，不静默转换或降级。
 
-验收尚未完成：0046–0048 空库/升级/RLS、fake Chromium、真实 DeepSeek/MiMo 图谱/节点问答、2G canary、只读 plan、恢复点、生产登录 smoke 和独立公网核验。
+验收尚未完成：0046–0051 空库/升级/RLS、fake Chromium、真实 DeepSeek/MiMo 与 Luna/OpenAI 原文件门禁、2G canary、只读 plan、恢复点、生产登录 smoke 和独立公网核验。
 
 ### 阶段 C：四类产物与学习闭环
 
@@ -302,9 +305,10 @@ NestJS API（业务边界、配额、订单、任务、管理）
 | LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
 | AI-01 | 试卷统一生成契约、任务/额度/Notes/答卷 | 已上线 | B | 0041–0043；真实 provider/canary/生产门禁已完成 |
 | AI-02 | Materials 确定性解析、视觉恢复和引用 | 已上线 | B | FastAPI DocumentIR/DeepSeek/MiMo；embedding/pgvector 不在首版 |
-| AI-03 | Materials 知识图谱与节点问答 | 候选已实现，未上线 | B | 0046–0048 + AI-01/02；待 CI、真实 provider、受保护发布 |
+| AI-03 | Materials 知识图谱与节点问答 | 候选已实现，未上线 | B | 0046–0051 + AI-01/02；待 CI、真实 provider、受保护发布 |
 | AI-04 | Knowledge list / 独立 Quiz | mock | C | AI-01/02；仍 Coming soon |
 | AI-05 | 长任务增量 usage 与断点续跑 | 候选已实现，未上线 | B+ | 本地单元已通过；真实 Supabase/provider/生产门禁待完成 |
+| AI-06 | Luna 原文件、任务删除/清空、跨设备图布局 | 候选已实现，未上线 | B+ | 0049–0051；需逐格式真实 OpenAI gate、RLS、250 节点 Playwright 与受保护发布 |
 | NOTE-01 | Notes CRUD、编辑、版本和导出 | 部分 | B/C | 私有试卷查看/删除/考试已实现；编辑/版本/PDF导出待完成 |
 | HOME-01 | 首页真实聚合 | mock | C | Notes/Tasks/Usage |
 | PLAN-01 | 到期提醒与薄弱点排程 | 部分 | C/E | Realtime/cron |

@@ -30,11 +30,46 @@ if (typeof window !== "undefined") {
   Object.defineProperty(window, "matchMedia", { configurable: true, value: matchMedia });
 }
 
-vi.stubGlobal("requestAnimationFrame", (callback: FrameRequestCallback) => {
+const requestAnimationFrameStub = (callback: FrameRequestCallback) => {
   callback(performance.now());
   return 1;
+};
+const cancelAnimationFrameStub = () => undefined;
+class ResizeObserverStub {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+}
+
+// Keep browser primitives outside Vitest's stub registry. Several suites call
+// `vi.unstubAllGlobals()` for per-test fetch/crypto mocks; React Flow still
+// needs these jsdom shims after that cleanup has run.
+Object.defineProperty(globalThis, "requestAnimationFrame", {
+  configurable: true,
+  value: requestAnimationFrameStub,
 });
-vi.stubGlobal("cancelAnimationFrame", vi.fn());
+Object.defineProperty(globalThis, "cancelAnimationFrame", {
+  configurable: true,
+  value: cancelAnimationFrameStub,
+});
+Object.defineProperty(globalThis, "ResizeObserver", {
+  configurable: true,
+  value: ResizeObserverStub,
+});
+if (typeof window !== "undefined") {
+  Object.defineProperty(window, "requestAnimationFrame", {
+    configurable: true,
+    value: requestAnimationFrameStub,
+  });
+  Object.defineProperty(window, "cancelAnimationFrame", {
+    configurable: true,
+    value: cancelAnimationFrameStub,
+  });
+  Object.defineProperty(window, "ResizeObserver", {
+    configurable: true,
+    value: ResizeObserverStub,
+  });
+}
 
 afterEach(() => {
   if (typeof document !== "undefined") {

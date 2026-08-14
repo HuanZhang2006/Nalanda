@@ -132,6 +132,7 @@ function aiJobsHtml() {
     auditing: l("Safety review", "安全审查"), visualRecovery: l("Visual recovery", "视觉补全"),
     generating: l("Generating", "生成中"), organizing: l("Organizing knowledge points", "梳理知识点"),
     answering: l("Answering", "回答中"), reviewing: l("Reviewing", "复核中"), saving: l("Saving", "保存中"),
+    preparingSource: "Preparing source", cleaning: "Cleaning up…",
     succeeded: l("Ready", "已完成"), failed: l("Failed", "失败"), cancelled: l("Cancelled", "已取消"),
   };
   const jobKind = {
@@ -143,13 +144,16 @@ function aiJobsHtml() {
     <div class="row between wrap-flex gap-12" style="margin-bottom:12px">
       <div><div class="eyebrow">${l("AI generation queue", "AI 生成队列")}</div>
         <h2 class="serif" style="font-size:17px">${l("Materials AI", "资料 AI")}</h2></div>
-      ${state.quota ? `<span class="chip chip-accent">${l("Free today", "今日免费额度")} · ${state.quota.generation.remaining}/${state.quota.generation.limit}</span>` : ""}
+      <div class="row gap-8 wrap-flex">
+        ${state.quota ? `<span class="chip chip-accent">${l("Free today", "今日免费额度")} · ${state.quota.generation.remaining}/${state.quota.generation.limit}</span>` : ""}
+        ${state.jobs.some((job) => ["succeeded", "failed", "cancelled"].includes(job.status)) ? `<button class="btn btn-sm" data-mat="clearAiHistory">Clear history</button>` : ""}
+      </div>
     </div>
     ${state.jobsError ? `<div class="course-feedback wrong" role="alert">${esc(state.jobsError)}</div>` : ""}
     ${state.jobs.slice(0, 10).map((job) => `<div class="list-row" style="padding:11px 0">
       <div class="stat-ic" style="margin:0">${job.status === "succeeded" ? ICON("check") : job.status === "failed" ? ICON("close") : ICON("sparkles")}</div>
       <div class="fill"><div style="font-weight:650;font-size:13px">${esc(job.materialName)}</div>
-        <div class="faint" style="font-size:11.5px">${esc(jobKind[job.kind] || job.kind)} · ${esc(stage[job.stage] || job.stage)}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
+        <div class="faint" style="font-size:11.5px">${esc(jobKind[job.kind] || job.kind)} · ${esc(stage[job.stage] || job.stage)} · ${esc(job.pipeline === "luna_native_file_v1" ? "Luna native file" : "Document IR")}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
         <div class="bar" style="margin-top:6px"><i style="width:${Math.max(0, Math.min(100, job.progress))}%"></i></div>
         ${job.errorCode ? `<div class="course-feedback wrong" style="margin-top:7px">${esc(job.errorCode)} · ${esc(materialAiErrorText(job.errorCode, job.errorMessage || l("Try again later.", "请稍后重试。"), l))}</div>` : ""}
       </div>
@@ -157,6 +161,7 @@ function aiJobsHtml() {
         ${job.status === "succeeded" && job.noteId ? `<button class="btn btn-sm" data-mat="openAiNote" data-note-id="${job.noteId}">${l("Open result", "打开结果")}</button>` : ""}
         ${job.status === "queued" || job.status === "processing" ? `<button class="btn btn-sm" data-mat="cancelAiJob" data-id="${job.id}">${l("Cancel", "取消")}</button>` : ""}
         ${job.status === "failed" && job.retryable ? `<button class="btn btn-sm" data-mat="retryAiJob" data-id="${job.id}">${l("Resume", "继续")}</button>` : ""}
+        ${job.status === "deleting" ? `<button class="btn btn-sm" disabled><span class="spin"></span>Cleaning up…</button>` : `<button class="icon-btn" data-mat="deleteAiJob" data-id="${job.id}" title="Delete task" aria-label="Delete task" style="width:32px;height:32px">${ICON("close")}</button>`}
       </div>
     </div>`).join("")}
   </section>`;
@@ -167,7 +172,7 @@ function confirmDialog({ title, message, confirmText = l("Delete", "删除"), da
   return new Promise((resolve) => {
     const scrim = document.createElement("div");
     scrim.className = "scrim";
-    scrim.innerHTML = `<div class="modal"><div class="modal-pad">
+    scrim.innerHTML = `<div class="modal" role="dialog" aria-modal="true"><div class="modal-pad">
       <h2 class="serif" style="font-size:19px;margin-bottom:10px">${esc(title)}</h2>
       <p class="muted" style="font-size:13.5px;line-height:1.55;margin-bottom:20px">${esc(message)}</p>
       <div class="row gap-8" style="justify-content:flex-end">
@@ -316,13 +321,22 @@ function handle(action, el) {
   else if (action === "delete") delMaterial(el.dataset.id);
   else if (action === "useAi") aiMenu(el.dataset.id);
   else if (action === "cancelAiJob") cancelAiJob(el.dataset.id);
+  else if (action === "deleteAiJob") deleteAiJob(el.dataset.id);
+  else if (action === "clearAiHistory") clearAiHistory();
   else if (action === "retryAiJob") retryAiJob(el.dataset.id);
   else if (action === "openAiNote") openNoteFn(el.dataset.noteId);
 }
 
-function aiMenu(materialId) {
+async function aiMenu(materialId) {
   const material = state.materials.find((item) => item.id === materialId);
   if (!material) return;
+  let capabilities;
+  try {
+    capabilities = await materialsAiApi.capabilities(material.id);
+  } catch (failure) {
+    toastFn(materialAiErrorText(failure, "AI capabilities could not be loaded.", l));
+    return;
+  }
   const scrim = document.createElement("div"); scrim.className = "scrim";
   const choices = [
     ["exam", l("Generate test paper", "生成试卷"), l("Create a cited, answerable paper and take it online.", "生成带来源引用的试卷，并可在线考试。"), true],
@@ -342,8 +356,8 @@ function aiMenu(materialId) {
   const close = () => scrim.remove();
   scrim.addEventListener("click", (event) => { if (event.target === scrim) close(); });
   scrim.querySelector("[data-ai-close]").onclick = close;
-  scrim.querySelector('[data-ai-choice="exam"]').onclick = () => { close(); examSettingsModal(material); };
-  scrim.querySelector('[data-ai-choice="knowledge_graph"]').onclick = () => { close(); knowledgeSettingsModal(material); };
+  scrim.querySelector('[data-ai-choice="exam"]').onclick = () => { close(); examSettingsModal(material, null, capabilities); };
+  scrim.querySelector('[data-ai-choice="knowledge_graph"]').onclick = () => { close(); knowledgeSettingsModal(material, capabilities); };
 }
 
 function consentBlock(alreadyConsented) {
@@ -352,13 +366,36 @@ function consentBlock(alreadyConsented) {
     : `<label class="card card-pad row gap-10" style="margin-top:14px;align-items:flex-start;cursor:pointer"><input type="checkbox" id="ai-consent" style="margin-top:3px"><span class="muted" style="font-size:12.5px;line-height:1.55">I agree that this file is processed by third-party AI providers using Zero Data Retention routing. Nalanda keeps a private structured parse cache until the material is deleted. Temporary files are deleted after each terminal job; private retry checkpoints expire automatically.</span></label>`;
 }
 
-function knowledgeSettingsModal(material) {
+function pipelineSelector(capabilityResponse) {
+  const capabilities = capabilityResponse?.capabilities || [];
+  const selected = capabilities.find((item) => item.default && item.available)?.pipeline
+    || capabilities.find((item) => item.available)?.pipeline
+    || "document_ir_v1";
+  const labels = {
+    luna_native_file_v1: ["Luna native file", "Sends the original file directly to GPT-5.6 Luna through the OpenAI provider."],
+    document_ir_v1: ["Document IR", "Uses deterministic extraction, targeted visual recovery, and DeepSeek generation."],
+  };
+  return `<fieldset style="border:0;margin:0 0 16px;padding:0"><legend class="eyebrow" style="margin-bottom:7px">Processing pipeline</legend>
+    <div class="grid g-2">${capabilities.map((item) => {
+      const copy = labels[item.pipeline] || [item.pipeline, item.model];
+      const reason = item.reasonCode === "AI_LUNA_DISABLED" ? "Luna is not enabled yet."
+        : item.reasonCode === "AI_LUNA_FORMAT_NOT_VERIFIED" ? "This file format has not passed the native-file gate." : "";
+      return `<label class="card card-pad row gap-10" style="padding:12px;align-items:flex-start;${item.available ? "cursor:pointer" : "opacity:.55"}">
+        <input type="radio" name="ai-pipeline" value="${esc(item.pipeline)}" ${item.pipeline === selected ? "checked" : ""} ${item.available ? "" : "disabled"} style="margin-top:3px">
+        <span><b style="font-size:13px">${esc(copy[0])}</b><span class="muted" style="display:block;font-size:11.5px;line-height:1.45;margin-top:3px">${esc(copy[1])}${reason ? ` ${esc(reason)}` : ""}</span></span>
+      </label>`;
+    }).join("")}</div>
+  </fieldset>`;
+}
+
+function knowledgeSettingsModal(material, capabilities) {
   const consentKey = `nalanda-material-ai-consent-v1:${USER?.id || "anonymous"}`;
   const alreadyConsented = localStorage.getItem(consentKey) === "1";
   const scrim = document.createElement("div"); scrim.className = "scrim";
   scrim.innerHTML = `<div class="modal" style="width:min(620px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto"><div class="modal-pad">
     <div class="eyebrow">Organize knowledge points</div><h2 class="serif" style="font-size:21px;margin-bottom:4px">${esc(material.name)}</h2>
     <p class="muted" style="font-size:12.5px;line-height:1.55;margin-bottom:18px">Build a comprehensive knowledge map in source order. Every point includes a detailed explanation, citations, relationships, examples, misconceptions, and review questions.</p>
+    ${pipelineSelector(capabilities)}
     <label><span class="eyebrow">Output language</span><select class="search" id="ai-language" style="width:100%;background:var(--card-2);margin-top:6px"><option value="auto">Match material</option><option value="en">English</option><option value="zh">Chinese</option></select></label>
     <label style="display:block;margin-top:16px"><span class="eyebrow">Topic focus (optional, 200 characters)</span><textarea class="search" id="ai-focus" maxlength="200" style="width:100%;min-height:76px;background:var(--card-2);margin-top:6px"></textarea></label>
     ${consentBlock(alreadyConsented)}
@@ -378,7 +415,7 @@ function knowledgeSettingsModal(material) {
     submit.disabled = true; submit.querySelector("span").textContent = "Queuing…"; error.style.display = "none";
     try {
       await materialsAiApi.createJob(material.id, {
-        idempotencyKey: crypto.randomUUID(), kind: "knowledge_graph", consentVersion: 1,
+        idempotencyKey: crypto.randomUUID(), kind: "knowledge_graph", pipeline: scrim.querySelector('[name="ai-pipeline"]:checked').value, consentVersion: 1,
         settings: {
           language: scrim.querySelector("#ai-language").value,
           detail: "comprehensive",
@@ -394,7 +431,7 @@ function knowledgeSettingsModal(material) {
   };
 }
 
-function examSettingsModal(material, preset = null) {
+function examSettingsModal(material, preset = null, capabilities = null) {
   const consentKey = `nalanda-material-ai-consent-v1:${USER?.id || "anonymous"}`;
   const alreadyConsented = localStorage.getItem(consentKey) === "1";
   const settings = preset || {
@@ -406,6 +443,7 @@ function examSettingsModal(material, preset = null) {
   scrim.innerHTML = `<div class="modal" style="width:min(720px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto"><div class="modal-pad">
     <div class="eyebrow">${l("Generate test paper", "生成试卷")}</div><h2 class="serif" style="font-size:21px;margin-bottom:4px">${esc(material.name)}</h2>
     <p class="muted" style="font-size:12.5px;margin-bottom:18px">${l("Configure a 5–100 question paper. Marks must be at least the number of questions.", "配置 5–100 道题；总分不得小于题目数量。")}</p>
+    ${pipelineSelector(capabilities)}
     <div class="grid g-3">
       <label><span class="eyebrow">${l("Language", "语言")}</span><select class="search" id="ai-language" style="width:100%;background:var(--card-2);margin-top:6px"><option value="auto">${l("Match material", "跟随资料")}</option><option value="en">English</option><option value="zh">Chinese</option></select></label>
       <label><span class="eyebrow">${l("Difficulty", "难度")}</span><select class="search" id="ai-difficulty" style="width:100%;background:var(--card-2);margin-top:6px"><option value="introductory">${l("Introductory", "入门")}</option><option value="intermediate">${l("Intermediate", "中等")}</option><option value="advanced">${l("Advanced", "进阶")}</option><option value="mixed">${l("Mixed", "混合")}</option></select></label>
@@ -440,7 +478,7 @@ function examSettingsModal(material, preset = null) {
     if (!Number.isInteger(total) || total < 5 || total > 100 || !Number.isInteger(totalMarks) || totalMarks < Math.max(20, total) || totalMarks > 200 || !Number.isInteger(durationMinutes) || durationMinutes < 15 || durationMinutes > 240) {
       error.textContent = l("Use 5–100 questions, 15–240 minutes, and 20–200 marks (at least one mark per question).", "请设置 5–100 道题、15–240 分钟、20–200 总分（每题至少 1 分）。"); error.style.display = "block"; return;
     }
-    const request = { idempotencyKey: crypto.randomUUID(), kind: "exam", consentVersion: 1, settings: {
+    const request = { idempotencyKey: crypto.randomUUID(), kind: "exam", pipeline: scrim.querySelector('[name="ai-pipeline"]:checked').value, consentVersion: 1, settings: {
       language: scrim.querySelector("#ai-language").value, difficulty: scrim.querySelector("#ai-difficulty").value,
       durationMinutes, totalMarks, questionCounts: counts, answerDetail: scrim.querySelector("#ai-answer-detail").value,
       focus: scrim.querySelector("#ai-focus").value.trim(),
@@ -458,8 +496,56 @@ function examSettingsModal(material, preset = null) {
 }
 
 async function cancelAiJob(id) {
+  const job = state.jobs.find((item) => item.id === id);
+  if (!job) return;
+  const accepted = await confirmDialog({
+    title: "Cancel AI task",
+    message: job.status === "processing"
+      ? `Cancel “${job.materialName}”? The worker will stop and clean temporary files. Because processing already started, this uses one free generation.`
+      : `Cancel “${job.materialName}”? The queued reservation will be released after cleanup.`,
+    confirmText: "Cancel task",
+  });
+  if (!accepted) return;
   try { await materialsAiApi.cancel(id); toastFn(l("AI job cancelled", "AI 任务已取消"), "check"); await loadAiJobs(); }
   catch (error) { toastFn(materialAiErrorText(error, l("Could not cancel the AI job", "无法取消 AI 任务"), l)); }
+}
+
+async function deleteAiJob(id) {
+  const job = state.jobs.find((item) => item.id === id);
+  if (!job) return;
+  const active = job.status === "queued" || job.status === "processing";
+  const message = job.status === "queued"
+    ? `Delete “${job.materialName}”? The queued job will stop, temporary state will be purged, and its reserved generation will be released.`
+    : job.status === "processing"
+      ? `Delete “${job.materialName}”? Processing will be interrupted and temporary files will be purged. One free generation is consumed because the worker already accepted it.`
+      : `Delete this ${job.status} task record for “${job.materialName}”? Existing My Notes content and provider cost records are kept, and past quota usage is not reversed.`;
+  const accepted = await confirmDialog({ title: active ? "Stop and delete AI task" : "Delete AI task record", message });
+  if (!accepted) return;
+  try {
+    const result = await materialsAiApi.deleteJob(id);
+    toastFn(result.status === "cleaning" ? "Cleaning temporary AI files…" : "AI task deleted", "check");
+    await loadAiJobs();
+  } catch (error) {
+    toastFn(materialAiErrorText(error, "The AI task could not be deleted.", l));
+  }
+}
+
+async function clearAiHistory() {
+  const count = state.jobs.filter((job) => ["succeeded", "failed", "cancelled"].includes(job.status)).length;
+  if (!count) return;
+  const accepted = await confirmDialog({
+    title: "Clear AI task history",
+    message: `Delete ${count} completed, failed, or cancelled task record${count === 1 ? "" : "s"}? Active tasks are not affected. Existing My Notes results, provider cost records, and past quota usage are kept.`,
+    confirmText: "Clear history",
+  });
+  if (!accepted) return;
+  try {
+    const result = await materialsAiApi.clearHistory();
+    toastFn(result.cleaning ? `Cleaning ${result.cleaning} task record${result.cleaning === 1 ? "" : "s"}…` : "AI history cleared", "check");
+    await loadAiJobs();
+  } catch (error) {
+    toastFn(materialAiErrorText(error, "AI task history could not be cleared.", l));
+  }
 }
 
 async function retryAiJob(id) {

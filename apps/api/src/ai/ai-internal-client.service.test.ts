@@ -16,7 +16,10 @@ describe("AI internal HTTP transport", () => {
     process.env.AI_INTERNAL_TOKEN = "test-internal-token";
     harness.request.mockReset();
   });
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    delete process.env.AI_CALLBACK_BASE_URL;
+    vi.restoreAllMocks();
+  });
 
   it("uses the asynchronous acceptance endpoint and returns its 202 response", async () => {
     harness.request.mockResolvedValue({
@@ -53,6 +56,23 @@ describe("AI internal HTTP transport", () => {
       "http://ai:8000/internal/exams/jobs",
       expect.objectContaining({ headersTimeout: 4 * 60_000, signal: expect.any(AbortSignal) }),
     );
+  });
+
+  it("sends callback credentials so cleanup can durably flush provider usage before purge", async () => {
+    process.env.AI_CALLBACK_BASE_URL = "http://api:3000/api";
+    harness.request.mockResolvedValue({
+      statusCode: 202,
+      body: { text: vi.fn().mockResolvedValue('{"accepted":true,"purged":true}') },
+    });
+    const client = new AiInternalClientService();
+    await expect(client.cancelGeneration("job-1", "lease-1")).resolves.toEqual({ accepted: true, purged: true });
+    const call = harness.request.mock.calls[0];
+    expect(call[0]).toBe("http://ai:8000/internal/materials/jobs/job-1/cancel");
+    expect(JSON.parse(String(call[1].body))).toEqual({
+      leaseToken: "lease-1",
+      callbackBaseUrl: "http://api:3000/api/internal/ai-jobs/job-1",
+      callbackToken: "test-internal-token",
+    });
   });
 
   it("does not misreport an invalid worker response as unreachable", async () => {

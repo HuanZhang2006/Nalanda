@@ -62,14 +62,25 @@ export class AiProcessorService {
       let payload: Record<string, unknown>;
       if (job.kind === "knowledge_question") {
         const context = await this.repository.knowledgeQuestionContext(job);
+        const sourceMaterial = job.pipeline === "luna_native_file_v1" && context.source.material_id
+          ? await this.repository.materialById(job.user_id, context.source.material_id)
+          : null;
         payload = {
           jobId,
           kind: job.kind,
+          pipeline: job.pipeline || "document_ir_v1",
           userId: job.user_id,
           question: context.question.question,
           nodeId: context.question.node_id,
           graph: context.artifact.content,
-          document: context.cache?.canonical_document || null,
+          document: job.pipeline === "document_ir_v1" ? context.cache?.canonical_document || null : null,
+          material: sourceMaterial ? {
+            id: sourceMaterial.id,
+            name: sourceMaterial.name,
+            type: sourceMaterial.type,
+            sizeBytes: Number(sourceMaterial.size_bytes || 0),
+            signedUrl: await this.repository.signMaterial(sourceMaterial.storage_path),
+          } : null,
           callbacks: this.callbacks(jobId, leaseToken),
           checkpoint: checkpoint ? { checkpointStage: checkpoint.stage, ...checkpoint.payload } : null,
           budgetMicroUsd,
@@ -82,6 +93,7 @@ export class AiProcessorService {
         payload = {
           jobId,
           kind: job.kind,
+          pipeline: job.pipeline || "document_ir_v1",
           userId: job.user_id,
           material: {
             id: material.id,
@@ -91,7 +103,7 @@ export class AiProcessorService {
             signedUrl,
           },
           settings: job.settings,
-          cache: cached ? {
+          cache: job.pipeline === "document_ir_v1" && cached ? {
             sourceSha256: cached.source_sha256,
             parserVersion: cached.parser_version,
             auditVersion: cached.audit_version,
@@ -140,7 +152,7 @@ export class AiProcessorService {
   }
 
   checkpoint(jobId: string, leaseToken: string, stage: string, payload: unknown) {
-    if (!leaseToken || !["parsed", "audited", "document_ready", "artifact_ready", "answer_ready"].includes(stage)
+    if (!leaseToken || !["parsed", "audited", "document_ready", "artifact_ready", "answer_ready", "native_audited", "native_artifact_ready"].includes(stage)
         || !payload || typeof payload !== "object" || Array.isArray(payload)) {
       throw new BadRequestException({ code: "INVALID_CHECKPOINT", message: "Invalid AI checkpoint" });
     }
@@ -207,6 +219,7 @@ export class AiProcessorService {
         }));
       const accepted = await this.worker.dispatchGrading({
         attemptId, questions, language: exam.language,
+        pipeline: context.note.pipeline || "document_ir_v1",
         callbacks: {
           baseUrl: `${(process.env.AI_CALLBACK_BASE_URL || "http://api:3000/api").replace(/\/$/, "")}/internal/exam-attempts/${attemptId}`,
           token: process.env.AI_INTERNAL_TOKEN,
@@ -284,6 +297,23 @@ export class AiProcessorService {
       objective.results, objective.score, objective.marks, objective.needsGrading,
     ).catch(() => null);
     if (result?.status === "grading") await this.grading(attemptId);
+  }
+
+  async cleanup(jobId: string) {
+    const row = await this.repository.generationCleanupState(jobId);
+    if (!row || row.status !== "deleting") return;
+    try {
+      const response = await this.worker.cancelGeneration(jobId, row.lease_token || null);
+      if (!response.accepted || !response.purged) {
+        throw new AiWorkerError("AI_WORKER_CLEANUP_PENDING", "AI worker has not confirmed cleanup", [], true);
+      }
+      await this.repository.finalizeCleanup(jobId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "AI worker cleanup failed";
+      this.logger.warn(`Materials AI cleanup ${jobId} remains pending: ${message}`);
+      await this.repository.recordCleanupFailure(jobId, message).catch(() => undefined);
+      throw error;
+    }
   }
 
   async progress(jobId: string, leaseToken: string, stage: string, progress: number, eventCode?: string) {

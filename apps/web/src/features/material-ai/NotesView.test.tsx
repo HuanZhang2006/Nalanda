@@ -1,7 +1,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { GeneratedExamAttempt, GeneratedExamNoteDetail, GeneratedKnowledgeNoteDetail, GeneratedNoteSummary } from "@nalanda/types";
+import type { GeneratedExamAttempt, GeneratedExamNoteDetail, GeneratedKnowledgeGraphV1, GeneratedKnowledgeNoteDetail, GeneratedNoteSummary } from "@nalanda/types";
 import "fake-indexeddb/auto";
 
 const harness = vi.hoisted(() => ({
@@ -9,6 +9,7 @@ const harness = vi.hoisted(() => ({
   notes: vi.fn(), note: vi.fn(), attempts: vi.fn(), createAttempt: vi.fn(), saveAnswers: vi.fn(),
   submit: vi.fn(), attempt: vi.fn(), requestGrading: vi.fn(), deleteNote: vi.fn(),
   askKnowledgeNode: vi.fn(), knowledgeQuestion: vi.fn(),
+  graphLayout: vi.fn(), saveGraphLayout: vi.fn(),
 }));
 
 vi.mock("../../lib/supabase", () => ({
@@ -35,12 +36,32 @@ vi.mock("./api", () => ({
     deleteNote: harness.deleteNote,
     askKnowledgeNode: harness.askKnowledgeNode,
     knowledgeQuestion: harness.knowledgeQuestion,
+    graphLayout: harness.graphLayout,
+    saveGraphLayout: harness.saveGraphLayout,
   },
+}));
+
+// The real ELK/React Flow layout has its own tests. Keep this integration test
+// focused on the Notes inspector contract without leaking React Flow's
+// asynchronous measurement loop beyond React's test act() boundary.
+vi.mock("./KnowledgeGraphCanvas", () => ({
+  default: ({ graph, pinnedId, onInspect }: {
+    graph: GeneratedKnowledgeGraphV1;
+    pinnedId: string | null;
+    onInspect: (nodeId: string | null, pinned: boolean) => void;
+  }) => <div role="region" aria-label="Interactive knowledge graph">
+    {graph.nodes.map((node) => <div className="react-flow__node" key={node.id}
+      onMouseEnter={() => { if (!pinnedId) onInspect(node.id, false); }}
+      onMouseLeave={() => { if (!pinnedId) onInspect(null, false); }}>
+      <button className="material-flow-node-content" onClick={() => onInspect(pinnedId === node.id ? null : node.id, pinnedId !== node.id)}>{node.title}</button>
+    </div>)}
+  </div>,
 }));
 
 import { NotesView } from "./NotesView";
 
 const summary: GeneratedNoteSummary = {
+  pipeline: "document_ir_v1", model: "deepseek/deepseek-v4-flash-0731",
   id: "note-1", courseId: "course-1", courseName: "Biology", courseCode: "BIO", title: "Cells test paper",
   kind: "ai_exam", materialName: "cells.pdf", sourceDeleted: false, questionCount: 1, totalMarks: 10,
   nodeCount: 0, edgeCount: 0,
@@ -102,6 +123,14 @@ function clickText(container: Element, text: string) {
   button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
 }
 
+function hoverGraphNode(container: Element, text: string) {
+  const button = [...container.querySelectorAll(".material-flow-node-content")]
+    .find((entry) => entry.textContent?.includes(text));
+  const node = button?.closest(".react-flow__node");
+  if (!node) throw new Error(`graph node not found: ${text}`);
+  node.dispatchEvent(new MouseEvent("mouseover", { bubbles: true }));
+}
+
 function setValue(element: HTMLTextAreaElement, value: string) {
   Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(element, value);
   element.dispatchEvent(new Event("input", { bubbles: true }));
@@ -123,6 +152,14 @@ describe("Materials AI My Notes and online exams", () => {
     }));
     harness.submit.mockResolvedValue(attempt("grading", 2)); harness.attempt.mockResolvedValue(attempt("completed", 3));
     harness.requestGrading.mockResolvedValue(attempt("grading", 3)); harness.deleteNote.mockResolvedValue({ deleted: true });
+    harness.graphLayout.mockResolvedValue({
+      noteId: "graph-note", artifactVersion: "a".repeat(64), revision: 0,
+      positions: [], viewport: { x: 0, y: 0, zoom: 1 }, updatedAt: null,
+    });
+    harness.saveGraphLayout.mockImplementation(async (_id, value) => ({
+      noteId: "graph-note", artifactVersion: value.artifactVersion, revision: value.expectedRevision + 1,
+      positions: value.positions, viewport: value.viewport, updatedAt: new Date().toISOString(),
+    }));
     harness.askKnowledgeNode.mockResolvedValue({
       id: "question-job", noteId: "graph-note", nodeId: "membrane", question: "Why is it selective?", status: "succeeded",
       answer: { schemaVersion: "knowledge-node-answer.v1", answer: "Selective permeability controls which substances cross.", keyPoints: ["Transport is regulated"], sourceRefs: [{ blockId: "b2", page: 1, slide: null, label: "Page 1" }], followUpQuestions: ["What is diffusion?"] },
@@ -165,7 +202,6 @@ describe("Materials AI My Notes and online exams", () => {
     let release!: (value: GeneratedExamAttempt) => void;
     harness.saveAnswers.mockReturnValueOnce(new Promise((resolve) => { release = resolve; }));
     await settle(() => root.render(<NotesView userId="user-1" initialNoteId="note-1" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={exit} onMaterials={vi.fn()} toast={vi.fn()} />));
-    await settle(() => new Promise((resolve) => setTimeout(resolve, 0)));
     await settle(() => clickText(container, "Start timed attempt"));
     await settle(() => setValue(container.querySelector("textarea") as HTMLTextAreaElement, "Draft"));
     await settle(() => clickText(container, "Save and exit"));
@@ -190,6 +226,23 @@ describe("Materials AI My Notes and online exams", () => {
     expect(harness.submit).not.toHaveBeenCalled();
     expect(container.textContent).toContain("Saved on this device; waiting for the network");
     expect(toast).toHaveBeenCalledWith("Your latest answers are still only on this device. Reconnect before submitting.");
+  });
+
+  it("keeps answers private while drafting and grades only after the in-app whole-paper confirmation", async () => {
+    await settle(() => root.render(<NotesView userId="user-1" initialNoteId="note-1" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={vi.fn()} />));
+    await settle(() => clickText(container, "Start timed attempt"));
+    expect(container.textContent).not.toContain("It controls movement into and out of a cell");
+    expect(container.textContent).not.toContain("Answer and explanation");
+
+    await settle(() => clickText(container, "Submit paper"));
+    expect(harness.submit).not.toHaveBeenCalled();
+    const dialog = container.querySelector('[role="dialog"]');
+    expect(dialog).not.toBeNull();
+    expect(container.textContent).toContain("Submit the entire paper?");
+    await settle(() => clickText(dialog!, "Submit paper"));
+
+    expect(harness.submit).toHaveBeenCalledTimes(1);
+    expect(container.textContent).toContain("Subjective answers are being graded");
   });
 
   it("asks the server to enforce the absolute deadline when the local countdown expires", async () => {
@@ -228,15 +281,17 @@ describe("Materials AI My Notes and online exams", () => {
     harness.note.mockResolvedValue(graphDetail);
     harness.attempts.mockClear();
     await settle(() => root.render(<NotesView userId="user-1" initialNoteId="graph-note" onOpenReal={vi.fn()} onOpenDemo={vi.fn()} onBack={vi.fn()} onMaterials={vi.fn()} toast={vi.fn()} />));
-    await settle(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    await vi.waitFor(() => expect(container.textContent).toContain("Cell membrane"));
 
     expect(container.textContent).toContain("Knowledge map overview");
     expect(container.textContent).toContain("Cell membrane");
-    expect(container.textContent).toContain("The basic unit of life");
+    expect(container.textContent).not.toContain("The basic unit of life");
     expect(container.querySelector('[role="region"][aria-label="Interactive knowledge graph"]')).not.toBeNull();
     expect(container.textContent).not.toMatch(/知识|来源|删除|提问/);
     expect(harness.attempts).not.toHaveBeenCalled();
 
+    await settle(() => hoverGraphNode(container, "Cell"));
+    expect(container.textContent).toContain("Cells are the basic structural and functional units of living organisms");
     await settle(() => clickText(container, "Cell membrane"));
     expect(container.textContent).toContain("Selectively permeable");
     await settle(() => setValue(container.querySelector("textarea") as HTMLTextAreaElement, "Why is it selective?"));

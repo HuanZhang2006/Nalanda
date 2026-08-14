@@ -1,13 +1,19 @@
+import asyncio
 import os
 import time
 from pathlib import Path
 
 import pytest
-from fastapi import BackgroundTasks
 
 from app import main
 from app.errors import PipelineError
-from app.schemas import GradeExamRequest, ProcessExamRequest, ProcessMaterialJobRequest, UsageEvent
+from app.schemas import (
+    CancelMaterialJobRequest,
+    GradeExamRequest,
+    ProcessExamRequest,
+    ProcessMaterialJobRequest,
+    UsageEvent,
+)
 
 
 def request() -> ProcessExamRequest:
@@ -109,7 +115,7 @@ def test_sweeper_never_removes_an_active_long_running_job(monkeypatch, tmp_path:
     os.utime(active, (time.time() - 7200, time.time() - 7200))
     monkeypatch.setattr(main, "TEMP_ROOT", root)
     monkeypatch.setattr(main, "RESUME_TTL_SECONDS", 3600)
-    main.active_jobs.add((job_id, "11111111-1111-4111-8111-111111111111"))
+    main.active_jobs[(job_id, "11111111-1111-4111-8111-111111111111")] = None
 
     try:
         assert main._sweep_stale() == 0
@@ -157,22 +163,38 @@ def durable_request(lease: str = "11111111-1111-4111-8111-111111111111") -> Proc
     )
 
 
+def cancel_request(lease: str | None = "11111111-1111-4111-8111-111111111111") -> CancelMaterialJobRequest:
+    return CancelMaterialJobRequest.model_validate({
+        "leaseToken": lease,
+        "callbackBaseUrl": "http://api:3000/api/internal/ai-jobs/22222222-2222-4222-8222-222222222222",
+        "callbackToken": "test-internal-token",
+    })
+
+
 @pytest.mark.asyncio
 async def test_durable_endpoint_returns_acceptance_before_running_the_pipeline(monkeypatch, tmp_path: Path):
     monkeypatch.setenv("AI_INTERNAL_TOKEN", "test-internal-token")
     monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
     monkeypatch.setattr(main, "MIN_FREE_BYTES", 0)
     main.active_jobs.clear()
-    background = BackgroundTasks()
+    main.cancelled_jobs.clear()
 
-    response = await main.material_job(durable_request(), background, "test-internal-token")
+    async def blocked(_request):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, "_run_material_job", blocked)
+
+    response = await main.material_job(durable_request(), "test-internal-token")
 
     assert response == {"accepted": True, "replayed": False}
-    assert len(background.tasks) == 1
-    assert (
+    key = (
         "22222222-2222-4222-8222-222222222222",
         "11111111-1111-4111-8111-111111111111",
-    ) in main.active_jobs
+    )
+    assert key in main.active_jobs
+    assert not main.active_jobs[key].done()
+    main.active_jobs[key].cancel()
+    await asyncio.gather(main.active_jobs[key], return_exceptions=True)
     main.active_jobs.clear()
 
 
@@ -182,16 +204,159 @@ async def test_a_new_lease_is_not_deduplicated_behind_a_stale_worker(monkeypatch
     monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
     monkeypatch.setattr(main, "MIN_FREE_BYTES", 0)
     main.active_jobs.clear()
-    old = durable_request()
-    main.active_jobs.add((old.jobId, old.callbacks.leaseToken))
-    new = durable_request("55555555-5555-4555-8555-555555555555")
-    background = BackgroundTasks()
 
-    response = await main.material_job(new, background, "test-internal-token")
+    async def blocked(_request):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, "_run_material_job", blocked)
+    old = durable_request()
+    old_key = (old.jobId, old.callbacks.leaseToken)
+    main.active_jobs[old_key] = asyncio.create_task(blocked(old))
+    new = durable_request("55555555-5555-4555-8555-555555555555")
+
+    response = await main.material_job(new, "test-internal-token")
 
     assert response == {"accepted": True, "replayed": False}
-    assert len(background.tasks) == 1
+    assert len(main.active_jobs) == 2
+    for task in main.active_jobs.values():
+        task.cancel()
+    await asyncio.gather(*main.active_jobs.values(), return_exceptions=True)
     main.active_jobs.clear()
+
+
+@pytest.mark.asyncio
+async def test_cancel_endpoint_interrupts_active_task_and_purges_private_workdir(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("AI_INTERNAL_TOKEN", "test-internal-token")
+    monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
+    monkeypatch.setattr(main, "MIN_FREE_BYTES", 0)
+    main.active_jobs.clear()
+    main.cancelled_jobs.clear()
+    request_value = durable_request()
+    workdir = main._workdir(request_value.jobId)
+    workdir.mkdir(parents=True)
+    (workdir / "private-source.pdf").write_bytes(b"private")
+    process_cancelled = []
+
+    async def blocked():
+        await asyncio.Event().wait()
+
+    def cancel_processes(path):
+        process_cancelled.append(path)
+
+    key = (request_value.jobId, request_value.callbacks.leaseToken)
+    task = asyncio.create_task(blocked())
+    main.active_jobs[key] = task
+    monkeypatch.setattr(main, "cancel_workdir_processes", cancel_processes)
+
+    response = await main.cancel_material_job(
+        request_value.jobId,
+        cancel_request(request_value.callbacks.leaseToken),
+        "test-internal-token",
+    )
+
+    assert response == {"accepted": True, "purged": True}
+    assert task.cancelled()
+    assert not workdir.exists()
+    assert process_cancelled == [workdir]
+    assert request_value.jobId in main.cancelled_jobs
+    main.active_jobs.clear()
+    main.cancelled_jobs.clear()
+
+
+@pytest.mark.asyncio
+async def test_cancel_flushes_spooled_provider_cost_before_purging(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("AI_INTERNAL_TOKEN", "test-internal-token")
+    monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
+    main.active_jobs.clear()
+    main.cancelled_jobs.clear()
+    request_value = durable_request()
+    workdir = main._workdir(request_value.jobId)
+    workdir.mkdir(parents=True)
+    event = UsageEvent(
+        purpose="exam_generation",
+        model="openai/gpt-5.6-luna",
+        requestId="provider-request-before-cancel",
+        promptTokens=10,
+        completionTokens=20,
+        totalTokens=30,
+        costMicroUsd=42,
+        durationMs=100,
+        zdrEnforced=True,
+        status="succeeded",
+        upstreamProvider="OpenAI",
+    )
+    (workdir / f"usage-{event.eventId}.json").write_text(event.model_dump_json())
+    callbacks: list[dict] = []
+
+    class FakeResponse:
+        is_success = True
+
+    class FakeClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_args):
+            return None
+
+        async def post(self, _url, **kwargs):
+            callbacks.append(kwargs["json"])
+            return FakeResponse()
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", FakeClient)
+    response = await main.cancel_material_job(
+        request_value.jobId,
+        cancel_request(request_value.callbacks.leaseToken),
+        "test-internal-token",
+    )
+
+    assert response == {"accepted": True, "purged": True}
+    assert callbacks == [{
+        "leaseToken": request_value.callbacks.leaseToken,
+        "event": event.model_dump(),
+    }]
+    assert not workdir.exists()
+    main.cancelled_jobs.clear()
+
+
+@pytest.mark.asyncio
+async def test_cancel_keeps_usage_spool_when_api_cannot_ack_cost(monkeypatch, tmp_path: Path):
+    monkeypatch.setenv("AI_INTERNAL_TOKEN", "test-internal-token")
+    monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
+    main.cancelled_jobs.clear()
+    request_value = durable_request()
+    workdir = main._workdir(request_value.jobId)
+    workdir.mkdir(parents=True)
+    event = UsageEvent(
+        purpose="exam_generation", model="openai/gpt-5.6-luna",
+        costMicroUsd=42, durationMs=100, zdrEnforced=True, status="succeeded",
+        upstreamProvider="OpenAI",
+    )
+    (workdir / f"usage-{event.eventId}.json").write_text(event.model_dump_json())
+
+    class OfflineClient:
+        def __init__(self, **_kwargs):
+            pass
+
+        async def __aenter__(self):
+            raise main.httpx.ConnectError("offline")
+
+        async def __aexit__(self, *_args):
+            return None
+
+    monkeypatch.setattr(main.httpx, "AsyncClient", OfflineClient)
+    response = await main.cancel_material_job(
+        request_value.jobId,
+        cancel_request(request_value.callbacks.leaseToken),
+        "test-internal-token",
+    )
+
+    assert response == {"accepted": True, "purged": False}
+    assert workdir.exists()
+    assert list(workdir.glob("usage-*.json"))
+    main.cancelled_jobs.clear()
 
 
 def grading_request(lease: str = "11111111-1111-4111-8111-111111111111") -> GradeExamRequest:
@@ -225,16 +390,23 @@ async def test_grading_endpoint_returns_acceptance_before_provider_work(monkeypa
     monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
     monkeypatch.setattr(main, "MIN_FREE_BYTES", 0)
     main.active_jobs.clear()
-    background = BackgroundTasks()
+    main.cancelled_jobs.clear()
 
-    response = await main.exam_grading_job(grading_request(), background, "test-internal-token")
+    async def blocked(_request):
+        await asyncio.Event().wait()
+
+    monkeypatch.setattr(main, "_run_exam_grading", blocked)
+
+    response = await main.exam_grading_job(grading_request(), "test-internal-token")
 
     assert response == {"accepted": True, "replayed": False}
-    assert len(background.tasks) == 1
-    assert (
+    key = (
         "22222222-2222-4222-8222-222222222222",
         "11111111-1111-4111-8111-111111111111",
-    ) in main.active_jobs
+    )
+    assert key in main.active_jobs
+    main.active_jobs[key].cancel()
+    await asyncio.gather(main.active_jobs[key], return_exceptions=True)
     main.active_jobs.clear()
 
 
@@ -256,6 +428,64 @@ async def test_callback_outage_keeps_incremental_usage_spool_for_replay(monkeypa
     assert workdir.exists()
     assert list(workdir.glob("usage-*.json"))
     assert (workdir / "grading-result.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_grading_shutdown_preserves_usage_and_validated_result_for_replay(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
+    monkeypatch.setattr(main, "MIN_FREE_BYTES", 0)
+    request_value = grading_request()
+    workdir = main._workdir(request_value.attemptId)
+    provider_returned = asyncio.Event()
+
+    async def interrupted_grading(_request, usage_sink=None):
+        await usage_sink(UsageEvent(
+            purpose="exam_grading",
+            model="deepseek/deepseek-v4-flash-0731",
+            requestId="provider-before-shutdown",
+            promptTokens=5,
+            completionTokens=5,
+            totalTokens=10,
+            costMicroUsd=4,
+            durationMs=10,
+            zdrEnforced=True,
+            status="succeeded",
+        ))
+        provider_returned.set()
+        await asyncio.Event().wait()
+
+    async def callback_outage(*_args, **_kwargs):
+        raise PipelineError("AI_CALLBACK_UNAVAILABLE", "API unavailable", 503)
+
+    monkeypatch.setattr(main, "grade_exam", interrupted_grading)
+    monkeypatch.setattr(main, "_post_callback", callback_outage)
+    task = asyncio.create_task(main._run_exam_grading(request_value))
+    await provider_returned.wait()
+    task.cancel()
+    await asyncio.gather(task, return_exceptions=True)
+
+    assert workdir.exists()
+    assert list(workdir.glob("usage-*.json"))
+
+
+@pytest.mark.asyncio
+async def test_usage_spool_write_is_atomic_and_corruption_is_never_discarded(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setattr(main, "TEMP_ROOT", tmp_path / "worker")
+    request_value = durable_request()
+    workdir = main._workdir(request_value.jobId)
+    workdir.mkdir(parents=True)
+    broken = workdir / "usage-11111111-1111-4111-8111-111111111111.json"
+    broken.write_text("{truncated", encoding="utf-8")
+
+    with pytest.raises(PipelineError, match="Provider accounting") as failure:
+        await main._flush_usage(request_value, workdir)
+
+    assert failure.value.code == "AI_USAGE_SPOOL_CORRUPT"
+    assert broken.exists()
 
 
 @pytest.mark.asyncio

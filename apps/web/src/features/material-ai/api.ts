@@ -1,5 +1,8 @@
 import type {
   AiGenerationJob,
+  AiJobClearResult,
+  AiJobDeleteResult,
+  AiMaterialCapabilities,
   AiQuotaSummary,
   CreateAiMaterialJobRequest,
   CreateKnowledgeNodeQuestionRequest,
@@ -7,6 +10,8 @@ import type {
   GeneratedNoteDetail,
   GeneratedNoteSummary,
   KnowledgeNodeQuestion,
+  KnowledgeGraphLayout,
+  SaveKnowledgeGraphLayoutRequest,
   SaveExamAnswersRequest,
   SubmitExamAttemptRequest,
 } from "@nalanda/types";
@@ -29,13 +34,30 @@ export const materialsAiApi = {
   createJob(materialId: string, request: CreateAiMaterialJobRequest) {
     return materialApiJson<AiGenerationJob>(`/api/materials/${materialId}/ai-jobs`, json(request));
   },
+  capabilities(materialId: string) {
+    return materialApiJson<AiMaterialCapabilities>(`/api/materials/${materialId}/ai-capabilities`);
+  },
   jobs() { return materialApiJson<AiGenerationJob[]>("/api/ai-jobs?limit=50"); },
   job(id: string) { return materialApiJson<AiGenerationJob>(`/api/ai-jobs/${id}`); },
   cancel(id: string) { return materialApiJson<AiGenerationJob>(`/api/ai-jobs/${id}/cancel`, json()); },
+  deleteJob(id: string) {
+    return materialApiJson<AiJobDeleteResult>(`/api/ai-jobs/${id}`, { method: "DELETE" });
+  },
+  clearHistory() {
+    return materialApiJson<AiJobClearResult>("/api/ai-jobs/clear-history", json());
+  },
   retry(id: string) { return materialApiJson<AiGenerationJob>(`/api/ai-jobs/${id}/retry`, json()); },
   quota() { return materialApiJson<AiQuotaSummary>("/api/profile/ai-quota"); },
   notes() { return materialApiJson<GeneratedNoteSummary[]>("/api/notes"); },
   note(id: string) { return materialApiJson<GeneratedNoteDetail>(`/api/notes/${id}`); },
+  graphLayout(id: string) {
+    return materialApiJson<KnowledgeGraphLayout>(`/api/notes/${id}/knowledge-graph-layout`);
+  },
+  saveGraphLayout(id: string, request: SaveKnowledgeGraphLayoutRequest) {
+    return materialApiJson<KnowledgeGraphLayout>(`/api/notes/${id}/knowledge-graph-layout`, {
+      ...json(request), method: "PUT",
+    });
+  },
   askKnowledgeNode(noteId: string, nodeId: string, request: CreateKnowledgeNodeQuestionRequest) {
     return materialApiJson<KnowledgeNodeQuestion>(
       `/api/notes/${noteId}/knowledge-nodes/${encodeURIComponent(nodeId)}/questions`,

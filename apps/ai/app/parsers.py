@@ -38,6 +38,31 @@ MAX_ZIP_UNCOMPRESSED = 400 * 1024 * 1024
 MAX_IMAGE_PIXELS = 40_000_000
 SUPPORTED = {"pdf", "docx", "pptx", "md", "markdown", "html", "htm", "txt", "json", "csv", "png", "jpg", "jpeg", "webp"}
 
+# Only LibreOffice child process handles are retained here; no file content or
+# credentials enter the registry. The FastAPI cancellation endpoint uses the
+# work-directory key to terminate the entire process group before purging it.
+ACTIVE_OFFICE_PROCESSES: dict[str, subprocess.Popen] = {}
+
+
+def cancel_workdir_processes(workdir: Path) -> None:
+    process = ACTIVE_OFFICE_PROCESSES.get(str(workdir.resolve()))
+    if process is None or process.poll() is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, 15)
+        else:
+            process.terminate()
+        process.wait(timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, 9)
+            else:
+                process.kill()
+        except OSError:
+            pass
+
 
 def _job_temp_limit() -> int:
     return int(os.getenv("MATERIAL_AI_JOB_TEMP_LIMIT_BYTES", str(1024 * 1024 * 1024)))
@@ -295,19 +320,26 @@ def _libreoffice_render(path: Path, workdir: Path) -> Path:
     ionice = shutil.which("ionice")
     if ionice:
         command = [ionice, "-c", "3", *command]
+    key = str(workdir.resolve())
     try:
-        result = subprocess.run(
+        process = subprocess.Popen(
             command,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
-            timeout=int(os.getenv("MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS", "120")),
-            check=False,
             preexec_fn=_limit_office_process if os.name == "posix" else None,
+            start_new_session=os.name == "posix",
+        )
+        ACTIVE_OFFICE_PROCESSES[key] = process
+        result_code = process.wait(
+            timeout=int(os.getenv("MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS", "120"))
         )
     except subprocess.TimeoutExpired as exc:
+        cancel_workdir_processes(workdir)
         raise PipelineError("OFFICE_RENDER_TIMEOUT", "Office rendering exceeded the time limit") from exc
+    finally:
+        ACTIVE_OFFICE_PROCESSES.pop(key, None)
     rendered = next(output.glob("*.pdf"), None)
-    if result.returncode != 0 or not rendered:
+    if result_code != 0 or not rendered:
         raise PipelineError("OFFICE_RENDER_FAILED", "The Office file could not be rendered")
     _enforce_temp_limit(workdir)
     return rendered

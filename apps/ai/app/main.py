@@ -14,14 +14,16 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 import httpx
-from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, status
+from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
 from .errors import PipelineError
 from .openrouter import OpenRouterClient, fake_enabled
+from .parsers import cancel_workdir_processes
 from .pipeline import grade_exam, process_exam, process_material_job
 from .schemas import (
+    CancelMaterialJobRequest,
     GradeExamRequest,
     GradingWorkerResult,
     ProcessExamRequest,
@@ -36,7 +38,8 @@ RESUME_TTL_SECONDS = int(os.getenv("MATERIAL_AI_RESUME_TTL_SECONDS", "86400"))
 JOB_TIMEOUT_SECONDS = max(60, int(os.getenv("MATERIAL_AI_JOB_TIMEOUT_SECONDS", "1200")))
 GRADING_TIMEOUT_SECONDS = max(30, int(os.getenv("MATERIAL_AI_GRADING_TIMEOUT_SECONDS", "240")))
 worker_slot = asyncio.Semaphore(1)
-active_jobs: set[tuple[str, str]] = set()
+active_jobs: dict[tuple[str, str], asyncio.Task[None]] = {}
+cancelled_jobs: dict[str, float] = {}
 JOB_ID = re.compile(
     r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-"
     r"[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$"
@@ -48,6 +51,8 @@ CHECKPOINT_RANK = {
     "document_ready": 3,
     "artifact_ready": 4,
     "answer_ready": 4,
+    "native_audited": 2,
+    "native_artifact_ready": 4,
 }
 
 
@@ -63,6 +68,10 @@ def _sweep_stale() -> int:
     # a shorter retention period.
     cutoff = time.time() - max(300, RESUME_TTL_SECONDS)
     active_names = {f"job-{job_id.lower()}" for job_id, _lease in tuple(active_jobs)}
+    now = time.time()
+    for job_id, expires_at in tuple(cancelled_jobs.items()):
+        if expires_at <= now:
+            cancelled_jobs.pop(job_id, None)
     removed = 0
     for child in TEMP_ROOT.iterdir():
         try:
@@ -91,6 +100,11 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         task.cancel()
+        running = list(active_jobs.values())
+        for running_task in running:
+            running_task.cancel()
+        if running:
+            await asyncio.gather(*running, return_exceptions=True)
         try:
             await task
         except asyncio.CancelledError:
@@ -237,7 +251,12 @@ async def _persist_usage(
     # is temporarily unavailable, the next lease replays this spool before it
     # makes another provider request. No prompt or material body is written.
     path = workdir / f"usage-{event.eventId}.json"
-    path.write_text(json.dumps(event.model_dump(), separators=(",", ":")), encoding="utf-8")
+    temporary = workdir / f".{path.name}.tmp"
+    temporary.write_text(
+        json.dumps(event.model_dump(), separators=(",", ":")), encoding="utf-8"
+    )
+    os.chmod(temporary, 0o600)
+    temporary.replace(path)
     try:
         await _post_callback(request, "usage", {"event": event.model_dump()})
     except PipelineError as error:
@@ -254,9 +273,15 @@ async def _flush_usage(request: ProcessMaterialJobRequest | GradeExamRequest, wo
     for path in sorted(workdir.glob("usage-*.json")):
         try:
             event = UsageEvent.model_validate_json(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            path.unlink(missing_ok=True)
-            continue
+        except (OSError, ValueError) as error:
+            # Never silently discard an immutable cost fact. Atomic writes make
+            # this exceptional; retaining the file keeps cleanup fail-closed
+            # for operator inspection instead of pretending it was persisted.
+            raise PipelineError(
+                "AI_USAGE_SPOOL_CORRUPT",
+                "Provider accounting could not be replayed safely",
+                503,
+            ) from error
         await _post_callback(request, "usage", {"event": event.model_dump()})
         path.unlink(missing_ok=True)
 
@@ -402,6 +427,13 @@ async def _run_material_job(request: ProcessMaterialJobRequest) -> None:
             await _flush_usage(request, workdir)
             await _post_callback(request, "complete", {"result": result}, timeout_seconds=60)
             callback_finished = True
+    except asyncio.CancelledError:
+        # The cancel endpoint owns the final purge. Keep the usage spool until
+        # it has acknowledged every already-incurred provider cost to the API.
+        # This also leaves a restart-safe 0700 directory when that callback is
+        # temporarily unavailable.
+        callback_finished = False
+        return
     except PipelineError as error:
         if error.code == "JOB_CANCELLED":
             callback_finished = True
@@ -440,7 +472,9 @@ async def _run_material_job(request: ProcessMaterialJobRequest) -> None:
         except PipelineError:
             pass
     finally:
-        active_jobs.discard((request.jobId, request.callbacks.leaseToken))
+        key = (request.jobId, request.callbacks.leaseToken)
+        if active_jobs.get(key) is asyncio.current_task():
+            active_jobs.pop(key, None)
         if callback_finished:
             shutil.rmtree(workdir, ignore_errors=True)
         elif workdir.exists():
@@ -450,17 +484,77 @@ async def _run_material_job(request: ProcessMaterialJobRequest) -> None:
 @app.post("/internal/materials/jobs", status_code=status.HTTP_202_ACCEPTED)
 async def material_job(
     request: ProcessMaterialJobRequest,
-    background_tasks: BackgroundTasks,
     x_ai_internal_token: str | None = Header(default=None),
 ):
     _internal_token(x_ai_internal_token)
     _resource_gate()
     active_key = (request.jobId, request.callbacks.leaseToken)
     replayed = active_key in active_jobs
+    if request.jobId in cancelled_jobs:
+        return {"accepted": True, "replayed": True}
     if not replayed:
-        active_jobs.add(active_key)
-        background_tasks.add_task(_run_material_job, request)
+        active_jobs[active_key] = asyncio.create_task(
+            _run_material_job(request), name=f"material-ai-{request.jobId}"
+        )
     return {"accepted": True, "replayed": replayed}
+
+
+@app.post("/internal/materials/jobs/{job_id}/cancel", status_code=status.HTTP_202_ACCEPTED)
+async def cancel_material_job(
+    job_id: str,
+    body: CancelMaterialJobRequest,
+    x_ai_internal_token: str | None = Header(default=None),
+):
+    _internal_token(x_ai_internal_token)
+    workdir = _workdir(job_id)
+    requested_lease = body.leaseToken
+    cancelled_jobs[job_id] = time.time() + max(300, RESUME_TTL_SECONDS)
+    matches = [
+        task for (active_id, lease), task in tuple(active_jobs.items())
+        if active_id == job_id and (not requested_lease or lease == requested_lease)
+    ]
+    for task in matches:
+        task.cancel()
+    await asyncio.to_thread(cancel_workdir_processes, workdir)
+    if matches:
+        await asyncio.gather(*matches, return_exceptions=True)
+    # A provider response may have arrived just before cancellation. Usage is
+    # spooled before its callback, so flush those immutable accounting facts
+    # while the deleting job and matching lease still exist. If the API is
+    # unreachable, do not claim purge success or discard the spool; the
+    # durable cleanup reconciler will retry this endpoint.
+    usage_paths = sorted(workdir.glob("usage-*.json")) if workdir.exists() else []
+    if usage_paths:
+        if not requested_lease:
+            return {"accepted": True, "purged": False}
+        try:
+            async with httpx.AsyncClient(timeout=30) as client:
+                for path in usage_paths:
+                    try:
+                        event = UsageEvent.model_validate_json(path.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        return {"accepted": True, "purged": False}
+                    response = await client.post(
+                        f"{str(body.callbackBaseUrl).rstrip('/')}/usage",
+                        headers={"X-AI-Internal-Token": body.callbackToken},
+                        json={"leaseToken": requested_lease, "event": event.model_dump()},
+                    )
+                    if not response.is_success:
+                        try:
+                            error_body = response.json()
+                            if isinstance(error_body.get("message"), dict):
+                                error_body = error_body["message"]
+                        except (ValueError, AttributeError):
+                            error_body = {}
+                        # The API raises this only after the event is stored and
+                        # the cost circuit is closed, so the spool is safe to ack.
+                        if not isinstance(error_body, dict) or error_body.get("code") != "AI_COST_LIMIT_EXCEEDED":
+                            return {"accepted": True, "purged": False}
+                    path.unlink(missing_ok=True)
+        except (httpx.HTTPError, OSError):
+            return {"accepted": True, "purged": False}
+    await asyncio.to_thread(shutil.rmtree, workdir, True)
+    return {"accepted": True, "purged": not workdir.exists()}
 
 
 @app.post("/internal/exams/grade")
@@ -535,6 +629,13 @@ async def _run_exam_grading(request: GradeExamRequest) -> None:
             await _flush_usage(request, workdir)
             await _post_callback(request, "complete", {"result": result}, timeout_seconds=60)
             callback_finished = True
+    except asyncio.CancelledError:
+        # Application shutdown can interrupt grading after the provider has
+        # returned but before usage/completion callbacks are acknowledged.
+        # Preserve the atomic usage spool and validated grading result so the
+        # next lease can replay them without paying to grade twice.
+        callback_finished = False
+        return
     except PipelineError as error:
         if error.code == "JOB_CANCELLED":
             callback_finished = True
@@ -551,7 +652,7 @@ async def _run_exam_grading(request: GradeExamRequest) -> None:
                 if callback_error.code in {"JOB_CANCELLED", "AI_COST_LIMIT_EXCEEDED"}:
                     callback_finished = True
     except Exception:
-        # BackgroundTasks does not have an HTTP caller left to receive an
+        # The caller already received 202, so persist a stable terminal result
         # unhandled exception. Persist a stable terminal result so the lease
         # cannot spin forever on an unexpected parser/serialization defect.
         try:
@@ -565,7 +666,9 @@ async def _run_exam_grading(request: GradeExamRequest) -> None:
         except PipelineError:
             pass
     finally:
-        active_jobs.discard((request.attemptId, request.callbacks.leaseToken))
+        key = (request.attemptId, request.callbacks.leaseToken)
+        if active_jobs.get(key) is asyncio.current_task():
+            active_jobs.pop(key, None)
         if callback_finished:
             shutil.rmtree(workdir, ignore_errors=True)
         elif workdir.exists():
@@ -575,7 +678,6 @@ async def _run_exam_grading(request: GradeExamRequest) -> None:
 @app.post("/internal/exams/jobs", status_code=status.HTTP_202_ACCEPTED)
 async def exam_grading_job(
     request: GradeExamRequest,
-    background_tasks: BackgroundTasks,
     x_ai_internal_token: str | None = Header(default=None),
 ):
     _internal_token(x_ai_internal_token)
@@ -588,6 +690,7 @@ async def exam_grading_job(
     active_key = (request.attemptId, request.callbacks.leaseToken)
     replayed = active_key in active_jobs
     if not replayed:
-        active_jobs.add(active_key)
-        background_tasks.add_task(_run_exam_grading, request)
+        active_jobs[active_key] = asyncio.create_task(
+            _run_exam_grading(request), name=f"exam-grading-{request.attemptId}"
+        )
     return {"accepted": True, "replayed": replayed}

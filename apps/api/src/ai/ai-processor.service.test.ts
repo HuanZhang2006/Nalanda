@@ -33,10 +33,14 @@ function harness() {
     recordGradingUsage: vi.fn().mockResolvedValue(undefined),
     checkpointGrading: vi.fn().mockResolvedValue(undefined),
     submitAttempt: vi.fn().mockResolvedValue({ status: "completed" }), updateJob: vi.fn(),
+    generationCleanupState: vi.fn().mockResolvedValue({ status: "deleting", lease_token: "lease-1" }),
+    finalizeCleanup: vi.fn().mockResolvedValue({ status: "deleted" }),
+    recordCleanupFailure: vi.fn().mockResolvedValue(undefined),
   };
   const worker = {
     dispatchGeneration: vi.fn().mockResolvedValue({ accepted: true, replayed: false }),
     dispatchGrading: vi.fn().mockResolvedValue({ accepted: true, replayed: false }),
+    cancelGeneration: vi.fn().mockResolvedValue({ accepted: true, purged: true }),
   };
   return { repository, worker, service: new AiProcessorService(repository as any, worker as unknown as AiInternalClientService) };
 }
@@ -149,5 +153,18 @@ describe("Materials AI durable processor", () => {
     first.repository.attemptProviderCostMicroUsd.mockResolvedValue(50_001);
     await expect(first.service.gradingUsage("attempt-1", "lease-1", event)).rejects.toMatchObject({ status: 503 });
     expect(first.repository.failGrading).toHaveBeenCalledWith("attempt-1", "lease-1", []);
+  });
+
+  it("keeps a deleting row until the worker confirms usage and temporary-file purge", async () => {
+    const first = harness();
+    first.worker.cancelGeneration.mockResolvedValueOnce({ accepted: true, purged: false });
+    await expect(first.service.cleanup("job-1")).rejects.toMatchObject({ code: "AI_WORKER_CLEANUP_PENDING" });
+    expect(first.repository.finalizeCleanup).not.toHaveBeenCalled();
+    expect(first.repository.recordCleanupFailure).toHaveBeenCalled();
+
+    const second = harness();
+    await expect(second.service.cleanup("job-1")).resolves.toBeUndefined();
+    expect(second.worker.cancelGeneration).toHaveBeenCalledWith("job-1", "lease-1");
+    expect(second.repository.finalizeCleanup).toHaveBeenCalledWith("job-1");
   });
 });

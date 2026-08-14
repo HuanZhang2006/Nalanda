@@ -9,12 +9,15 @@ import {
 } from "@nestjs/common";
 import type {
   AiGenerationJob,
+  AiPipeline,
   AiQuotaSummary,
   ExamAnswerInput,
   GeneratedExamAttempt,
   GeneratedExamV1,
   GeneratedKnowledgeGraphV1,
   KnowledgeNodeQuestion,
+  KnowledgeGraphLayout,
+  SaveKnowledgeGraphLayoutRequest,
   GeneratedNoteDetail,
   GeneratedNoteSummary,
 } from "@nalanda/types";
@@ -43,6 +46,9 @@ export class AiRepository {
         throw new HttpException({ code: message.includes("GRADING") ? "AI_GRADING_DAILY_LIMIT" : "AI_GENERATION_DAILY_LIMIT", message: "Daily free AI allowance has been used" }, 429);
       }
       if (/AI_JOB_ACTIVE/.test(message)) throw new ConflictException({ code: "AI_JOB_ACTIVE", message: "Finish or cancel the active AI job first" });
+      if (code === "23505" && /generation_jobs_one_active_per_user_idx/.test(message)) {
+        throw new ConflictException({ code: "AI_JOB_ACTIVE", message: "Wait for the active AI job to finish cleaning up" });
+      }
       if (/AI_JOB_NOT_RESUMABLE|AI_RESUME_EXPIRED|AI_WORKER_RETRY_EXHAUSTED/.test(message)) {
         const stableCode = message.match(/AI_(?:JOB_NOT_RESUMABLE|RESUME_EXPIRED|WORKER_RETRY_EXHAUSTED)/)?.[0] || "AI_JOB_NOT_RESUMABLE";
         throw new ConflictException({
@@ -53,6 +59,10 @@ export class AiRepository {
         });
       }
       if (/IDEMPOTENCY_CONFLICT/.test(message)) throw new ConflictException({ code: "IDEMPOTENCY_CONFLICT", message: "The idempotency key was already used for another request" });
+      if (/GRAPH_LAYOUT_REVISION_CONFLICT|GRAPH_ARTIFACT_CHANGED/.test(message)) {
+        const stableCode = message.includes("ARTIFACT_CHANGED") ? "GRAPH_ARTIFACT_CHANGED" : "GRAPH_LAYOUT_REVISION_CONFLICT";
+        throw new ConflictException({ code: stableCode, message: "The graph layout changed elsewhere; reload and merge before saving" });
+      }
       if (/REVISION_CONFLICT/.test(message)) throw new ConflictException({ code: "EXAM_REVISION_CONFLICT", message: "This exam was updated elsewhere; refresh before continuing" });
       if (/NOT_FOUND/.test(message) || code === "P0002") throw new NotFoundException({ code: message.match(/[A-Z][A-Z_]+/)?.[0] || "NOT_FOUND", message: "The requested item was not found" });
       if (/CONSENT_REQUIRED/.test(message)) throw new BadRequestException({ code: "AI_PROCESSING_CONSENT_REQUIRED", message: "AI processing consent is required" });
@@ -71,6 +81,8 @@ export class AiRepository {
       materialName: row.material_name,
       courseId: row.course_id ?? null,
       kind: row.kind,
+      pipeline: (row.pipeline || "document_ir_v1") as AiPipeline,
+      model: row.generation_model || "deepseek/deepseek-v4-flash-0731",
       status: row.status,
       stage: row.stage,
       progress: Number(row.progress),
@@ -93,7 +105,7 @@ export class AiRepository {
   }
 
   async createJob(userId: string, materialId: string, idempotencyKey: string, fingerprint: string,
-    kind: "exam" | "knowledge_graph", settings: unknown, consentVersion: number) {
+    kind: "exam" | "knowledge_graph", settings: unknown, consentVersion: number, pipeline: AiPipeline) {
     const rows = await this.call(() => this.db.rpc<DbRow[]>("ai_create_generation_job", {
       p_user_id: userId,
       p_material_id: materialId,
@@ -102,6 +114,7 @@ export class AiRepository {
       p_kind: kind,
       p_settings: settings,
       p_consent_version: consentVersion,
+      p_pipeline: pipeline,
     }));
     if (!rows[0]) throw new ServiceUnavailableException({ code: "AI_JOB_CREATE_FAILED", message: "AI job could not be created" });
     return rows[0];
@@ -137,6 +150,37 @@ export class AiRepository {
     return rows[0];
   }
 
+  async deleteJob(userId: string, id: string) {
+    const rows = await this.call(() => this.db.rpc<DbRow[]>("ai_delete_generation_job", {
+      p_user_id: userId, p_job_id: id,
+    }));
+    if (!rows[0]) throw new NotFoundException({ code: "AI_JOB_NOT_FOUND", message: "AI job not found" });
+    return rows[0];
+  }
+
+  async clearJobHistory(userId: string) {
+    return this.call(() => this.db.rpc<DbRow[]>("ai_clear_generation_history", { p_user_id: userId }));
+  }
+
+  async deletingGenerationJobs() {
+    const rows = await this.db.select<DbRow>("generation_jobs", query({
+      select: "id", status: "eq.deleting", order: "deletion_requested_at.asc", limit: "100",
+    }));
+    return rows.map((row) => String(row.id));
+  }
+
+  recordCleanupFailure(id: string, message: string) {
+    return this.db.rpc<void>("ai_record_generation_cleanup_failure", {
+      p_job_id: id, p_error_message: message,
+    });
+  }
+
+  finalizeCleanup(id: string) {
+    return this.db.rpc<{ status: "deleted" | "cancelled" }>("ai_finalize_generation_job_cleanup", {
+      p_job_id: id,
+    });
+  }
+
   async dispatchableGenerationJobs() {
     const now = new Date().toISOString();
     const [queued, expired] = await Promise.all([
@@ -149,6 +193,13 @@ export class AiRepository {
   async generationExecutionState(id: string) {
     const rows = await this.db.select<DbRow>("generation_jobs", query({
       select: "status,lease_expires_at", id: `eq.${id}`, limit: "1",
+    }));
+    return rows[0] || null;
+  }
+
+  async generationCleanupState(id: string) {
+    const rows = await this.db.select<DbRow>("generation_jobs", query({
+      select: "id,status,lease_token,delete_after_cleanup,deletion_quota_consumed", id: `eq.${id}`, limit: "1",
     }));
     return rows[0] || null;
   }
@@ -224,13 +275,13 @@ export class AiRepository {
   }
 
   recordJobUsage(id: string, leaseToken: string, event: unknown) {
-    return this.db.rpc<void>("ai_record_generation_usage", {
+    return this.db.rpc<void>("ai_record_generation_usage_v2", {
       p_job_id: id, p_lease_token: leaseToken, p_event: event,
     });
   }
 
   checkpointJob(id: string, leaseToken: string, stage: string, payload: unknown, ttlSeconds: number) {
-    return this.db.rpc<void>("ai_checkpoint_generation_job", {
+    return this.db.rpc<void>("ai_checkpoint_generation_job_v2", {
       p_job_id: id, p_lease_token: leaseToken, p_stage: stage,
       p_payload: payload, p_ttl_seconds: ttlSeconds,
     });
@@ -249,6 +300,14 @@ export class AiRepository {
     return rows[0] || null;
   }
 
+  async materialById(userId: string, materialId: string) {
+    const rows = await this.db.select<DbRow>("materials", query({
+      select: "id,user_id,course_id,name,type,size_bytes,storage_path",
+      id: `eq.${materialId}`, user_id: `eq.${userId}`, limit: "1",
+    }));
+    return rows[0] || null;
+  }
+
   async cachedDocument(materialId: string) {
     const rows = await this.db.select<DbRow>("ai_material_parse_cache", query({
       select: "source_sha256,parser_version,audit_version,vision_model,canonical_document,block_count,visual_region_count",
@@ -262,14 +321,15 @@ export class AiRepository {
   completeMaterialJob(jobId: string, leaseToken: string, result: DbRow) {
     const artifact = result.exam || result.graph;
     const schemaVersion = result.exam ? "generated-exam.v1" : "generated-knowledge-graph.v1";
-    return this.db.rpc<string>("ai_complete_material_generation_job", {
+    return this.db.rpc<string>("ai_complete_material_generation_job_v2", {
       p_job_id: jobId,
       p_lease_token: leaseToken,
       p_source_sha256: result.sourceSha256,
       p_parser_version: result.parserVersion,
       p_audit_version: result.auditVersion,
       p_prompt_version: result.promptVersion,
-      p_canonical_document: result.document,
+      p_source_mode: result.sourceMode || "document_ir",
+      p_canonical_document: result.document ?? null,
       p_block_count: result.blockCount,
       p_visual_region_count: result.visualRegionCount,
       p_title: artifact.title,
@@ -281,14 +341,14 @@ export class AiRepository {
   }
 
   completeKnowledgeQuestion(jobId: string, leaseToken: string, answer: unknown) {
-    return this.db.rpc<void>("ai_complete_knowledge_question_job", {
+    return this.db.rpc<void>("ai_complete_knowledge_question_job_v2", {
       p_job_id: jobId, p_lease_token: leaseToken, p_answer: answer,
     });
   }
 
   failJob(jobId: string, leaseToken: string | null, code: string, message: string,
     retryable = false, resumeSeconds = 86_400) {
-    return this.db.rpc<void>("ai_fail_generation_job_v2", {
+    return this.db.rpc<void>("ai_fail_generation_job_v3", {
       p_job_id: jobId, p_lease_token: leaseToken, p_error_code: code,
       p_error_message: message, p_retryable: retryable, p_resume_seconds: resumeSeconds,
     });
@@ -340,6 +400,8 @@ export class AiRepository {
       courseCode: course?.code || null,
       title: note.title,
       kind: note.kind,
+      pipeline: (note.pipeline || "document_ir_v1") as AiPipeline,
+      model: note.generation_model || "deepseek/deepseek-v4-flash-0731",
       materialName: note.material_name,
       sourceDeleted: !source?.material_id,
       questionCount: Number(artifact?.question_count || 0),
@@ -391,6 +453,7 @@ export class AiRepository {
     return {
       id: row.id, noteId: row.note_id, nodeId: row.node_id, question: row.question,
       status: job.status, answer: row.answer ?? null,
+      pipeline: (job.pipeline || "document_ir_v1") as AiPipeline,
       errorCode: job.error_code ?? null, errorMessage: job.error_message ?? null,
       createdAt: row.created_at, answeredAt: row.answered_at ?? null,
     };
@@ -428,6 +491,22 @@ export class AiRepository {
   }
 
   deleteStorage(paths: string[]) { return this.db.storageDelete("materials", paths); }
+
+  getKnowledgeGraphLayout(userId: string, noteId: string): Promise<KnowledgeGraphLayout> {
+    return this.call(() => this.db.rpc<KnowledgeGraphLayout>("ai_get_knowledge_graph_layout", {
+      p_user_id: userId, p_note_id: noteId,
+    }));
+  }
+
+  saveKnowledgeGraphLayout(userId: string, noteId: string, value: SaveKnowledgeGraphLayoutRequest): Promise<KnowledgeGraphLayout> {
+    return this.call(() => this.db.rpc<KnowledgeGraphLayout>("ai_save_knowledge_graph_layout", {
+      p_user_id: userId, p_note_id: noteId,
+      p_artifact_version: value.artifactVersion,
+      p_expected_revision: value.expectedRevision,
+      p_positions: value.positions,
+      p_viewport: value.viewport,
+    }));
+  }
 
   async createAttempt(userId: string, noteId: string) {
     const rows = await this.call(() => this.db.rpc<DbRow[]>("ai_create_exam_attempt", { p_user_id: userId, p_note_id: noteId }));
@@ -487,7 +566,7 @@ export class AiRepository {
       totalScore: attempt.total_score == null ? null : Number(attempt.total_score),
       totalMarks: Number(attempt.total_marks),
       answers: answers.map((row) => ({ questionId: row.question_id, value: row.answer })),
-      results: answers.map((row) => ({
+      results: attempt.status === "in_progress" ? [] : answers.map((row) => ({
         questionId: row.question_id,
         awardedMarks: row.awarded_marks == null ? null : Number(row.awarded_marks),
         correct: row.correct ?? null,
@@ -511,7 +590,7 @@ export class AiRepository {
   }
 
   recordGradingUsage(attemptId: string, leaseToken: string, event: unknown) {
-    return this.db.rpc<void>("ai_record_grading_usage", {
+    return this.db.rpc<void>("ai_record_grading_usage_v2", {
       p_attempt_id: attemptId, p_lease_token: leaseToken, p_event: event,
     });
   }
@@ -524,7 +603,7 @@ export class AiRepository {
   }
 
   completeGrading(attemptId: string, leaseToken: string, subjectiveScore: number, results: unknown[], usageEvents: unknown[]) {
-    return this.db.rpc<void>("ai_complete_exam_grading", {
+    return this.db.rpc<void>("ai_complete_exam_grading_v2", {
       p_attempt_id: attemptId, p_lease_token: leaseToken, p_subjective_score: subjectiveScore,
       p_results: results, p_usage_events: usageEvents,
     });

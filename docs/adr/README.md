@@ -3,7 +3,7 @@
 > **本文内容：**列出 Nalanda 的架构决策记录、状态、编号约定和维护流程。  
 > **作用：**保存“为什么这样选”的上下文，使后续开发能区分已接受决策、待验证提案与已被替代方案。  
 > **何时更新：**新增、接受、否决、废弃或替代 ADR 时；ADR 状态或所有者变化时。  
-> **状态基线：**2026-08-11；ADR 记录决策，不证明目标能力已经在生产启用，生产状态需同时核对发布证据。
+> **状态基线：**2026-08-14；ADR 记录决策，不证明目标能力已经在生产启用，生产状态需同时核对发布证据。
 
 ## 决策索引
 
@@ -22,6 +22,7 @@
 | [0011](0011-private-redis-and-points-abuse-boundary.md) | 私有 Redis 请求保护 + 不可变 Points 决策/审核边界 | Accepted | 0039–0040 Stage A 已上线并进入 24 小时观察；最终撤权顺延为未来 0044–0045 |
 | [0012](0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) | Materials AI durable queue + OpenRouter ZDR + 2G Office 渲染 | Accepted | 0041–0043 已于 2026-08-11 受保护发布 |
 | [0013](0013-materials-ai-async-callback-resume-and-knowledge-graph.md) | Materials AI 异步回调、双层断点与知识图谱 | Accepted | 0046–0048 候选，尚未部署 |
+| [0014](0014-materials-ai-luna-native-lifecycle-and-graph-layout.md) | Luna 原文件、任务清理、可保存图布局与整卷批改 | Accepted | 0049–0051 候选，尚未部署 |
 
 ## 状态定义
 
