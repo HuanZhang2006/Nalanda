@@ -78,8 +78,15 @@ jobs:
 
       - name: Install Materials AI native test dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends libreoffice-writer libreoffice-impress fonts-dejavu-core fonts-noto-cjk util-linux
+          apt_network=(
+            -o Acquire::Retries=4
+            -o Acquire::http::Timeout=30
+            -o Acquire::https::Timeout=30
+          )
+          sudo timeout --signal=TERM 600s apt-get "${apt_network[@]}" update
+          sudo timeout --signal=TERM 600s apt-get "${apt_network[@]}" -o DPkg::Lock::Timeout=60 \
+            install -y --no-install-recommends \
+            libreoffice-writer libreoffice-impress fonts-dejavu-core fonts-noto-cjk util-linux
 
       - name: Detect and protect migration changes
         id: migration_changes
