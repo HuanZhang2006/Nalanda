@@ -379,7 +379,9 @@ function pipelineSelector(capabilityResponse) {
     <div class="grid g-2">${capabilities.map((item) => {
       const copy = labels[item.pipeline] || [item.pipeline, item.model];
       const reason = item.reasonCode === "AI_LUNA_DISABLED" ? "Luna is not enabled yet."
-        : item.reasonCode === "AI_LUNA_FORMAT_NOT_VERIFIED" ? "This file format has not passed the native-file gate." : "";
+        : item.reasonCode === "OPENROUTER_ZDR_UNAVAILABLE"
+          ? "No OpenAI Zero Data Retention endpoint is currently available. Document IR remains available."
+          : item.reasonCode === "AI_LUNA_FORMAT_NOT_VERIFIED" ? "This file format has not passed the native-file gate." : "";
       return `<label class="card card-pad row gap-10" style="padding:12px;align-items:flex-start;${item.available ? "cursor:pointer" : "opacity:.55"}">
         <input type="radio" name="ai-pipeline" value="${esc(item.pipeline)}" ${item.pipeline === selected ? "checked" : ""} ${item.available ? "" : "disabled"} style="margin-top:3px">
         <span><b style="font-size:13px">${esc(copy[0])}</b><span class="muted" style="display:block;font-size:11.5px;line-height:1.45;margin-top:3px">${esc(copy[1])}${reason ? ` ${esc(reason)}` : ""}</span></span>

@@ -43,6 +43,12 @@ export class AiService {
     return new Set(configured.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
   }
 
+  private nativeDisabledReason() {
+    return process.env.MATERIAL_AI_LUNA_DISABLED_REASON_CODE === "OPENROUTER_ZDR_UNAVAILABLE"
+      ? "OPENROUTER_ZDR_UNAVAILABLE"
+      : "AI_LUNA_DISABLED";
+  }
+
   private capabilityRows(material: Record<string, any>) {
     const ext = extension(String(material.name || ""));
     const nativeEnabled = this.flags.materialAiLunaEnabled();
@@ -54,7 +60,11 @@ export class AiService {
         default: nativeAvailable,
         model: LUNA_MODEL,
         provider: "OpenAI",
-        reasonCode: nativeAvailable ? null : nativeEnabled ? "AI_LUNA_FORMAT_NOT_VERIFIED" : "AI_LUNA_DISABLED",
+        reasonCode: nativeAvailable
+          ? null
+          : nativeEnabled
+            ? "AI_LUNA_FORMAT_NOT_VERIFIED"
+            : this.nativeDisabledReason(),
       },
       {
         pipeline: "document_ir_v1" as const,
@@ -100,7 +110,9 @@ export class AiService {
       throw new BadRequestException({
         code: selected?.reasonCode || "AI_PIPELINE_UNAVAILABLE",
         message: request.pipeline === "luna_native_file_v1"
-          ? "Luna native-file processing is not available for this format"
+          ? selected?.reasonCode === "OPENROUTER_ZDR_UNAVAILABLE"
+            ? "No compliant OpenAI Zero Data Retention endpoint is currently available"
+            : "Luna native-file processing is not available for this format"
           : "The selected AI pipeline is unavailable",
       });
     }

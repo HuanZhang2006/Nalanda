@@ -4,13 +4,18 @@ import { randomBytes, randomUUID } from "node:crypto";
 const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const apiOrigin = String(process.env.SMOKE_API_ORIGIN || "http://127.0.0.1:8411/api").replace(/\/$/, "");
+const expectLunaEnabled = String(process.env.MATERIAL_AI_EXPECT_LUNA_ENABLED || "true") === "true";
 const users = [];
 const storagePaths = [];
 
 assert.match(supabaseUrl, /^https:\/\/[a-z0-9-]+\.supabase\.co$/, "SUPABASE_URL is invalid");
 assert.ok(serviceKey, "SUPABASE_SERVICE_ROLE_KEY is required");
 assert.equal(process.env.FEATURE_MATERIAL_AI, "true", "Materials AI must be enabled for the public smoke");
-assert.equal(process.env.FEATURE_MATERIAL_AI_LUNA, "true", "Luna native-file processing must be enabled for the public smoke");
+assert.equal(
+  process.env.FEATURE_MATERIAL_AI_LUNA,
+  String(expectLunaEnabled),
+  "Luna native-file processing did not match the protected provider gate",
+);
 assert.notEqual(process.env.MATERIAL_AI_FAKE_PROVIDER, "true", "production smoke refuses the fake provider");
 
 const adminHeaders = {
@@ -168,7 +173,7 @@ async function waitForKnowledgeQuestion(user, questionId) {
   throw new Error("knowledge question did not finish before the protected smoke deadline");
 }
 
-async function providerFacts(jobIds, attemptId, lunaJobIds) {
+async function providerFacts(jobIds, attemptId, lunaJobIds, lunaAttempt) {
   const generationQuery = new URLSearchParams({
     select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status,pipeline,upstream_provider,upstream_endpoint",
     job_id: `in.(${jobIds.join(",")})`,
@@ -189,16 +194,18 @@ async function providerFacts(jobIds, attemptId, lunaJobIds) {
   assert.ok(succeeded((row) => row.job_id === jobIds[0] && row.purpose === "exam_generation"));
   assert.ok(succeeded((row) => row.job_id === jobIds[1] && row.purpose === "knowledge_graph_generation"));
   assert.ok(succeeded((row) => row.job_id === jobIds[2] && row.purpose === "knowledge_node_question"));
-  assert.ok(succeeded((row) => row.job_id === jobIds[3] && row.purpose === "knowledge_graph_generation"));
-  assert.ok(succeeded((row) => row.job_id === jobIds[4] && row.purpose === "knowledge_node_question"));
+  if (jobIds.length === 5) {
+    assert.ok(succeeded((row) => row.job_id === jobIds[3] && row.purpose === "knowledge_graph_generation"));
+    assert.ok(succeeded((row) => row.job_id === jobIds[4] && row.purpose === "knowledge_node_question"));
+  }
   assert.ok(succeeded((row) => row.attempt_id === attemptId && row.purpose === "exam_grading"));
   assert.ok(rows.every((row) => row.zdr_enforced === true));
   assert.ok(rows.every((row) => row.status === "succeeded" || row.status === "failed"));
   const succeededRows = rows.filter((row) => row.status === "succeeded");
   assert.ok(succeededRows.every((row) => typeof row.provider_request_id === "string" && row.provider_request_id));
   assert.ok(succeededRows.every((row) => Number.isSafeInteger(row.total_tokens) && Number.isSafeInteger(row.cost_micro_usd)));
-  const lunaRows = rows.filter((row) => lunaJobIds.includes(row.job_id) || row.attempt_id === attemptId);
-  assert.ok(lunaRows.length > 0);
+  const lunaRows = rows.filter((row) => lunaJobIds.includes(row.job_id) || (lunaAttempt && row.attempt_id === attemptId));
+  assert.equal(lunaRows.length > 0, expectLunaEnabled);
   assert.ok(lunaRows.every((row) => row.pipeline === "luna_native_file_v1"));
   assert.ok(lunaRows.every((row) => row.model === "openai/gpt-5.6-luna"));
   const succeededLunaRows = lunaRows.filter((row) => row.status === "succeeded");
@@ -234,11 +241,17 @@ try {
   const capabilities = await request("native-file capabilities", `${apiOrigin}/materials/${nativeMaterial.id}/ai-capabilities`, {
     headers: authHeaders(user.token),
   });
-  assert.ok(capabilities.capabilities.some((entry) => entry.pipeline === "luna_native_file_v1" && entry.available && entry.default));
-  const created = await request("public native generation creation", `${apiOrigin}/materials/${nativeMaterial.id}/ai-jobs`, {
+  const lunaCapability = capabilities.capabilities.find((entry) => entry.pipeline === "luna_native_file_v1");
+  assert.ok(lunaCapability);
+  assert.equal(lunaCapability.available, expectLunaEnabled);
+  assert.equal(lunaCapability.default, expectLunaEnabled);
+  if (!expectLunaEnabled) assert.equal(lunaCapability.reasonCode, "OPENROUTER_ZDR_UNAVAILABLE");
+  const examMaterial = expectLunaEnabled ? nativeMaterial : source.material;
+  const examPipeline = expectLunaEnabled ? "luna_native_file_v1" : "document_ir_v1";
+  const created = await request("public exam generation creation", `${apiOrigin}/materials/${examMaterial.id}/ai-jobs`, {
     method: "POST", headers: authHeaders(user.token),
     body: JSON.stringify({
-      idempotencyKey: randomUUID(), kind: "exam", pipeline: "luna_native_file_v1", consentVersion: 1,
+      idempotencyKey: randomUUID(), kind: "exam", pipeline: examPipeline, consentVersion: 1,
       settings: {
         language: "en", difficulty: "mixed", durationMinutes: 30, totalMarks: 20,
         questionCounts: { singleChoice: 4, multipleChoice: 0, trueFalse: 0, fillBlank: 0, shortAnswer: 1, essay: 0 },
@@ -248,11 +261,11 @@ try {
   });
   const finished = await waitForJob(user, created.id);
   assert.ok(finished.noteId);
-  assert.equal(finished.pipeline, "luna_native_file_v1");
-  assert.equal(finished.model, "openai/gpt-5.6-luna");
+  assert.equal(finished.pipeline, examPipeline);
+  assert.equal(finished.model, expectLunaEnabled ? "openai/gpt-5.6-luna" : "deepseek/deepseek-v4-flash-0731");
   const note = await request("generated note", `${apiOrigin}/notes/${finished.noteId}`, { headers: authHeaders(user.token) });
   assert.equal(note.courseId, source.course.id);
-  assert.equal(note.pipeline, "luna_native_file_v1");
+  assert.equal(note.pipeline, examPipeline);
   assert.equal(note.exam.sections.flatMap((section) => section.questions).length, 5);
 
   let attempt = await request("timed attempt creation", `${apiOrigin}/notes/${note.id}/exam-attempts`, {
@@ -294,6 +307,18 @@ try {
   assert.ok(graphNote.graph.nodes.length > 0);
   assert.ok(graphNote.graph.nodes.every((node, index, nodes) => index === 0 || node.sourceOrder >= nodes[index - 1].sourceOrder));
   assert.ok(graphNote.graph.nodes.every((node) => node.explanation && node.sourceRefs.length));
+  const layout = await request("knowledge graph layout", `${apiOrigin}/notes/${graphNote.id}/knowledge-graph-layout`, {
+    headers: authHeaders(user.token),
+  });
+  const savedLayout = await request("knowledge graph layout save", `${apiOrigin}/notes/${graphNote.id}/knowledge-graph-layout`, {
+    method: "PUT", headers: authHeaders(user.token),
+    body: JSON.stringify({
+      artifactVersion: layout.artifactVersion, expectedRevision: layout.revision,
+      positions: [{ nodeId: graphNote.graph.nodes[0].id, x: 24, y: 48 }],
+      viewport: { x: 3, y: 5, zoom: 1.2 },
+    }),
+  });
+  assert.equal(savedLayout.revision, 1);
   const selectedNode = graphNote.graph.nodes[0];
   const questionCreated = await request("grounded knowledge question creation", `${apiOrigin}/notes/${graphNote.id}/knowledge-nodes/${selectedNode.id}/questions`, {
     method: "POST", headers: authHeaders(user.token),
@@ -303,46 +328,45 @@ try {
   assert.ok(questionAnswered.answer?.answer);
   assert.ok(questionAnswered.answer.sourceRefs.every((ref) => selectedNode.sourceRefs.some((source) => source.blockId === ref.blockId)));
 
-  const nativeGraphCreated = await request("public native knowledge organization", `${apiOrigin}/materials/${nativeMaterial.id}/ai-jobs`, {
-    method: "POST", headers: authHeaders(user.token),
-    body: JSON.stringify({
-      idempotencyKey: randomUUID(), kind: "knowledge_graph", pipeline: "luna_native_file_v1", consentVersion: 1,
-      settings: { language: "en", detail: "comprehensive", focus: "" },
-    }),
-  });
-  const nativeGraphFinished = await waitForJob(user, nativeGraphCreated.id);
-  const nativeGraphNote = await request("native knowledge note", `${apiOrigin}/notes/${nativeGraphFinished.noteId}`, {
-    headers: authHeaders(user.token),
-  });
-  assert.equal(nativeGraphNote.pipeline, "luna_native_file_v1");
-  assert.equal(nativeGraphNote.model, "openai/gpt-5.6-luna");
-  assert.ok(nativeGraphNote.graph.nodes.length > 0);
-  const layout = await request("knowledge graph layout", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-graph-layout`, {
-    headers: authHeaders(user.token),
-  });
-  const savedLayout = await request("knowledge graph layout save", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-graph-layout`, {
-    method: "PUT", headers: authHeaders(user.token),
-    body: JSON.stringify({
-      artifactVersion: layout.artifactVersion, expectedRevision: layout.revision,
-      positions: [{ nodeId: nativeGraphNote.graph.nodes[0].id, x: 24, y: 48 }],
-      viewport: { x: 3, y: 5, zoom: 1.2 },
-    }),
-  });
-  assert.equal(savedLayout.revision, 1);
-  const nativeNode = nativeGraphNote.graph.nodes[0];
-  const nativeQuestionCreated = await request("native grounded question creation", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-nodes/${nativeNode.id}/questions`, {
-    method: "POST", headers: authHeaders(user.token),
-    body: JSON.stringify({ idempotencyKey: randomUUID(), question: "Explain this native-file point simply." }),
-  });
-  const nativeQuestionAnswered = await waitForKnowledgeQuestion(user, nativeQuestionCreated.id);
-  assert.equal(nativeQuestionAnswered.pipeline, "luna_native_file_v1");
-  assert.ok(nativeQuestionAnswered.answer?.answer);
+  let nativeGraphCreated = null;
+  let nativeGraphNote = null;
+  let nativeQuestionCreated = null;
+  if (expectLunaEnabled) {
+    nativeGraphCreated = await request("public native knowledge organization", `${apiOrigin}/materials/${nativeMaterial.id}/ai-jobs`, {
+      method: "POST", headers: authHeaders(user.token),
+      body: JSON.stringify({
+        idempotencyKey: randomUUID(), kind: "knowledge_graph", pipeline: "luna_native_file_v1", consentVersion: 1,
+        settings: { language: "en", detail: "comprehensive", focus: "" },
+      }),
+    });
+    const nativeGraphFinished = await waitForJob(user, nativeGraphCreated.id);
+    nativeGraphNote = await request("native knowledge note", `${apiOrigin}/notes/${nativeGraphFinished.noteId}`, {
+      headers: authHeaders(user.token),
+    });
+    assert.equal(nativeGraphNote.pipeline, "luna_native_file_v1");
+    assert.equal(nativeGraphNote.model, "openai/gpt-5.6-luna");
+    assert.ok(nativeGraphNote.graph.nodes.length > 0);
+    const nativeNode = nativeGraphNote.graph.nodes[0];
+    nativeQuestionCreated = await request("native grounded question creation", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-nodes/${nativeNode.id}/questions`, {
+      method: "POST", headers: authHeaders(user.token),
+      body: JSON.stringify({ idempotencyKey: randomUUID(), question: "Explain this native-file point simply." }),
+    });
+    const nativeQuestionAnswered = await waitForKnowledgeQuestion(user, nativeQuestionCreated.id);
+    assert.equal(nativeQuestionAnswered.pipeline, "luna_native_file_v1");
+    assert.ok(nativeQuestionAnswered.answer?.answer);
+  }
 
   const quota = await request("Free plan quota", `${apiOrigin}/profile/ai-quota`, { headers: authHeaders(user.token) });
+  const expectedGenerationUsage = expectLunaEnabled ? 5 : 3;
   assert.deepEqual({ plan: quota.plan, generation: quota.generation.consumed, grading: quota.grading.consumed },
-    { plan: "free", generation: 5, grading: 1 });
-  const trackedJobs = [created.id, graphCreated.id, questionCreated.id, nativeGraphCreated.id, nativeQuestionCreated.id];
-  const usageEvents = await providerFacts(trackedJobs, attempt.id, [created.id, nativeGraphCreated.id, nativeQuestionCreated.id]);
+    { plan: "free", generation: expectedGenerationUsage, grading: 1 });
+  const trackedJobs = [created.id, graphCreated.id, questionCreated.id];
+  const lunaJobIds = expectLunaEnabled ? [created.id] : [];
+  if (nativeGraphCreated && nativeQuestionCreated) {
+    trackedJobs.push(nativeGraphCreated.id, nativeQuestionCreated.id);
+    lunaJobIds.push(nativeGraphCreated.id, nativeQuestionCreated.id);
+  }
+  const usageEvents = await providerFacts(trackedJobs, attempt.id, lunaJobIds, expectLunaEnabled);
   const cleared = await request("terminal AI history cleanup", `${apiOrigin}/ai-jobs/clear-history`, {
     method: "POST", headers: authHeaders(user.token), body: "{}",
   });
@@ -358,17 +382,20 @@ try {
     headers: authHeaders(user.token),
   }, [404]);
   assert.equal(graphAfterDelete.code, "NOTE_NOT_FOUND");
-  const nativeGraphAfterDelete = await request("deleted native knowledge note verification", `${apiOrigin}/notes/${nativeGraphNote.id}`, {
-    headers: authHeaders(user.token),
-  }, [404]);
-  assert.equal(nativeGraphAfterDelete.code, "NOTE_NOT_FOUND");
+  if (nativeGraphNote) {
+    const nativeGraphAfterDelete = await request("deleted native knowledge note verification", `${apiOrigin}/notes/${nativeGraphNote.id}`, {
+      headers: authHeaders(user.token),
+    }, [404]);
+    assert.equal(nativeGraphAfterDelete.code, "NOTE_NOT_FOUND");
+  }
   storagePaths.length = 0;
   console.log(JSON.stringify({
     ok: true,
     generationJob: "succeeded",
     grading: "completed",
-    quota: { generation: 5, grading: 1 },
-    knowledgeGraph: { renderedNodes: graphNote.graph.nodes.length, nativeNodes: nativeGraphNote.graph.nodes.length, groundedQuestion: "succeeded" },
+    quota: { generation: expectedGenerationUsage, grading: 1 },
+    luna: { enabled: expectLunaEnabled, reasonCode: expectLunaEnabled ? null : "OPENROUTER_ZDR_UNAVAILABLE" },
+    knowledgeGraph: { renderedNodes: graphNote.graph.nodes.length, nativeNodes: nativeGraphNote?.graph.nodes.length || 0, groundedQuestion: "succeeded" },
     usageEvents,
     sourceAndResultsDeleted: true,
     deps: { supabase: coreHealth.deps.supabase, ai: aiHealth.deps.worker },

@@ -22,6 +22,8 @@ const messages: Record<string, [string, string]> = {
   OFFICE_RENDER_TIMEOUT: ["Office rendering timed out.", "Office 文件渲染超时。"],
   OFFICE_RENDER_FAILED: ["The Office file could not be rendered.", "Office 文件无法完成渲染。"],
   OPENROUTER_ZDR_UNAVAILABLE: ["No compliant Zero Data Retention endpoint is currently available.", "当前没有符合零数据保留要求的模型端点。"],
+  OPENROUTER_BAD_REQUEST: ["The AI provider rejected an unsupported request configuration.", "AI 供应商拒绝了不受支持的请求配置。"],
+  OPENROUTER_MODEL_UNAVAILABLE: ["The configured AI model is currently unavailable.", "配置的 AI 模型当前不可用。"],
   OPENROUTER_RATE_LIMIT: ["The AI provider is temporarily rate limited.", "AI 供应商暂时触发限流。"],
   OPENROUTER_UNREACHABLE: ["The AI provider did not respond.", "AI 供应商暂未响应。"],
   AI_BAD_JSON: ["The AI response did not match the required structure.", "AI 响应不符合要求的结构。"],

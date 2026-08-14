@@ -3,7 +3,7 @@
 > **本文内容：**定义 Nalanda 收集的数据、用途与访问边界，以及用户访问、导出、更正、删除请求、留存、备份和第三方 AI/支付数据处理流程。  
 > **作用：**为产品设计、数据库、客服、安全和运维提供可执行的隐私基线；也是对外隐私政策和数据处理协议的工程输入。  
 > **何时更新：**新增/改变数据字段、用途、第三方处理者、目标地区、AI/支付能力、留存期限、备份方式或用户权利流程时；发生隐私事件时。  
-> **状态基线：**2026-08-11。本文不是法律意见或已发布隐私政策；生产已到 0043，HMAC 化限流审计、points 审核/协同信号和 Materials AI 第一阶段已启用。Materials AI 只处理用户明确选择的 Materials 文件，使用私有解析缓存和 Notes，并在任务结束清理过程文件；逐账号同意、真实 ZDR/provider 和受保护发布门禁已经实现，但不替代正式第三方/跨境法律审查。STT 与既有 Speech 均不持久化用户 WAV，录音只在请求内存中转发并立即丢弃。
+> **状态基线：**2026-08-14。本文不是法律意见或已发布隐私政策；生产数据库已到 0051，但 0049–0051 应用候选因 OpenAI 无 ZDR endpoint 自动回退，不能把 Luna 标为启用。DocumentIR 的用户同意、私有解析缓存/Notes 与过程文件清理边界不变；STT 与既有 Speech 均不持久化用户 WAV，录音只在请求内存中转发并立即丢弃。
 
 ## 1. 原则与责任
 
@@ -136,7 +136,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。生产旧 Materials 路径把完整规范化 DocumentIR 发给 DeepSeek、仅失败范围图像发给 MiMo。0049–0051 候选 Luna 路径则把用户选择的完整原文件 inline 发给 OpenRouter 并强制实际 OpenAI upstream，不使用 Files API；这不因“省去解析”而减少第三方数据范围。两条路径都不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。ZDR/deny collection/strict routing 是技术控制，不替代留存、训练、子处理者、跨境、删除与用户告知的正式审查。
+当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。DocumentIR 路径把完整规范化 DocumentIR 发给 DeepSeek、仅失败范围图像发给 MiMo。Luna 路径若未来启用，会把用户选择的完整原文件 inline 发给 OpenRouter 并强制实际 OpenAI upstream，不使用 Files API；这不因“省去解析”而减少第三方数据范围。2026-08-14 catalog 只有 Azure/Azure EU ZDR endpoint，因此 first-party OpenAI-only Luna 保持关闭，文件不会通过该路径发送。两条路径都不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。ZDR/deny collection/strict routing 是技术控制，不替代留存、训练、子处理者、跨境、删除与用户告知的正式审查。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
 
