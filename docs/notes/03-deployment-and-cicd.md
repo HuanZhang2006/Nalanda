@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-23。生产数据库已到 0053，0052–0053 时间列 Stage B 已生效；不可变应用仍为此前稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733`。最新 main 两次被真实 Materials AI PPTX gate 拦截并自动回退，数据库 apply 不能冒充应用上线。
+> - **状态基线**：2026-08-23。生产数据库已到 0053，0052–0053 时间列 Stage B 已生效；不可变应用仍为此前稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733`，Materials AI/Luna flag 均保持关闭。最新 main 两次被真实 Materials AI PPTX 引用/语义门拦截并自动回退，数据库 apply 不能冒充应用上线。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -247,10 +247,12 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 
 ### 2026-08-22 · 0052–0053 安全 Stage B 数据库发布、应用 gate 回退
 
+- PR #71 的 main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) 首次真实 Materials suite 通过后被 Japan East Azure HTTP 401 阻断并回退；用户要求重试后的 attempt 2 通过 220 页资源 canary，随后固定 DOCX 初次语义复核失败、repair 后最终结构门返回 `SOURCE_REFERENCE`，同样未切流。
 - PR [#72](https://github.com/1590703336/Nalanda/pull/72) 以 main `1ef0bc8d333a9ff841176d91acb4c977c0e64bed` 为唯一基线，合并为 `4d1bc97888799417641fefdd507c026b274a2bab`；PR run [`32579985463`](https://github.com/1590703336/Nalanda/actions/runs/32579985463) 与 main run [`32580594918`](https://github.com/1590703336/Nalanda/actions/runs/32580594918) 通过 docs/lint/typecheck、API/Web/Python、真实 CI Redis、0007→0053、空库/lint、双用户 RLS/Storage、fake-provider Chromium、生产镜像启动和 nginx/compose。普通 main push 正确跳过生产数据库和应用部署。
 - [只读 plan `32581192318`](https://github.com/1590703336/Nalanda/actions/runs/32581192318) 显示远端完整到 0051，dry-run 唯一列出 0052–0053且没有写库或部署。[protected run `32581805613`](https://github.com/1590703336/Nalanda/actions/runs/32581805613) 在 apply 前上传 14 天加密恢复 artifact [`9478168126`](https://github.com/1590703336/Nalanda/actions/runs/32581805613/artifacts/9478168126)（885,857 bytes，zip SHA-256 `0e4425b7098b4b352b5a7f6e81e87861d9c98b535970f9f20592641653a41274`），随后应用 0052–0053。远端 history 对齐到 0053、dry-run 为空、public schema lint 成功；0053 同时失败关闭断言合法列、service-role、trigger 与最终撤权。
 - 应用 attempt 1 的 220 页资源 canary 通过，但真实 PPTX 试卷在 repair 后缺 `SOURCE_REFERENCE`；attempt 2 的同一样本从缺引用修复后仍未通过五类语义门，两次均返回 `AI_EXAM_VALIDATION_FAILED`。没有改用 fake、放宽 gate 或继续碰运气；真实 Materials AI gate 失败发生在 Azure/OpenRouter/Courses 后续 smoke 之前，因此本次不能把那些后续门写成通过。
 - 两次候选均在 Web/API 切流前调用 rollback。独立公网复核为 Web 200、`/api/health` 200 且 `deps.supabase=ok/deps.redis=ok`、`/api/health/ai` 200、匿名 `/api/me` 401；主机复核确认 Web 软链与 API/AI image 仍为 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，AI/Redis healthy，`FEATURE_MATERIAL_AI=false`、`FEATURE_MATERIAL_AI_LUNA=false`。结论：0052–0053 数据库权限已上线，最新 main 应用没有部署成功，Materials AI 保持关闭直至独立修复重新通过全部门禁。
+- 来源引用向前修复只允许 DocumentIR allowlist、服务端 locator 和同一稳定 question ID 的 repair 前引用恢复，并强制再次语义复核。它必须经新 PR/main 的完整 CI、真实 provider、Azure、登录用户 smoke、候选切流及服务器/公网独立核验后，才可记录为部署成功；真实语义门再次失败时仍必须回退。
 
 ## 8. 运维速查
 

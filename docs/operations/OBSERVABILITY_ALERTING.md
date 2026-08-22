@@ -9,12 +9,12 @@
 当前已有信号：
 
 - `GET /api/health`：生产 0043 真实探测 Supabase、校验 HMAC 配置并执行 Redis PING；Supabase/Redis 任一失败 readiness 都是 503。`GET /api/health/ai` 检查 worker、队列和内部依赖，不以变量存在冒充 readiness；
-- FastAPI `GET /health`：实际检查 OpenRouter 配置、LibreOffice、临时磁盘和内部认证；production fake 明确失败。Materials AI 已于 2026-08-11 通过真实 provider/canary/登录用户 gate 后公开启用；health 本身不逐次调用真实模型；
+- FastAPI `GET /health`：实际检查 OpenRouter 配置、LibreOffice、临时磁盘和内部认证；production fake 明确失败。最近应用候选在真实门禁失败后已回退，Materials AI/Luna flag 当前保持关闭；health 本身不逐次调用真实模型；
 - deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase/deps.redis`，并检查公网 Web root；失败会回退上一 Web/API release；
 - API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
 - nginx access/error log、systemd、Docker 与主机资源命令；
 - GitHub Actions deploy 运行结果；
-- 最新生产 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 已独立核对 API/AI image、Web symlink、feature flag、公网 Supabase/Redis/AI health 和匿名鉴权；此前 workflow `31463661987` 的假绿证明 Actions success 不能替代这些独立信号；
+- 当前生产稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` 已在最近候选回滚后独立核对 API/Web、Supabase/Redis/AI health 和匿名鉴权，Materials AI/Luna flag 均为 false；此前 workflow `31463661987` 的假绿证明 Actions success 不能替代这些独立信号；
 - Supabase 控制台可提供平台侧 Auth/数据库/Storage 日志与指标，具体可用项取决于项目配置。
 - Courses 举报达到配置阈值时 API 输出单行 JSON `event=course_report_threshold`；speech 配额/估算成本持久在 `learning_speech_usage`，429 使用稳定 `SPEECH_QUOTA_EXCEEDED`；这些当前仍需日志/SQL 人工查看，不是完整告警链。
 - 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
@@ -223,7 +223,7 @@ tail -n 200 /var/log/nginx/error.log
 1. 先检查 `/api/health` 的 Supabase/Redis 与 `/api/health/ai`，再看 `generation_jobs` 的 queued/stage/lease/attempt/error 和 BullMQ/reconciler；Postgres job 才是事实，不手工在 Redis 补状态。
 2. provider 问题按 purpose/model/request ID/duration/token/cost/ZDR 分层；不得读取或复制文件正文、prompt、答案、signed URL。ZDR unavailable、坏 schema 或安全 uncertain 均保持失败关闭并释放 reservation。
    对 `OPENROUTER_RATE_LIMIT` 先核对有界尝试数、退避配置、供应商 `Retry-After` 和同模型 provider failover；禁止增加跨模型 fallback、换模型或去掉 ZDR/deny/require-parameters 来让门禁变绿。若相同固定样本在有界重试后仍失败，保持 feature 关闭，待供应商窗口恢复后重跑真实 gate。
-   对 `AI_EXAM_VALIDATION_FAILED` 只检查 `initialGate/finalGate`、结构 code、语义 category 和预期/实际题数/总分；禁止为排障记录 reviewer issue、题目、答案、课件或 provider body。薄 fixture 的 `ANSWERABILITY`/grounding 失败应先修正无个人数据固定样本并重新走门禁，不等于 worker outage；用户 reservation 仍应释放。
+   对 `AI_EXAM_VALIDATION_FAILED` 只检查 `initialGate/finalGate`、结构 code、语义 category 和预期/实际题数/总分；禁止为排障记录 reviewer issue、题目、答案、课件或 provider body。薄 fixture 的 `ANSWERABILITY`/grounding 失败应先修正无个人数据固定样本并重新走门禁，不等于 worker outage；用户 reservation 仍应释放。若初次为语义失败、repair 后仅剩 `SOURCE_REFERENCE`，核对输出引用是否落在 DocumentIR block allowlist、locator 是否来自服务端以及 question ID 是否稳定；不得关闭引用校验或跳过 repair 后的第二次语义复核。
 3. 磁盘/Office 问题检查容器 RSS/swap、cgroup OOM、`/tmp/nalanda-material-ai` orphan 和水位；关闭 flag 后只清理确认超过一小时且不属于 active job 的目录。
 4. 考试问题按 attempt/revision/operation UUID/deadline 对账；Redis 延迟任务丢失时下一次 API 请求必须强制到期提交。评分额度用完保留 `submitted_ungraded`，不能伪造 completed。
 5. 修复后使用无个人数据 fixture 验证一个完整生成、Notes、客观/主观评分、删除与临时目录清理；真实 provider smoke 与 fake Playwright 分开记录。
