@@ -122,7 +122,7 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 - [x] 2026-07-22 Courses 发布：RLS、Storage policy、function EXECUTE、trigger 幂等有双用户测试。
 - [x] 0008/0009 首次生产发布审计：2026-07-21 只读聚合确认 1 个 Profile，points=11、credits=0、streak=0、无 VIP；owner 决定 points 归零，0009 以 append-only reversal 实施，credits/VIP/streak 不改。
 - [ ] 估算表规模、锁、statement timeout 和 backfill 时间。
-- [x] 0039 第一阶段 PR/plan 只包含 0039–0040；后续迁移已把生产 history 推进到 0051。Stage B 采用顺序追加的 0052–0053，原预留 0044–0045 不补插历史。
+- [x] 0039 第一阶段 PR/plan 只包含 0039–0040；Stage B 随后以顺序追加的 0052–0053 把生产 history 推进到 0053，原预留 0044–0045 没有补插历史。
 - [x] Redis/HMAC secrets 已安装；compose/nginx config、真实 Redis Lua、PING/AOF/no-port、429 JSON/headers 与 fail-open/closed 已验证。
 - [x] 0039 应用于 `2026-08-10T09:35:34Z` 激活；24 小时观察截止不早于 `2026-08-11T09:35:34Z`，contract go/no-go 已于 2026-08-22 完成。
 - [x] 2026-07-22 Courses 发布：[ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
@@ -198,7 +198,7 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 2026-08-22 go/no-go 记录：兼容期已超过 24 小时；部署 release `3c095a55ced21cee11a1b3131dd2889ec1f70733` 与最新 main 的 Community/Schedule 均不提交两个时间字段；生产 Redis PING/AOF/noeviction 正常、`evicted_keys=0`、`total_error_replies=0`；脱敏数据库汇总显示 2 个 Profile、2 条 ledger entry 且 projection 差异为 0，没有 signal 或 API abuse bucket。样本量很小，不把“无命中”写成反滥用效果证明，但足以和代码审计共同关闭旧客户端 contract 门禁。
 
-最终撤权在新的 PR 中按严格追加顺序实现为 0052–0053：0052 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0053 断言最终精确 grant、合法内容/Schedule 写入、service-role 与时间 trigger。0044–0045 保持历史空号，不使用 `--include-all` 补插已经越过 0051 的生产 history。必须再次执行独立 plan、恢复点、apply、RLS/权限和公网 smoke。
+最终撤权已在新的 PR 中按严格追加顺序实现，并将生产数据库应用到 0053：0052 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0053 断言最终精确 grant、合法内容/Schedule 写入、service-role 与时间 trigger。0044–0045 保持历史空号，没有使用 `--include-all` 补插已经越过 0051 的生产 history。独立 plan、恢复点、apply、RLS/权限和公网 smoke 证据见 8.14。
 
 #### 0041–0043 Materials AI 专项顺序
 
@@ -337,7 +337,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - 修复后的 [plan run `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端均到 0040且无待办。[最终 protected run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 再保留 artifact `9057062920`（800,819 bytes，zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并再次验证 history/lint/空 dry-run。
 - 应用切流前依次通过 Redis password PING、AOF、noeviction、无 host port，nginx `-t`，真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8），真实 OpenRouter Gemma（5,524 ms、253/27/280 tokens）和 Courses API/Storage/Fish gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`assessmentBytes=88444`、`transcriptionMatched=true`）。一次 OpenRouter 12 秒超时与三次 free-route 429 均在切流前阻断；同凭据额度状态正常且本机/生产主机相同请求恢复 HTTP 200 后才成功，未切换模型或绕过真实 gate。
 - 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 健康激活。公网复核：health `deps.supabase=ok/deps.redis=ok`，匿名 `/api/me` 与 `/api/admin/points/abuse-signals` 为 401，空注册为 400 且带 `RateLimit-Limit: 5`，Web/Course Market 为 200；主机 Web 软链和 API image 指向同一 release，Redis healthy 且只暴露容器内 `6379/tcp`。
-- Stage B 观察最早截止为 `2026-08-11T09:35:34Z`，实际 go/no-go 于 2026-08-22 完成。0052–0053 只有在完整 CI、只读 plan 精确列出这两个文件、恢复点上传成功后才能 apply；生产前仍不得提前描述为撤权完成。
+- Stage B 观察最早截止为 `2026-08-11T09:35:34Z`，实际 go/no-go 于 2026-08-22 完成。0052–0053 随后在完整 CI、只读 plan 精确列出两个文件且恢复点上传成功后 apply；生产 history、空 dry-run 与 lint 已验证到 0053。
+
+### 8.14 2026-08-22 安全 Stage B 0052–0053 发布记录
+
+- PR [#72](https://github.com/1590703336/Nalanda/pull/72) 合并为 `4d1bc97888799417641fefdd507c026b274a2bab`。PR run `32579985463` 和 main run `32580594918` 均通过 quality、真实 CI Redis、0007→0053、空库/lint、双用户 RLS/Storage、Chromium Playwright与生产镜像启动；main push 因 migration 变化正确保持数据库/应用跳过。
+- [plan run `32581192318`](https://github.com/1590703336/Nalanda/actions/runs/32581192318) 只读确认远端到 0051，唯一待办为 0052–0053。[protected run `32581805613`](https://github.com/1590703336/Nalanda/actions/runs/32581805613) 在写库前上传 artifact [`9478168126`](https://github.com/1590703336/Nalanda/actions/runs/32581805613/artifacts/9478168126)：885,857 bytes、digest `0e4425b7098b4b352b5a7f6e81e87861d9c98b535970f9f20592641653a41274`、14 天保留；数据库 dump 不包含 Storage object bytes。
+- apply 仅执行 `20260822000052_security_integrity_time_column_contract.sql` 与 `20260822000053_verify_security_integrity_time_column_contract.sql`。最终远端 migration list 本地/远端均到 0053，dry-run 返回 `Remote database is up to date`，public schema lint job 成功；0053 的失败关闭断言保证 authenticated 已失去两个派生列 UPDATE、合法业务列与 service-role/trigger 保持。
+- 同一 run 的不可变应用 attempt 1/2 均在真实 Materials AI PPTX gate 返回 `AI_EXAM_VALIDATION_FAILED`，分别停在 repair 后引用门和语义门；两次都在公开切流前恢复 `3c095a55ced21cee11a1b3131dd2889ec1f70733`。独立公网 health 为 Supabase/Redis ok、AI worker/queue ok、匿名 me 401，服务器 Web 软链/API/AI image 也指向旧稳定 release。数据库按 forward-fix 保持 0053；应用失败不能回退或伪装数据库 contract，也不能被记录为最新 main 已部署。
 
 ## 9. 失败处置
 

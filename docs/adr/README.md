@@ -19,7 +19,7 @@
 | [0008](0008-independent-learning-courses-and-azure-speech.md) | 独立学习课程模型 + 服务端 Azure Speech 适配层 | Accepted | 0011–0018 与应用已于 2026-07-27 完成受保护发布 |
 | [0009](0009-server-side-semantic-spelling-translation-assessment.md) | 服务端语义翻译前测 + 会话级拼写设置 | Accepted | 0019–0020 与应用已于 2026-07-28 完成受保护发布 |
 | [0010](0010-ephemeral-translation-stt-and-shared-waveform.md) | 临时 Fish Audio 翻译 STT + 共享录音波形 | Accepted | 0037–0038 与应用已于 2026-08-04 完成受保护发布；真实口音评测仍待扩充 |
-| [0011](0011-private-redis-and-points-abuse-boundary.md) | 私有 Redis 请求保护 + 不可变 Points 决策/审核边界 | Accepted | Stage A 已上线且 go/no-go 通过；0052–0053 Stage B 候选待受保护发布 |
+| [0011](0011-private-redis-and-points-abuse-boundary.md) | 私有 Redis 请求保护 + 不可变 Points 决策/审核边界 | Accepted | Stage A/go-no-go 与 0052–0053 Stage B 均已受保护生产发布 |
 | [0012](0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) | Materials AI durable queue + OpenRouter ZDR + 2G Office 渲染 | Accepted | 0041–0043 已于 2026-08-11 受保护发布 |
 | [0013](0013-materials-ai-async-callback-resume-and-knowledge-graph.md) | Materials AI 异步回调、双层断点与知识图谱 | Accepted | 0046–0048 候选，尚未部署 |
 | [0014](0014-materials-ai-luna-native-lifecycle-and-graph-layout.md) | Luna 原文件、任务清理、可保存图布局与整卷批改 | Accepted | 0049–0051 候选，尚未部署 |
