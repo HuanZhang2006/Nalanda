@@ -467,8 +467,9 @@ def normalize_exam_source_refs(
     that the remaining citation supports the question; the mandatory semantic
     review still makes that decision. If a repair removes every valid citation,
     the pre-repair citation may be restored only for the same stable question
-    ID, after which the repaired question is reviewed again. Otherwise the
-    invalid reference is deliberately retained so validation fails closed.
+    ID. When the entire DocumentIR has exactly one block, that sole allowlisted
+    block is also mechanically unambiguous. Every normalized candidate is still
+    reviewed; ambiguous multi-block references remain invalid and fail closed.
     """
     normalized = exam.model_copy(deep=True)
     blocks = {block.id: block for block in document.blocks}
@@ -482,6 +483,16 @@ def normalize_exam_source_refs(
         else {}
     )
 
+    def canonical_ref(block: DocumentBlock) -> SourceRef:
+        return SourceRef(
+            blockId=block.id,
+            page=block.page,
+            slide=block.slide,
+            label=block.label,
+            locatorKind="block",
+            locatorIndex=None,
+        )
+
     def canonical_refs(refs: list[SourceRef]) -> list[SourceRef]:
         result: list[SourceRef] = []
         seen: set[str] = set()
@@ -490,16 +501,7 @@ def normalize_exam_source_refs(
             if block is None or block.id in seen:
                 continue
             seen.add(block.id)
-            result.append(
-                SourceRef(
-                    blockId=block.id,
-                    page=block.page,
-                    slide=block.slide,
-                    label=block.label,
-                    locatorKind="block",
-                    locatorIndex=None,
-                )
-            )
+            result.append(canonical_ref(block))
         return result
 
     for section in normalized.sections:
@@ -509,6 +511,8 @@ def normalize_exam_source_refs(
                 fallback = fallback_questions.get(question.id)
                 if fallback is not None:
                     valid_refs = canonical_refs(fallback.sourceRefs)
+            if not valid_refs and len(blocks) == 1:
+                valid_refs = [canonical_ref(next(iter(blocks.values())))]
             if valid_refs:
                 question.sourceRefs = valid_refs
     return normalized
