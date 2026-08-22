@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。PR #74 首个候选通过真实 Materials/Azure 后被 Gemma 429 拦截，重试又暴露单 block PDF 全无效引用；两次均回退。唯一 block 引用向前修复尚需新的真实门禁证明，且不会放宽独立语义门。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。PR #75 已证明唯一 block 修复可通过完整真实 Materials 门，但 attempt 1 仍出现题数结构波动，attempt 2 又被 Gemma 免费模型持续 HTTP 429拦截；两次均在切流前回退。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -68,6 +68,8 @@ provider usage 只留 model、token、micro-USD、latency、request ID、用途�
 2026-08-23 重试 run `32543270581` 的 attempt 2 证明上述 content-free 诊断有效：初次生成在结构上满足 5 题/20 分，但语义复核返回五类质量缺陷；一次 repair 后这些语义类别不再作为最终门出现，最终结构门只剩 `SOURCE_REFERENCE`。这说明 repair 虚构/替换了 block ID，而不是队列、资源或题数/总分失败。向前修复只做可证明的引用 allowlist 规范化：丢弃与有效引用混合的虚构 ID、使用 DocumentIR 的规范 locator；若 repair 让同一稳定 question ID 丢失全部有效引用，可恢复该题 repair 前的有效引用。换题 ID、跨题引用或原本没有有效引用仍失败关闭，恢复后的题目必须重新经过语义复核，避免把机械修复误当 grounding 证明。
 
 随后 PR #74 的 main run `32585659792` attempt 1 证明混合/repair 引用修复可通过真实 PDF/DOCX/PPTX/chart、注入、安全教材、评分和图谱门；Japan East Azure 也返回 accuracy 98、pronunciation 98.8，但独立 Gemma 翻译 smoke 持续 429 后回退。仅重跑失败 job 的 attempt 2 在单 block PDF 上同时出现初次与 repair 全无效引用，诊断为 initial/final `SOURCE_REFERENCE`；这不是多 block 的 grounding 歧义，因为服务端 allowlist 只有一个真实 block。新机械规则只在 `len(blocks)==1` 时选择这个唯一 block并进入语义复核；两个及以上 block 仍必须由模型提供有效 ID，否则失败关闭。它不能让语义复核不支持的题目通过，也不能消除独立 Gemma 429 门。
+
+PR #75 的 main run `32587844503` attempt 1 通过本地完整门禁与 220 页 canary，但固定单 block PDF 的初次候选为 6 题，repair 后仍为 6 题，因设置要求 5 题而在最终结构门以 `QUESTION_TYPE_COUNT` 失败；这说明来源引用修复没有放宽题型数量。唯一一次失败 job 重跑的 attempt 2 随后通过 PDF/DOCX/PPTX/chart、注入拒绝、安全教材、评分和 9-node graph，证明单 block 引用会继续接受结构与语义复核；Luna 仍因 OpenAI-only ZDR 不可用而保持关闭，Japan East Azure 返回 accuracy 98、pronunciation 98.8。最终 Gemma 免费模型在 5/10/20/40 秒有界退避后仍连续 HTTP 429，候选再次回退。持续限流是独立供应商可用性硬门，不得以跳过 smoke、改模型或去掉失败关闭来冒充上线。
 
 ### 2.2 Luna 原文件候选闭环
 
