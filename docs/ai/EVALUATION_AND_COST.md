@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。既有候选曾因 Luna/OpenAI-only 无 ZDR endpoint、总分机械约束、知识图 root 和固定 DOCX validation 失败回退；2026-08-22 的最新 main 又在同一 protected run 的两个 attempt 中被真实 PPTX 引用/语义 gate 拦截并回退。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。最新 protected run 的两个 attempt 分别被真实 PPTX 引用门和语义门拦截并回退；来源引用的向前修复尚需新的真实门禁证明，且不会放宽独立语义门。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -21,11 +21,11 @@
 - FastAPI 只有内部 token 生成/评分路由，确定性解析 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片，并以 `DocumentIR` 保留页/幻灯片/块/来源；
 - 首次 DeepSeek 审查与解析器诊断取失败范围并集，只把这些页/slide/region 的渲染图发送 MiMo，拼接完整 IR 后再次审查；
 - 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters，关闭 reasoning/tool/Web/跨模型 fallback；同一模型按吞吐量优先、只在满足全部过滤器的 provider endpoint 间故障转移；
-- `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；允许一次结构化 repair，修复结果必须重复同一归一化/结构/语义门禁；
+- `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；来源引用只可规范到 DocumentIR allowlist，repair 全部丢失有效引用时仅可按相同稳定 question ID 恢复 repair 前引用；允许一次结构化 repair，修复结果必须重复同一归一化/结构/语义门禁；
 - `GeneratedKnowledgeGraphV1` 保存前把模型的相对 hierarchy levels 以最小值归零，并在 worker 与数据库两层一致验证 pipeline `sourceMode`、level-0 root、节点/边唯一 ID、端点、来源顺序和引用；该机械步骤不改标题、解释、关系、引用或相对层级；
 - 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
 - 生产 0043 每任务 0700 临时目录在 `finally` 删除并清理一小时 orphan；0046–0051 候选仅在可恢复故障下保留验证过的 checkpoint/usage spool 到配置 TTL，成功、不可恢复失败、Delete/Cancel 或过期清理；持久 parse cache、DB checkpoint 与布局是分开的私有产品数据；
-- 生产 compose 已激活隔离 worker 与 flag；fake 自动化不证明真实供应商质量，真实门禁也只是时点证据，不替代持续质量/成本监控。
+- 生产已有隔离 worker/Redis 拓扑，但最近失败候选回滚后 Materials AI/Luna flag 均保持关闭；fake 自动化不证明真实供应商质量，真实门禁也只是时点证据，不替代持续质量/成本监控。
 - Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
 - Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列和 private Storage 事实源已经在生产启用；生产 Web 已移除客户端 VAD/静音裁剪，fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
 - 0019 增加 NestJS 翻译评判 adapter：规范化后完全等于服务端参考 translation 的答案由服务端确定性判对；非字面同义/改写才使用 OpenRouter structured JSON。输入正文不落库，服务端仍唯一写 spelling 错误事实。生产已取得真实 provider、候选 API 与不可变 release 证据。
@@ -64,6 +64,8 @@ provider usage 只留 model、token、micro-USD、latency、request ID、用途�
 同日 main run `31838779292` 证明上述试卷归一化已通过真实 provider fixture，随后登录生产 smoke 的知识图在 `artifact_ready` 后被完成 RPC 拒绝为 SQLSTATE `22023`。脱敏 checkpoint 断言显示 artifact 为 3 nodes/2 valid edges、唯一 ID/端点/引用均正常，但 `roots=0`；worker 的 DocumentIR validator 漏掉了数据库已有的 root 约束。候选未切 Web并自动回退。向前修复将 graph 层级机械归零并补齐本地/数据库契约对照测试；完成回调的永久结构/路由拒绝也会进入明确终态，不再伪装成可恢复 callback outage。新的真实发布门禁通过前仍不能称为生产上线。
 
 2026-08-22 的 PR #70 run `32499521666` 与 main run `32540131549` 已通过完整 fake/local 门禁、0007→0051、空库、RLS/Storage、Chromium、镜像构建和 220 页资源 canary；真实 PDF 通过后，固定 DOCX 试卷在最终门禁返回 `AI_EXAM_VALIDATION_FAILED`，候选于 API/Web 切流前自动回退，生产仍运行旧稳定 release。旧响应只含这一总括 code，既无法判断是结构还是语义失败，也不应为诊断而泄露 provider 原文。向前修复仅输出 `initialGate/finalGate`、稳定结构 code、稳定语义 category 及预期/实际题数和总分；不输出课件、文件名、题目、答案、prompt、reviewer issue 或 provider body。固定材料同时由三条事实扩展为八个独立事实，以稳定支撑五道选择题；schema、答案、引用、语义复核、单次 repair 和失败关闭行为均未放宽。该修复必须由新的真实 run 证明后才能计作上线。
+
+2026-08-23 重试 run `32543270581` 的 attempt 2 证明上述 content-free 诊断有效：初次生成在结构上满足 5 题/20 分，但语义复核返回五类质量缺陷；一次 repair 后这些语义类别不再作为最终门出现，最终结构门只剩 `SOURCE_REFERENCE`。这说明 repair 虚构/替换了 block ID，而不是队列、资源或题数/总分失败。向前修复只做可证明的引用 allowlist 规范化：丢弃与有效引用混合的虚构 ID、使用 DocumentIR 的规范 locator；若 repair 让同一稳定 question ID 丢失全部有效引用，可恢复该题 repair 前的有效引用。换题 ID、跨题引用或原本没有有效引用仍失败关闭，恢复后的题目必须重新经过语义复核，避免把机械修复误当 grounding 证明。
 
 ### 2.2 Luna 原文件候选闭环
 
@@ -208,7 +210,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 ### 5.6 模拟试卷
 
-总分与 section/题目 marks 一致；题型/知识点/难度分布符合用户选择；题目可解、答案与评分标准正确；无资料外关键假设；无重复/泄题；预计时长合理。language/difficulty/duration/totalMarks、重复 ID 和可行的 marks 合计属于服务端可确定的机械约束，可在模型返回后稳定归一化；题数、题意、答案、引用、难度是否真实匹配和教学质量不得用归一化伪造，仍须 validator、语义复核和真实样本门禁。
+总分与 section/题目 marks 一致；题型/知识点/难度分布符合用户选择；题目可解、答案与评分标准正确；无资料外关键假设；无重复/泄题；预计时长合理。language/difficulty/duration/totalMarks、重复 ID、可行的 marks 合计、引用是否属于服务端 block allowlist 及其 locator 元数据属于可确定的机械约束，可稳定归一化；仅同一稳定 question ID 可在 repair 后继承该题此前有效引用。题数、题意、答案、引用是否实际支持题目、难度匹配和教学质量不得用归一化伪造，仍须 validator、语义复核和真实样本门禁。
 
 ### 5.7 人工评审量表
 
@@ -349,7 +351,7 @@ job 状态至少：`queued/processing/validating/.../succeeded/failed/cancelled`
 - price snapshot、usage/cost ledger、预算/kill switch；
 - staging/canary，仅授权测试账户。
 
-Materials 试卷当前处于本阶段：Free quota，不销售 credits；生产 flag 已在真实 gate 和 2G canary 通过后开启，后续模型/prompt/parser 变更仍须重复门禁。
+Materials 试卷当前处于本阶段：Free quota，不销售 credits；最近候选回滚后生产 flag 保持关闭，只有新的真实 gate、2G canary、候选切流和独立公网复核全部通过后才能重新开启。
 
 ### Phase 3：其它 AI 产物与未来 credits
 
