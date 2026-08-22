@@ -5,7 +5,7 @@
 > **作用：** 固定实时流量控制与长期业务审计的职责边界，避免把 Redis 当事实库、把客户端反馈当奖励权威，或让 service-role 绕过审核流程。
 > **何时更新：** Redis 拓扑/算法/故障策略、路由分组、points 上限/账本、管理员授权、协同检测、审计保留或两阶段发布方式变化时。
 
-- **状态：** Accepted / Stage B candidate；0039–0040 与兼容应用已于 `2026-08-10T09:35:34Z` 受保护生产发布，2026-08-22 go/no-go 通过；最终撤权按严格追加顺序实现为候选 0052–0053，原预留 0044–0045 不补插历史。
+- **状态：** Accepted / Stage B deployed；0039–0040 与兼容应用已于 `2026-08-10T09:35:34Z` 受保护生产发布，2026-08-22 go/no-go 通过；最终撤权随后按严格追加顺序以 0052–0053 生产应用，原预留 0044–0045 没有补插历史。
 - **日期：** 2026-08-10
 - **决策者：** Nalanda owner
 
@@ -38,4 +38,4 @@
 
 - CI 使用真实 Redis service 验证 Lua 并发/过期/lock，使用一次性 Supabase 验证精确 grants、双用户负向路径、cap 并发、时区/重建、root suppress/restore 和 pending signal；浏览器供应商仍为 fake。
 - 第一阶段已完成：只读 migration plan → 加密恢复点 → apply 0039–0040 → Redis PING/AOF/private network → 新 API readiness/auth/限流/admin 拒绝 → 真实既有供应商 gate → 激活兼容应用；证据见部署记录 run `31372888441`。
-- 从 `2026-08-10T09:35:34Z` 起的观察已超过 24 小时；2026-08-22 复核 Redis/AOF/noeviction、误限流审计、points projection 和受支持 Web 时间字段依赖后通过 go/no-go。0052–0053 仍须完整 CI、plan、恢复点和 apply；数据库始终 forward-fix，应用可回退上一兼容 release。
+- 从 `2026-08-10T09:35:34Z` 起的观察已超过 24 小时；2026-08-22 复核 Redis/AOF/noeviction、误限流审计、points projection 和受支持 Web 时间字段依赖后通过 go/no-go。0052–0053 随后通过完整 CI、plan `32581192318`、恢复 artifact `9478168126` 和 apply `32581805613` 上线；数据库始终 forward-fix，应用仍可回退上一兼容 release。

@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至仓库候选 `20260822000053_verify_security_integrity_time_column_contract.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 已确认到 0051，0052–0053 在受保护 apply 前仍只是候选。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至 `20260822000053_verify_security_integrity_time_column_contract.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 已于 2026-08-22 受保护确认到 0053。
 
 - **生产结构**：生产 0043 包含 0039–0040 安全/限流与 0041–0043 Materials AI/Notes/考试实体、事务和验证，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
 - **未实现目标**：Courses AI 文件导入、Knowledge list、独立 Quiz、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。仓库 0046–0051 候选已增加 Materials 知识图谱/节点问答、长任务恢复、Luna 原文件流水线、任务清理生命周期和跨设备图谱布局，但在受保护发布完成前不得描述为生产事实。
@@ -578,7 +578,7 @@ Postgres 是额度、任务、Notes、答卷和成绩的唯一事实源；BullMQ
 | `knowledge_node_questions`（候选） | 本人 | 无 | 无 | 无 |
 | `knowledge_graph_layouts`（候选） | 本人 | 无 | 无 | 无 |
 
-迁移 0008 已修复 Profile 整行更新缺口。生产 0039 进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。生产当前仍保留 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE grant且由 trigger 覆盖；候选 0052–0053 在观察通过后撤销这两个 authenticated grant，并验证合法内容/Schedule 列、service-role 与时间 trigger 不受影响。
+迁移 0008 已修复 Profile 整行更新缺口。生产 0039 进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。生产 0052–0053 已在观察通过后撤销 authenticated 对 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE grant，并验证合法内容/Schedule 列、service-role 与时间 trigger 不受影响。
 
 ## 6. Storage 模型
 

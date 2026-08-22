@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-22。生产数据库已受保护应用到 0051；当前应用在后续候选失败后安全恢复到 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，API/AI/Web、Supabase 和 Redis 健康。时间列兼容观察已通过 go/no-go，最终撤权在仓库按严格追加顺序实现为候选 0052–0053；原预留 0044–0045 不补插历史，受保护 apply 前生产仍保持兼容 grant。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-23。生产数据库已受保护应用到 0053；0052–0053 已完成时间列 Stage B，原预留 0044–0045 没有补插。最新 main 的应用候选在同一 protected run 及一次 failed-job rerun 中均被真实 Materials AI PPTX gate 拦截，当前应用安全恢复到 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，API/AI/Web、Supabase 和 Redis 健康。数据库权限上线不等于候选应用切流。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 2026-08-14 候选代码（尚未部署）包含 0046–0051：0046–0048 将生成/评分改为 202 接收 + 持久回调并增加双层断点、增量 usage、知识点图谱和节点问答；0049–0051 增加 Luna 原文件流水线、provider provenance、可确认清理的任务删除/清空及私有跨设备图布局。以下带“候选”的段落描述当前分支，不改变上述生产事实。
 
@@ -48,7 +48,7 @@ Supabase Cloud 当前承担：
 - Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
 - RLS：主要的数据隔离边界。
 
-生产 migration history 已到 0051：0039–0040 增加并验证直接 PostgREST 防御、冻结奖励窗口、审核和协同/滥用审计；0041–0051 增加 Materials AI/Notes/在线考试、可恢复任务、图谱和生命周期事实。原计划的时间列 contract 因生产已越过预留空号而改为顺序追加的候选 0052–0053，避免修改远端历史或扩大 migration workflow；它只收窄 authenticated 列权限，不改变 Materials AI、Courses、points、trigger、RLS 或 service-role。
+生产 migration history 已到 0053：0039–0040 增加并验证直接 PostgREST 防御、冻结奖励窗口、审核和协同/滥用审计；0041–0051 增加 Materials AI/Notes/在线考试、可恢复任务、图谱和生命周期事实；0052–0053 只收窄 authenticated 对两个派生时间列的 UPDATE 权限并验证最终 contract。它不改变 Materials AI、Courses、points、trigger、RLS 或 service-role，原预留 0044–0045 没有补插。
 
 同机 Redis 已纳入生产依赖：Redis 只连接默认 compose 私网、无宿主端口、密码认证、AOF `everysec`、`noeviction`；API 使用原子 Lua 滑动窗口和 HMAC(IP/email)键，不保存原始 IP/email，并用 BullMQ 只投递 durable Postgres job UUID。写入/注册/克隆/举报/成本接口在 Redis 故障时 fail-closed，私有只读 fail-open 并输出 `rate_limit_degraded`；readiness 只有 Supabase 与 Redis PING 均成功才为 200，AI readiness 还要求 worker/queue 就绪。协同扫描器每五分钟以 Redis token lock 单实例执行，只写待审 signal，不自动冻结或冲正。
 
@@ -289,7 +289,7 @@ Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考
 - TTL 内 worker checkpoint 会包含私有 DocumentIR/已验证产物。目录权限、磁盘水位、sweeper 和“不得备份/记录正文”属于安全控制；主机被攻破时它仍是敏感数据。
 - prompt injection 检测无法数学上保证绝对正确；节点问题同样是不可信数据。任何模型输出都必须通过 schema、引用和产品约束，且不得获得工具/Web。
 
-1. 完成候选 0052–0053 的完整 CI、只读 plan、恢复点、apply 与精确权限 smoke；go/no-go 已确认 Redis/AOF/noeviction 正常、points projection 无差异且受支持 Web 不提交旧时间列，生产 apply 前仍不得宣称最终撤权。
+1. 独立修复并重新验证最新 main 的真实 Materials AI PPTX provider gate；0052–0053 数据库 contract 已生产完成，不能通过放宽 provider gate 或重复碰运气来冒充应用发布。
 2. 在第一阶段生产观察中核对 points cap/审核/协同信号的误报、投影差异和 Redis 降级；再补完整审核 UI/申诉与内容质量检测。credits/VIP 另建商业账本。
 3. 实现 Courses 文件 AI 导入前先统一模型契约、人工确认、评测集、成本和隐私留存；当前禁用入口不能算能力。
 4. 为已上线 Courses/Azure/市场建立持续指标、成本对账和审核工作台；执行数据库/Storage/TTS 缓存恢复与告警演练。
