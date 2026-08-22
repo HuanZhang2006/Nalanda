@@ -3,7 +3,7 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-14。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
+> **状态基线：**2026-08-22。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
@@ -34,6 +34,8 @@
 
 ### Fixed
 
+- 修复真实 Materials AI 发布门禁把最终 `AI_EXAM_VALIDATION_FAILED` 压缩成单一 code，导致无法区分题数/总分/引用等结构错误与 grounding/答案/干扰项等语义错误的问题。worker 现在只返回稳定类别、门禁阶段和题数/总分计数，不返回课件、题目、答案、prompt、reviewer 原文或 provider body；真实门禁仍严格失败关闭并只允许一次 repair。
+- 固定 PDF/DOCX/PPTX 真实供应商样本由不足以稳定支撑五道题的三条事实扩展为八个独立、无个人数据的学习科学事实，避免把过薄 fixture 自身造成的随机不可出题误判成服务故障；题数、答案、语义、引用和费用门禁没有放宽。
 - 修复真实登录生产 smoke 中知识图最低层级从 `1` 开始、通过 worker 校验后却被完成 RPC 以 SQLSTATE `22023` 拒绝，任务随后停在 `saving` 直到 15 分钟门禁超时的问题。`knowledge-graph.v2` 与 `knowledge-graph-native-file.v2` 现在在不改节点内容、引用、顺序或相对层级的前提下，把最小 level 确定性归零；DocumentIR validator 同时补齐 `sourceMode=document_ir` 与 level-0 root 检查，和数据库保存 contract 保持一致。
 - 完成回调若仍被数据库以结果结构约束拒绝，会原子写入对应的试卷/图谱/问答/评分 validation failure 并返回成功确认，使 worker 清理 checkpoint/spool，而不是把永久性错误误当 callback outage 无限恢复；provider 路由违规同样终止且保留 usage，过期 lease 映射 409 让 worker 安全退出。
 - 修复真实 DocumentIR 发布门禁中试卷模型偶发返回“题数正确、单题分值合法，但合计分值不等于用户设置”的 `AI_EXAM_VALIDATION_FAILED`。`exam-generate.v3` 与 `exam-native-file.v2` 现在先用服务端设置确定性归一化语言、难度、时长、总分、重复 section/question ID，并在可行范围内按原相对权重稳定重分配单题分值；题数、答案、语义和引用仍由原 validator/DeepSeek 复核严格把关。复核结果若 `issues` 非空不再因 `valid=true` 被忽略。
@@ -58,6 +60,8 @@
 
 ### Testing
 
+- PR #70 的完整门禁 run [`32499521666`](https://github.com/1590703336/Nalanda/actions/runs/32499521666) 通过后合并为 main `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e`。main run [`32540131549`](https://github.com/1590703336/Nalanda/actions/runs/32540131549) 再次通过 lint/typecheck、131 个 API、113 个 Web、72 个 Python测试、0007→0051、空库/lint/RLS/Storage、fake Chromium、镜像构建和 220 页 canary，但真实 DOCX 试卷返回 `AI_EXAM_VALIDATION_FAILED`；候选在 API/Web 切流前回退并清除，因此该 run 不是生产上线证据。
+- validation 诊断/fixture 向前修复本地通过 74 个 Python 测试、ruff、26 个 release tooling 测试与 `git diff --check`；真实供应商、完整 CI 和生产激活仍须由新的 PR/main run 证明。
 - PR #69 与 main run [`31838779292`](https://github.com/1590703336/Nalanda/actions/runs/31838779292) 的 fake/local 门禁、真实 provider fixture、220 页 canary、Azure/Courses gate均通过；登录生产 smoke 的固定知识图返回 3 nodes/2 edges 但没有 level-0 root，数据库拒绝完成回调，候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 未切 Web 且自动恢复旧 API/AI。该 run 是发现并隔离发布缺陷的证据，不是上线证据。
 - 根节点/完成回调向前修复本地通过 72 个 Python、131 个 API、113 个 Web/jsdom 测试，以及 ruff、docs 55、release tooling 26、lint、typecheck 和 Web/API build；真实 Supabase、Chromium 与真实 provider仍须由新 PR/main/protected run 再证明。
 
