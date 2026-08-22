@@ -4,7 +4,7 @@
 > - **内容**：记录学习目标/普通任务、独立课程复习日程、RLS、完成奖励、连续学习和当前规则式填充。
 > - **作用**：解释 Schedule 如何合并两套数据源，同时保持普通任务积分与 Courses 复习事实隔离。
 > - **何时更新**：任务/目标字段、奖励幂等、提醒、排程算法、时区或关联权限变化时。
-> - **状态基线**：2026-08-22。生产总 history 已到 0051；关联 owner trigger、数据库派生 `done_at` 和任务日上限已上线。候选 0052–0053 撤销 authenticated 对 `done_at` 的兼容 UPDATE 权限。
+> - **状态基线**：2026-08-23。生产总 history 已到 0053；关联 owner trigger、数据库派生 `done_at`、任务日上限及 authenticated 对 `done_at` 的最终撤权均已上线。
 
 > 文件：`supabase/migrations/20260625000007_schedule.sql`（结构/旧触发器）、`...0008_security_points_ledger.sql`（稳定任务键、points 冲正与敏感列保护）、`...0011_learning_courses.sql`/`...0012_learning_course_workflows.sql`（复习日程及服务端工作流）、`...0039_security_integrity_rate_limit_points_abuse.sql`（生产 owner/done_at/日上限）、`apps/web/src/legacy/schedule.ts`、`apps/api/src/learning/*`。
 
@@ -20,7 +20,7 @@
 - **三个可空外键**让任务能挂到 课程 / 资料 / 目标——这是和 Materials 的联动基础。
 - `on delete set null`：删了课程/资料，任务还在，只是断开关联（不级联删任务）。
 - 0008 在 INSERT 时用 owner + 规范化 title/due_date/course/material/goal 生成不可变 `task:{owner}:{sha256}:completed:v1`；相同逻辑任务共享一个奖励 claim，客户端不能指定或修改 key。
-- 生产 0039 trigger 重新验证 course/material/goal 全部属于 `new.user_id`，包括 service-role 路径；`done_at` 根据 `done` 自动设为服务器 `now()` 或清空。生产兼容 grant 当前仍会接受并覆盖该值，Web 已不再提交；候选 0052–0053 最终拒绝 authenticated UPDATE。
+- 生产 0039 trigger 重新验证 course/material/goal 全部属于 `new.user_id`，包括 service-role 路径；`done_at` 根据 `done` 自动设为服务器 `now()` 或清空。Web 已不再提交该值；生产 0052–0053 最终拒绝 authenticated UPDATE。
 
 ### profiles 增列
 `streak int`（连续学习天数）、`streak_date date`（最近计入连续的那天），以及 Courses 0011 的合法 IANA `timezone`。复习尝试与日程偏移使用该时区；历史日期不会因后续改时区而重写。

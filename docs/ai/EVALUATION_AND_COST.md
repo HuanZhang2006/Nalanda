@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-22。生产数据库已到 0051，但不可变应用仍为此前稳定 release；仓库 0046–0051 候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。最近四次应用候选均在切流前失败并自动回退：Luna/OpenAI-only 无 ZDR endpoint、真实试卷偶发违反总分机械约束、真实知识图缺少 level-0 root，以及固定 DOCX 试卷最终 validation failure。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。既有候选曾因 Luna/OpenAI-only 无 ZDR endpoint、总分机械约束、知识图 root 和固定 DOCX validation 失败回退；2026-08-22 的最新 main 又在同一 protected run 的两个 attempt 中被真实 PPTX 引用/语义 gate 拦截并回退。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
