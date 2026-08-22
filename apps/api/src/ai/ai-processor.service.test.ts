@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { GeneratedExamV1 } from "@nalanda/types";
+import { SupabaseRequestError } from "../learning/supabase-admin.service";
 import { AiInternalClientService, AiWorkerError } from "./ai-internal-client.service";
 import { AiProcessorService } from "./ai-processor.service";
 
@@ -85,6 +86,84 @@ describe("Materials AI durable processor", () => {
       document: {}, blockCount: 1, visualRegionCount: 0, exam, questionCount: 1, totalMarks: 20,
     })).resolves.toEqual({ completed: true });
     expect(repository.completeMaterialJob).toHaveBeenCalled();
+  });
+
+  it("turns a database material-result contract rejection into a terminal validation failure", async () => {
+    const { service, repository } = harness();
+    repository.completeMaterialJob.mockRejectedValue(new SupabaseRequestError(
+      "Database request failed",
+      400,
+      { code: "22023" },
+    ));
+
+    await expect(service.complete("job-1", "lease-1", {
+      kind: "knowledge_graph", sourceSha256: "a".repeat(64), parserVersion: "v1",
+      auditVersion: "v1", promptVersion: "v2", document: {}, blockCount: 1,
+      visualRegionCount: 0, graph: {}, nodeCount: 1, edgeCount: 0,
+    })).resolves.toEqual({ completed: false, failed: true });
+
+    expect(repository.failJob).toHaveBeenCalledWith(
+      "job-1",
+      "lease-1",
+      "AI_KNOWLEDGE_GRAPH_VALIDATION_FAILED",
+      "The generated result did not pass the storage contract",
+      false,
+    );
+  });
+
+  it("turns a stale completion lease into a conflict so the worker purges instead of retrying", async () => {
+    const { service, repository } = harness();
+    repository.completeMaterialJob.mockRejectedValue(new SupabaseRequestError(
+      "Database request failed",
+      400,
+      { code: "P0001", message: "JOB_LEASE_LOST" },
+    ));
+
+    await expect(service.complete("job-1", "lease-1", {
+      kind: "exam", sourceSha256: "a".repeat(64), parserVersion: "v1",
+      auditVersion: "v1", promptVersion: "v2", document: {}, blockCount: 1,
+      visualRegionCount: 0, exam, questionCount: 1, totalMarks: 20,
+    })).rejects.toMatchObject({ status: 409 });
+
+    expect(repository.failJob).not.toHaveBeenCalled();
+  });
+
+  it("persists a provider-routing rejection as a terminal job failure", async () => {
+    const { service, repository } = harness();
+    repository.completeKnowledgeQuestion.mockRejectedValue(new SupabaseRequestError(
+      "Database request failed",
+      400,
+      { code: "P0001", message: "AI_PROVIDER_ROUTING_VIOLATION" },
+    ));
+
+    await expect(service.complete("job-1", "lease-1", {
+      kind: "knowledge_question",
+      answer: {},
+    })).resolves.toEqual({ completed: false, failed: true });
+
+    expect(repository.failJob).toHaveBeenCalledWith(
+      "job-1",
+      "lease-1",
+      "AI_PROVIDER_ROUTING_VIOLATION",
+      "The provider route did not satisfy the locked AI policy",
+      false,
+    );
+  });
+
+  it("turns a database grading-result contract rejection into a terminal ungraded attempt", async () => {
+    const { service, repository } = harness();
+    repository.completeGrading.mockRejectedValue(new SupabaseRequestError(
+      "Database request failed",
+      400,
+      { code: "23514" },
+    ));
+
+    await expect(service.gradingComplete("attempt-1", "lease-1", {
+      subjectiveScore: 20,
+      results: [],
+    })).resolves.toEqual({ completed: false, failed: true });
+
+    expect(repository.failGrading).toHaveBeenCalledWith("attempt-1", "lease-1", []);
   });
 
   it("opens the monthly budget circuit before dispatching to the worker", async () => {

@@ -14,6 +14,7 @@ from app.pipeline import (
     enforce_pre_recovery_audit,
     generate_knowledge_graph,
     normalize_exam_invariants,
+    normalize_knowledge_graph_invariants,
     recover_visuals,
     review_result_issues,
     validate_exam,
@@ -638,6 +639,40 @@ def test_review_result_issues_fails_closed_on_inconsistent_provider_output(valid
     assert review_result_issues(pipeline.ReviewResult(valid=valid, issues=issues)) == expected
 
 
+def test_knowledge_graph_levels_are_rebased_without_mutating_provider_result():
+    doc = document("A supported source concept")
+    graph = pipeline.GeneratedKnowledgeGraph.model_validate(
+        pipeline._fake_knowledge_graph(
+            doc,
+            KnowledgeGraphSettings(language="en", detail="comprehensive", focus=""),
+        )
+    )
+    graph.nodes[0].level = 3
+
+    normalized = normalize_knowledge_graph_invariants(graph)
+
+    assert graph.nodes[0].level == 3
+    assert normalized.nodes[0].level == 0
+    assert validate_knowledge_graph(normalized, doc) == []
+
+
+def test_document_graph_validation_matches_completion_rpc_root_and_source_mode_contract():
+    doc = document("A supported source concept")
+    graph = pipeline.GeneratedKnowledgeGraph.model_validate(
+        pipeline._fake_knowledge_graph(
+            doc,
+            KnowledgeGraphSettings(language="en", detail="comprehensive", focus=""),
+        )
+    )
+    graph.nodes[0].level = 1
+    graph.sourceMode = "native_file"
+
+    issues = validate_knowledge_graph(graph, doc)
+
+    assert "the graph has no root node" in issues
+    assert "sourceMode must be document_ir" in issues
+
+
 @pytest.mark.asyncio
 async def test_marks_only_provider_drift_is_normalized_before_semantic_review():
     settings = ExamSettings(
@@ -834,6 +869,40 @@ async def test_knowledge_graph_is_detailed_source_ordered_and_directly_renderabl
     assert [node.sourceOrder for node in graph.nodes] == sorted(node.sourceOrder for node in graph.nodes)
     assert all(node.explanation and node.sourceRefs for node in graph.nodes)
     assert {event.purpose for event in usage} == {"knowledge_graph_generation", "knowledge_graph_review"}
+
+
+@pytest.mark.asyncio
+async def test_generated_graph_levels_are_normalized_before_structural_and_semantic_review():
+    doc = document("A supported source concept")
+    settings = KnowledgeGraphSettings(language="en", detail="comprehensive", focus="")
+    raw = pipeline.GeneratedKnowledgeGraph.model_validate(
+        pipeline._fake_knowledge_graph(doc, settings)
+    )
+    for node in raw.nodes:
+        node.level += 2
+    reviewed_payloads: list[str] = []
+
+    class Client:
+        async def structured(self, *, purpose, user_content, **_kwargs):
+            event = UsageEvent(
+                purpose=purpose,
+                model="fake",
+                requestId="fake",
+                durationMs=1,
+                zdrEnforced=True,
+                status="succeeded",
+            )
+            if purpose == "knowledge_graph_generation":
+                return raw, [event]
+            if purpose == "knowledge_graph_review":
+                reviewed_payloads.append(str(user_content))
+                return pipeline.ReviewResult(valid=True, issues=[]), [event]
+            raise AssertionError(f"unexpected provider purpose: {purpose}")
+
+    result = await generate_knowledge_graph(Client(), doc, settings, [])
+
+    assert min(node.level for node in result.nodes) == 0
+    assert '"level":0' in reviewed_payloads[0]
 
 
 @pytest.mark.asyncio

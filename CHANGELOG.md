@@ -34,6 +34,8 @@
 
 ### Fixed
 
+- 修复真实登录生产 smoke 中知识图最低层级从 `1` 开始、通过 worker 校验后却被完成 RPC 以 SQLSTATE `22023` 拒绝，任务随后停在 `saving` 直到 15 分钟门禁超时的问题。`knowledge-graph.v2` 与 `knowledge-graph-native-file.v2` 现在在不改节点内容、引用、顺序或相对层级的前提下，把最小 level 确定性归零；DocumentIR validator 同时补齐 `sourceMode=document_ir` 与 level-0 root 检查，和数据库保存 contract 保持一致。
+- 完成回调若仍被数据库以结果结构约束拒绝，会原子写入对应的试卷/图谱/问答/评分 validation failure 并返回成功确认，使 worker 清理 checkpoint/spool，而不是把永久性错误误当 callback outage 无限恢复；provider 路由违规同样终止且保留 usage，过期 lease 映射 409 让 worker 安全退出。
 - 修复真实 DocumentIR 发布门禁中试卷模型偶发返回“题数正确、单题分值合法，但合计分值不等于用户设置”的 `AI_EXAM_VALIDATION_FAILED`。`exam-generate.v3` 与 `exam-native-file.v2` 现在先用服务端设置确定性归一化语言、难度、时长、总分、重复 section/question ID，并在可行范围内按原相对权重稳定重分配单题分值；题数、答案、语义和引用仍由原 validator/DeepSeek 复核严格把关。复核结果若 `issues` 非空不再因 `valid=true` 被忽略。
 - 修复真实 DocumentIR chart 门禁把“解析器已隔离、尚待视觉恢复的纯图片范围”误判为整份文件 prompt injection，并在 MiMo 恢复前返回 `PROMPT_INJECTION_REJECTED`。`material-safety-audit.v2` 只允许没有确定性注入信号、且所有不确定位置均属于解析器失败范围的首轮 `uncertain` 进入隔离恢复；未知范围、已解析文本/focus 信号和 `malicious` 仍立即拒绝，恢复后的完整 DocumentIR 仍以严格二次审查失败关闭。
 - 真实发布 run `31824832947` 暴露出 Luna 的 OpenAI-only 与 ZDR 组合当前无可路由 endpoint；原发布正确自动恢复旧 Web/API，但会阻断已经通过的 DocumentIR/图谱/任务/考试改进。向前修复把真实门禁拆为必须通过的旧流水线和实时 Luna ZDR catalog 决策：只有 first-party OpenAI ZDR endpoint 存在才开启 Luna，否则稳定返回 `OPENROUTER_ZDR_UNAVAILABLE`、保持子开关 false并继续让用户显式使用 DocumentIR，绝不关闭 ZDR、改用 Azure或允许 fallback。
@@ -53,6 +55,11 @@
 - 修复传给 FastAPI 的 `budgetMicroUsd` 过去只作为未使用元数据的问题；每个增量 usage event 现在会在继续下一次模型调用前更新 worker 预算，超限事实仍先写 spool/账本再失败关闭。
 - Materials AI 队列现在标明每项是 Test paper、Knowledge map 或 Knowledge question；同一文件存在多个历史任务时，用户与浏览器测试不会再把旧试卷误认成最新知识图。
 - 修复过期/耗尽 retry RPC 在抛异常后回滚自身清理的问题；终态现在持久保存稳定错误并由 API 映射 409。
+
+### Testing
+
+- PR #69 与 main run [`31838779292`](https://github.com/1590703336/Nalanda/actions/runs/31838779292) 的 fake/local 门禁、真实 provider fixture、220 页 canary、Azure/Courses gate均通过；登录生产 smoke 的固定知识图返回 3 nodes/2 edges 但没有 level-0 root，数据库拒绝完成回调，候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 未切 Web 且自动恢复旧 API/AI。该 run 是发现并隔离发布缺陷的证据，不是上线证据。
+- 根节点/完成回调向前修复本地通过 72 个 Python、131 个 API、113 个 Web/jsdom 测试，以及 ruff、docs 55、release tooling 26、lint、typecheck 和 Web/API build；真实 Supabase、Chromium 与真实 provider仍须由新 PR/main/protected run 再证明。
 
 ### Security
 
