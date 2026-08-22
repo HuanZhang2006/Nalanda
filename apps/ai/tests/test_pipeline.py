@@ -15,6 +15,7 @@ from app.pipeline import (
     enforce_pre_recovery_audit,
     generate_knowledge_graph,
     normalize_exam_invariants,
+    normalize_exam_source_refs,
     normalize_knowledge_graph_invariants,
     recover_visuals,
     review_result_issues,
@@ -748,6 +749,157 @@ async def test_marks_only_provider_drift_is_normalized_before_semantic_review():
     assert purposes == ["exam_generation", "exam_review"]
     assert sum(question.marks for section in exam.sections for question in section.questions) == 20
     assert [event.purpose for event in usage] == purposes
+
+
+def test_exam_source_refs_drop_invented_ids_and_use_canonical_document_metadata():
+    source = DocumentIR(
+        title="Fixture",
+        sourceType="docx",
+        pageCount=1,
+        slideCount=0,
+        blocks=[
+            DocumentBlock(
+                id="docx-b1",
+                order=1,
+                kind="paragraph",
+                text="Supported source",
+                page=1,
+                label="Canonical paragraph",
+            ),
+        ],
+        diagnostics=[],
+    )
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+    exam = GeneratedExam.model_validate(pipeline._fake_exam(settings, "docx-b1"))
+    exam.sections[0].questions[0].sourceRefs = [
+        pipeline.SourceRef(blockId="invented", label="Private provider prose"),
+        pipeline.SourceRef(blockId="docx-b1", page=99, label="Invented label"),
+    ]
+
+    normalized = normalize_exam_source_refs(exam, source)
+
+    assert normalized.sections[0].questions[0].sourceRefs == [
+        pipeline.SourceRef(
+            blockId="docx-b1",
+            page=1,
+            label="Canonical paragraph",
+            locatorKind="block",
+        )
+    ]
+    assert exam.sections[0].questions[0].sourceRefs[0].blockId == "invented"
+
+
+def test_exam_source_ref_fallback_requires_the_same_stable_question_id():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+    source = document("Source")
+    original = GeneratedExam.model_validate(pipeline._fake_exam(settings, "t1-b1"))
+    repaired = original.model_copy(deep=True)
+    repaired.sections[0].questions[0].id = "provider-replaced-id"
+    repaired.sections[0].questions[0].sourceRefs = [
+        pipeline.SourceRef(blockId="invented-block", label="Invented"),
+    ]
+
+    normalized = normalize_exam_source_refs(repaired, source, fallback_exam=original)
+
+    assert normalized.sections[0].questions[0].sourceRefs[0].blockId == "invented-block"
+    assert "provider-replaced-id has an invalid source reference" in validate_exam(
+        normalized,
+        settings,
+        {"t1-b1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_exam_repair_restores_same_question_valid_refs_then_rechecks_semantics():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+
+    class InvalidRepairReferenceClient:
+        review_calls = 0
+
+        async def structured(self, *, purpose, result_type, **_kwargs):
+            value = pipeline._fake_exam(settings, "t1-b1")
+            if purpose == "exam_review":
+                self.review_calls += 1
+                value = {
+                    "valid": self.review_calls == 2,
+                    "issues": [] if self.review_calls == 2 else ["one distractor is ambiguous"],
+                }
+            elif purpose == "exam_repair":
+                value["sections"][0]["questions"][0]["sourceRefs"] = [
+                    {"blockId": "invented-block", "label": "Invented"},
+                ]
+            return result_type.model_validate(value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=pipeline.TEXT_MODEL,
+                    requestId=f"test-{purpose}-{self.review_calls}",
+                    promptTokens=1,
+                    completionTokens=1,
+                    totalTokens=2,
+                    costMicroUsd=1,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
+
+    client = InvalidRepairReferenceClient()
+    usage: list[UsageEvent] = []
+    exam = await pipeline.generate_exam(client, document("Source"), settings, usage)
+
+    assert client.review_calls == 2
+    assert exam.sections[0].questions[0].sourceRefs[0].blockId == "t1-b1"
+    assert [event.purpose for event in usage] == [
+        "exam_generation",
+        "exam_review",
+        "exam_repair",
+        "exam_review",
+    ]
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-22。生产数据库已到 0051，但不可变应用仍为此前稳定 release；0046–0051 的异步恢复、知识图、任务清理与 Luna 原文件尚未通过真实门禁并切流，数据库 apply 不能冒充应用上线。
+> - **状态基线**：2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna flag 均保持关闭；0046–0051 的异步恢复、知识图、任务清理与 Luna 原文件尚未通过全部真实门禁并切流，数据库 apply 不能冒充应用上线。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -244,6 +244,12 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - PR #70 run `32499521666` 完成完整 fake/local 门禁并合并为 main `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e`。main run [`32540131549`](https://github.com/1590703336/Nalanda/actions/runs/32540131549) 再次通过 lint/typecheck、API/Web/Python、真实 Redis、0007→0051、空库/lint/RLS/Storage、fake Chromium、镜像构建及 220 页资源 canary；本次无新 migration，数据库发布 job 正确跳过。
 - 同一 run 的真实 PDF gate 通过后，固定 DOCX 试卷在最终校验返回 `AI_EXAM_VALIDATION_FAILED`。候选 `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e-32540131549-1` 在 API/Web 切流前失败，EXIT trap 清除候选并恢复旧 API/AI/Web；独立检查确认 `.deploy.env` 与 Web symlink 仍指向旧稳定 `3c095a55ced21cee11a1b3131dd2889ec1f70733` release，公网 Supabase/Redis/AI health 正常且匿名 `/api/me` 为 401。因此 #70 已合并但没有部署成功。
 - 向前修复只增加 content-free validation categories/counts，并将固定材料扩展为足够支持五道题的八个独立事实；仍保持一次 repair、严格 schema/答案/引用/语义门。新的 PR/main 真实门禁通过、候选切流并完成服务器与公网独立复核之前，不得称 0046–0051 应用已上线；Luna 仍需 first-party OpenAI ZDR endpoint，能力不存在时子开关必须 false。
+
+### 2026-08-23 · 0052–0053 已应用，应用重试仍回退
+
+- PR #72 将时间列 contract 以 0052–0053 追加到生产 0051 之后；受保护 run `32581805613` 已完成恢复点与数据库 apply/验证，但应用候选没有完成真实门禁和切流。生产数据库到 0053 不代表新 Web/API/AI 已激活。
+- PR #71 的 main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) 首次真实 Materials suite 通过后被 Japan East Azure HTTP 401 阻断并回退。用户要求重试后的 attempt 2 通过 220 页资源 canary，随后固定 DOCX 初次语义复核失败、repair 后最终结构门返回 `SOURCE_REFERENCE`；候选再次在切流前清理，生产继续运行稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，Materials AI/Luna 保持 false。
+- 来源引用向前修复只允许 DocumentIR allowlist、服务端 locator 和同一稳定 question ID 的 repair 前引用恢复，并强制再次语义复核。它必须经新 PR/main 的完整 CI、真实 provider、Azure、登录用户 smoke、候选切流及服务器/公网独立核验后，才可记录为部署成功。
 
 ## 8. 运维速查
 

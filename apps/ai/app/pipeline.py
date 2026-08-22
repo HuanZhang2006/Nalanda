@@ -40,6 +40,7 @@ from .schemas import (
     ProcessExamRequest,
     ProcessMaterialJobRequest,
     ReviewResult,
+    SourceRef,
     UsageEvent,
     VisualExtractResult,
     VisualRegion,
@@ -453,6 +454,66 @@ def normalize_exam_invariants(exam: GeneratedExam, settings: ExamSettings) -> Ge
     return normalized
 
 
+def normalize_exam_source_refs(
+    exam: GeneratedExam,
+    document: DocumentIR,
+    *,
+    fallback_exam: GeneratedExam | None = None,
+) -> GeneratedExam:
+    """Canonicalize only mechanically valid DocumentIR source references.
+
+    Providers occasionally append an invented block ID while repairing an
+    otherwise structurally valid exam. Removing invented IDs does not assert
+    that the remaining citation supports the question; the mandatory semantic
+    review still makes that decision. If a repair removes every valid citation,
+    the pre-repair citation may be restored only for the same stable question
+    ID, after which the repaired question is reviewed again. Otherwise the
+    invalid reference is deliberately retained so validation fails closed.
+    """
+    normalized = exam.model_copy(deep=True)
+    blocks = {block.id: block for block in document.blocks}
+    fallback_questions = (
+        {
+            question.id: question
+            for section in fallback_exam.sections
+            for question in section.questions
+        }
+        if fallback_exam is not None
+        else {}
+    )
+
+    def canonical_refs(refs: list[SourceRef]) -> list[SourceRef]:
+        result: list[SourceRef] = []
+        seen: set[str] = set()
+        for ref in refs:
+            block = blocks.get(ref.blockId)
+            if block is None or block.id in seen:
+                continue
+            seen.add(block.id)
+            result.append(
+                SourceRef(
+                    blockId=block.id,
+                    page=block.page,
+                    slide=block.slide,
+                    label=block.label,
+                    locatorKind="block",
+                    locatorIndex=None,
+                )
+            )
+        return result
+
+    for section in normalized.sections:
+        for question in section.questions:
+            valid_refs = canonical_refs(question.sourceRefs)
+            if not valid_refs:
+                fallback = fallback_questions.get(question.id)
+                if fallback is not None:
+                    valid_refs = canonical_refs(fallback.sourceRefs)
+            if valid_refs:
+                question.sourceRefs = valid_refs
+    return normalized
+
+
 def normalize_knowledge_graph_invariants(
     graph: GeneratedKnowledgeGraph,
 ) -> GeneratedKnowledgeGraph:
@@ -662,7 +723,7 @@ the learner session. Return only the strict GeneratedExamV1 JSON schema."""
         fake_value=fake_exam,
     )
     usage.extend(events)
-    exam = normalize_exam_invariants(exam, settings)
+    exam = normalize_exam_source_refs(normalize_exam_invariants(exam, settings), document)
 
     async def semantic_issues(candidate: GeneratedExam) -> list[str]:
         review, review_events = await client.structured(
@@ -702,7 +763,11 @@ the learner session. Return only the strict GeneratedExamV1 JSON schema."""
             fake_value=fake_exam,
         )
         usage.extend(repair_events)
-        exam = normalize_exam_invariants(repaired, settings)
+        exam = normalize_exam_source_refs(
+            normalize_exam_invariants(repaired, settings),
+            document,
+            fallback_exam=exam,
+        )
         final_structural = validate_exam(exam, settings, block_ids)
         final_semantic: list[str] = []
         if not final_structural:

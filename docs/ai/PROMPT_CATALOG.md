@@ -3,7 +3,7 @@
 > **本文内容：**集中记录 Nalanda 当前生产、发布门禁和测试中所有发送给 AI/语音供应商的自然语言 prompt、动态输入模板、输出 schema、安全约束、模型、代码位置与版本边界；同时区分不属于 AI prompt 的浏览器对话框和题目字段。  
 > **作用：**作为全项目唯一的 prompt 人工维护入口，回答“每一环节实际给模型发送了什么”，并要求 prompt、代码、schema、评测和发布证据同步演进，避免在多个蓝图或实现笔记中维护互相冲突的副本。  
 > **何时更新：**任何 system/user prompt、模型、供应商、动态字段、schema、temperature/token/tool/reasoning/ZDR 参数、安全分类、版本号或真实评测样本变化时，必须与实现同一 PR 更新；新增 AI 能力必须先登记再启用。  
-> **状态基线：**2026-08-22。生产 Materials AI 应用仍使用固定 DeepSeek/MiMo；生产数据库已到 0051，但知识图、节点问答和固定 Luna/OpenAI 原文件 prompt 的新应用候选尚未通过真实门禁并切流。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
+> **状态基线：**2026-08-23。生产数据库已到 0053，但生产应用已回退到此前稳定 release，Materials AI/Luna 开关保持关闭；知识图、节点问答和固定 Luna/OpenAI 原文件 prompt 的新应用候选尚未通过全部真实门禁并切流。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
 
 ## 1. 维护规则与范围
 
@@ -177,7 +177,7 @@ UNTRUSTED_SOURCE_JSON
 {"settings":<language/difficulty/durationMinutes/totalMarks/questionCounts/answerDetail/focus>,"sourceBlocks":<完整重建后的 blocks[]>}
 ```
 
-`focus` 与所有 source block 都是 JSON 数据，不拼进 system prompt。输出必须是 `GeneratedExamV1`，包含试卷元数据、sections、六类题目、marks、选项/答案、explanation、rubric 和精确 `sourceRefs`。运行时版本为 `exam-generate.v3`：服务端先用请求设置覆盖 language/difficulty/duration/totalMarks，规范重复 section/question ID，并在题数可承载设置总分时按模型原相对权重稳定重分配 marks；它不会改题干、选项、答案、解析、rubric 或引用。随后确定性 validator 仍检查题型数量、总分、元数据、唯一 ID、答案和引用，语义复核仍是必须门禁。
+`focus` 与所有 source block 都是 JSON 数据，不拼进 system prompt。输出必须是 `GeneratedExamV1`，包含试卷元数据、sections、六类题目、marks、选项/答案、explanation、rubric 和精确 `sourceRefs`。运行时版本为 `exam-generate.v3`：服务端先用请求设置覆盖 language/difficulty/duration/totalMarks，规范重复 section/question ID，并在题数可承载设置总分时按模型原相对权重稳定重分配 marks；它不会改题干、选项、答案、解析或 rubric。source reference 只做可证明的机械规范化：删除 DocumentIR allowlist 外的混合引用、去重，并用服务端 block 元数据重建 locator；没有有效引用时仍失败关闭。随后确定性 validator 仍检查题型数量、总分、元数据、唯一 ID、答案和引用，语义复核仍是必须门禁。
 
 ### 3.4 `MAT-EXAM-REVIEW-V1`：语义复核
 
@@ -213,7 +213,7 @@ UNTRUSTED_REPAIR_JSON
 {"settings":<ExamSettings>,"allowedBlockIds":<sorted source block IDs>,"issues":<validator/reviewer issues[]>,"exam":<candidate exam>}
 ```
 
-输出仍为完整 `GeneratedExamV1`，不是 patch。修复后重新执行全部确定性校验和 `MAT-EXAM-REVIEW-V1`；仍失败则整个任务失败并释放产品额度。
+输出仍为完整 `GeneratedExamV1`，不是 patch。修复后先将引用限制到服务端 `allowedBlockIds`：有效引用采用 DocumentIR 的规范页/幻灯片/标签；如果 repair 让某题完全丢失有效引用，只允许在 question ID 未变时恢复该题 repair 前的有效引用。模型替换题目 ID、跨题借用或原候选本来就没有有效引用时不得恢复。该机械步骤不证明引用支持题意，因此之后仍重新执行全部确定性校验和 `MAT-EXAM-REVIEW-V1`；仍失败则整个任务失败并释放产品额度。
 
 一次 repair 后仍失败时，worker 只向内部发布门禁暴露稳定结构 code（例如题数、总分、引用、答案形状）、语义 category（例如来源 grounding、答案正确性、干扰项质量）以及预期/实际题数和总分。不得在诊断、日志或 API 错误中暴露 source、题目、答案、prompt、reviewer issue 原文或 provider body；诊断能力不增加 repair 次数，也不放宽 schema、引用或语义门禁。
 
