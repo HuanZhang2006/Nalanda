@@ -662,7 +662,7 @@ Web 使用 `@supabase/supabase-js`，并由 Supabase 自动映射到 Auth/PostgR
 | 社区 | `posts`, `comments` | 公共读取；作者写/删 | 生产 0039 起 posts 仅允许内容列写入，作者快照/计数/owner/业务键/时间由数据库维护 |
 | 社区关系 | `post_likes`, `post_favorites`, `follows` | 当前用户增删/查询关系 | 复合主键防同时重复关系 |
 | 标签 | `tags` | authenticated 读/插入 | 无更新/删除；无 kind 白名单约束 |
-| 计划 | `study_goals`, `study_tasks` | owner CRUD 内容列 | 生产 0039 trigger 同时约束客户端/service-role 的关联 owner，`done_at` 随 `done` 维护 |
+| 计划 | `study_goals`, `study_tasks` | owner CRUD 内容列；Web 只提交 `done` | 生产 0039 trigger 同时约束客户端/service-role 的关联 owner，`done_at` 随 `done` 维护；候选 0052–0053 撤销 authenticated 对该派生列的 UPDATE grant |
 | Courses 私有读取 | `learning_courses/units/words/sessions/items/attempts/progress/review_schedules/shares` | Web 当前经 Nest API 读取；数据库允许 owner SELECT | authenticated 无写权限；API service-role 写事务 RPC |
 | Courses 传播/成长 | publications/reports/badges | 作者/举报人/本人只读；公共读取经 API | 匿名 PostgREST 不开放；speech usage/审核动作对客户端隐藏 |
 | Courses 音频任务 | `learning_audio_assets` | 客户端无表/API 原始读取；只经 owner unit/word API 获取脱敏 manifest/audio | RLS + 表 grant 默认拒绝；仅 service-role worker |
