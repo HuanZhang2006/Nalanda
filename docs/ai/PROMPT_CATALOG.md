@@ -3,7 +3,7 @@
 > **本文内容：**集中记录 Nalanda 当前生产、发布门禁和测试中所有发送给 AI/语音供应商的自然语言 prompt、动态输入模板、输出 schema、安全约束、模型、代码位置与版本边界；同时区分不属于 AI prompt 的浏览器对话框和题目字段。  
 > **作用：**作为全项目唯一的 prompt 人工维护入口，回答“每一环节实际给模型发送了什么”，并要求 prompt、代码、schema、评测和发布证据同步演进，避免在多个蓝图或实现笔记中维护互相冲突的副本。  
 > **何时更新：**任何 system/user prompt、模型、供应商、动态字段、schema、temperature/token/tool/reasoning/ZDR 参数、安全分类、版本号或真实评测样本变化时，必须与实现同一 PR 更新；新增 AI 能力必须先登记再启用。  
-> **状态基线：**2026-08-23。生产数据库已到 0053，但生产应用已回退到此前稳定 release，Materials AI/Luna 开关保持关闭；知识图、节点问答和固定 Luna/OpenAI 原文件 prompt 的新应用候选尚未通过全部真实门禁并切流。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
+> **状态基线：**2026-08-23。生产数据库已到 0053，但生产应用已回退到此前稳定 release，Materials AI/Luna 开关保持关闭；知识图、节点问答和固定 Luna/OpenAI 原文件 prompt 的新应用候选尚未通过全部真实门禁并切流。最新 main 的真实 PPTX 引用/语义门均曾失败，不得把数据库版本或机械引用修复写成 prompt/语义质量上线证据。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
 
 ## 1. 维护规则与范围
 

@@ -90,7 +90,7 @@ and exists (select 1 from public.courses c
 
 API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/图片10MB，再创建短期 signed URL与 Postgres job/quota reservation；BullMQ 只投 UUID，FastAPI 解析并回调进度。页面每2秒轮询，后台退避到10秒，离开/刷新不取消。成功试卷落在同一 `courses.id` 的 My Notes；删除材料/科目可保留到 Unfiled 或同时删除 AI 结果，两者都取消任务、清 parse cache和过程文件。
 
-生产数据库已到 0051，但后续候选应用在真实供应商门禁失败后回退到此前稳定 release。2026-08-11 的 0041–0043 受保护发布曾通过真实 DeepSeek/MiMo、220 页 Office canary、登录用户生成/评分/删除、临时目录清理和独立公网 readiness 后开启 `FEATURE_MATERIAL_AI`；数据库版本与应用能力仍须分别核对。Storage 文件删除仍是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
+生产数据库已到 0053，但后续候选应用在真实供应商门禁失败后回退到此前稳定 release。2026-08-11 的 0041–0043 受保护发布曾通过真实 DeepSeek/MiMo、220 页 Office canary、登录用户生成/评分/删除、临时目录清理和独立公网 readiness 后开启 `FEATURE_MATERIAL_AI`；2026-08-22 的最新候选又连续两次在真实 PPTX 试卷 gate 返回 `AI_EXAM_VALIDATION_FAILED`，没有切流。数据库版本与应用能力仍须分别核对。Storage 文件删除仍是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
 
 ### 8.2 可恢复长任务、知识图谱与 Luna（0046–0051 候选，尚未上线）
 

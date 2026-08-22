@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna flag 均保持关闭；0046–0051 的异步恢复、知识图、任务清理与 Luna 原文件尚未通过全部真实门禁并切流，数据库 apply 不能冒充应用上线。
+> - **状态基线**：2026-08-23。生产数据库已到 0053，0052–0053 时间列 Stage B 已生效；不可变应用仍为此前稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733`，Materials AI/Luna flag 均保持关闭。最新 main 两次被真实 Materials AI PPTX 引用/语义门拦截并自动回退，数据库 apply 不能冒充应用上线。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -227,7 +227,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 修复合入后，[只读 plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端均到 0040且 dry-run 为空。最终 [受保护 run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 再保留 artifact `9057062920`（800,819 bytes，zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并通过远端 history、lint 与空 dry-run。
 - 切流前 Redis PING/AOF/private-port/noeviction、nginx `-t`、真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter Gemma（5,524 ms、253/27/280 tokens）和真实 Courses API/Storage/Fish gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`transcriptionMatched=true`）全部通过。此前一次 12 秒超时和三次 429 均在切流前阻断；同密钥额度正常且生产主机恢复 HTTP 200 后才重跑成功，未改用 fake 或绕过门禁。
 - 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 激活。公网复核确认 Web/Course Market 200、匿名 `/api/me` 与 points admin 401、注册 400 且带 `RateLimit-Limit: 5`，health 为 `deps.supabase=ok/deps.redis=ok`；主机复核确认 Web 软链与 API image 指向该 release，Redis healthy 且无宿主端口。
-- 24 小时兼容观察从激活时刻计算，最早 contract 资格时间为 `2026-08-11T09:35:34Z`。2026-08-22 已复核 Redis、points projection、协同 signal 与受支持客户端时间列依赖并通过 go/no-go；最终 contract 改为生产 0051 后顺序追加的 0052–0053，仍需独立 CI、plan、恢复点和发布。
+- 24 小时兼容观察从激活时刻计算，最早 contract 资格时间为 `2026-08-11T09:35:34Z`。2026-08-22 已复核 Redis、points projection、协同 signal 与受支持客户端时间列依赖并通过 go/no-go；最终 contract 随后在生产 0051 后顺序追加为 0052–0053 并完成受保护发布。
 
 ### 2026-08-11 · 0041–0043 Materials AI 生产激活
 
@@ -245,11 +245,14 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 同一 run 的真实 PDF gate 通过后，固定 DOCX 试卷在最终校验返回 `AI_EXAM_VALIDATION_FAILED`。候选 `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e-32540131549-1` 在 API/Web 切流前失败，EXIT trap 清除候选并恢复旧 API/AI/Web；独立检查确认 `.deploy.env` 与 Web symlink 仍指向旧稳定 `3c095a55ced21cee11a1b3131dd2889ec1f70733` release，公网 Supabase/Redis/AI health 正常且匿名 `/api/me` 为 401。因此 #70 已合并但没有部署成功。
 - 向前修复只增加 content-free validation categories/counts，并将固定材料扩展为足够支持五道题的八个独立事实；仍保持一次 repair、严格 schema/答案/引用/语义门。新的 PR/main 真实门禁通过、候选切流并完成服务器与公网独立复核之前，不得称 0046–0051 应用已上线；Luna 仍需 first-party OpenAI ZDR endpoint，能力不存在时子开关必须 false。
 
-### 2026-08-23 · 0052–0053 已应用，应用重试仍回退
+### 2026-08-22 · 0052–0053 安全 Stage B 数据库发布、应用 gate 回退
 
-- PR #72 将时间列 contract 以 0052–0053 追加到生产 0051 之后；受保护 run `32581805613` 已完成恢复点与数据库 apply/验证，但应用候选没有完成真实门禁和切流。生产数据库到 0053 不代表新 Web/API/AI 已激活。
-- PR #71 的 main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) 首次真实 Materials suite 通过后被 Japan East Azure HTTP 401 阻断并回退。用户要求重试后的 attempt 2 通过 220 页资源 canary，随后固定 DOCX 初次语义复核失败、repair 后最终结构门返回 `SOURCE_REFERENCE`；候选再次在切流前清理，生产继续运行稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，Materials AI/Luna 保持 false。
-- 来源引用向前修复只允许 DocumentIR allowlist、服务端 locator 和同一稳定 question ID 的 repair 前引用恢复，并强制再次语义复核。它必须经新 PR/main 的完整 CI、真实 provider、Azure、登录用户 smoke、候选切流及服务器/公网独立核验后，才可记录为部署成功。
+- PR #71 的 main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) 首次真实 Materials suite 通过后被 Japan East Azure HTTP 401 阻断并回退；用户要求重试后的 attempt 2 通过 220 页资源 canary，随后固定 DOCX 初次语义复核失败、repair 后最终结构门返回 `SOURCE_REFERENCE`，同样未切流。
+- PR [#72](https://github.com/1590703336/Nalanda/pull/72) 以 main `1ef0bc8d333a9ff841176d91acb4c977c0e64bed` 为唯一基线，合并为 `4d1bc97888799417641fefdd507c026b274a2bab`；PR run [`32579985463`](https://github.com/1590703336/Nalanda/actions/runs/32579985463) 与 main run [`32580594918`](https://github.com/1590703336/Nalanda/actions/runs/32580594918) 通过 docs/lint/typecheck、API/Web/Python、真实 CI Redis、0007→0053、空库/lint、双用户 RLS/Storage、fake-provider Chromium、生产镜像启动和 nginx/compose。普通 main push 正确跳过生产数据库和应用部署。
+- [只读 plan `32581192318`](https://github.com/1590703336/Nalanda/actions/runs/32581192318) 显示远端完整到 0051，dry-run 唯一列出 0052–0053且没有写库或部署。[protected run `32581805613`](https://github.com/1590703336/Nalanda/actions/runs/32581805613) 在 apply 前上传 14 天加密恢复 artifact [`9478168126`](https://github.com/1590703336/Nalanda/actions/runs/32581805613/artifacts/9478168126)（885,857 bytes，zip SHA-256 `0e4425b7098b4b352b5a7f6e81e87861d9c98b535970f9f20592641653a41274`），随后应用 0052–0053。远端 history 对齐到 0053、dry-run 为空、public schema lint 成功；0053 同时失败关闭断言合法列、service-role、trigger 与最终撤权。
+- 应用 attempt 1 的 220 页资源 canary 通过，但真实 PPTX 试卷在 repair 后缺 `SOURCE_REFERENCE`；attempt 2 的同一样本从缺引用修复后仍未通过五类语义门，两次均返回 `AI_EXAM_VALIDATION_FAILED`。没有改用 fake、放宽 gate 或继续碰运气；真实 Materials AI gate 失败发生在 Azure/OpenRouter/Courses 后续 smoke 之前，因此本次不能把那些后续门写成通过。
+- 两次候选均在 Web/API 切流前调用 rollback。独立公网复核为 Web 200、`/api/health` 200 且 `deps.supabase=ok/deps.redis=ok`、`/api/health/ai` 200、匿名 `/api/me` 401；主机复核确认 Web 软链与 API/AI image 仍为 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，AI/Redis healthy，`FEATURE_MATERIAL_AI=false`、`FEATURE_MATERIAL_AI_LUNA=false`。结论：0052–0053 数据库权限已上线，最新 main 应用没有部署成功，Materials AI 保持关闭直至独立修复重新通过全部门禁。
+- 来源引用向前修复只允许 DocumentIR allowlist、服务端 locator 和同一稳定 question ID 的 repair 前引用恢复，并强制再次语义复核。它必须经新 PR/main 的完整 CI、真实 provider、Azure、登录用户 smoke、候选切流及服务器/公网独立核验后，才可记录为部署成功；真实语义门再次失败时仍必须回退。
 
 ## 8. 运维速查
 
@@ -268,5 +271,5 @@ docker system df
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 0046–0051 的数据库已前向应用；0039–0040 的时间列撤权 go/no-go 已完成并单独形成 0052–0053 候选。Stripe Webhook 仍属于后续能力。
+- 0046–0051 与 0052–0053 数据库均已前向应用；最新 main 应用仍须先修复真实 Materials AI PPTX gate，再走不可变 release。Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。
