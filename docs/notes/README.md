@@ -22,4 +22,4 @@
 | [10-学习计划](10-schedule.md) | 任务/目标、幂等完成奖励 + 连续学习、关联课程资料、智能填充 |
 | [11-Courses 英语单词学习](11-learning-courses.md) | 独立学习课程、文本解析/编辑、四阶段学习、复习熟练度、分享市场、Azure Speech |
 
-> 状态：已接生产真数据 —— 注册/登录、**Materials、社区、学习计划、Courses、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API/AI；生产迁移仍到 0043。0041–0043 已上线 Materials 试卷/考试/Free quota；0046–0051 的恢复、图谱、任务清理、布局与 Luna 只是未发布候选。fake Playwright、jsdom 或 pytest 不构成真实 provider/生产证明；候选仍须真实 DeepSeek/MiMo/Luna、资源 canary、数据库/RLS、登录用户 smoke 和独立公网核验。
+> 状态：已接生产真数据 —— 注册/登录、**Materials、社区、学习计划、Courses、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API/AI；生产 migration history 已到 0053，0052–0053 安全 contract 已生效。当前稳定应用继续提供 0041–0043 Materials 试卷/考试/Free quota；0046–0051 的恢复、图谱、任务清理、布局与 Luna 只是未发布候选。fake Playwright、jsdom 或 pytest 不构成真实 provider/生产证明；候选仍须真实 DeepSeek/MiMo/Luna、资源 canary、数据库/RLS、登录用户 smoke 和独立公网核验。

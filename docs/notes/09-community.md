@@ -43,7 +43,7 @@ create policy posts_delete_own  ... for delete using (user_id = auth.uid());    
 - comments 同款（公共读 + 作者写删）。
 - **likes/favorites 是 owner-only**（`for all using user_id=auth.uid()`）：你只能看到/改自己的点赞记录。「这帖多少赞」不靠查 likes 表，而靠帖子上的 `like_count`。这样既不泄露「谁赞了谁」，又能显示总数。
 - follows：`select using (follower_id=auth.uid() or following_id=auth.uid())`——能看自己关注的人 + 自己的粉丝。
-- 生产 0039 在行级 owner policy 之外增加列级白名单：INSERT 只接受内容列和 `repost_of`；内容 UPDATE 接受 `title/body/kind/subject/tags/image_url/audio_url`。`user_id`、作者快照、四个计数、repost、points key 和时间由数据库维护；生产当前兼容 grant 仍会接受并覆盖 `updated_at`，候选 0052–0053 最终撤销该 authenticated UPDATE 权限。
+- 生产 0039 在行级 owner policy 之外增加列级白名单：INSERT 只接受内容列和 `repost_of`；内容 UPDATE 接受 `title/body/kind/subject/tags/image_url/audio_url`。`user_id`、作者快照、四个计数、repost、points key 和时间由数据库维护；生产 0052–0053 已最终撤销 authenticated 对 `updated_at` 的 UPDATE 权限。
 
 > 心法：**读权限按「这数据该不该公开」定**，不是一刀切 owner-only。写权限永远卡 `auth.uid()`。
 

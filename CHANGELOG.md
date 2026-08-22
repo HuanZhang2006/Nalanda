@@ -11,7 +11,7 @@
 
 ### Added
 
-- 新增 Stage B 候选迁移 0052–0053：在生产 0051 后严格追加，撤销 authenticated 对 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE 权限，并失败关闭验证最终内容列、Schedule 列、service-role 与时间维护 trigger。原预留的 0044–0045 保持未使用，不补插远端 migration history。
+- 新增并在生产数据库应用 Stage B 迁移 0052–0053：在 0051 后严格追加，撤销 authenticated 对 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE 权限，并失败关闭验证最终内容列、Schedule 列、service-role 与时间维护 trigger。原预留的 0044–0045 保持未使用，没有补插远端 migration history。
 - 追加候选迁移 0049–0051：为 job/Note 增加显式 `pipeline`，为成本事件记录实际 upstream provider/endpoint，新增 `deleting` 清理状态、私有 `knowledge_graph_layouts`、任务删除/清空/取消清理事务、Luna 完成路由门和精确权限断言；旧签名继续保留用于数据库先行和应用回滚。
 - 新增 `luna_native_file_v1`：固定 `openai/gpt-5.6-luna`、`provider.only=["openai"]`、无 fallback、ZDR/deny collection/require parameters、禁用工具/Web，并以内联 base64 原文件处理已通过门禁 allowlist 的 PDF/图片。它不调用确定性解析、OCR、LibreOffice、DocumentIR 或 parse cache，且不会使用具有远端留存语义的 Files API。
 - 知识图改为动态 React Flow + ELK 分层画布，支持平移、缩放、拖动/键盘移动节点、适应视图、自动整理、无重叠碰撞消解、外部 hover/click 详情和带 revision 的跨设备布局保存；fake-provider Chromium 路径加入 250 节点及活动删除夹具。
@@ -68,7 +68,7 @@
 
 ### Security
 
-- 2026-08-22 go/no-go 复核确认兼容观察已超过 24 小时；现网与最新 Web 均不提交两个时间字段，Redis PING/AOF/noeviction 正常、无 error/eviction，points ledger/Profile projection 差异为 0。0052–0053 在受保护 plan/apply 完成前仍不得描述为生产权限事实。
+- 2026-08-22 go/no-go 复核确认兼容观察已超过 24 小时；现网与最新 Web 均不提交两个时间字段，Redis PING/AOF/noeviction 正常、无 error/eviction，points ledger/Profile projection 差异为 0。只读 plan run `32581192318` 仅列 0052–0053；protected run `32581805613` 在 artifact `9478168126` 后应用并验证到 0053。该 run 的最新应用候选两次均被真实 Materials AI PPTX gate 拦截并自动恢复 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，因此数据库权限已上线，但最新 main 应用没有切流。
 - 新 checkpoint 表不开放客户端读取；知识问答仅 owner 可读且不能由客户端写。所有新 RPC 撤销 `public/anon/authenticated` EXECUTE，问题和来源内容继续按不可信数据处理，不能改变模型、工具或 system prompt。
 
 ## [0.11.1] - 2026-08-11

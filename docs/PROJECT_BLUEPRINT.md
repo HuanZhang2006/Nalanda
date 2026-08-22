@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-08-22。生产数据库已受保护应用到 0051；后续候选失败后旧 Web/API 已恢复，不能把数据库迁移成功写成应用/Luna 上线。0039–0040 安全第一阶段和既有 Materials AI 数据仍保留；时间列撤权 contract 已按严格追加顺序实现为候选 0052–0053，原预留 0044–0045 保持未使用，不补插远端历史。
+最后核对：2026-08-23。生产数据库已受保护应用到 0053；0052–0053 时间列 Stage B 已上线，原预留 0044–0045 保持未使用。最新 main 应用候选因真实 Materials AI PPTX gate 两次失败而恢复旧 Web/API，不能把数据库迁移成功写成候选应用/Luna 上线。
 
 2026-08-14 代码与数据库已占用 0046–0051：0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；0049–0051 实现 Luna 原文件、可取消清理、provider provenance 和跨设备图布局。数据库已应用，应用仍需成功的不可变 release；Luna 另受实时 ZDR/OpenAI 门禁约束。Stage B 采用 0052–0053，避免为填补 0044–0045 空号引入 `--include-all` 或改写既有 migration history。
 
@@ -28,7 +28,7 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 
 截至 2026-08-11，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses + Materials AI 最小闭环 + 私有 Redis 请求保护/任务投递”：
 
-- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API/AI 生产部署；生产 migration history 已到 0051，但后续应用候选失败后仍由此前稳定 release 提供服务。
+- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API/AI 生产部署；生产 migration history 已到 0053，但最新应用候选失败后仍由此前稳定 release 提供服务。
 - 已上线：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech；生产 flags 已开启，fake 未进入生产。
 - 已上线增量：0015–0016 把普通答题改成客户端一帧内预测反馈、`attemptId + expectedRevision` 幂等串行 outbox、单 RPC session snapshot，并用 Supabase Storage 持久队列与浏览器 Cache Storage 预取/下载单元音频；服务端仍唯一决定进度与成长事实。
 - 已上线增量：0017–0018 让当前词和未来四词不论 ready/pending 都立即缓存或提升生成优先级，持续轮询 manifest 并在 ready 后替换浏览器朗读；active session 改为按首次学习、临时复习或日程复习的精确意图恢复，暂停学习不会再劫持另一单元复习。
@@ -41,8 +41,8 @@ Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资�
 - 仍为 mock/未实现：Home 聚合、独立 AI Create、知识清单、独立 Quiz、Note Market；My Notes 历史硬数据保留在 Demo 分组。
 - 已上线：Materials AI 第一阶段的 Generate test paper、私有 Notes、在线考试和主观题评分。未发布候选另完成知识点梳理、交互图谱/节点问答以及长任务断点续跑；在受保护发布完成前不得标为上线。
 - 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；pgvector/RAG、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。生产 Redis 同时用于 API 限流、审计聚合、协同扫描锁和 BullMQ UUID 投递。
-- 安全基线进展：生产已应用 0008–0051，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 与 Materials AI 私有写入/RPC/传播、幂等 operation、配额、布局和任务清理事实均通过双用户 RLS 与发布断言；新应用仍以独立 release 证据判定。
-- 发布候选：0039–0040 与兼容应用从 `2026-08-10T09:35:34Z` 起已观察超过 24 小时，2026-08-22 go/no-go 通过；0052–0053 已实现最终兼容时间列撤权，但生产 apply 前仍以兼容 grant 为事实。
+- 安全基线进展：生产已应用 0008–0053，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 与 Materials AI 私有写入/RPC/传播、幂等 operation、配额、布局和任务清理事实均通过双用户 RLS 与发布断言；新应用仍以独立 release 证据判定。
+- 已上线：0039–0040 与兼容应用从 `2026-08-10T09:35:34Z` 起观察超过 24 小时并于 2026-08-22 通过 go/no-go；0052–0053 随后撤销两个 authenticated 兼容 UPDATE grant，远端 0053 自验证通过。
 
 当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
 
@@ -227,7 +227,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - **已上线：**0039–0040 修复帖子 UPDATE 可信字段、Feedback 状态、goal/task owner 关联与数据库时间字段；兼容期仍接受两个旧时间列但总由 trigger 覆盖。
 - **已上线：**0008–0010 已完成受保护生产发布；旧 opening 以追加式等额冲正归零，生产 history、发布断言和最终 dry-run 均通过。
 - **已上线：**points 首次决策冻结、每日数量上限、owner 回执、审核 suppress/restore、协同行为待审信号、Redis 滑动窗口、HMAC 滥用审计和管理 API；自动处罚、完整审核 UI 与 webhook 告警不在本阶段。
-- **当前发布中止点：**兼容观察和 go/no-go 已完成；0052–0053 候选只撤销 authenticated 对 `posts.updated_at` 与 `study_tasks.done_at` 的 UPDATE grant，并验证合法内容/Schedule 写入、service-role 和时间 trigger 保持。只有完整 CI、独立 plan、恢复点、apply 和公网 smoke 后才改为已上线。
+- **当前发布中止点：**0052–0053 数据库 contract 已通过完整 CI、独立 plan、恢复点、apply 和远端验证上线；最新 main 应用仍因真实 Materials AI PPTX gate 失败而未切流。修复该独立 AI 问题时不得改回时间列 grant，也不得放宽 provider gate。
 - 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、Courses 浏览器主流程、构建、加密恢复点与应用回退门禁；继续补全旧模块 API HTTP/浏览器 E2E 与 FastAPI 测试。
 - 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
 
@@ -293,7 +293,7 @@ NestJS API（业务边界、配额、订单、任务、管理）
 |---|---|---|---|---|
 | SEC-01 | Profile 敏感列与内部 RPC 收口 | 已上线 | A | 0008–0010、RLS E2E、2026-07-21 生产发布记录 |
 | SEC-02 | 注册限流、邮箱验证、找回密码 | 部分 | A/B | 0039–0040 已上线 Redis IP+email 限流；邮箱验证/找回/CAPTCHA 仍未完成 |
-| SEC-03 | 帖子/Feedback/Schedule 完整性与 points 反滥用 | Stage B 候选 | A | 0039–0040、真实 Redis/双用户 RLS/生产 gates 与 go/no-go 已完成；0052–0053 待受保护发布 |
+| SEC-03 | 帖子/Feedback/Schedule 完整性与 points 反滥用 | 已上线 | A | 0039–0040、真实 Redis/双用户 RLS/go-no-go，以及 plan `32581192318`、apply `32581805613`、0052–0053 远端验证 |
 | QA-01 | jsdom、API、Python、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API/Python unit + CI 本地 Supabase + Courses/Materials AI Playwright；staging 与旧模块 API HTTP/浏览器待补 |
 | OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
 | FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
