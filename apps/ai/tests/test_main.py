@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import time
 from pathlib import Path
@@ -76,6 +77,33 @@ def test_production_readiness_rejects_the_fake_provider(monkeypatch, tmp_path: P
     result = main.health()
     assert result["status"] == "error"
     assert result["deps"]["openrouter"] == "unavailable"
+
+
+@pytest.mark.asyncio
+async def test_pipeline_error_response_exposes_only_explicit_safe_diagnostics():
+    response = await main.pipeline_error(
+        None,
+        PipelineError(
+            "AI_EXAM_VALIDATION_FAILED",
+            "The generated result failed validation",
+            diagnostics={
+                "stage": "post_repair",
+                "finalGate": "semantic",
+                "finalSemanticCategories": ["SOURCE_GROUNDING"],
+                "prompt": "do not expose this",
+                "initialGate": "private source text",
+                "actualQuestionCount": -1,
+            },
+        ),
+    )
+
+    payload = json.loads(response.body)
+    assert payload["diagnostics"] == {
+        "stage": "post_repair",
+        "finalGate": "semantic",
+        "finalSemanticCategories": ["SOURCE_GROUNDING"],
+    }
+    assert "prompt" not in response.body.decode().casefold()
 
 
 def test_startup_sweeper_removes_only_orphaned_job_directories(monkeypatch, tmp_path: Path):

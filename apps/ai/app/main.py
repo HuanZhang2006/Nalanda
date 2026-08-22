@@ -146,6 +146,7 @@ async def pipeline_error(_request, error: PipelineError):
             "code": error.code,
             "message": error.safe_message,
             "usageEvents": error.usage_events,
+            "diagnostics": error.diagnostics,
         },
     )
 

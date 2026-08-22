@@ -1,5 +1,6 @@
 import base64
 import copy
+import json
 from pathlib import Path
 
 import pytest
@@ -639,6 +640,29 @@ def test_review_result_issues_fails_closed_on_inconsistent_provider_output(valid
     assert review_result_issues(pipeline.ReviewResult(valid=valid, issues=issues)) == expected
 
 
+def test_exam_diagnostics_use_only_stable_content_free_categories():
+    structural = [
+        "singleChoice count is 4, expected 5",
+        "q-secret has an invalid source reference",
+    ]
+    semantic = ["The answer is not supported by the cited source passage about a private topic"]
+
+    assert pipeline.exam_structural_issue_codes(structural) == [
+        "QUESTION_TYPE_COUNT",
+        "SOURCE_REFERENCE",
+    ]
+    assert pipeline.semantic_review_categories(semantic) == [
+        "ANSWER_CORRECTNESS",
+        "SOURCE_GROUNDING",
+    ]
+    assert "private" not in json.dumps(
+        {
+            "structural": pipeline.exam_structural_issue_codes(structural),
+            "semantic": pipeline.semantic_review_categories(semantic),
+        }
+    )
+
+
 def test_knowledge_graph_levels_are_rebased_without_mutating_provider_result():
     doc = document("A supported source concept")
     graph = pipeline.GeneratedKnowledgeGraph.model_validate(
@@ -776,6 +800,19 @@ async def test_repaired_exam_must_pass_a_second_semantic_review():
     with pytest.raises(PipelineError) as caught:
         await pipeline.generate_exam(client, document("Source"), settings, usage)
     assert caught.value.code == "AI_EXAM_VALIDATION_FAILED"
+    assert caught.value.diagnostics == {
+        "stage": "post_repair",
+        "initialGate": "semantic",
+        "finalGate": "semantic",
+        "initialStructuralCodes": [],
+        "finalStructuralCodes": [],
+        "initialSemanticCategories": ["ANSWER_CORRECTNESS", "SOURCE_GROUNDING"],
+        "finalSemanticCategories": ["ANSWER_CORRECTNESS", "SOURCE_GROUNDING"],
+        "expectedQuestionCount": 5,
+        "actualQuestionCount": 5,
+        "expectedTotalMarks": 20,
+        "actualTotalMarks": 20,
+    }
     assert client.review_calls == 2
     assert [event.purpose for event in usage] == [
         "exam_generation", "exam_review", "exam_repair", "exam_review"

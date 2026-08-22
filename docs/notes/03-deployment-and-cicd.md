@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-14。生产数据库/应用证据仍到 0043；0046–0051 的异步恢复、知识图、任务清理与 Luna 原文件是待验证候选，不是生产事实。
+> - **状态基线**：2026-08-22。生产数据库已到 0051，但不可变应用仍为此前稳定 release；0046–0051 的异步恢复、知识图、任务清理与 Luna 原文件尚未通过真实门禁并切流，数据库 apply 不能冒充应用上线。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -238,11 +238,12 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 既有真实 Japan East Azure、Gemma 翻译与 Courses API/Storage gate 继续通过。登录用户 Materials gate 得到 `generationJob=succeeded`、`grading=completed`、生成/评分 quota 各 1、5 条 provider usage、`sourceAndResultsDeleted=true` 和 `deps.supabase=ok/deps.ai=ok`。
 - 不可变 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 于 `2026-08-11T07:20:02Z` 激活。服务器只读复核确认 API/AI image、`.deploy.env` 和 Web symlink 同一 commit，AI/Redis healthy，`FEATURE_MATERIAL_AI=true`；独立公网复核为首页 200、Supabase/Redis health ok、AI worker/queue ok、匿名 me/quota 401。
 
-### 2026-08-14 · 0046–0051 候选（尚未发布）
+### 2026-08-14 至 2026-08-22 · 0046–0051 数据库已发布、应用候选仍未激活
 
-- 候选把长任务改为快速 202 + callback/checkpoint/usage spool，新增 ELK/React Flow 图谱、跨设备布局、任务 Delete/Clear、统一交卷批改和 `luna_native_file_v1`。本节不构成 CI、真实 provider 或上线证据。
-- 生产仍停在 0043，因此独立 migration plan 预期只列已有仓库文件 0046–0051；0044–0045 缺号是被延后的 contract，不得补造。apply 前必须创建并验证新的加密恢复点。
-- 候选 release 先以两个 Materials flags 关闭部署；真实 DeepSeek/MiMo、真实 Luna/OpenAI-only/native PDF、2G canary、登录用户双 pipeline/delete/layout/exam smoke 全部通过后，才按总开关→Luna 子开关顺序激活。最终证据需补 PR/main/protected run、artifact、release、服务器与公网核验。
+- 候选把长任务改为快速 202 + callback/checkpoint/usage spool，新增 ELK/React Flow 图谱、跨设备布局、任务 Delete/Clear、统一交卷批改和 `luna_native_file_v1`。生产数据库已通过受保护流程前向应用到 0051；0044–0045 缺号仍是被延后的 contract，不得补造。数据库 apply 不等于应用激活。
+- PR #70 run `32499521666` 完成完整 fake/local 门禁并合并为 main `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e`。main run [`32540131549`](https://github.com/1590703336/Nalanda/actions/runs/32540131549) 再次通过 lint/typecheck、API/Web/Python、真实 Redis、0007→0051、空库/lint/RLS/Storage、fake Chromium、镜像构建及 220 页资源 canary；本次无新 migration，数据库发布 job 正确跳过。
+- 同一 run 的真实 PDF gate 通过后，固定 DOCX 试卷在最终校验返回 `AI_EXAM_VALIDATION_FAILED`。候选 `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e-32540131549-1` 在 API/Web 切流前失败，EXIT trap 清除候选并恢复旧 API/AI/Web；独立检查确认 `.deploy.env` 与 Web symlink 仍指向旧稳定 `3c095a55ced21cee11a1b3131dd2889ec1f70733` release，公网 Supabase/Redis/AI health 正常且匿名 `/api/me` 为 401。因此 #70 已合并但没有部署成功。
+- 向前修复只增加 content-free validation categories/counts，并将固定材料扩展为足够支持五道题的八个独立事实；仍保持一次 repair、严格 schema/答案/引用/语义门。新的 PR/main 真实门禁通过、候选切流并完成服务器与公网独立复核之前，不得称 0046–0051 应用已上线；Luna 仍需 first-party OpenAI ZDR endpoint，能力不存在时子开关必须 false。
 
 ## 8. 运维速查
 

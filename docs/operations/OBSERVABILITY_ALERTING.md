@@ -77,7 +77,7 @@
 | 复习日程 | 到期 pending 项进入/完成成功率 | ≥99%；不允许误建 `study_tasks` 或 +5 |
 | 请求保护 | rate-limit decision latency、429/503、Redis availability/memory | Redis PING ≥99.9%；合法流量 429 误判需接近 0；noeviction/AOF 配置漂移为发布阻断 |
 | Points 完整性 | ledger/Profile projection、cap/审核 transition | projection 差异必须为 0；同 business key 只有一项首次 decision；协同 signal 只改变待审队列 |
-| Materials AI 生成 | 成功率、queue wait/stage/provider/总时延、引用/schema、成本 | 合法任务成功率 ≥95%；最旧 queued <5 分钟；schema/source 100%；单次预算硬门不得突破 |
+| Materials AI 生成 | 成功率、queue wait/stage/provider/总时延、引用/schema、稳定 validation category、成本 | 合法任务成功率 ≥95%；最旧 queued <5 分钟；schema/source 100%；单次预算硬门不得突破；日志不得含 reviewer/source/answer 原文 |
 | Materials AI 恢复/图谱/Luna | accept/callback、checkpoint/usage、delete cleanup、pipeline/upstream、graph/layout/Q&A schema/source、ZDR catalog decision | accept p95<2秒；callback backlog<1分钟；期限内恢复不重复 provider/费用；deleting p95<30秒且残留为0；Luna 开启时 upstream 100% OpenAI、PDF native 100%；无 OpenAI ZDR endpoint 时 flag 100% 保持 false 且 reason 稳定；usage UUID重复副作用为0；graph schema/source-order/citation 100% |
 | 在线考试 | draft revision、deadline submit、grading queue/额度 | 已确认保存 p95<1秒；过期最终必提交；相同 operation UUID 副作用为 0 |
 
@@ -223,6 +223,7 @@ tail -n 200 /var/log/nginx/error.log
 1. 先检查 `/api/health` 的 Supabase/Redis 与 `/api/health/ai`，再看 `generation_jobs` 的 queued/stage/lease/attempt/error 和 BullMQ/reconciler；Postgres job 才是事实，不手工在 Redis 补状态。
 2. provider 问题按 purpose/model/request ID/duration/token/cost/ZDR 分层；不得读取或复制文件正文、prompt、答案、signed URL。ZDR unavailable、坏 schema 或安全 uncertain 均保持失败关闭并释放 reservation。
    对 `OPENROUTER_RATE_LIMIT` 先核对有界尝试数、退避配置、供应商 `Retry-After` 和同模型 provider failover；禁止增加跨模型 fallback、换模型或去掉 ZDR/deny/require-parameters 来让门禁变绿。若相同固定样本在有界重试后仍失败，保持 feature 关闭，待供应商窗口恢复后重跑真实 gate。
+   对 `AI_EXAM_VALIDATION_FAILED` 只检查 `initialGate/finalGate`、结构 code、语义 category 和预期/实际题数/总分；禁止为排障记录 reviewer issue、题目、答案、课件或 provider body。薄 fixture 的 `ANSWERABILITY`/grounding 失败应先修正无个人数据固定样本并重新走门禁，不等于 worker outage；用户 reservation 仍应释放。
 3. 磁盘/Office 问题检查容器 RSS/swap、cgroup OOM、`/tmp/nalanda-material-ai` orphan 和水位；关闭 flag 后只清理确认超过一小时且不属于 active job 的目录。
 4. 考试问题按 attempt/revision/operation UUID/deadline 对账；Redis 延迟任务丢失时下一次 API 请求必须强制到期提交。评分额度用完保留 `submitted_ungraded`，不能伪造 completed。
 5. 修复后使用无个人数据 fixture 验证一个完整生成、Notes、客观/主观评分、删除与临时目录清理；真实 provider smoke 与 fake Playwright 分开记录。

@@ -477,6 +477,82 @@ def review_result_issues(review: ReviewResult) -> list[str]:
     return [] if review.valid else ["semantic review failed"]
 
 
+def exam_structural_issue_codes(issues: list[str]) -> list[str]:
+    """Map validator prose to stable, content-free release diagnostics."""
+    codes: set[str] = set()
+    for issue in issues:
+        if " count is " in issue:
+            codes.add("QUESTION_TYPE_COUNT")
+        elif issue == "question marks do not equal the configured total":
+            codes.add("TOTAL_MARKS")
+        elif issue == "exam metadata does not match settings":
+            codes.add("EXAM_METADATA")
+        elif issue == "question IDs are not unique":
+            codes.add("QUESTION_ID_UNIQUENESS")
+        elif issue.endswith(" has an invalid source reference"):
+            codes.add("SOURCE_REFERENCE")
+        elif issue.endswith(" has invalid choices"):
+            codes.add("CHOICE_SHAPE")
+        elif issue.endswith(" has an out-of-range answer index"):
+            codes.add("ANSWER_INDEX_RANGE")
+        elif issue.endswith(" must have one correct choice"):
+            codes.add("SINGLE_CHOICE_CARDINALITY")
+        elif issue.endswith(" is missing accepted answers"):
+            codes.add("ACCEPTED_ANSWER")
+        elif issue.endswith(" is missing its rubric"):
+            codes.add("RUBRIC")
+        else:
+            codes.add("OTHER_STRUCTURE")
+    return sorted(codes)
+
+
+def semantic_review_categories(issues: list[str]) -> list[str]:
+    """Classify reviewer defects without retaining or emitting model prose."""
+    categories: set[str] = set()
+    for issue in issues:
+        value = issue.casefold()
+        if any(token in value for token in ("citation", "source", "ground", "support")):
+            categories.add("SOURCE_GROUNDING")
+        if any(token in value for token in ("answer", "correct", "accuracy")):
+            categories.add("ANSWER_CORRECTNESS")
+        if any(token in value for token in ("distractor", "option", "choice")):
+            categories.add("DISTRACTOR_QUALITY")
+        if any(token in value for token in ("explanation", "rationale")):
+            categories.add("EXPLANATION_QUALITY")
+        if any(token in value for token in ("answerable", "ambiguous", "fair")):
+            categories.add("ANSWERABILITY")
+    if issues and not categories:
+        categories.add("OTHER_SEMANTIC")
+    return sorted(categories)
+
+
+def exam_validation_diagnostics(
+    exam: GeneratedExam,
+    settings: ExamSettings,
+    *,
+    initial_structural: list[str],
+    initial_semantic: list[str],
+    final_structural: list[str],
+    final_semantic: list[str],
+) -> dict[str, object]:
+    questions = [question for section in exam.sections for question in section.questions]
+    initial_gate = "structural" if initial_structural else "semantic"
+    final_gate = "structural" if final_structural else "semantic"
+    return {
+        "stage": "post_repair",
+        "initialGate": initial_gate,
+        "finalGate": final_gate,
+        "initialStructuralCodes": exam_structural_issue_codes(initial_structural),
+        "finalStructuralCodes": exam_structural_issue_codes(final_structural),
+        "initialSemanticCategories": semantic_review_categories(initial_semantic),
+        "finalSemanticCategories": semantic_review_categories(final_semantic),
+        "expectedQuestionCount": settings.questionCounts.total(),
+        "actualQuestionCount": len(questions),
+        "expectedTotalMarks": settings.totalMarks,
+        "actualTotalMarks": sum(question.marks for question in questions),
+    }
+
+
 def validate_exam(exam: GeneratedExam, settings: ExamSettings, block_ids: set[str]) -> list[str]:
     issues: list[str] = []
     questions = [question for section in exam.sections for question in section.questions]
@@ -603,9 +679,11 @@ the learner session. Return only the strict GeneratedExamV1 JSON schema."""
         usage.extend(review_events)
         return review_result_issues(review)
 
-    issues = validate_exam(exam, settings, block_ids)
-    if not issues:
-        issues = await semantic_issues(exam)
+    initial_structural = validate_exam(exam, settings, block_ids)
+    initial_semantic: list[str] = []
+    if not initial_structural:
+        initial_semantic = await semantic_issues(exam)
+    issues = initial_structural or initial_semantic
     if issues:
         repair_payload = {
             "settings": settings.model_dump(),
@@ -625,16 +703,26 @@ the learner session. Return only the strict GeneratedExamV1 JSON schema."""
         )
         usage.extend(repair_events)
         exam = normalize_exam_invariants(repaired, settings)
-        remaining = validate_exam(exam, settings, block_ids)
-        if not remaining:
+        final_structural = validate_exam(exam, settings, block_ids)
+        final_semantic: list[str] = []
+        if not final_structural:
             # A structurally valid repair can still change an answer or citation's
             # meaning, so the repaired artifact must pass the semantic gate too.
-            remaining = await semantic_issues(exam)
+            final_semantic = await semantic_issues(exam)
+        remaining = final_structural or final_semantic
         if remaining:
             raise PipelineError(
                 "AI_EXAM_VALIDATION_FAILED",
                 "The generated test could not pass structural, citation, and semantic validation",
                 usage_events=[item.model_dump() for item in usage],
+                diagnostics=exam_validation_diagnostics(
+                    exam,
+                    settings,
+                    initial_structural=initial_structural,
+                    initial_semantic=initial_semantic,
+                    final_structural=final_structural,
+                    final_semantic=final_semantic,
+                ),
             )
     return exam
 
