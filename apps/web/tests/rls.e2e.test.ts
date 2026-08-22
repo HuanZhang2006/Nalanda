@@ -318,7 +318,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const createdAt = post.data!.created_at;
     const originalUpdatedAt = post.data!.updated_at;
     const edited = await a.from("posts")
-      .update({ title: "RLS community post edited", updated_at: "2099-01-01T00:00:00.000Z" })
+      .update({ title: "RLS community post edited" })
       .eq("id", post.data!.id)
       .select("title,created_at,updated_at")
       .single();
@@ -327,6 +327,11 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(edited.data?.created_at).toBe(createdAt);
     expect(edited.data?.updated_at).not.toBe("2099-01-01T00:00:00.000Z");
     expect(edited.data?.updated_at).not.toBe(originalUpdatedAt);
+
+    const forgedUpdatedAt = await a.from("posts")
+      .update({ updated_at: "2099-01-01T00:00:00.000Z" })
+      .eq("id", post.data!.id);
+    expect(forgedUpdatedAt.error).not.toBeNull();
 
     for (const patch of [
       { user_id: bId },
@@ -774,13 +779,14 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     const before = await a.from("profiles").select("points,streak").eq("id", aId).single();
     expect((await a.from("study_tasks").update({
-      done: true, done_at: "2099-01-01T00:00:00.000Z",
-    }).eq("id", tasks.data![0].id)).error).toBeNull();
+      done_at: "2099-01-01T00:00:00.000Z",
+    }).eq("id", tasks.data![0].id)).error).not.toBeNull();
+    expect((await a.from("study_tasks").update({ done: true }).eq("id", tasks.data![0].id)).error).toBeNull();
     const databaseDoneAt = (await a.from("study_tasks").select("done_at").eq("id", tasks.data![0].id).single()).data!.done_at;
     expect(databaseDoneAt).toBeTruthy();
     expect(databaseDoneAt).not.toBe("2099-01-01T00:00:00.000Z");
     const afterFirst = await a.from("profiles").select("points,streak").eq("id", aId).single();
-    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![1].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: true }).eq("id", tasks.data![1].id)).error).toBeNull();
     const afterSecond = await a.from("profiles").select("points,streak").eq("id", aId).single();
 
     expect(afterFirst.data!.points).toBe(before.data!.points + 5);
@@ -789,11 +795,11 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(afterSecond.data!.streak).toBe(afterFirst.data!.streak);
 
     // 同一任务反复取消/完成只在 +5/-5 间切换，且不会再次推进 streak。
-    expect((await a.from("study_tasks").update({ done: false, done_at: null }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: false }).eq("id", tasks.data![0].id)).error).toBeNull();
     expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(before.data!.points + 5);
-    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![0].id)).error).toBeNull();
-    expect((await a.from("study_tasks").update({ done: false, done_at: null }).eq("id", tasks.data![0].id)).error).toBeNull();
-    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: true }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: false }).eq("id", tasks.data![0].id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: true }).eq("id", tasks.data![0].id)).error).toBeNull();
     const afterRedo = await a.from("profiles").select("points,streak").eq("id", aId).single();
     expect(afterRedo.data!.points).toBe(before.data!.points + 10);
     expect(afterRedo.data!.streak).toBe(afterFirst.data!.streak);
@@ -809,7 +815,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     }).select("id,points_business_key").single();
     expect(recreatedTask.error).toBeNull();
     expect(recreatedTask.data!.points_business_key).toBe(tasks.data![0].points_business_key);
-    expect((await a.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", recreatedTask.data!.id)).error).toBeNull();
+    expect((await a.from("study_tasks").update({ done: true }).eq("id", recreatedTask.data!.id)).error).toBeNull();
     const afterRecreate = await a.from("profiles").select("points,streak").eq("id", aId).single();
     expect(afterRecreate.data!.points).toBe(before.data!.points + 10);
     expect(afterRecreate.data!.streak).toBe(afterFirst.data!.streak);

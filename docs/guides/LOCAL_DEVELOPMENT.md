@@ -11,7 +11,7 @@
 - **当前实现**：命令和文件已经存在于仓库，可按本文执行。
 - **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
 
-当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库与应用当前到 0043；0046–0051 的知识图、恢复、Luna 原文件与任务清理仍是候选，必须经完整 CI、真实 OpenAI 门禁和受保护发布后才可称为生产能力。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
+当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库已到 0051，但 0046–0051 对应的新应用仍因真实供应商门禁失败而回退到此前稳定 release；知识图、恢复、Luna 原文件与任务清理必须在不可变应用成功切流后才可称为生产能力。时间列 Stage B 为候选 0052–0053，受保护 apply 前生产仍保留兼容 grant。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
 
 ## 2. 前置条件
 

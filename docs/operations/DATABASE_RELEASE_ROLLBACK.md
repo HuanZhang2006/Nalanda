@@ -122,9 +122,9 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 - [x] 2026-07-22 Courses 发布：RLS、Storage policy、function EXECUTE、trigger 幂等有双用户测试。
 - [x] 0008/0009 首次生产发布审计：2026-07-21 只读聚合确认 1 个 Profile，points=11、credits=0、streak=0、无 VIP；owner 决定 points 归零，0009 以 append-only reversal 实施，credits/VIP/streak 不改。
 - [ ] 估算表规模、锁、statement timeout 和 backfill 时间。
-- [x] 0039 第一阶段 PR/plan 只包含 0039–0040；0041–0043 后续以独立 additive Materials AI 发布，仓库和远端均未出现未来 0044–0045 最终撤权。
+- [x] 0039 第一阶段 PR/plan 只包含 0039–0040；后续迁移已把生产 history 推进到 0051。Stage B 采用顺序追加的 0052–0053，原预留 0044–0045 不补插历史。
 - [x] Redis/HMAC secrets 已安装；compose/nginx config、真实 Redis Lua、PING/AOF/no-port、429 JSON/headers 与 fail-open/closed 已验证。
-- [x] 0039 应用于 `2026-08-10T09:35:34Z` 激活；24 小时观察截止不早于 `2026-08-11T09:35:34Z`，contract go/no-go 仍待观察完成。
+- [x] 0039 应用于 `2026-08-10T09:35:34Z` 激活；24 小时观察截止不早于 `2026-08-11T09:35:34Z`，contract go/no-go 已于 2026-08-22 完成。
 - [x] 2026-07-22 Courses 发布：[ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
 - [x] 2026-07-22 Courses 发布：owner 核对 Ref、Git SHA、0001–0013 history 和只读 dry-run；人工 plan/apply 分开执行。
 - [x] 2026-07-22 Courses 发布：新的加密恢复点创建、验证并保留；解密 key 仍由 Actions 外受控保管。
@@ -186,7 +186,7 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 0015–0016 还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到旧 release 仍能运行。当前应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、未经 VAD/静音裁剪的固定 WAV 评分与最终 `deps.supabase=ok`。
 
-### 0039–0040 Stage A、0041–0043 Materials AI 与未来 0044–0045 撤权门禁
+### 0039–0040 Stage A、后续 Materials AI 与 0052–0053 撤权门禁
 
 兼容应用必须继续适配 0039–0040；0041–0043 已作为独立 additive Materials AI 发布，但不改变时间列 grant：
 
@@ -196,7 +196,9 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 4. 候选 API 已验证 `deps.supabase=ok/deps.redis=ok`、匿名 `/api/me` 与 points admin 401、注册限流 headers、Redis 分级 fail-open/closed，并通过既有三类真实供应商 gates 后原子切换 Web/API。
 5. 当前从 `2026-08-10T09:35:34Z` 起观察至少 24 小时：Redis error/restart/AOF/memory、`rate_limit_degraded`、合法请求误 429/503、cap claim/ledger/Profile 差异、signal 只待审，以及任何旧客户端仍提交 `posts.updated_at`/`study_tasks.done_at` 的证据。任一异常均 no-go，应用恢复上一兼容 release，数据库/Redis/nginx保持并 forward-fix。
 
-最终撤权只有上述兼容记录通过后才能在新的 PR 中创建未来 0044–0045：0044 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0045 断言最终精确 grant。再次执行独立 plan、恢复点、apply、RLS/权限和公网 smoke。不能预先创建这两个 contract 文件，因为 CI 空库和迁移 job 会提前执行，破坏观察窗口。
+2026-08-22 go/no-go 记录：兼容期已超过 24 小时；部署 release `3c095a55ced21cee11a1b3131dd2889ec1f70733` 与最新 main 的 Community/Schedule 均不提交两个时间字段；生产 Redis PING/AOF/noeviction 正常、`evicted_keys=0`、`total_error_replies=0`；脱敏数据库汇总显示 2 个 Profile、2 条 ledger entry 且 projection 差异为 0，没有 signal 或 API abuse bucket。样本量很小，不把“无命中”写成反滥用效果证明，但足以和代码审计共同关闭旧客户端 contract 门禁。
+
+最终撤权在新的 PR 中按严格追加顺序实现为 0052–0053：0052 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0053 断言最终精确 grant、合法内容/Schedule 写入、service-role 与时间 trigger。0044–0045 保持历史空号，不使用 `--include-all` 补插已经越过 0051 的生产 history。必须再次执行独立 plan、恢复点、apply、RLS/权限和公网 smoke。
 
 #### 0041–0043 Materials AI 专项顺序
 
@@ -213,7 +215,7 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 本节是尚未发布候选的门禁，不是生产记录：
 
-1. 独立 plan 必须证明远端仍停在 0043，唯一待应用迁移为 0046–0051；0044–0045 尚不存在，不得把缺号误判为漂移或临时补造 contract。0048 与 0051 必须在 0007→latest 和空库两条路径断言表、constraint、RLS、trigger、精确 RPC signature/grant。
+1. 该历史发布的独立 plan 必须证明远端仍停在 0043，唯一待应用迁移为 0046–0051；当时的 0044–0045 空号不是漂移。Stage B 后续改用 0052–0053，不改写这段既有发布历史。0048 与 0051 必须在 0007→latest 和空库两条路径断言表、constraint、RLS、trigger、精确 RPC signature/grant。
 2. 恢复点成功上传并完成解密/SHA 校验后才 apply。应用后核对旧 0041–0043 同步 worker RPC 仍存在，新应用可用 202 回调协议，上一不可变应用 release 仍可忽略新增表运行。
 3. 先保持 `FEATURE_MATERIAL_AI=false` 启动候选 API/AI；验证 explicit Undici transport timeout、内部 callback token、数据库 checkpoint、worker 本地 checkpoint/usage spool、TTL sweep 和 terminal cleanup。不得通过把所有错误统一延长到 20 分钟来掩盖不可达、响应头 timeout 或无 callback。
 4. 人工注入 API callback 断线：provider 已返回后终止 callback，确认同一 job/新 lease 从 `artifact_ready` 或 `answer_ready` 恢复、不再次调用 provider、event UUID 只写一条费用记录，完成后 DB/local checkpoint 均清除。再验证超过 TTL 的 Resume 返回稳定终态、释放 reservation 且不复活旧产物。
@@ -335,7 +337,7 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 - 修复后的 [plan run `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端均到 0040且无待办。[最终 protected run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 再保留 artifact `9057062920`（800,819 bytes，zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并再次验证 history/lint/空 dry-run。
 - 应用切流前依次通过 Redis password PING、AOF、noeviction、无 host port，nginx `-t`，真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8），真实 OpenRouter Gemma（5,524 ms、253/27/280 tokens）和 Courses API/Storage/Fish gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`assessmentBytes=88444`、`transcriptionMatched=true`）。一次 OpenRouter 12 秒超时与三次 free-route 429 均在切流前阻断；同凭据额度状态正常且本机/生产主机相同请求恢复 HTTP 200 后才成功，未切换模型或绕过真实 gate。
 - 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 健康激活。公网复核：health `deps.supabase=ok/deps.redis=ok`，匿名 `/api/me` 与 `/api/admin/points/abuse-signals` 为 401，空注册为 400 且带 `RateLimit-Limit: 5`，Web/Course Market 为 200；主机 Web 软链和 API image 指向同一 release，Redis healthy 且只暴露容器内 `6379/tcp`。
-- Stage B 观察最早截止为 `2026-08-11T09:35:34Z`。在 Redis/限流、points projection、pending signals 与旧时间列依赖的 go/no-go 记录完成前，不创建或应用未来 0044–0045 时间列撤权 contract。
+- Stage B 观察最早截止为 `2026-08-11T09:35:34Z`，实际 go/no-go 于 2026-08-22 完成。0052–0053 只有在完整 CI、只读 plan 精确列出这两个文件、恢复点上传成功后才能 apply；生产前仍不得提前描述为撤权完成。
 
 ## 9. 失败处置
 

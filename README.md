@@ -27,7 +27,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 | Courses 文件导入 / 其他类别 | ⬜ PDF/Word/JSON/Markdown/HTML/图片仅有禁用入口；AI 解析、知识点/阅读理解/题库训练未实现 |
 | Electron / React Native / 完整 i18n | ⬜ 未开始 |
 
-旧模块大多由浏览器直连 Supabase；Courses 和 Materials AI 的业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-08-10 完成 0039–0040 安全第一阶段，随后于 2026-08-11 通过独立只读 plan、加密恢复点、0041–0043 远端验证、2G 资源 canary、真实 DeepSeek/MiMo/Azure/OpenRouter 门禁、登录用户完整链路和不可变应用发布启用 Materials AI。当前所有用户 Free，每个 Profile 本地日期分别有 10 次成功生成和 10 次成功主观题评分；只有成功才消耗，拒绝/失败/取消释放预留，不读取 credits。时间列撤权第二阶段仍须等 0039–0040 兼容观察通过后另行追加为未来 0044–0045。完整离线 PWA、销售 credits/VIP 商业账本仍未实现。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
+旧模块大多由浏览器直连 Supabase；Courses 和 Materials AI 的业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-08-10 完成 0039–0040 安全第一阶段，随后于 2026-08-11 通过独立只读 plan、加密恢复点、0041–0043 远端验证、2G 资源 canary、真实 DeepSeek/MiMo/Azure/OpenRouter 门禁、登录用户完整链路和不可变应用发布启用 Materials AI。当前所有用户 Free，每个 Profile 本地日期分别有 10 次成功生成和 10 次成功主观题评分；只有成功才消耗，拒绝/失败/取消释放预留，不读取 credits。时间列撤权第二阶段已在仓库按严格追加顺序实现为候选 0052–0053；原预留 0044–0045 不补插历史，受保护 plan/apply 完成前生产仍保持兼容 grant。完整离线 PWA、销售 credits/VIP 商业账本仍未实现。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
 
 当前分支的 **Unreleased** 候选包含 0046–0051：0046–0048 将生成/评分改为 202 + 持久回调，修复 Undici 五分钟响应头超时误报，并加入 24 小时双层断点、知识点梳理与节点问答；0049–0051 增加 `luna_native_file_v1`、实际 OpenAI 上游审计、任务中断/删除/清空、私有跨设备图布局及权限验证。知识图使用动态 React Flow + ELK，支持缩放、平移、拖动、键盘移动、自动整理和移动端下置详情；考试草稿不批改且不返回答案，整卷提交/到期后才统一批改。此段是代码状态，不是生产声明；上线前仍须通过真实 Supabase、真实 OpenRouter/OpenAI、资源 canary 和受保护发布。
 
@@ -46,7 +46,7 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 - `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
 - `apps/ai`：生产 Materials AI 隔离 worker；解析 PDF/Office/文本/图片并只恢复失败视觉范围，内部 token 认证，不是公网服务。
 - `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：追加式迁移；生产 migration history 已到 0043。仓库候选 0046–0051 是尚未部署的 Materials AI 恢复/图谱/Luna/任务生命周期迁移；时间列撤权 contract 仍另行顺延，不能与候选编号混称。
+- `supabase/migrations`：追加式迁移；生产 migration history 已到 0051。仓库候选 0052–0053 只执行安全时间列 contract；原 0044–0045 空号不补插，不能把仓库候选写成生产权限事实。
 - `infra/deploy`：当前生产部署配置。
 - `infra/hybrid-2g`：未来 AI/BullMQ 接入时的通用部署模板；当前生产 Redis 配置在 `infra/deploy`，两者不可混称。
 

@@ -240,10 +240,10 @@ async function assertUpgradeFixture() {
   await must(b.from("posts").insert({ repost_of: fixture.postIds[1], kind: "experience", tags: [] }), "restore legacy repost claim");
   assert.equal(await ledgerTotal(b), 0);
 
-  await must(b.from("study_tasks").update({ done: false, done_at: null }).eq("id", fixture.taskId), "undo legacy task");
+  await must(b.from("study_tasks").update({ done: false }).eq("id", fixture.taskId), "undo legacy task");
   assert.equal(await ledgerTotal(b), 0);
   assert.equal((await profile(b, fixture.bId)).points, 0);
-  await must(b.from("study_tasks").update({ done: true, done_at: new Date().toISOString() }).eq("id", fixture.taskId), "redo legacy task");
+  await must(b.from("study_tasks").update({ done: true }).eq("id", fixture.taskId), "redo legacy task");
   const afterTaskRedo = await profile(b, fixture.bId);
   assert.equal(afterTaskRedo.points, 0);
   assert.equal(await ledgerTotal(b), 0);
