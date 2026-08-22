@@ -177,7 +177,7 @@ UNTRUSTED_SOURCE_JSON
 {"settings":<language/difficulty/durationMinutes/totalMarks/questionCounts/answerDetail/focus>,"sourceBlocks":<完整重建后的 blocks[]>}
 ```
 
-`focus` 与所有 source block 都是 JSON 数据，不拼进 system prompt。输出必须是 `GeneratedExamV1`，包含试卷元数据、sections、六类题目、marks、选项/答案、explanation、rubric 和精确 `sourceRefs`。运行时版本为 `exam-generate.v3`：服务端先用请求设置覆盖 language/difficulty/duration/totalMarks，规范重复 section/question ID，并在题数可承载设置总分时按模型原相对权重稳定重分配 marks；它不会改题干、选项、答案、解析或 rubric。source reference 只做可证明的机械规范化：删除 DocumentIR allowlist 外的混合引用、去重，并用服务端 block 元数据重建 locator；没有有效引用时仍失败关闭。随后确定性 validator 仍检查题型数量、总分、元数据、唯一 ID、答案和引用，语义复核仍是必须门禁。
+`focus` 与所有 source block 都是 JSON 数据，不拼进 system prompt。输出必须是 `GeneratedExamV1`，包含试卷元数据、sections、六类题目、marks、选项/答案、explanation、rubric 和精确 `sourceRefs`。运行时版本为 `exam-generate.v3`：服务端先用请求设置覆盖 language/difficulty/duration/totalMarks，规范重复 section/question ID，并在题数可承载设置总分时按模型原相对权重稳定重分配 marks；它不会改题干、选项、答案、解析或 rubric。source reference 只做可证明的机械规范化：删除 DocumentIR allowlist 外的混合引用、去重，并用服务端 block 元数据重建 locator；当整份 DocumentIR 恰好只有一个 block 时，全无效引用可规范到这个唯一 allowlisted block。两块及以上没有有效引用时仍失败关闭。随后确定性 validator 仍检查题型数量、总分、元数据、唯一 ID、答案和引用，语义复核仍是必须门禁。
 
 ### 3.4 `MAT-EXAM-REVIEW-V1`：语义复核
 
@@ -213,7 +213,7 @@ UNTRUSTED_REPAIR_JSON
 {"settings":<ExamSettings>,"allowedBlockIds":<sorted source block IDs>,"issues":<validator/reviewer issues[]>,"exam":<candidate exam>}
 ```
 
-输出仍为完整 `GeneratedExamV1`，不是 patch。修复后先将引用限制到服务端 `allowedBlockIds`：有效引用采用 DocumentIR 的规范页/幻灯片/标签；如果 repair 让某题完全丢失有效引用，只允许在 question ID 未变时恢复该题 repair 前的有效引用。模型替换题目 ID、跨题借用或原候选本来就没有有效引用时不得恢复。该机械步骤不证明引用支持题意，因此之后仍重新执行全部确定性校验和 `MAT-EXAM-REVIEW-V1`；仍失败则整个任务失败并释放产品额度。
+输出仍为完整 `GeneratedExamV1`，不是 patch。修复后先将引用限制到服务端 `allowedBlockIds`：有效引用采用 DocumentIR 的规范页/幻灯片/标签；如果 repair 让某题完全丢失有效引用，只允许在 question ID 未变时恢复该题 repair 前的有效引用。当服务端 allowlist 本身只有一个 block 时，可以选择这个唯一 block；两块及以上时，模型替换题目 ID、跨题借用或原候选本来没有有效引用均不得猜测。该机械步骤不证明引用支持题意，因此之后仍重新执行全部确定性校验和 `MAT-EXAM-REVIEW-V1`；仍失败则整个任务失败并释放产品额度。
 
 一次 repair 后仍失败时，worker 只向内部发布门禁暴露稳定结构 code（例如题数、总分、引用、答案形状）、语义 category（例如来源 grounding、答案正确性、干扰项质量）以及预期/实际题数和总分。不得在诊断、日志或 API 错误中暴露 source、题目、答案、prompt、reviewer issue 原文或 provider body；诊断能力不增加 repair 次数，也不放宽 schema、引用或语义门禁。
 

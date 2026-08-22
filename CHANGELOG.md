@@ -33,7 +33,7 @@
 
 ### Fixed
 
-- 修复试卷语义 repair 偶发追加不存在的 `sourceRef.blockId`，导致原本题数/总分正确的候选在最终结构门以 `SOURCE_REFERENCE` 失败的问题。worker 现在只保留 DocumentIR allowlist 内的引用、用服务端 block 元数据规范 locator，并且只有稳定 question ID 相同且 repair 删除全部有效引用时才恢复该题 repair 前的有效引用；跨题/换 ID 不继承引用，最终仍必须重新通过结构校验和语义复核，不能用机械规范化伪造 grounding。
+- 修复试卷生成/语义 repair 偶发返回不存在的 `sourceRef.blockId`，导致题数/总分正确的候选在结构门以 `SOURCE_REFERENCE` 失败的问题。worker 现在只保留 DocumentIR allowlist 内的引用、用服务端 block 元数据规范 locator；只有稳定 question ID 相同且 repair 删除全部有效引用时才恢复该题 repair 前引用，或在整份 DocumentIR 恰好只有一个 block 时选择这个唯一可能的 allowlisted block。多 block、跨题/换 ID 仍不猜测，最终必须重新通过结构校验和语义复核，不能用机械规范化伪造 grounding。
 - 修复真实 Materials AI 发布门禁把最终 `AI_EXAM_VALIDATION_FAILED` 压缩成单一 code，导致无法区分题数/总分/引用等结构错误与 grounding/答案/干扰项等语义错误的问题。worker 现在只返回稳定类别、门禁阶段和题数/总分计数，不返回课件、题目、答案、prompt、reviewer 原文或 provider body；真实门禁仍严格失败关闭并只允许一次 repair。
 - 固定 PDF/DOCX/PPTX 真实供应商样本由不足以稳定支撑五道题的三条事实扩展为八个独立、无个人数据的学习科学事实，避免把过薄 fixture 自身造成的随机不可出题误判成服务故障；题数、答案、语义、引用和费用门禁没有放宽。
 - 修复真实登录生产 smoke 中知识图最低层级从 `1` 开始、通过 worker 校验后却被完成 RPC 以 SQLSTATE `22023` 拒绝，任务随后停在 `saving` 直到 15 分钟门禁超时的问题。`knowledge-graph.v2` 与 `knowledge-graph-native-file.v2` 现在在不改节点内容、引用、顺序或相对层级的前提下，把最小 level 确定性归零；DocumentIR validator 同时补齐 `sourceMode=document_ir` 与 level-0 root 检查，和数据库保存 contract 保持一致。
@@ -60,6 +60,7 @@
 
 ### Testing
 
+- PR #74 合并为 main `5b4cad883b628fd21cc1d104227be6dfb746834f` 后，run [`32585659792`](https://github.com/1590703336/Nalanda/actions/runs/32585659792) 通过 quality、0007→0053、空库/lint、双用户 RLS/Storage 和 fake Chromium。生产 attempt 1 的真实 Materials suite、220 页 canary和 Japan East Azure均通过，但 Gemma 翻译 smoke 在 5 次有界退避后仍为 HTTP 429并回退；同 SHA 仅重跑失败 job 的 attempt 2 又在单 block PDF 首次生成及 repair 都返回无效引用时失败为 `SOURCE_REFERENCE`。两次候选均未切流且生产独立 health 正常。唯一 block 回归修复本地通过 ruff 与 78 个 Python 测试；真实 provider、Gemma、Azure、登录 smoke、切流和公网独立验证仍须由新 PR/main run 证明。
 - PR #71 合并后的 main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) 首次执行通过完整 fake/local 门禁和真实 Materials provider suite，但 Japan East Azure TTS 返回 HTTP 401，候选在切流前自动回退。用户要求重试后的 attempt 2 通过 220 页资源 canary（主/子进程峰值 107,868,160/221,601,792 bytes），随后固定 DOCX 试卷初次语义复核失败、一次 repair 后只剩最终结构 code `SOURCE_REFERENCE`，再次在切流前回退。新回归本地通过 ruff 与 77 个 Python 测试，覆盖引用去重/规范化、同题恢复、换题 ID 失败关闭及恢复后第二次语义复核；真实 provider、Azure、候选激活和公网独立验证仍须由新的 main run 证明。
 - PR #70 的完整门禁 run [`32499521666`](https://github.com/1590703336/Nalanda/actions/runs/32499521666) 通过后合并为 main `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e`。main run [`32540131549`](https://github.com/1590703336/Nalanda/actions/runs/32540131549) 再次通过 lint/typecheck、131 个 API、113 个 Web、72 个 Python测试、0007→0051、空库/lint/RLS/Storage、fake Chromium、镜像构建和 220 页 canary，但真实 DOCX 试卷返回 `AI_EXAM_VALIDATION_FAILED`；候选在 API/Web 切流前回退并清除，因此该 run 不是生产上线证据。
 - validation 诊断/fixture 向前修复本地通过 74 个 Python 测试、ruff、26 个 release tooling 测试与 `git diff --check`；真实供应商、完整 CI 和生产激活仍须由新的 PR/main run 证明。

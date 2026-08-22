@@ -254,6 +254,13 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 两次候选均在 Web/API 切流前调用 rollback。独立公网复核为 Web 200、`/api/health` 200 且 `deps.supabase=ok/deps.redis=ok`、`/api/health/ai` 200、匿名 `/api/me` 401；主机复核确认 Web 软链与 API/AI image 仍为 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，AI/Redis healthy，`FEATURE_MATERIAL_AI=false`、`FEATURE_MATERIAL_AI_LUNA=false`。结论：0052–0053 数据库权限已上线，最新 main 应用没有部署成功，Materials AI 保持关闭直至独立修复重新通过全部门禁。
 - 来源引用向前修复只允许 DocumentIR allowlist、服务端 locator 和同一稳定 question ID 的 repair 前引用恢复，并强制再次语义复核。它必须经新 PR/main 的完整 CI、真实 provider、Azure、登录用户 smoke、候选切流及服务器/公网独立核验后，才可记录为部署成功；真实语义门再次失败时仍必须回退。
 
+### 2026-08-23 · PR #74 来源引用修复候选仍回退
+
+- PR [#74](https://github.com/1590703336/Nalanda/pull/74) 合并为 main `5b4cad883b628fd21cc1d104227be6dfb746834f`；PR run `32585020750` 和 main run [`32585659792`](https://github.com/1590703336/Nalanda/actions/runs/32585659792) 通过 docs、quality、0007→0053、空库/database lint、双用户 RLS/Storage、fake Chromium与生产形态镜像。没有 migration 变更，production database job 正确跳过。
+- application attempt 1 通过 220 页 canary、真实 DeepSeek/MiMo PDF/DOCX/PPTX/chart、注入/安全教材、评分、9-node graph 和 Japan East Azure（accuracy 98、pronunciation 98.8）；Luna 因 OpenAI-only ZDR 不可用保持 false。随后独立 Gemma 翻译 smoke 连续五次 HTTP 429，候选自动回退。
+- 同 SHA 仅重跑失败 job 的 attempt 2 在 canary 后被固定 PDF 拦截：DocumentIR 只有一个 block，但首次生成和一次 repair 都引用无效 ID，initial/final gate 均为 `SOURCE_REFERENCE`。两次候选均未切 Web；服务器与公网独立复核继续指向 `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，Supabase/Redis/AI health ok、匿名 `/api/me` 401。
+- 新向前修复仅在 allowlist 恰好一个 block 时规范到唯一来源并强制语义复核；多 block 继续失败关闭。它不能绕过独立 Gemma 429 或后续登录 smoke，仍需新 PR/main 完整受保护发布证据。
+
 ## 8. 运维速查
 
 ```bash

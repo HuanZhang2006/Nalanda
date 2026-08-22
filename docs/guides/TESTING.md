@@ -359,7 +359,7 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。试卷回归另覆盖请求元数据、重复 section/question ID、错误 marks 合计的确定性归一化，确认不改题目内容；source refs 回归覆盖移除 allowlist 外引用、采用服务端 block locator、同一稳定 question ID 的 repair 前引用恢复、换题 ID 失败关闭，并验证恢复后仍执行第二次语义复核。reviewer 的非空 issues 不会被矛盾的 `valid=true` 掩盖；最终失败诊断只能包含稳定结构 code、语义 category 与题数/总分计数，不能包含课件、题目、答案、prompt、reviewer 原文或 provider body。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
+当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。试卷回归另覆盖请求元数据、重复 section/question ID、错误 marks 合计的确定性归一化，确认不改题目内容；source refs 回归覆盖移除 allowlist 外引用、采用服务端 block locator、同一稳定 question ID 的 repair 前引用恢复、单 block 全无效引用选择唯一来源并实际运行语义复核，以及多 block/换题 ID 继续失败关闭。reviewer 的非空 issues 不会被矛盾的 `valid=true` 掩盖；最终失败诊断只能包含稳定结构 code、语义 category 与题数/总分计数，不能包含课件、题目、答案、prompt、reviewer 原文或 provider body。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
 
 启动带开发配置的 `uvicorn` 后：
 
@@ -493,6 +493,8 @@ python3 scripts/smoke-material-ai-provider.py
 2026-08-22 的 PR #70 run `32499521666` 通过完整门禁并合并；main run `32540131549` 通过 131 个 API、113 个 Web、72 个 Python 测试、真实 Redis、0007→0051、空库/lint、双用户 RLS/Storage、fake Chromium、镜像和 220 页 canary，但真实固定 DOCX 在最终试卷校验返回 `AI_EXAM_VALIDATION_FAILED`。候选在 API/Web 切流前自动回退且没有新迁移，因此该 run 不是上线证据。向前修复的本地门禁为 74 个 Python、ruff 和 26 个 release tooling 测试；下一次真实门禁必须证明八事实 fixture 能稳定生成五道题，并在仍失败时只输出 content-free validation categories/counts。
 
 2026-08-23 的 PR #71 合并后 main run `32543270581` 首次执行通过完整 fake/local 与真实 Materials provider 门禁，但 Japan East Azure TTS HTTP 401 阻断切流并自动回退。按用户要求重试的 attempt 2 通过 220 页 canary，固定 DOCX 初次语义门返回 `ANSWERABILITY/ANSWER_CORRECTNESS/DISTRACTOR_QUALITY/EXPLANATION_QUALITY/SOURCE_GROUNDING`，repair 后题数 5、总分 20 均正确但最终结构门只剩 `SOURCE_REFERENCE`，因此仍正确失败关闭。引用向前修复本地通过 ruff 与 77 个 Python 测试；新的真实门禁必须证明 repair 不再因虚构 block ID 失败，同时结构和第二次语义复核保持严格。Azure 401 若再次出现仍是独立硬门，不能用本次 AI 修复绕过。
+
+同日 PR #74 run `32585020750` 和 main run `32585659792` 通过 docs、quality、0007→0053、空库/lint、双用户 RLS/Storage 与 fake Chromium。生产 attempt 1 的真实 Materials suite、canary 和 Azure 均通过，Gemma 翻译在五次有界重试后仍 429并回退；attempt 2 又在只有一个 DocumentIR block 的 PDF 上以 initial/final `SOURCE_REFERENCE` 失败并回退。唯一 block 修复的本地门禁为 ruff 和 78 个 Python 测试；下一真实 run 必须同时证明单 block 引用通过结构+语义门、多个 block 仍不猜测，以及 Gemma、后续 Courses、登录 smoke 和切流全部完成。
 
 随后 PR #69 完整 CI 与 main run `31838779292` 的本地数据库/RLS/fake Chromium、真实 provider fixture、220 页 canary和 Azure/Courses gate通过，但登录生产 smoke 的知识图产生 3 nodes/2 valid edges 且没有 level-0 root。数据库完成 RPC 以 `22023` 拒绝，job 停在 `saving`，15 分钟 smoke 超时后候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 自动回退且未切 Web。回归现在覆盖：DocumentIR/native graph level 机械归零、root/sourceMode 与 DB contract 对齐、checkpoint 恢复后仍归一化、永久 result/routing 拒绝进入终态，以及 lost lease 返回 409；新真实 run 前仍不得报告应用上线。
 

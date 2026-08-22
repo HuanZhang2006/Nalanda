@@ -821,7 +821,17 @@ def test_exam_source_ref_fallback_requires_the_same_stable_question_id():
         answerDetail="detailed",
         focus="",
     )
-    source = document("Source")
+    source = DocumentIR(
+        title="Ambiguous fixture",
+        sourceType="txt",
+        pageCount=0,
+        slideCount=0,
+        blocks=[
+            DocumentBlock(id="t1-b1", order=1, kind="paragraph", text="First", label="First"),
+            DocumentBlock(id="t1-b2", order=2, kind="paragraph", text="Second", label="Second"),
+        ],
+        diagnostics=[],
+    )
     original = GeneratedExam.model_validate(pipeline._fake_exam(settings, "t1-b1"))
     repaired = original.model_copy(deep=True)
     repaired.sections[0].questions[0].id = "provider-replaced-id"
@@ -835,8 +845,67 @@ def test_exam_source_ref_fallback_requires_the_same_stable_question_id():
     assert "provider-replaced-id has an invalid source reference" in validate_exam(
         normalized,
         settings,
-        {"t1-b1"},
+        {"t1-b1", "t1-b2"},
     )
+
+
+@pytest.mark.asyncio
+async def test_single_source_block_recovers_invalid_generation_refs_then_runs_semantic_review():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+
+    class InvalidSingleBlockReferenceClient:
+        purposes: list[str] = []
+
+        async def structured(self, *, purpose, result_type, **_kwargs):
+            self.purposes.append(purpose)
+            if purpose == "exam_generation":
+                value = pipeline._fake_exam(settings, "invented-block")
+            elif purpose == "exam_review":
+                value = {"valid": True, "issues": []}
+            else:
+                raise AssertionError(f"unexpected purpose: {purpose}")
+            return result_type.model_validate(value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=pipeline.TEXT_MODEL,
+                    requestId=f"test-{purpose}",
+                    promptTokens=1,
+                    completionTokens=1,
+                    totalTokens=2,
+                    costMicroUsd=1,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
+
+    client = InvalidSingleBlockReferenceClient()
+    usage: list[UsageEvent] = []
+    exam = await pipeline.generate_exam(client, document("Only source"), settings, usage)
+
+    assert client.purposes == ["exam_generation", "exam_review"]
+    assert [event.purpose for event in usage] == client.purposes
+    assert {
+        ref.blockId
+        for section in exam.sections
+        for question in section.questions
+        for ref in question.sourceRefs
+    } == {"t1-b1"}
 
 
 @pytest.mark.asyncio
