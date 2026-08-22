@@ -223,7 +223,7 @@ tail -n 200 /var/log/nginx/error.log
 1. 先检查 `/api/health` 的 Supabase/Redis 与 `/api/health/ai`，再看 `generation_jobs` 的 queued/stage/lease/attempt/error 和 BullMQ/reconciler；Postgres job 才是事实，不手工在 Redis 补状态。
 2. provider 问题按 purpose/model/request ID/duration/token/cost/ZDR 分层；不得读取或复制文件正文、prompt、答案、signed URL。ZDR unavailable、坏 schema 或安全 uncertain 均保持失败关闭并释放 reservation。
    对 `OPENROUTER_RATE_LIMIT` 先核对有界尝试数、退避配置、供应商 `Retry-After` 和同模型 provider failover；禁止增加跨模型 fallback、换模型或去掉 ZDR/deny/require-parameters 来让门禁变绿。若相同固定样本在有界重试后仍失败，保持 feature 关闭，待供应商窗口恢复后重跑真实 gate。
-   对 `AI_EXAM_VALIDATION_FAILED` 只检查 `initialGate/finalGate`、结构 code、语义 category 和预期/实际题数/总分；禁止为排障记录 reviewer issue、题目、答案、课件或 provider body。薄 fixture 的 `ANSWERABILITY`/grounding 失败应先修正无个人数据固定样本并重新走门禁，不等于 worker outage；用户 reservation 仍应释放。若初次为语义失败、repair 后仅剩 `SOURCE_REFERENCE`，核对输出引用是否落在 DocumentIR block allowlist、locator 是否来自服务端以及 question ID 是否稳定；不得关闭引用校验或跳过 repair 后的第二次语义复核。
+   对 `AI_EXAM_VALIDATION_FAILED` 只检查 `initialGate/finalGate`、结构 code、语义 category 和预期/实际题数/总分；禁止为排障记录 reviewer issue、题目、答案、课件或 provider body。薄 fixture 的 `ANSWERABILITY`/grounding 失败应先修正无个人数据固定样本并重新走门禁，不等于 worker outage；用户 reservation 仍应释放。若初次或 repair 后仅剩 `SOURCE_REFERENCE`，核对输出引用是否落在 DocumentIR block allowlist、locator 是否来自服务端以及 question ID 是否稳定；allowlist 只有一个 block 时可规范到唯一来源并必须继续语义复核，多个 block 不得猜测。不得关闭引用校验或跳过 repair 后的第二次语义复核。
 3. 磁盘/Office 问题检查容器 RSS/swap、cgroup OOM、`/tmp/nalanda-material-ai` orphan 和水位；关闭 flag 后只清理确认超过一小时且不属于 active job 的目录。
 4. 考试问题按 attempt/revision/operation UUID/deadline 对账；Redis 延迟任务丢失时下一次 API 请求必须强制到期提交。评分额度用完保留 `submitted_ungraded`，不能伪造 completed。
 5. 修复后使用无个人数据 fixture 验证一个完整生成、Notes、客观/主观评分、删除与临时目录清理；真实 provider smoke 与 fake Playwright 分开记录。

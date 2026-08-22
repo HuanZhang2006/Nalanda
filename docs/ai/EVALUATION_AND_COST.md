@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。最新 protected run 的两个 attempt 分别被真实 PPTX 引用门和语义门拦截并回退；来源引用的向前修复尚需新的真实门禁证明，且不会放宽独立语义门。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。PR #74 首个候选通过真实 Materials/Azure 后被 Gemma 429 拦截，重试又暴露单 block PDF 全无效引用；两次均回退。唯一 block 引用向前修复尚需新的真实门禁证明，且不会放宽独立语义门。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -21,7 +21,7 @@
 - FastAPI 只有内部 token 生成/评分路由，确定性解析 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片，并以 `DocumentIR` 保留页/幻灯片/块/来源；
 - 首次 DeepSeek 审查与解析器诊断取失败范围并集，只把这些页/slide/region 的渲染图发送 MiMo，拼接完整 IR 后再次审查；
 - 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters，关闭 reasoning/tool/Web/跨模型 fallback；同一模型按吞吐量优先、只在满足全部过滤器的 provider endpoint 间故障转移；
-- `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；来源引用只可规范到 DocumentIR allowlist，repair 全部丢失有效引用时仅可按相同稳定 question ID 恢复 repair 前引用；允许一次结构化 repair，修复结果必须重复同一归一化/结构/语义门禁；
+- `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；来源引用只可规范到 DocumentIR allowlist，repair 全部丢失有效引用时仅可按相同稳定 question ID 恢复 repair 前引用，或在整份 IR 只有一个 block 时选取唯一 allowlisted block；允许一次结构化 repair，修复结果必须重复同一归一化/结构/语义门禁；
 - `GeneratedKnowledgeGraphV1` 保存前把模型的相对 hierarchy levels 以最小值归零，并在 worker 与数据库两层一致验证 pipeline `sourceMode`、level-0 root、节点/边唯一 ID、端点、来源顺序和引用；该机械步骤不改标题、解释、关系、引用或相对层级；
 - 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
 - 生产 0043 每任务 0700 临时目录在 `finally` 删除并清理一小时 orphan；0046–0051 候选仅在可恢复故障下保留验证过的 checkpoint/usage spool 到配置 TTL，成功、不可恢复失败、Delete/Cancel 或过期清理；持久 parse cache、DB checkpoint 与布局是分开的私有产品数据；
@@ -66,6 +66,8 @@ provider usage 只留 model、token、micro-USD、latency、request ID、用途�
 2026-08-22 的 PR #70 run `32499521666` 与 main run `32540131549` 已通过完整 fake/local 门禁、0007→0051、空库、RLS/Storage、Chromium、镜像构建和 220 页资源 canary；真实 PDF 通过后，固定 DOCX 试卷在最终门禁返回 `AI_EXAM_VALIDATION_FAILED`，候选于 API/Web 切流前自动回退，生产仍运行旧稳定 release。旧响应只含这一总括 code，既无法判断是结构还是语义失败，也不应为诊断而泄露 provider 原文。向前修复仅输出 `initialGate/finalGate`、稳定结构 code、稳定语义 category 及预期/实际题数和总分；不输出课件、文件名、题目、答案、prompt、reviewer issue 或 provider body。固定材料同时由三条事实扩展为八个独立事实，以稳定支撑五道选择题；schema、答案、引用、语义复核、单次 repair 和失败关闭行为均未放宽。该修复必须由新的真实 run 证明后才能计作上线。
 
 2026-08-23 重试 run `32543270581` 的 attempt 2 证明上述 content-free 诊断有效：初次生成在结构上满足 5 题/20 分，但语义复核返回五类质量缺陷；一次 repair 后这些语义类别不再作为最终门出现，最终结构门只剩 `SOURCE_REFERENCE`。这说明 repair 虚构/替换了 block ID，而不是队列、资源或题数/总分失败。向前修复只做可证明的引用 allowlist 规范化：丢弃与有效引用混合的虚构 ID、使用 DocumentIR 的规范 locator；若 repair 让同一稳定 question ID 丢失全部有效引用，可恢复该题 repair 前的有效引用。换题 ID、跨题引用或原本没有有效引用仍失败关闭，恢复后的题目必须重新经过语义复核，避免把机械修复误当 grounding 证明。
+
+随后 PR #74 的 main run `32585659792` attempt 1 证明混合/repair 引用修复可通过真实 PDF/DOCX/PPTX/chart、注入、安全教材、评分和图谱门；Japan East Azure 也返回 accuracy 98、pronunciation 98.8，但独立 Gemma 翻译 smoke 持续 429 后回退。仅重跑失败 job 的 attempt 2 在单 block PDF 上同时出现初次与 repair 全无效引用，诊断为 initial/final `SOURCE_REFERENCE`；这不是多 block 的 grounding 歧义，因为服务端 allowlist 只有一个真实 block。新机械规则只在 `len(blocks)==1` 时选择这个唯一 block并进入语义复核；两个及以上 block 仍必须由模型提供有效 ID，否则失败关闭。它不能让语义复核不支持的题目通过，也不能消除独立 Gemma 429 门。
 
 ### 2.2 Luna 原文件候选闭环
 
@@ -210,7 +212,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 ### 5.6 模拟试卷
 
-总分与 section/题目 marks 一致；题型/知识点/难度分布符合用户选择；题目可解、答案与评分标准正确；无资料外关键假设；无重复/泄题；预计时长合理。language/difficulty/duration/totalMarks、重复 ID、可行的 marks 合计、引用是否属于服务端 block allowlist 及其 locator 元数据属于可确定的机械约束，可稳定归一化；仅同一稳定 question ID 可在 repair 后继承该题此前有效引用。题数、题意、答案、引用是否实际支持题目、难度匹配和教学质量不得用归一化伪造，仍须 validator、语义复核和真实样本门禁。
+总分与 section/题目 marks 一致；题型/知识点/难度分布符合用户选择；题目可解、答案与评分标准正确；无资料外关键假设；无重复/泄题；预计时长合理。language/difficulty/duration/totalMarks、重复 ID、可行的 marks 合计、引用是否属于服务端 block allowlist 及其 locator 元数据属于可确定的机械约束，可稳定归一化；同一稳定 question ID 可在 repair 后继承该题此前有效引用，整份 IR 只有一个 block 时也可选取唯一来源。多 block 不猜测。题数、题意、答案、引用是否实际支持题目、难度匹配和教学质量不得用归一化伪造，仍须 validator、语义复核和真实样本门禁。
 
 ### 5.7 人工评审量表
 
