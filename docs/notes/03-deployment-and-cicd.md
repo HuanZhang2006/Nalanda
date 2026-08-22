@@ -227,7 +227,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 修复合入后，[只读 plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端均到 0040且 dry-run 为空。最终 [受保护 run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 再保留 artifact `9057062920`（800,819 bytes，zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并通过远端 history、lint 与空 dry-run。
 - 切流前 Redis PING/AOF/private-port/noeviction、nginx `-t`、真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter Gemma（5,524 ms、253/27/280 tokens）和真实 Courses API/Storage/Fish gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`transcriptionMatched=true`）全部通过。此前一次 12 秒超时和三次 429 均在切流前阻断；同密钥额度正常且生产主机恢复 HTTP 200 后才重跑成功，未改用 fake 或绕过门禁。
 - 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 激活。公网复核确认 Web/Course Market 200、匿名 `/api/me` 与 points admin 401、注册 400 且带 `RateLimit-Limit: 5`，health 为 `deps.supabase=ok/deps.redis=ok`；主机复核确认 Web 软链与 API image 指向该 release，Redis healthy 且无宿主端口。
-- 24 小时兼容观察从激活时刻计算，最早 contract 资格时间为 `2026-08-11T09:35:34Z`。在 Redis 错误/误限流、points projection、协同 signal 和旧时间列依赖完成 go/no-go 前，不创建未来 0044–0045。0041–0043 是独立 additive Materials AI，已另走完整 CI、plan、恢复点、真实 provider/canary 与登录用户生产 smoke，不改变该 contract 门禁。
+- 24 小时兼容观察从激活时刻计算，最早 contract 资格时间为 `2026-08-11T09:35:34Z`。2026-08-22 已复核 Redis、points projection、协同 signal 与受支持客户端时间列依赖并通过 go/no-go；最终 contract 改为生产 0051 后顺序追加的 0052–0053，仍需独立 CI、plan、恢复点和发布。
 
 ### 2026-08-11 · 0041–0043 Materials AI 生产激活
 
@@ -240,7 +240,7 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 
 ### 2026-08-14 至 2026-08-22 · 0046–0051 数据库已发布、应用候选仍未激活
 
-- 候选把长任务改为快速 202 + callback/checkpoint/usage spool，新增 ELK/React Flow 图谱、跨设备布局、任务 Delete/Clear、统一交卷批改和 `luna_native_file_v1`。生产数据库已通过受保护流程前向应用到 0051；0044–0045 缺号仍是被延后的 contract，不得补造。数据库 apply 不等于应用激活。
+- 候选把长任务改为快速 202 + callback/checkpoint/usage spool，新增 ELK/React Flow 图谱、跨设备布局、任务 Delete/Clear、统一交卷批改和 `luna_native_file_v1`。生产数据库已通过受保护流程前向应用到 0051；0044–0045 保持未使用，时间列 contract 另以 0052–0053 严格追加。数据库 apply 不等于应用激活。
 - PR #70 run `32499521666` 完成完整 fake/local 门禁并合并为 main `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e`。main run [`32540131549`](https://github.com/1590703336/Nalanda/actions/runs/32540131549) 再次通过 lint/typecheck、API/Web/Python、真实 Redis、0007→0051、空库/lint/RLS/Storage、fake Chromium、镜像构建及 220 页资源 canary；本次无新 migration，数据库发布 job 正确跳过。
 - 同一 run 的真实 PDF gate 通过后，固定 DOCX 试卷在最终校验返回 `AI_EXAM_VALIDATION_FAILED`。候选 `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e-32540131549-1` 在 API/Web 切流前失败，EXIT trap 清除候选并恢复旧 API/AI/Web；独立检查确认 `.deploy.env` 与 Web symlink 仍指向旧稳定 `3c095a55ced21cee11a1b3131dd2889ec1f70733` release，公网 Supabase/Redis/AI health 正常且匿名 `/api/me` 为 401。因此 #70 已合并但没有部署成功。
 - 向前修复只增加 content-free validation categories/counts，并将固定材料扩展为足够支持五道题的八个独立事实；仍保持一次 repair、严格 schema/答案/引用/语义门。新的 PR/main 真实门禁通过、候选切流并完成服务器与公网独立复核之前，不得称 0046–0051 应用已上线；Luna 仍需 first-party OpenAI ZDR endpoint，能力不存在时子开关必须 false。
@@ -262,5 +262,5 @@ docker system df
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 先完成 0046–0051 的 CI、真实 OpenAI gate 与受保护发布；0039–0040 的最终时间列撤权仍需另行 go/no-go 并单独创建未来 0044–0045 contract。Stripe Webhook 仍属于后续能力。
+- 0046–0051 的数据库已前向应用；0039–0040 的时间列撤权 go/no-go 已完成并单独形成 0052–0053 候选。Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。
