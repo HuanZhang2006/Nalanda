@@ -496,6 +496,8 @@ python3 scripts/smoke-material-ai-provider.py
 
 同日 PR #74 run `32585020750` 和 main run `32585659792` 通过 docs、quality、0007→0053、空库/lint、双用户 RLS/Storage 与 fake Chromium。生产 attempt 1 的真实 Materials suite、canary 和 Azure 均通过，Gemma 翻译在五次有界重试后仍 429并回退；attempt 2 又在只有一个 DocumentIR block 的 PDF 上以 initial/final `SOURCE_REFERENCE` 失败并回退。唯一 block 修复的本地门禁为 ruff 和 78 个 Python 测试；下一真实 run 必须同时证明单 block 引用通过结构+语义门、多个 block 仍不猜测，以及 Gemma、后续 Courses、登录 smoke 和切流全部完成。
 
+PR #75 run `32587211309` 通过 docs、quality（3m52s）和 0007→0053/空库/lint/RLS/Storage/fake Chromium（8m12s），main run `32587844503` 再次通过 quality（4m6s）和本地数据库/浏览器（7m26s），且没有 migration 变更。production attempt 1 的固定 PDF 在 repair 后仍多出一道题，以 `QUESTION_TYPE_COUNT` 失败关闭；唯一一次失败 job 重跑的 attempt 2 通过 220 页 canary、全部真实 Materials 样本与语义门、Japan East Azure，但 Gemma 免费模型连续五次 429后回退。该证据证明唯一 block 引用回归已越过真实门，同时也证明真实供应商硬门没有被 fake 测试、结构规范化或重跑绕过；Courses/登录 smoke、切流和公网新版本验证仍未发生。
+
 随后 PR #69 完整 CI 与 main run `31838779292` 的本地数据库/RLS/fake Chromium、真实 provider fixture、220 页 canary和 Azure/Courses gate通过，但登录生产 smoke 的知识图产生 3 nodes/2 valid edges 且没有 level-0 root。数据库完成 RPC 以 `22023` 拒绝，job 停在 `saving`，15 分钟 smoke 超时后候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 自动回退且未切 Web。回归现在覆盖：DocumentIR/native graph level 机械归零、root/sourceMode 与 DB contract 对齐、checkpoint 恢复后仍归一化、永久 result/routing 拒绝进入终态，以及 lost lease 返回 409；新真实 run 前仍不得报告应用上线。
 
 ## 11. 新增测试约定
