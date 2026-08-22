@@ -47,11 +47,11 @@ from .schemas import (
 
 AUDIT_VERSION = "material-safety-audit.v2"
 EXAM_PROMPT_VERSION = "exam-generate.v3"
-KNOWLEDGE_GRAPH_PROMPT_VERSION = "knowledge-graph.v1"
+KNOWLEDGE_GRAPH_PROMPT_VERSION = "knowledge-graph.v2"
 KNOWLEDGE_QUESTION_PROMPT_VERSION = "knowledge-question.v1"
 NATIVE_AUDIT_VERSION = "luna-native-audit.v1"
 NATIVE_EXAM_PROMPT_VERSION = "exam-native-file.v2"
-NATIVE_GRAPH_PROMPT_VERSION = "knowledge-graph-native-file.v1"
+NATIVE_GRAPH_PROMPT_VERSION = "knowledge-graph-native-file.v2"
 NATIVE_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
 INJECTION_PATTERNS = [
     re.compile(pattern, re.I)
@@ -453,6 +453,23 @@ def normalize_exam_invariants(exam: GeneratedExam, settings: ExamSettings) -> Ge
     return normalized
 
 
+def normalize_knowledge_graph_invariants(
+    graph: GeneratedKnowledgeGraph,
+) -> GeneratedKnowledgeGraph:
+    """Align graph mechanics with the database completion contract.
+
+    Model-generated hierarchy levels are relative. Rebasing the smallest level
+    to zero preserves every relative relationship while guaranteeing that the
+    graph has at least one root before it reaches the completion RPC.
+    """
+    normalized = graph.model_copy(deep=True)
+    minimum_level = min(node.level for node in normalized.nodes)
+    if minimum_level > 0:
+        for node in normalized.nodes:
+            node.level -= minimum_level
+    return normalized
+
+
 def review_result_issues(review: ReviewResult) -> list[str]:
     """Treat the issue list as authoritative and fail closed on an empty invalid result."""
     if review.issues:
@@ -721,8 +738,12 @@ def validate_knowledge_graph(graph: GeneratedKnowledgeGraph, document: DocumentI
     issues: list[str] = []
     block_ids = {block.id for block in document.blocks}
     node_ids = [node.id for node in graph.nodes]
+    if graph.sourceMode != "document_ir":
+        issues.append("sourceMode must be document_ir")
     if len(node_ids) != len(set(node_ids)):
         issues.append("node IDs are not unique")
+    if not any(node.level == 0 for node in graph.nodes):
+        issues.append("the graph has no root node")
     edge_ids = [edge.id for edge in graph.edges]
     if len(edge_ids) != len(set(edge_ids)):
         issues.append("edge IDs are not unique")
@@ -760,7 +781,8 @@ diagrams, timelines, procedures, humanities sources, and technical reference mat
 Create atomic nodes detailed enough for learning: a concise summary plus a self-contained
 explanation, key details, examples, formulas where present, common misconceptions, check
 questions, and keywords. Preserve the source's teaching/reading sequence using ascending
-sourceOrder; use level to express hierarchy without replacing source order. Split overloaded
+sourceOrder; use level to express hierarchy without replacing source order. Always include at
+least one level-0 root and direct hierarchy edges consistently with node levels. Split overloaded
 ideas, but merge exact duplicates. Every node must cite exact supplied block IDs and may contain
 only claims supported by those blocks. Connect nodes with typed, directed edges that explain the
 relationship. Include prerequisite and part-of structure only when supported, and use sequence
@@ -778,6 +800,7 @@ GeneratedKnowledgeGraphV1 JSON schema."""
         fake_value=fake_graph,
     )
     usage.extend(events)
+    graph = normalize_knowledge_graph_invariants(graph)
 
     async def semantic_issues(candidate: GeneratedKnowledgeGraph) -> list[str]:
         review, review_events = await client.structured(
@@ -815,7 +838,7 @@ GeneratedKnowledgeGraphV1 JSON schema."""
             fake_value=fake_graph,
         )
         usage.extend(events)
-        graph = repaired
+        graph = normalize_knowledge_graph_invariants(repaired)
         remaining = validate_knowledge_graph(graph, document)
         if not remaining:
             remaining = await semantic_issues(graph)
@@ -1374,6 +1397,8 @@ record locator. Return only strict GeneratedKnowledgeGraphV1 JSON."""
     usage.extend(events)
     if isinstance(artifact, GeneratedExam):
         artifact = normalize_exam_invariants(artifact, settings)
+    else:
+        artifact = normalize_knowledge_graph_invariants(artifact)
     issues = validate_native_exam(artifact, settings) if isinstance(artifact, GeneratedExam) else validate_native_graph(artifact)
     if not issues:
         return artifact
@@ -1400,6 +1425,8 @@ record locator. Return only strict GeneratedKnowledgeGraphV1 JSON."""
     usage.extend(repair_events)
     if isinstance(repaired, GeneratedExam):
         repaired = normalize_exam_invariants(repaired, settings)
+    else:
+        repaired = normalize_knowledge_graph_invariants(repaired)
     remaining = validate_native_exam(repaired, settings) if isinstance(repaired, GeneratedExam) else validate_native_graph(repaired)
     if remaining:
         raise PipelineError(
@@ -1432,6 +1459,8 @@ async def _process_native_material_job(
     artifact: GeneratedExam | GeneratedKnowledgeGraph
     if checkpoint_matches and checkpoint.get("checkpointStage") == "native_artifact_ready" and checkpoint.get("artifact"):
         artifact = GeneratedExam.model_validate(checkpoint["artifact"]) if request.kind == "exam" else GeneratedKnowledgeGraph.model_validate(checkpoint["artifact"])
+        if isinstance(artifact, GeneratedKnowledgeGraph):
+            artifact = normalize_knowledge_graph_invariants(artifact)
         issues = validate_native_exam(artifact, request.settings) if isinstance(artifact, GeneratedExam) and isinstance(request.settings, ExamSettings) else validate_native_graph(artifact) if isinstance(artifact, GeneratedKnowledgeGraph) else ["checkpoint type mismatch"]
         if issues:
             artifact = await _generate_native_artifact(client, request, content, plugins, usage)
@@ -1531,7 +1560,9 @@ async def process_material_job(
         if not isinstance(settings, KnowledgeGraphSettings):
             raise PipelineError("INVALID_INTERNAL_REQUEST", "Knowledge graph settings are missing", 422)
         if artifact:
-            graph = GeneratedKnowledgeGraph.model_validate(artifact)
+            graph = normalize_knowledge_graph_invariants(
+                GeneratedKnowledgeGraph.model_validate(artifact)
+            )
         else:
             await _progress(request, "organizing", 70, "ORGANIZING_KNOWLEDGE_GRAPH")
             graph = await generate_knowledge_graph(client, document, settings, usage)
