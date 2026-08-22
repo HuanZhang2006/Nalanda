@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-23。生产数据库已到 0053，0052–0053 时间列 Stage B 已生效；不可变应用仍为此前稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733`，Materials AI/Luna flag 均保持关闭。最新 main 两次被真实 Materials AI PPTX 引用/语义门拦截并自动回退，数据库 apply 不能冒充应用上线。
+> - **状态基线**：2026-08-23。生产数据库已到 0053，0052–0053 时间列 Stage B 已生效；不可变应用仍为此前稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733`，Materials AI/Luna flag 均保持关闭。PR #75 的完整 Materials/Azure 门已在第二次候选通过，但 Gemma 免费模型持续 HTTP 429，候选仍在切流前自动回退；数据库 apply、PR 合并和真实门部分通过均不能冒充应用上线。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -261,6 +261,13 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 同 SHA 仅重跑失败 job 的 attempt 2 在 canary 后被固定 PDF 拦截：DocumentIR 只有一个 block，但首次生成和一次 repair 都引用无效 ID，initial/final gate 均为 `SOURCE_REFERENCE`。两次候选均未切 Web；服务器与公网独立复核继续指向 `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，Supabase/Redis/AI health ok、匿名 `/api/me` 401。
 - 新向前修复仅在 allowlist 恰好一个 block 时规范到唯一来源并强制语义复核；多 block 继续失败关闭。它不能绕过独立 Gemma 429 或后续登录 smoke，仍需新 PR/main 完整受保护发布证据。
 
+### 2026-08-23 · PR #75 单 block 修复通过，Gemma 硬门仍回退
+
+- PR [#75](https://github.com/1590703336/Nalanda/pull/75) 合并为 main `ad4b98b041ccb38954ac3bba705b26a92b70cca2`。PR run [`32587211309`](https://github.com/1590703336/Nalanda/actions/runs/32587211309) 与 main run [`32587844503`](https://github.com/1590703336/Nalanda/actions/runs/32587844503) 通过 docs、quality、0007→0053、空库/database lint、双用户 RLS/Storage、fake Chromium与生产形态镜像；没有 migration 变更，production database job 正确跳过。
+- application attempt 1 通过 220 页资源 canary，但固定单 block PDF 初次与一次 repair 后均为 6 题，而设置要求 5 题；最终结构门以 `QUESTION_TYPE_COUNT` 失败并自动回退。该失败没有被来源补偿逻辑吞掉。
+- 同一 SHA 仅重跑一次失败 job。attempt 2 的 canary 再次通过，真实 DeepSeek/MiMo gate 完成 PDF/DOCX/PPTX/chart、注入拒绝、安全教材、评分和 9-node graph；Luna 因 OpenAI-only ZDR 不可用保持 false，Japan East Azure 返回 accuracy 98、pronunciation 98.8。随后 Gemma 免费模型在五次有界尝试后仍为 HTTP 429，候选第二次回退，Courses 与登录用户 smoke 因顺序门禁尚未执行。
+- 两次均未切 Web/API。独立主机与公网核对确认 Web 软链和 API/AI image 仍为 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，两个 Materials flag 为 false，Supabase/Redis/AI health ok，匿名 `/api/me` 401、首页 200，attempt 2 候选目录与 `web.next` 均已清除。因此 PR #75 已合并但未部署；不得第三次盲目重跑或弱化 Gemma 硬门。
+
 ## 8. 运维速查
 
 ```bash
@@ -278,5 +285,5 @@ docker system df
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 0046–0051 与 0052–0053 数据库均已前向应用；最新 main 应用仍须先修复真实 Materials AI PPTX gate，再走不可变 release。Stripe Webhook 仍属于后续能力。
+- 0046–0051 与 0052–0053 数据库均已前向应用；最新 main 应用已通过 Materials/Azure，但仍须等 Gemma 固定模型恢复可用或经独立产品决策更换模型后重新走完整不可变 release。Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。
