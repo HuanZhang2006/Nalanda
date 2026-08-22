@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-15。生产数据库已到 0051，但不可变应用仍为此前稳定 release；仓库 0046–0051 候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。三次应用候选均在切流前失败并自动回退：Luna/OpenAI-only 无 ZDR endpoint、真实试卷偶发违反总分机械约束，以及真实知识图缺少 level-0 root。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-22。生产数据库已到 0051，但不可变应用仍为此前稳定 release；仓库 0046–0051 候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。最近四次应用候选均在切流前失败并自动回退：Luna/OpenAI-only 无 ZDR endpoint、真实试卷偶发违反总分机械约束、真实知识图缺少 level-0 root，以及固定 DOCX 试卷最终 validation failure。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -62,6 +62,8 @@ provider usage 只留 model、token、micro-USD、latency、request ID、用途�
 2026-08-15 的候选 run `31834895278` 已通过完整 CI 和 220 页资源 canary，但固定安全教材的真实试卷有一次以 `AI_EXAM_VALIDATION_FAILED` 阻断切流并回退。随后在相同无个人数据 fixture 上做三次脱敏阶段诊断：一次正常、一次复现 5 题各 5 分但请求总分为 20 且 repair 仍未改正、一次正常；另观察到一次 reviewer 同时返回 `valid=true` 与非空 issues。向前修复只确定性处理可证明的机械约束（请求元数据、重复 ID、marks 合计），不改题干/答案/引用；非空 reviewer issues 继续触发修复。真实重发通过前不能把这一修复称为生产上线。
 
 同日 main run `31838779292` 证明上述试卷归一化已通过真实 provider fixture，随后登录生产 smoke 的知识图在 `artifact_ready` 后被完成 RPC 拒绝为 SQLSTATE `22023`。脱敏 checkpoint 断言显示 artifact 为 3 nodes/2 valid edges、唯一 ID/端点/引用均正常，但 `roots=0`；worker 的 DocumentIR validator 漏掉了数据库已有的 root 约束。候选未切 Web并自动回退。向前修复将 graph 层级机械归零并补齐本地/数据库契约对照测试；完成回调的永久结构/路由拒绝也会进入明确终态，不再伪装成可恢复 callback outage。新的真实发布门禁通过前仍不能称为生产上线。
+
+2026-08-22 的 PR #70 run `32499521666` 与 main run `32540131549` 已通过完整 fake/local 门禁、0007→0051、空库、RLS/Storage、Chromium、镜像构建和 220 页资源 canary；真实 PDF 通过后，固定 DOCX 试卷在最终门禁返回 `AI_EXAM_VALIDATION_FAILED`，候选于 API/Web 切流前自动回退，生产仍运行旧稳定 release。旧响应只含这一总括 code，既无法判断是结构还是语义失败，也不应为诊断而泄露 provider 原文。向前修复仅输出 `initialGate/finalGate`、稳定结构 code、稳定语义 category 及预期/实际题数和总分；不输出课件、文件名、题目、答案、prompt、reviewer issue 或 provider body。固定材料同时由三条事实扩展为八个独立事实，以稳定支撑五道选择题；schema、答案、引用、语义复核、单次 repair 和失败关闭行为均未放宽。该修复必须由新的真实 run 证明后才能计作上线。
 
 ### 2.2 Luna 原文件候选闭环
 

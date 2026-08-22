@@ -3,7 +3,7 @@
 > **本文内容：**集中记录 Nalanda 当前生产、发布门禁和测试中所有发送给 AI/语音供应商的自然语言 prompt、动态输入模板、输出 schema、安全约束、模型、代码位置与版本边界；同时区分不属于 AI prompt 的浏览器对话框和题目字段。  
 > **作用：**作为全项目唯一的 prompt 人工维护入口，回答“每一环节实际给模型发送了什么”，并要求 prompt、代码、schema、评测和发布证据同步演进，避免在多个蓝图或实现笔记中维护互相冲突的副本。  
 > **何时更新：**任何 system/user prompt、模型、供应商、动态字段、schema、temperature/token/tool/reasoning/ZDR 参数、安全分类、版本号或真实评测样本变化时，必须与实现同一 PR 更新；新增 AI 能力必须先登记再启用。  
-> **状态基线：**2026-08-15。生产 Materials AI 使用固定 DeepSeek/MiMo；0046–0051 候选新增知识图、节点问答和固定 Luna/OpenAI 原文件 prompt，受保护发布完成前只可称候选。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
+> **状态基线：**2026-08-22。生产 Materials AI 应用仍使用固定 DeepSeek/MiMo；生产数据库已到 0051，但知识图、节点问答和固定 Luna/OpenAI 原文件 prompt 的新应用候选尚未通过真实门禁并切流。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
 
 ## 1. 维护规则与范围
 
@@ -214,6 +214,8 @@ UNTRUSTED_REPAIR_JSON
 ```
 
 输出仍为完整 `GeneratedExamV1`，不是 patch。修复后重新执行全部确定性校验和 `MAT-EXAM-REVIEW-V1`；仍失败则整个任务失败并释放产品额度。
+
+一次 repair 后仍失败时，worker 只向内部发布门禁暴露稳定结构 code（例如题数、总分、引用、答案形状）、语义 category（例如来源 grounding、答案正确性、干扰项质量）以及预期/实际题数和总分。不得在诊断、日志或 API 错误中暴露 source、题目、答案、prompt、reviewer issue 原文或 provider body；诊断能力不增加 repair 次数，也不放宽 schema、引用或语义门禁。
 
 ### 3.6 `MAT-EXAM-GRADE-V1`：主观题批量评分
 

@@ -65,9 +65,29 @@ def safe_worker_failure(response: httpx.Response) -> str:
     )
     provider_summary = ",".join(provider_codes) if provider_codes else "none"
     purpose_summary = ",".join(provider_purposes) if provider_purposes else "none"
+    diagnostics = payload.get("diagnostics") if isinstance(payload.get("diagnostics"), dict) else {}
+    safe_diagnostics = {
+        key: diagnostics[key]
+        for key in (
+            "stage",
+            "initialGate",
+            "finalGate",
+            "initialStructuralCodes",
+            "finalStructuralCodes",
+            "initialSemanticCategories",
+            "finalSemanticCategories",
+            "expectedQuestionCount",
+            "actualQuestionCount",
+            "expectedTotalMarks",
+            "actualTotalMarks",
+        )
+        if key in diagnostics
+    }
+    diagnostic_summary = json.dumps(safe_diagnostics, separators=(",", ":"), sort_keys=True)
     return (
         f"HTTP {response.status_code}; code={code}; "
-        f"providerErrorCodes={provider_summary}; providerPurposes={purpose_summary}"
+        f"providerErrorCodes={provider_summary}; providerPurposes={purpose_summary}; "
+        f"validationDiagnostics={diagnostic_summary}"
     )
 
 
@@ -133,8 +153,14 @@ def clean_storage() -> None:
 
 def make_fixtures(root: Path) -> dict[str, Path]:
     text = (
-        "Working memory temporarily holds information used for a current task. "
-        "Long-term memory stores knowledge over extended periods. Retrieval practice improves durable learning."
+        "Working memory temporarily holds a limited amount of information used for a current task. "
+        "Long-term memory stores knowledge over extended periods and has much greater capacity. "
+        "Encoding moves selected information from working memory into long-term memory. "
+        "Retrieval brings stored information back into working memory when it is needed. "
+        "Retrieval practice strengthens later access more effectively than passive rereading. "
+        "Spaced practice distributes study sessions across time and improves durable retention. "
+        "Interleaving mixes related topics so learners practise choosing the appropriate method. "
+        "Sleep supports consolidation, the process that stabilizes newly encoded memories."
     )
     pdf_path = root / "fixed.pdf"
     pdf = pymupdf.open()
