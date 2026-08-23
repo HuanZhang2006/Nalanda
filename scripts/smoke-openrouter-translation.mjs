@@ -25,7 +25,7 @@ const origin = process.env.PUBLIC_ORIGIN || "https://nalanda.online";
 
 assert.ok(key, "OPENROUTER_API_KEY is required");
 assert.equal(model, DEFAULT_OPENROUTER_TRANSLATION_MODEL,
-  "production OpenRouter translation model must use the reviewed free Gemma route");
+  "production OpenRouter translation model must use the reviewed Ox Alpha route");
 assert.notEqual(process.env.OPENROUTER_FAKE, "true", "production smoke refuses OPENROUTER_FAKE=true");
 assert.equal(baseUrl, "https://openrouter.ai/api/v1", "production OpenRouter base URL is not reviewed");
 assert.ok(Number.isFinite(attemptTimeoutMs));

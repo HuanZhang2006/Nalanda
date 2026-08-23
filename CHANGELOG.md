@@ -11,6 +11,7 @@
 
 ### Added
 
+- 追加候选迁移 0054–0055 与第三条 `ox_alpha_native_file_v1`：固定 `stealth/ox-alpha`、Stealth-only/no-fallback、低档 mandatory reasoning，复用 Luna 的原字节安全审查/生成/repair/checkpoint/清理编排；API 与 worker 双层只允许 PNG/JPEG/WebP，数据库完成事务要求匹配用途的 Stealth usage，全部新签名继续 service-role-only。
 - 新增并在生产数据库应用 Stage B 迁移 0052–0053：在 0051 后严格追加，撤销 authenticated 对 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE 权限，并失败关闭验证最终内容列、Schedule 列、service-role 与时间维护 trigger。原预留的 0044–0045 保持未使用，没有补插远端 migration history。
 - 追加候选迁移 0049–0051：为 job/Note 增加显式 `pipeline`，为成本事件记录实际 upstream provider/endpoint，新增 `deleting` 清理状态、私有 `knowledge_graph_layouts`、任务删除/清空/取消清理事务、Luna 完成路由门和精确权限断言；旧签名继续保留用于数据库先行和应用回滚。
 - 新增 `luna_native_file_v1`：固定 `openai/gpt-5.6-luna`、`provider.only=["openai"]`、无 fallback、ZDR/deny collection/require parameters、禁用工具/Web，并以内联 base64 原文件处理已通过门禁 allowlist 的 PDF/图片。它不调用确定性解析、OCR、LibreOffice、DocumentIR 或 parse cache，且不会使用具有远端留存语义的 Files API。
@@ -22,6 +23,7 @@
 
 ### Changed
 
+- Courses 拼写前非字面翻译语义判定由 Gemma 4 改为固定 `stealth/ox-alpha`，锁定 Stealth provider、禁止 fallback、拒绝数据收集并使用 strict boolean schema；完全匹配仍由服务端确定性零 token 判定，模型不能直接写进度或奖励。Materials 的 Ox 原图能力使用独立 flag/ZDR 门禁，当前无合规 ZDR endpoint 时保持关闭，不能用文本 smoke 替代。
 - 在线考试的选择与草稿保存不再判分或返回任何答案/解析；只有整卷二次确认提交或到期自动交卷后，服务端才在同一提交事务内批改全部客观题，并把主观题合并为一次模型评分。`in_progress` 响应强制 `results=[]`。
 - Luna Note 的节点问答会在来源仍存在时重新附原文件；来源删除后只使用持久图谱、选中节点和邻接关系。Luna 试卷主观评分继续使用 Luna/OpenAI，但不重复发送源材料。
 - 清理额度规则统一：queued 删除释放 reservation；worker 已接收的 processing 删除/Cancel 消耗一次；历史删除不回退额度、不删除 My Notes，并保留 provider usage 审计。
@@ -70,6 +72,7 @@
 
 ### Security
 
+- Ox Alpha 的模型/provider/reasoning/格式能力均由服务端固定；客户端不能选择模型或直接执行 0054–0055 工作流。Materials Ox 在实时 ZDR catalog 不合规时失败关闭，非图片即使被运维误加 allowlist 也会由 API/worker 拒绝。
 - 2026-08-22 go/no-go 复核确认兼容观察已超过 24 小时；现网与最新 Web 均不提交两个时间字段，Redis PING/AOF/noeviction 正常、无 error/eviction，points ledger/Profile projection 差异为 0。只读 plan run `32581192318` 仅列 0052–0053；protected run `32581805613` 在 artifact `9478168126` 后应用并验证到 0053。该 run 的最新应用候选两次均被真实 Materials AI PPTX gate 拦截并自动恢复 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，因此数据库权限已上线，但最新 main 应用没有切流。
 - 新 checkpoint 表不开放客户端读取；知识问答仅 owner 可读且不能由客户端写。所有新 RPC 撤销 `public/anon/authenticated` EXECUTE，问题和来源内容继续按不可信数据处理，不能改变模型、工具或 system prompt。
 

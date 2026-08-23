@@ -27,7 +27,7 @@ test("production OpenRouter installer preserves unrelated values and replaces ma
   const content = await readFile(envFile, "utf8");
   assert.match(content, /SUPABASE_URL=https:\/\/example\.supabase\.co/);
   assert.match(content, /FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true/);
-  assert.match(content, /OPENROUTER_MODEL=google\/gemma-4-26b-a4b-it:free/);
+  assert.match(content, /OPENROUTER_MODEL=stealth\/ox-alpha/);
   assert.match(content, /OPENROUTER_ASSESSMENTS_PER_DAY=500/);
   assert.match(content, /OPENROUTER_STT_MODEL=fish-audio\/transcribe-1/);
   assert.match(content, /OPENROUTER_STT_LANGUAGE=zh/);

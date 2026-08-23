@@ -29,14 +29,14 @@ Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测
 
 旧模块大多由浏览器直连 Supabase；Courses 和 Materials AI 的业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-08-10 完成 0039–0040 安全第一阶段，随后于 2026-08-11 通过独立只读 plan、加密恢复点、0041–0043 远端验证、2G 资源 canary、真实 DeepSeek/MiMo/Azure/OpenRouter 门禁、登录用户完整链路和不可变应用发布启用 Materials AI。当前所有用户 Free，每个 Profile 本地日期分别有 10 次成功生成和 10 次成功主观题评分；只有成功才消耗，拒绝/失败/取消释放预留，不读取 credits。时间列 Stage B 已于 2026-08-22 通过独立 plan、加密恢复点和远端验证，将生产数据库应用到 0053；原预留 0044–0045 没有补插。最新 main 的应用候选随后两次被真实 Materials AI PPTX gate 拦截并自动恢复此前稳定 release，因此数据库权限已上线，候选 UI/AI 能力没有切流。完整离线 PWA、销售 credits/VIP 商业账本仍未实现。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
 
-当前分支的 **Unreleased** 候选包含 0046–0051：0046–0048 将生成/评分改为 202 + 持久回调，修复 Undici 五分钟响应头超时误报，并加入 24 小时双层断点、知识点梳理与节点问答；0049–0051 增加 `luna_native_file_v1`、实际 OpenAI 上游审计、任务中断/删除/清空、私有跨设备图布局及权限验证。知识图使用动态 React Flow + ELK，支持缩放、平移、拖动、键盘移动、自动整理和移动端下置详情；考试草稿不批改且不返回答案，整卷提交/到期后才统一批改。此段是代码状态，不是生产声明；上线前仍须通过真实 Supabase、真实 OpenRouter/OpenAI、资源 canary 和受保护发布。
+当前分支的 **Unreleased** 候选包含 0046–0051 以及追加式 0054–0055：0046–0048 将生成/评分改为 202 + 持久回调，修复 Undici 五分钟响应头超时误报，并加入 24 小时双层断点、知识点梳理与节点问答；0049–0051 增加 `luna_native_file_v1`、实际 OpenAI 上游审计、任务中断/删除/清空、私有跨设备图布局及权限验证；0054–0055 再增加 `ox_alpha_native_file_v1`、Stealth 上游审计和 service-role-only 完成约束。知识图使用动态 React Flow + ELK，支持缩放、平移、拖动、键盘移动、自动整理和移动端下置详情；考试草稿不批改且不返回答案，整卷提交/到期后才统一批改。Courses 的非字面翻译判定同时从 Gemma 4 切换为固定 `stealth/ox-alpha`。此段是代码状态，不是生产声明；上线前仍须通过真实 Supabase、真实 OpenRouter、资源 canary 和受保护发布。
 
 ## 当前技术结构
 
 - Web：React 18 + Vite 鉴权壳，内部挂载 legacy DOM 应用。
 - 数据/Auth/Storage：Supabase PostgreSQL、Auth、Storage、RLS。
 - API：NestJS，提供 health/auth/me、Courses、语音/AI 适配和 points 管理接口；生产已启用 ioredis 原子限流、协同扫描器和真实 Redis readiness。
-- AI：生产 0041–0043 使用内网 FastAPI、确定性解析器、固定 OpenRouter ZDR 模型和严格 schema；NestJS 以 Postgres 任务事实 + BullMQ/Redis 调度。Unreleased 候选把长任务改为快速接收/回调，并增加可恢复图谱/节点问答；可选 Luna 路径把经过 hash/MIME/大小验证的原始 PDF/图片以内联 base64 直接交给固定 `openai/gpt-5.6-luna`，强制 OpenAI 上游且不进入 DocumentIR/parse cache。
+- AI：生产 0041–0043 使用内网 FastAPI、确定性解析器、固定 OpenRouter ZDR 模型和严格 schema；NestJS 以 Postgres 任务事实 + BullMQ/Redis 调度。Unreleased 候选把长任务改为快速接收/回调，并增加可恢复图谱/节点问答；显式原文件路径包括 Luna 的 PDF/图片以及 Ox Alpha 的原始图片，分别锁定 OpenAI/Stealth 上游且不进入 DocumentIR/parse cache。两条原文件子能力都继续要求实时 ZDR endpoint；catalog 不合规时保持关闭，不静默降级。
 - 共享：pnpm + Turborepo；`packages/ui` 是 CSS 包，Courses 的 camelCase 契约由 `packages/types` 在 Web/API 共用。
 - 生产：GitHub Actions 构建，宿主 nginx 托管 Web，Docker 运行 API、隔离 FastAPI AI worker 与仅容器内网可达、密码认证、AOF everysec 的 Redis；Supabase 继续使用云服务。
 

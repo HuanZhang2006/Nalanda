@@ -15,7 +15,11 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const LANGUAGES = new Set(["auto", "en", "zh"]);
 const DIFFICULTIES = new Set(["introductory", "intermediate", "advanced", "mixed"]);
 const ANSWER_DETAILS = new Set(["concise", "detailed"]);
-const PIPELINES = new Set<AiPipeline>(["document_ir_v1", "luna_native_file_v1"]);
+const PIPELINES = new Set<AiPipeline>([
+  "document_ir_v1",
+  "luna_native_file_v1",
+  "ox_alpha_native_file_v1",
+]);
 const COUNT_KEYS = ["singleChoice", "multipleChoice", "trueFalse", "fillBlank", "shortAnswer", "essay"] as const;
 
 function invalid(code: string, message: string, fieldErrors?: Record<string, string>): never {

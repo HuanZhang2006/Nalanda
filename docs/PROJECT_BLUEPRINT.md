@@ -256,9 +256,9 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - Materials/My Notes 保持英文和原有视觉；不把本阶段扩大成全站 React/i18n 重写。
 - 图谱使用 React Flow + ELK，提供无重叠分层、pan/zoom、拖动/键盘、外部详情和 revision 跨设备保存；考试只有整卷提交/超时后才统一批改。
 - job 支持应用内二次确认的 Delete/Clear history；活动清理必须等 worker 取消网络/Office、落账 usage 并删除临时目录后才消失，已接收任务按规则 consume 一次。
-- 能力矩阵允许用户显式选择 DocumentIR 或 `luna_native_file_v1`。Luna 只对真实门禁 allowlist 开放，以 inline 原字节、固定模型和 OpenAI-only/ZDR/no-fallback 处理，不静默转换或降级。
+- 能力矩阵允许用户显式选择 DocumentIR、`luna_native_file_v1` 或 `ox_alpha_native_file_v1`。Luna 只对真实门禁的 PDF/图片 allowlist 开放；Ox Alpha 只对其能力元数据声明支持的原始图片开放。两者均 inline 原字节、固定模型、锁定实际上游、要求 ZDR 且禁止 fallback，不静默转换或降级。
 
-验收进度：0046–0051 空库/升级/RLS、fake Chromium、只读 plan、恢复点、生产 apply 和 2G canary已完成。真实 Luna/OpenAI 原文件门禁确认当前无 first-party OpenAI ZDR endpoint，因此必须保持 Luna false；DocumentIR 真实 chart 已通过，固定安全教材又暴露出试卷 marks 合计的随机漂移，当前以服务端机械约束归一化向前修复。仍需新的完整 CI、真实 DeepSeek/MiMo 门禁、DocumentIR 应用 release、生产登录 smoke 和独立公网核验。未来只有 catalog 合规并跑完 PDF/图片真实门禁后，Luna 才能从“已实现但不可用”改为上线。
+验收进度：0046–0051 空库/升级/RLS、fake Chromium、只读 plan、恢复点、生产 apply 和 2G canary已完成。0054–0055 的 Ox Alpha 三流水线扩展仍属 Unreleased。真实 Luna/OpenAI 原文件门禁确认当前无 first-party OpenAI ZDR endpoint；2026-08-23 Ox Alpha ZDR catalog 同样没有合规 endpoint，因此两个原文件子开关都必须保持 false，DocumentIR 仍可独立发布。仍需新的完整 CI、真实 DeepSeek/MiMo、Ox 文本翻译、DocumentIR 应用 release、生产登录 smoke 和独立公网核验。未来只有对应 catalog 合规并跑完逐格式真实门禁后，原文件 pipeline 才能从“已实现但不可用”改为上线。
 
 ### 阶段 C：四类产物与学习闭环
 
