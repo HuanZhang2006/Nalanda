@@ -120,7 +120,7 @@ export class AiProcessorService {
       let payload: Record<string, unknown>;
       if (job.kind === "knowledge_question") {
         const context = await this.repository.knowledgeQuestionContext(job);
-        const sourceMaterial = job.pipeline === "luna_native_file_v1" && context.source.material_id
+        const sourceMaterial = job.pipeline !== "document_ir_v1" && context.source.material_id
           ? await this.repository.materialById(job.user_id, context.source.material_id)
           : null;
         payload = {

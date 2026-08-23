@@ -224,6 +224,14 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 7. 最后先开启 `FEATURE_MATERIAL_AI`，再仅对私有 gate 用户开启/验证 Luna，完成双 pipeline 的 exam/knowledge graph、250 节点桌面与移动图、布局保存、node Q&A、整卷交卷后统一批改、delete/clear 和同 job Resume。全部通过后才把 `FEATURE_MATERIAL_AI_LUNA=true` 设为默认，并独立核对公网 Web、health、401、release/image/Web symlink。
 8. 数据库仍只 forward-fix。应用异常先关闭 `FEATURE_MATERIAL_AI_LUNA`，必要时再关闭总开关并恢复上一不可变 release；0046–0051 表保留。不得 drop checkpoint/layout/usage rows，也不得手工修改额度或任务状态来“回滚”。
 
+#### 0054–0055 Ox Alpha 追加发布
+
+1. 只读 plan 必须精确显示 0054–0055；任何其他待应用 migration 都是 stop rule。恢复点加密、上传、解密与 SHA 验证完成后才允许 apply。
+2. 空库和 0007→latest 要证明三张 pipeline constraint 接受 `ox_alpha_native_file_v1`，创建/完成/checkpoint RPC 固定 `stealth/ox-alpha` 与 Stealth usage，且 public/anon/authenticated 都不能执行新签名。
+3. 候选启动时 `FEATURE_MATERIAL_AI_OX_ALPHA=false`。实时 ZDR catalog 没有 Ox/Stealth endpoint 时记录 `OPENROUTER_ZDR_UNAVAILABLE` 并保持关闭；不得关闭 ZDR、允许 fallback 或把 Courses 文本 smoke 当 Materials 原图证据。
+4. 若未来 catalog 合规，只用无个人数据 PNG/JPEG/WebP 逐格式验证原始 SHA-256、Stealth upstream、mandatory reasoning、strict schema、注入拒绝、checkpoint/cancel/purge。PDF/Office 必须保持不可选。
+5. 独立 Ox 翻译 smoke 必须证明固定 `stealth/ox-alpha` 的双样本判定、Stealth-only 路由和结构化输出。该硬门失败时不得切流；应用回滚不会撤销已经应用的 0054–0055，数据库只 forward-fix。
+
 ### 8.1 2026-07-21 安全与积分发布记录
 
 - 发布提交：`271137279aacb42454018d9e1b401ed41f2380b7`；只读 plan：GitHub Actions run `29832166947`；受保护 apply：run `29832551375`。

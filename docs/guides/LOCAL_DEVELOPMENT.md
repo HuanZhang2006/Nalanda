@@ -152,8 +152,11 @@ FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=false
 FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=false
 FEATURE_MATERIAL_AI=false
 FEATURE_MATERIAL_AI_LUNA=false
+FEATURE_MATERIAL_AI_OX_ALPHA=false
 MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png
+MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS=png,jpg,jpeg,webp
 MATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED
+MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE=AI_OX_ALPHA_DISABLED
 AI_SERVICE_URL=http://localhost:8000
 AI_CALLBACK_BASE_URL=http://localhost:3000/api
 AI_INTERNAL_TOKEN=<same-local-32-byte-secret-as-worker>
@@ -240,9 +243,11 @@ chmod 600 .env
 curl -fsS http://localhost:8000/health
 ```
 
-health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000` 与和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`。生成/评分/cancel-purge 接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 总开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与 “Organize knowledge points”。Luna 还需单独打开 `FEATURE_MATERIAL_AI_LUNA`，且 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` 只能列入已完成真实格式门禁的扩展名。
+health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000`、和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`，以及两条原文件 allowlist。生成/评分/cancel-purge 接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 总开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与 “Organize knowledge points”。Luna/Ox 还需分别打开子开关，allowlist 只能列入已完成真实格式门禁的扩展名。
 
 Luna 本地验证必须显式选择 `luna_native_file_v1`：worker 校验 Storage 下载的原始字节、MIME、大小与 SHA-256 后，以 inline base64 发送，不运行解析器/OCR/DocumentIR，也不使用 OpenRouter Files API。PDF 请求必须带 `file-parser.native`，provider 必须实际为 OpenAI；如果响应路由不符，usage 仍落账但产物被拒绝。fake provider 只能证明编排和 UI，不能证明上述供应商事实。
+
+Ox Alpha 本地验证必须显式选择 `ox_alpha_native_file_v1`，只使用 PNG/JPEG/WebP 原始图片并核对实际 upstream 为 Stealth。模型元数据没有 file modality，因此 PDF/Office 必须拒绝，即使环境变量误配也不能开放。Materials 请求仍要求 ZDR；catalog 没有 Ox endpoint 时预期能力为 disabled，而不是改用非 ZDR 或 DocumentIR 冒充成功。
 
 运行 Python 门禁：
 

@@ -17,7 +17,7 @@ import { FeatureFlagsService } from "./feature-flags.service";
 import { LearningService } from "./learning.service";
 import { assertUuid } from "./learning.util";
 
-const DEFAULT_MODEL = "google/gemma-4-26b-a4b-it:free";
+const DEFAULT_MODEL = "stealth/ox-alpha";
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 type ProviderDecision = {
@@ -47,6 +47,12 @@ function safeTokenCount(value: unknown) {
 
 function parseDecision(payload: unknown): ProviderDecision {
   const root = payload && typeof payload === "object" ? payload as Record<string, any> : {};
+  if (typeof root.provider !== "string" || root.provider.toLocaleLowerCase() !== "stealth") {
+    throw new BadGatewayException({
+      code: "TRANSLATION_PROVIDER_INVALID",
+      message: "翻译判分服务未使用指定供应商",
+    });
+  }
   const message = root.choices?.[0]?.message;
   const content = message?.content;
   const parsedMessage = message?.parsed;
@@ -153,7 +159,15 @@ export class OpenRouterTranslationService {
     const requestBody = JSON.stringify({
       model: config.model,
       temperature: 0,
-      max_tokens: 24,
+      max_tokens: 512,
+      reasoning: { effort: "low", exclude: true },
+      tool_choice: "none",
+      provider: {
+        only: ["stealth"],
+        allow_fallbacks: false,
+        data_collection: "deny",
+        require_parameters: true,
+      },
       response_format: {
         type: "json_schema",
         json_schema: {
