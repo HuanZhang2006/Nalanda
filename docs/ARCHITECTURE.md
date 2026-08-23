@@ -180,11 +180,15 @@ Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责�
 
 Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，仍为 Coming soon。候选 `GeneratedKnowledgeGraphV1` 是新的真实契约：节点按 source order，带层级、详细解释、例子/公式/误区/自测与严格引用；edge 有受限关系类型。节点问答只使用所选节点、相邻节点及这两类节点引用到的 source blocks，答案不能越过该来源并集。当前候选仍不含 embeddings、pgvector、Notes 编辑、导出、credits 或支付。
 
-### 6.2 Luna 原文件与任务清理候选（0049–0051）
+### 6.2 Luna/Ox Alpha 原文件与任务清理候选（0049–0051、0054–0055）
 
 创建 job 时 Web 必须显式发送 `pipeline`。`GET /api/materials/:id/ai-capabilities` 只把通过真实逐格式门禁且由 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` 允许的格式标为 Luna 可用；默认候选 allowlist 为 PDF/PNG。`luna_native_file_v1` 下载私有 Storage 原字节后校验声明大小、MIME 与 SHA-256，以 inline base64 发送给固定 `openai/gpt-5.6-luna`：PDF 使用 `type:file` + `file-parser.native`，图片使用 `image_url`。该路径不调用解析器、OCR、LibreOffice、DocumentIR 或 parse cache，也不使用会产生远端 workspace 留存的 Files API。每次请求强制 `provider.only=["openai"]`、`allow_fallbacks=false`、ZDR、deny data collection、require parameters、strict schema、no tools/Web；usage 先落库，实际上游不是 OpenAI 时完成事务拒绝产物但保留成本证据。
 
+0054–0055 增加第三条显式 `ox_alpha_native_file_v1`。它复用同一原字节审查/生成/repair/checkpoint/cleanup 编排，固定 `stealth/ox-alpha`、`provider.only=["stealth"]`、禁止 fallback，并在数据库完成事务要求实际 upstream 为 Stealth。因为实时模型能力只声明 image 而未声明 file，API 与 worker 双层将其限制为 PNG/JPEG/WebP 原始图片；PDF、Office 和文本格式继续使用 Luna（若可用）或显式 DocumentIR，绝不转换或静默降级。Ox 的 mandatory reasoning 固定 low 并从响应中排除。
+
 受保护发布还读取 OpenRouter 的实时 ZDR endpoint catalog。只有 catalog 同时包含 Luna、`provider_name=OpenAI` 且 endpoint 可用时，才允许把 `FEATURE_MATERIAL_AI_LUNA` 从 false 改为 true；否则保持原文件能力关闭、以 `OPENROUTER_ZDR_UNAVAILABLE` 返回原因，并让用户显式使用 DocumentIR。2026-08-14 的真实门禁与 catalog 均显示 Luna 当时只有 Azure/Azure EU ZDR endpoint，first-party OpenAI 不满足 ZDR；发布不得关闭 ZDR、改用 Azure、允许 fallback 或自动选择旧流水线来伪造 Luna 成功。
+
+Ox Alpha 采用完全独立的 `FEATURE_MATERIAL_AI_OX_ALPHA` 与 allowlist/reason code。当前实时 ZDR catalog 没有 Ox endpoint，因此该 Materials 子能力应保持关闭；Courses 非字面翻译只发送最小服务端词义上下文、使用 `data_collection=deny`，其真实文本 gate 不能替代 Materials 原图的 ZDR gate。
 
 知识图画布动态加载 React Flow 与 ELK，按 level 建立从左到右泳道并用 sourceOrder 约束同层顺序；关联边弱化为虚线。节点拖动结束及自动布局后执行碰撞消解，位置/viewport 保存到 owner 私有 `knowledge_graph_layouts`。artifact 改版时只复用仍存在的 node ID，revision 冲突由 Web 拉取最新布局、合并非重叠节点后重试。详情永远在画布外：桌面右侧、移动端下方，hover/focus 临时预览，click 固定，Esc 解除。
 

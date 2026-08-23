@@ -19,6 +19,7 @@ T = TypeVar("T", bound=BaseModel)
 TEXT_MODEL = "deepseek/deepseek-v4-flash-0731"
 VISION_MODEL = "xiaomi/mimo-v2.5"
 LUNA_MODEL = "openai/gpt-5.6-luna"
+OX_ALPHA_MODEL = "stealth/ox-alpha"
 
 
 def fake_enabled() -> bool:
@@ -61,8 +62,10 @@ class OpenRouterClient:
         max_tokens: int,
         fake_value: dict[str, Any] | None = None,
         provider_only: list[str] | None = None,
+        required_upstream_provider: str | None = None,
         allow_fallbacks: bool = True,
         plugins: list[dict[str, Any]] | None = None,
+        reasoning: dict[str, Any] | None = None,
     ) -> tuple[T, list[UsageEvent]]:
         if fake_enabled():
             if fake_value is None:
@@ -84,7 +87,7 @@ class OpenRouterClient:
                     durationMs=1,
                     zdrEnforced=True,
                     status="succeeded",
-                    upstreamProvider="OpenAI" if model == LUNA_MODEL else "fake",
+                    upstreamProvider=required_upstream_provider or "fake",
                     upstreamEndpoint="fake",
             )
             await self._emit(event)
@@ -105,7 +108,7 @@ class OpenRouterClient:
             # returned chain of thought. The pinned models expose optional
             # reasoning and otherwise default it on, which can consume the
             # completion budget and leave message.content null.
-            "reasoning": {"enabled": False},
+            "reasoning": reasoning if reasoning is not None else {"enabled": False},
             "tool_choice": "none",
             "response_format": {
                 "type": "json_schema",
@@ -201,10 +204,14 @@ class OpenRouterClient:
                         ) from exc
                     succeeded = self._usage(purpose, model, response, started, "succeeded", None)
                     await self._emit(succeeded)
-                    if provider_only and succeeded.upstreamProvider not in {"OpenAI", "openai"}:
+                    if (
+                        required_upstream_provider
+                        and (succeeded.upstreamProvider or "").casefold()
+                        != required_upstream_provider.casefold()
+                    ):
                         raise PipelineError(
                             "AI_PROVIDER_ROUTING_VIOLATION",
-                            "The AI provider did not use the required OpenAI endpoint",
+                            "The AI provider did not use the required endpoint",
                             502,
                             [*[item.model_dump() for item in failed_events], succeeded.model_dump()],
                         )
@@ -360,6 +367,8 @@ class OpenRouterClient:
             # Persist one canonical value so the database completion gate is
             # case-stable while still rejecting every non-OpenAI provider.
             upstream_provider = "OpenAI"
+        elif upstream_provider and upstream_provider.casefold() == "stealth":
+            upstream_provider = "Stealth"
         raw_endpoint = body.get("provider_endpoint") or body.get("endpoint")
         upstream_endpoint = raw_endpoint if isinstance(raw_endpoint, str) and raw_endpoint else None
         raw_cost = usage.get("cost")

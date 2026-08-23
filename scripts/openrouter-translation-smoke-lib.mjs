@@ -1,4 +1,4 @@
-export const DEFAULT_OPENROUTER_TRANSLATION_MODEL = "google/gemma-4-26b-a4b-it:free";
+export const DEFAULT_OPENROUTER_TRANSLATION_MODEL = "stealth/ox-alpha";
 
 const RETRYABLE_SMOKE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -122,7 +122,15 @@ export function buildOpenRouterSmokeBody(model = DEFAULT_OPENROUTER_TRANSLATION_
   return {
     model,
     temperature: 0,
-    max_tokens: 160,
+    max_tokens: 768,
+    reasoning: { effort: "low", exclude: true },
+    tool_choice: "none",
+    provider: {
+      only: ["stealth"],
+      allow_fallbacks: false,
+      data_collection: "deny",
+      require_parameters: true,
+    },
     response_format: {
       type: "json_schema",
       json_schema: {
@@ -182,6 +190,9 @@ export function buildOpenRouterSmokeBody(model = DEFAULT_OPENROUTER_TRANSLATION_
 }
 
 export function parseOpenRouterSmokePayload(payload) {
+  if (typeof payload?.provider !== "string" || payload.provider.toLowerCase() !== "stealth") {
+    throw new Error("OpenRouter translation smoke did not use the required Stealth provider");
+  }
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("OpenRouter response has no message content");
   let parsed;
@@ -196,6 +207,7 @@ export function parseOpenRouterSmokePayload(payload) {
     throw new Error("OpenRouter semantic decisions did not match the release fixture");
   }
   return {
+    upstreamProvider: "Stealth",
     promptTokens: Number.isSafeInteger(payload?.usage?.prompt_tokens)
       ? payload.usage.prompt_tokens : null,
     completionTokens: Number.isSafeInteger(payload?.usage?.completion_tokens)

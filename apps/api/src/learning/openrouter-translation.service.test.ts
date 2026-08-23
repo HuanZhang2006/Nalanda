@@ -62,6 +62,7 @@ describe("OpenRouter spelling translation adapter", () => {
     process.env.PUBLIC_ORIGIN = "https://nalanda.online";
     const { service, learning, flags } = harness();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      provider: "Stealth",
       choices: [{ message: { content: JSON.stringify({
         correct: true,
         feedback: "This paraphrase expresses the accepted meaning.",
@@ -80,8 +81,15 @@ describe("OpenRouter spelling translation adapter", () => {
     );
     const providerRequest = vi.mocked(fetch).mock.calls[0];
     const body = JSON.parse(String((providerRequest[1] as RequestInit).body));
-    expect(body.model).toBe("google/gemma-4-26b-a4b-it:free");
-    expect(body.max_tokens).toBe(24);
+    expect(body.model).toBe("stealth/ox-alpha");
+    expect(body.max_tokens).toBe(512);
+    expect(body.reasoning).toEqual({ effort: "low", exclude: true });
+    expect(body.provider).toEqual({
+      only: ["stealth"],
+      allow_fallbacks: false,
+      data_collection: "deny",
+      require_parameters: true,
+    });
     expect(body.response_format.json_schema.strict).toBe(true);
     expect(body.response_format.json_schema.schema.required).toEqual(["correct"]);
     expect(body.response_format.json_schema.schema.properties).toEqual({
@@ -95,7 +103,7 @@ describe("OpenRouter spelling translation adapter", () => {
       expect.objectContaining({
         correct: true,
         provider: "openrouter",
-        model: "google/gemma-4-26b-a4b-it:free",
+        model: "stealth/ox-alpha",
         usage: { promptTokens: 41, completionTokens: 13, totalTokens: 54 },
       }),
     );
@@ -150,6 +158,7 @@ describe("OpenRouter spelling translation adapter", () => {
     process.env.OPENROUTER_API_KEY = "test-secret";
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      provider: "Stealth",
       choices: [{ message: { content: JSON.stringify({
         correct: true,
       }) } }],
@@ -175,6 +184,7 @@ describe("OpenRouter spelling translation adapter", () => {
     const { service, learning } = harness();
     learning.completeSpellingTranslationAssessment.mockResolvedValue(result(false));
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      provider: "Stealth",
       choices: [{
         message: {
           content: [{ type: "text", text: JSON.stringify({ correct: false }) }],
@@ -199,9 +209,11 @@ describe("OpenRouter spelling translation adapter", () => {
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        provider: "Stealth",
         choices: [{ message: { reasoning: "provider returned no content" } }],
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
+        provider: "Stealth",
         choices: [{ message: { content: JSON.stringify({
           correct: true,
         }) } }],
@@ -262,6 +274,7 @@ describe("OpenRouter spelling translation adapter", () => {
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
       new Response(JSON.stringify({
+        provider: "Stealth",
         choices: [{ message: { content: "not-json" } }],
       }), { status: 200 })));
     await expect(service.assess("user-a", sessionId, request("一种常见的果实"))).rejects.toMatchObject({

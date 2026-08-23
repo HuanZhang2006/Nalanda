@@ -95,7 +95,9 @@ class KnowledgeGraphSettings(StrictModel):
 class ProcessMaterialJobRequest(StrictModel):
     jobId: str = Field(min_length=1, max_length=100)
     kind: Literal["exam", "knowledge_graph", "knowledge_question"]
-    pipeline: Literal["document_ir_v1", "luna_native_file_v1"] = "document_ir_v1"
+    pipeline: Literal[
+        "document_ir_v1", "luna_native_file_v1", "ox_alpha_native_file_v1"
+    ] = "document_ir_v1"
     userId: str = Field(min_length=1, max_length=100)
     material: MaterialSource | None = None
     settings: ExamSettings | KnowledgeGraphSettings | None = None
@@ -330,7 +332,9 @@ class GradeExamRequest(StrictModel):
     attemptId: str
     questions: list[SubjectiveQuestion] = Field(min_length=1, max_length=100)
     language: Literal["en", "zh"]
-    pipeline: Literal["document_ir_v1", "luna_native_file_v1"] = "document_ir_v1"
+    pipeline: Literal[
+        "document_ir_v1", "luna_native_file_v1", "ox_alpha_native_file_v1"
+    ] = "document_ir_v1"
     callbacks: WorkerCallbacks | None = None
     budgetMicroUsd: int | None = Field(default=None, gt=0)
     checkpoint: dict[str, Any] | None = None

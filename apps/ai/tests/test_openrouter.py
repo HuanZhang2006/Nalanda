@@ -7,7 +7,7 @@ from httpx import Response
 
 from app import openrouter
 from app.errors import PipelineError
-from app.openrouter import LUNA_MODEL, TEXT_MODEL, OpenRouterClient
+from app.openrouter import LUNA_MODEL, OX_ALPHA_MODEL, TEXT_MODEL, OpenRouterClient
 from app.schemas import AuditResult
 
 
@@ -97,7 +97,8 @@ async def test_luna_locks_openai_disables_fallback_and_accounts_routing_violatio
             result_type=AuditResult, system="fixed", user_content=[
                 {"type": "text", "text": "untrusted"},
                 {"type": "file", "file": {"filename": "x.pdf", "file_data": "data:application/pdf;base64,AA=="}},
-            ], max_tokens=100, provider_only=["openai"], allow_fallbacks=False,
+            ], max_tokens=100, provider_only=["openai"],
+            required_upstream_provider="OpenAI", allow_fallbacks=False,
             plugins=[{"id": "file-parser", "pdf": {"engine": "native"}}],
         )
 
@@ -135,11 +136,45 @@ async def test_luna_canonicalizes_verified_openai_provider_name(monkeypatch):
     _result, usage = await OpenRouterClient().structured(
         purpose="safety_audit", model=LUNA_MODEL, schema_name="native_audit",
         result_type=AuditResult, system="fixed", user_content="untrusted",
-        max_tokens=100, provider_only=["openai"], allow_fallbacks=False,
+        max_tokens=100, provider_only=["openai"],
+        required_upstream_provider="OpenAI", allow_fallbacks=False,
     )
 
     assert usage[0].upstreamProvider == "OpenAI"
     assert usage[0].upstreamEndpoint == "openai-primary"
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_ox_alpha_locks_stealth_and_keeps_mandatory_reasoning_low(monkeypatch):
+    monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        return_value=Response(200, json={
+            "id": "ox-stealth-provider", "provider": "stealth",
+            "provider_endpoint": "stealth-primary",
+            "choices": [{"message": {"content": json.dumps({
+                "classification": "safe", "rationale": "ok",
+                "failedRanges": [], "injectionLocations": [],
+            })}}],
+            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7, "cost": 0},
+        })
+    )
+
+    _result, usage = await OpenRouterClient().structured(
+        purpose="safety_audit", model=OX_ALPHA_MODEL, schema_name="native_audit",
+        result_type=AuditResult, system="fixed", user_content="untrusted",
+        max_tokens=100, provider_only=["stealth"],
+        required_upstream_provider="Stealth", allow_fallbacks=False,
+        reasoning={"effort": "low", "exclude": True},
+    )
+
+    body = json.loads(route.calls.last.request.content)
+    assert body["model"] == OX_ALPHA_MODEL
+    assert body["provider"]["only"] == ["stealth"]
+    assert body["provider"]["allow_fallbacks"] is False
+    assert body["reasoning"] == {"effort": "low", "exclude": True}
+    assert usage[0].upstreamProvider == "Stealth"
 
 
 @pytest.mark.asyncio

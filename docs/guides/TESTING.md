@@ -19,8 +19,8 @@
 | Redis 集成 | 真实 Redis 7.4 验证 Lua 滑动窗口并发原子性、过期和 token lock；未显式开启时只跳过这两项，不得称为 Redis E2E | 本地/CI Redis | `RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 RATE_LIMIT_HMAC_SECRET=<32+ bytes> pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
 | OpenRouter 供应商 smoke | 文本脚本验证 structured 语义判分；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应 | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
-| FastAPI 自动测试 | ruff + pytest 覆盖 DocumentIR、Luna 原始字节、provider 锁、注入、schema、checkpoint/cancel/purge 和 internal auth | 否；provider fake | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
-| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest/FastAPI，对一次性 Supabase + 真 Redis + provider fake 运行 Courses，以及 Materials→双流水线→250 节点图→任务删除/清历史→整卷考试 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
+| FastAPI 自动测试 | ruff + pytest 覆盖 DocumentIR、Luna/Ox 原始字节、provider 锁、reasoning、注入、schema、checkpoint/cancel/purge 和 internal auth | 否；provider fake | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
+| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest/FastAPI，对一次性 Supabase + 真 Redis + provider fake 运行 Courses，以及 Materials→三流水线能力矩阵→250 节点图→任务删除/清历史→整卷考试 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
 重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；只有启用 `RUN_REDIS_E2E=true` 的两项测试会连接真实 Redis；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest、本地 Supabase 和真实 Redis，但 Azure/OpenRouter 都是 fake。真实 provider smoke 证明当前 key/model/endpoint/structured response，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
 
@@ -303,7 +303,9 @@ FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
 FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
 FEATURE_MATERIAL_AI=true \
 FEATURE_MATERIAL_AI_LUNA=true \
+FEATURE_MATERIAL_AI_OX_ALPHA=true \
 MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png \
+MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS=png,jpg,jpeg,webp \
 AZURE_SPEECH_FAKE=true \
 OPENROUTER_FAKE=true \
 REDIS_URL=redis://127.0.0.1:6379/14 \

@@ -268,6 +268,12 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 同一 SHA 仅重跑一次失败 job。attempt 2 的 canary 再次通过，真实 DeepSeek/MiMo gate 完成 PDF/DOCX/PPTX/chart、注入拒绝、安全教材、评分和 9-node graph；Luna 因 OpenAI-only ZDR 不可用保持 false，Japan East Azure 返回 accuracy 98、pronunciation 98.8。随后 Gemma 免费模型在五次有界尝试后仍为 HTTP 429，候选第二次回退，Courses 与登录用户 smoke 因顺序门禁尚未执行。
 - 两次均未切 Web/API。独立主机与公网核对确认 Web 软链和 API/AI image 仍为 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，两个 Materials flag 为 false，Supabase/Redis/AI health ok，匿名 `/api/me` 401、首页 200，attempt 2 候选目录与 `web.next` 均已清除。因此 PR #75 已合并但未部署；不得第三次盲目重跑或弱化 Gemma 硬门。
 
+### 2026-08-23 · Ox Alpha 三流水线候选（尚未发布）
+
+- 当前分支把 Courses 非字面翻译从 Gemma 改为固定 `stealth/ox-alpha`，并增加 0054–0055 与 `ox_alpha_native_file_v1`。Materials 能力矩阵成为 DocumentIR、Luna 原文件、Ox Alpha 原图三条显式 pipeline；Ox 固定 Stealth-only/no-fallback/mandatory reasoning，且 API/worker 只允许 PNG/JPEG/WebP。
+- 实时模型元数据没有 file modality，实时 ZDR catalog 也没有 Ox endpoint。因此受保护发布必须把“Ox 文本翻译真实 smoke”和“Materials Ox 原图 ZDR gate”分开：前者失败会阻断应用切流；后者当前应稳定保持子开关 false 并记录 `OPENROUTER_ZDR_UNAVAILABLE`，不能放宽 ZDR 或用文本 smoke 冒充原图可用。
+- 本段只记录候选设计和已核对的供应商能力，不是 CI、数据库 apply、应用切流或公网验证证据。完成后必须补充 PR/main run、0054–0055 只读 plan、恢复 artifact、protected apply、真实门禁、release/image/Web symlink 和独立公网结果。
+
 ## 8. 运维速查
 
 ```bash
@@ -285,5 +291,5 @@ docker system df
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 0046–0051 与 0052–0053 数据库均已前向应用；最新 main 应用已通过 Materials/Azure，但仍须等 Gemma 固定模型恢复可用或经独立产品决策更换模型后重新走完整不可变 release。Stripe Webhook 仍属于后续能力。
+- 0046–0051 与 0052–0053 数据库均已前向应用；0054–0055 仍是候选。Gemma 已按独立产品决策在代码中替换为 Ox Alpha，但必须重新走完整不可变 release，不能据代码变更推断已上线。Stripe Webhook 仍属于后续能力。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。

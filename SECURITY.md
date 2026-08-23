@@ -5,7 +5,7 @@
 > **何时更新：**认证/授权、RLS、上传、AI、支付、部署拓扑或第三方处理者变化时；发现或修复高风险问题时；至少每季度复核一次。  
 > **状态基线：**2026-08-22。生产数据库已受保护应用到 0053；0052–0053 已完成时间列 Stage B，authenticated 不再能 UPDATE `posts.updated_at` 或 `study_tasks.done_at`。同一 run 的最新应用候选因真实 Materials AI PPTX gate 两次失败而自动恢复稳定 release，不能据数据库版本声称候选 UI 或供应商能力已上线。字段收口、points 上限/审核/协同信号和 Redis 限流仍有效。本文明确区分代码、数据库、应用与供应商上线状态。
 
-> **Unreleased 应用变更：**0046–0051 数据库已应用；对应应用增加 service-role-only checkpoint/usage/知识问答/任务清理/图谱布局工作流、Luna 原文件流水线、真实 upstream 审计和 24 小时恢复 TTL。Luna 只有实时 catalog 与真实 OpenAI gate 均合规后才打开，否则稳定禁用且不放宽 ZDR。
+> **Unreleased 应用变更：**0046–0051 数据库已应用；0054–0055 候选再增加 Ox Alpha 原图流水线及 Stealth usage 完成约束。对应应用包含 service-role-only checkpoint/usage/知识问答/任务清理/图谱布局、Luna/Ox 原文件路径和 24 小时恢复 TTL。任一原文件模型只有实时 catalog 与实际 provider gate 均合规后才打开，否则稳定禁用且不放宽 ZDR。
 
 ## 1. 支持范围
 
@@ -48,6 +48,7 @@
 | API 其它能力 | health、register、me；旧业务多数直连 Supabase | Courses AI 文件导入、支付、钱包和通用管理后台安全控制尚不存在 |
 | Materials AI | 生产 0041–0043 为 owner-only Nest API、service-role 事务、Postgres durable job、BullMQ UUID 投递和内网 token FastAPI；OpenRouter 固定 ZDR 模型与 strict schema | 注入分类、ZDR、结构化输出或单次真实门禁都不能提供数学上的绝对安全保证 |
 | Luna 原文件（候选） | inline base64、不使用 Files API；PDF native parser；固定 Luna + OpenAI-only/no fallback；响应 upstream 与 usage ledger 双重验证；独立 flag/格式 allowlist | 模型“支持 file”不等于每种 Office/文本格式已通过真实门禁；不能自动转换或降级 |
+| Ox Alpha 原始图片（候选） | inline base64 image；固定 Ox Alpha + Stealth-only/no fallback；mandatory reasoning 设 low 且不返回；响应 upstream 与 usage ledger 双重验证；独立 flag | 模型元数据没有 file modality，必须拒绝 PDF/Office；当前无 ZDR endpoint 时保持关闭，不能用 Courses 文本 smoke 替代原图门 |
 | 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
 
 ## 4. 已修复控制与开放风险
@@ -81,6 +82,7 @@
 12. Materials AI 会将解析后的完整文件内容送 DeepSeek，并把失败页/区域图像送 MiMo；只有用户逐账号接受版本化第三方处理说明后才能创建任务。`malicious/uncertain` 注入必须拒绝，主题/文件/答案均作为不可信数据隔离；不能把模型分类当唯一防线或通过 fallback 路由绕过 ZDR。
 13. FastAPI 每任务 0700 临时目录和 `finally`/orphan 清理只处理过程文件；`ai_material_parse_cache` 与生成 Notes 是经告知的持久私有数据。Storage 对象删除是 best effort，失败必须告警/重试，不能只依赖数据库级联声明完全删除。
 14. Luna 会把用户选择的原文件直接发给 OpenRouter/OpenAI；不运行本地文本提取并不减少第三方看到完整文件的隐私影响。必须保持逐账号同意、ZDR/deny collection、OpenAI-only 与 no tools/Web；不支持格式保持禁用。
+15. Ox Alpha Materials 路径只允许原始图片，发送给 OpenRouter/Stealth；同样要求逐账号同意、ZDR、deny collection、Stealth-only 与 no tools/Web。当前 catalog 不合规时必须关闭。Courses 翻译只发送最小词义上下文，但仍须独立隐私与质量复核。
 
 ## 5. 数据与密钥分级
 
@@ -104,7 +106,7 @@
 - 上传同时校验扩展名、MIME、magic bytes、大小和页数；对象名由服务端生成；目标阶段增加恶意文件扫描与隔离区。
 - HTML/Markdown/AI 输出渲染必须净化；社区正文、文件名和模型文本一律视为不可信输入，防 XSS、公式/URL 注入和提示词注入。
 - AI 服务只接收完成授权的资料，服务间鉴权，不记录原始课件或完整 prompt；供应商训练/留存条款须经过审批。
-- Materials AI worker 只允许 project signed Storage host，禁止工具/Web，固定 provider/model/schema。DocumentIR 路径限制 Office zip expansion/页数/字符/图像/资源；Luna 路径只校验并发送原始字节，禁止调用提取器、OCR、转换器或 Files API，并验证实际 upstream。FastAPI 422 也不得回显 signed URL/token/payload。
+- Materials AI worker 只允许 project signed Storage host，禁止工具/Web，固定 provider/model/schema。DocumentIR 路径限制 Office zip expansion/页数/字符/图像/资源；Luna/Ox 路径只校验并发送允许的原始字节，禁止调用提取器、OCR、转换器或 Files API，并验证实际 upstream。Ox 的 allowlist 还必须与图片集合取交集。FastAPI 422 也不得回显 signed URL/token/payload。
 - 语义翻译评判的 reference 只能从当前 owner session/word 推导；答案正文仅内存转发，数据库/日志只留 hash 与非正文计量；provider 输出必须过结构校验并经权威事务转换，不能直接信任。
 - Speech reference 只能由当前 owner 的 word/session 得到；限制 WAV magic/codec/采样率/声道/位深/大小/时长，录音仅内存转发且不得进入 DB、Storage、日志或备份。
 - 公开分享/市场只返回脱敏、转义快照；token 只存哈希；撤销/克隆在同一事务重查 active。举报数量不得自动下架，管理员处置必须写审计事实。
