@@ -91,4 +91,8 @@ export class FeatureFlagsService {
   materialAiLunaEnabled() {
     return this.materialAiEnabled() && enabled("FEATURE_MATERIAL_AI_LUNA", false);
   }
+
+  materialAiOxAlphaEnabled() {
+    return this.materialAiEnabled() && enabled("FEATURE_MATERIAL_AI_OX_ALPHA", false);
+  }
 }

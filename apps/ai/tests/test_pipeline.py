@@ -163,10 +163,81 @@ async def test_luna_native_pipeline_sends_exact_original_bytes_and_never_calls_d
     for call in captured:
         assert call["model"] == pipeline.LUNA_MODEL
         assert call["provider_only"] == ["openai"]
+        assert call["required_upstream_provider"] == "OpenAI"
         assert call["allow_fallbacks"] is False
         assert call["plugins"] == [{"id": "file-parser", "pdf": {"engine": "native"}}]
         file_part = next(part for part in call["user_content"] if part["type"] == "file")
         assert file_part["file"]["file_data"] == f"data:application/pdf;base64,{encoded}"
+
+
+@pytest.mark.asyncio
+async def test_ox_alpha_native_pipeline_sends_original_image_bytes_with_stealth_route(
+    monkeypatch, tmp_path: Path
+):
+    monkeypatch.setenv("MATERIAL_AI_FAKE_PROVIDER", "true")
+    original_bytes = b"\x89PNG\r\n\x1a\nexact-image-bytes"
+    request = native_exam_request().model_copy(update={
+        "pipeline": "ox_alpha_native_file_v1",
+        "material": native_exam_request().material.model_copy(update={
+            "name": "diagram.png", "type": "image/png", "sizeBytes": len(original_bytes),
+        }),
+    })
+    captured: list[dict] = []
+    original_structured = pipeline.OpenRouterClient.structured
+
+    async def fake_download(_url: str, destination: Path, _expected_size: int):
+        destination.write_bytes(original_bytes)
+        return "e" * 64, len(original_bytes)
+
+    def forbidden_parser(*_args, **_kwargs):
+        raise AssertionError("Ox Alpha native-image processing must not call a parser")
+
+    async def no_callback(*_args, **_kwargs):
+        return None
+
+    async def capture(self, **kwargs):
+        captured.append(kwargs)
+        return await original_structured(self, **kwargs)
+
+    monkeypatch.setattr(pipeline, "download_material", fake_download)
+    monkeypatch.setattr(pipeline, "parse_material", forbidden_parser)
+    monkeypatch.setattr(pipeline, "_worker_callback", no_callback)
+    monkeypatch.setattr(pipeline.OpenRouterClient, "structured", capture)
+
+    result = await pipeline.process_material_job(request, tmp_path)
+
+    encoded = base64.b64encode(original_bytes).decode("ascii")
+    assert result["sourceMode"] == "native_file"
+    assert [call["purpose"] for call in captured] == ["safety_audit", "exam_generation"]
+    for call in captured:
+        assert call["model"] == pipeline.OX_ALPHA_MODEL
+        assert call["provider_only"] == ["stealth"]
+        assert call["required_upstream_provider"] == "Stealth"
+        assert call["allow_fallbacks"] is False
+        assert call["reasoning"] == {"effort": "low", "exclude": True}
+        assert call["plugins"] is None
+        image_part = next(part for part in call["user_content"] if part["type"] == "image_url")
+        assert image_part["image_url"]["url"] == f"data:image/png;base64,{encoded}"
+
+
+@pytest.mark.asyncio
+async def test_ox_alpha_native_pipeline_rejects_pdf_even_if_operator_allowlists_it(
+    monkeypatch, tmp_path: Path
+):
+    request = native_exam_request().model_copy(update={"pipeline": "ox_alpha_native_file_v1"})
+    monkeypatch.setenv("MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS", "pdf,png")
+
+    async def forbidden_download(*_args, **_kwargs):
+        raise AssertionError("Ox Alpha must reject non-native file modalities before download")
+
+    async def no_callback(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr(pipeline, "download_material", forbidden_download)
+    monkeypatch.setattr(pipeline, "_worker_callback", no_callback)
+    with pytest.raises(PipelineError) as caught:
+        await pipeline._native_source_for_job(request, tmp_path)
+    assert caught.value.code == "AI_OX_ALPHA_FORMAT_NOT_VERIFIED"
 
 
 @pytest.mark.asyncio

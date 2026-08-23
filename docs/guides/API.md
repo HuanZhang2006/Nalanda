@@ -445,12 +445,12 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 
 ## 5. Materials AI、Notes、知识图谱与在线考试
 
-基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，但对应应用 release 因 Luna/OpenAI 无 ZDR endpoint 自动回退，0046–0051 新接口需以后续应用 release 证据才算公开启用。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。`FEATURE_MATERIAL_AI=false` 时不接受新任务，`FEATURE_MATERIAL_AI_LUNA=false` 时 capability 会关闭 Luna 而不是静默降级；若严格门禁确认无 first-party OpenAI ZDR endpoint，reasonCode 为 `OPENROUTER_ZDR_UNAVAILABLE`，DocumentIR 仍可用且成为默认。
+基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，但对应应用 release 因 Luna/OpenAI 无 ZDR endpoint 自动回退，0046–0051 新接口需以后续应用 release 证据才算公开启用。0054–0055 候选增加 Ox Alpha 原图 pipeline。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。总开关及 Luna/Ox 子开关相互独立；任一原文件模型缺少合规 ZDR endpoint 时 capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`，不会静默创建 DocumentIR job。
 
 | 方法与路径 | 输入/行为 | 关键边界 |
 |---|---|---|
-| `POST /api/materials/:id/ai-jobs` | 生产支持 `kind=exam`；候选增加 `kind=knowledge_graph`，并要求显式 `pipeline=document_ir_v1|luna_native_file_v1`。均含 UUID `idempotencyKey`、版本化同意与 settings | owner、格式/25MB、每日 generation reservation、单用户 active job；同 key 重放不重复预留；未通过 capability 的 Luna 格式返回稳定 400 |
-| `GET /api/materials/:id/ai-capabilities` | 返回两条 pipeline 的 available/default/model/provider/reasonCode | owner-only；Luna 同时要求 feature flag、逐格式 allowlist、实时 ZDR catalog 与真实 provider gate；`OPENROUTER_ZDR_UNAVAILABLE` 不会自动创建 DocumentIR job |
+| `POST /api/materials/:id/ai-jobs` | 生产支持 `kind=exam`；候选增加 `kind=knowledge_graph`，并要求显式 `pipeline=document_ir_v1|luna_native_file_v1|ox_alpha_native_file_v1`。均含 UUID `idempotencyKey`、版本化同意与 settings | owner、格式/25MB、每日 generation reservation、单用户 active job；同 key 重放不重复预留；未通过 capability 的原文件格式返回稳定 400 |
+| `GET /api/materials/:id/ai-capabilities` | 返回三条 pipeline 的 available/default/model/provider/reasonCode | owner-only；Luna 与 Ox 各自要求子 flag、逐格式 allowlist、实时 ZDR catalog 与真实 provider gate；Ox 仅允许图片；不可用不会自动创建 DocumentIR job |
 | `GET /api/ai-jobs?limit=50` | 最近任务及阶段/进度/稳定错误/结果引用 | owner-only；limit 被服务器夹紧 |
 | `GET /api/ai-jobs/:id` | 单任务 | owner-only |
 | `POST /api/ai-jobs/:id/cancel` | 兼容取消入口，进入持久 `deleting/cleaning` | queued 释放 reservation；worker 已接收则消费一次；只有 purge 确认后变 cancelled |

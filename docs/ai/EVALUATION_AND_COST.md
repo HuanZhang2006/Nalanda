@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。PR #75 已证明唯一 block 修复可通过完整真实 Materials 门，但 attempt 1 仍出现题数结构波动，attempt 2 又被 Gemma 免费模型持续 HTTP 429拦截；两次均在切流前回退。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。0054–0055 候选增加 Ox Alpha/Stealth 原图第三流水线，并把 Courses 非字面翻译从 Gemma 更换为 Ox Alpha；这些尚未通过完整 CI、真实 provider 与受保护切流。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -81,7 +81,13 @@ Luna 顺序固定为原文件安全审查→原文件生成→本地 schema/题�
 
 2026-08-14 真实发布 run `31824832947` 的 2G canary 通过，但首个 Luna PDF 试卷在安全审查前即失败为 `OPENROUTER_ZDR_UNAVAILABLE`；应用自动回退且未启用 Luna。随后读取 OpenRouter 官方 `/api/v1/endpoints/zdr`，同一模型只有 Azure/Azure EU，未包含 first-party OpenAI。因为本架构同时要求 OpenAI-only 与 ZDR，这一状态必须解释为“能力不可用”，不能删去 ZDR、改 provider 或把 `data_collection=deny` 冒充 ZDR。后续发布每次重新读取 catalog；只有 OpenAI ZDR endpoint 出现并完成真实 PDF/图片全门禁后才开放。
 
-### 2.3 Courses 文件导入的目标闭环（未实现）
+### 2.3 Ox Alpha 原始图片候选闭环
+
+`ox_alpha_native_file_v1` 复用 Luna 的原文件安全审查、生成、strict schema、一次修复、checkpoint 和清理流程，但固定模型为 `stealth/ox-alpha`、`provider.only=["stealth"]`、`allow_fallbacks=false`，完成事务要求 usage 的实际 upstream 为 Stealth。模型实时元数据只声明 `text/image/video`，没有 `file`，因此 API 与 worker 都把 allowlist 硬限制为 PNG/JPEG/WebP 原字节；即使运维误把 PDF/Office 加入环境变量也会拒绝，不能通过转 PDF、转文本或 DocumentIR 冒充原文件能力。Ox Alpha 要求 reasoning，当前使用 `effort=low` 且 `exclude=true`，不把推理正文保存或返回。
+
+Materials 原文件处理仍要求 ZDR。2026-08-23 实时 ZDR catalog 未提供 Ox Alpha endpoint，因此候选必须保持 `FEATURE_MATERIAL_AI_OX_ALPHA=false` 并返回 `OPENROUTER_ZDR_UNAVAILABLE`；这与 Courses 翻译判定的独立数据边界不同，后者只发送服务端英文词、参考翻译和用户答案并使用 `data_collection=deny`。真实发布门必须分别证明“Ox 文本翻译可用”和“Materials Ox ZDR 原图可用”，不能用前者替代后者。
+
+### 2.4 Courses 文件导入的目标闭环（未实现）
 
 目标输入：PDF、DOC/DOCX、JSON、Markdown、HTML 和受控图片。文件先进入按用户隔离的 quarantine，服务端检查扩展名、MIME、magic bytes、大小/页数/像素、压缩炸弹和恶意内容，再解析/OCR；浏览器不能把原文直接送供应商，也不能让模型使用 service-role 或任意网络工具。
 
@@ -98,7 +104,7 @@ Luna 顺序固定为原文件安全审查→原文件生成→本地 schema/题�
 
 文件原文、OCR 临时图、prompt 和模型输出按 job 使用最短留存；普通日志只留 hash/内部 ID/版本/计量。删除课程或账号时必须覆盖 quarantine、临时文件、OCR、模型 cache、job payload 和供应商副本。任何把用户文件加入 eval/golden set 的行为都需要单独、可撤回授权。
 
-### 2.4 Courses 导入评测与成本门
+### 2.5 Courses 导入评测与成本门
 
 固定评测集按格式、数字/扫描、单元有无、表格/多栏/图片、词/短语、多翻译、中英混排、坏格式和恶意提示词分层。核心指标：
 
@@ -111,7 +117,7 @@ Luna 顺序固定为原文件安全审查→原文件生成→本地 schema/题�
 
 运行时先估算最大页/图片/token/费用，让用户确认；超限拒绝或缩小范围，不事后无限扣 credits。v1 文本手工导入免费，未来 AI 导入是否收费须先接 credits hold/commit/release 和失败退款，points 绝不用于支付。
 
-### 2.5 Azure Speech 当前边界
+### 2.6 Azure Speech 当前边界
 
 Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的 PCM WAV；客户端最多录制 6 秒，关闭 echo cancellation、noise suppression、auto gain control，不做 VAD、音量阈值、最短语音判断、首尾裁剪或内容截断，只执行 Azure 契约所需的 16 kHz/16-bit/单声道 PCM 格式转换。服务端继续限制 8 秒/2 MB，并把验证后的同一 WAV 字节转发 Azure。不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
 
@@ -121,9 +127,9 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 必须分别观测 attempt/snapshot RPC 延迟、队列等待、Azure 合成、Storage hit、浏览器 Cache hit、评分总耗时与供应商耗时；配额暂停、失败重试和重复词命中不能混入“生成成功率”。2026-07-27 Japan East 真实发布 gate 已验证 4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象且不增加生成，以及 VAD 裁剪后评分 97。Azure fake 只验证代码路径，不参与质量或供应商可用率报告；单次 gate 也不是持续可用率或账单对账。
 
-### 2.6 OpenRouter 翻译语义前测当前边界
+### 2.7 OpenRouter 翻译语义前测当前边界
 
-用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定 `google/gemma-4-26b-a4b-it:free`、temperature 0 和严格 JSON schema `{correct:boolean}`。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback，避免把自由文本输出当词义或因空 feedback 丢弃有效判定。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
+用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定 `stealth/ox-alpha`、temperature 0、低档 mandatory reasoning 和严格 JSON schema `{correct:boolean}`，并锁定 Stealth 上游且禁止 fallback。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback，避免把自由文本输出当词义或因空 feedback 丢弃有效判定。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
 
 最低固定评测集需包含：
 
@@ -134,9 +140,9 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 语义质量门仍须用授权合成/专家标注集计算 precision、recall、false-accept/false-reject，并按单义/多义、词/短语和中英文分层。高风险错误是把无关翻译判对；当前真实 gate 的两条样本（同义为 true、无关为 false）只证明 endpoint/schema/key 当前可用，不代表质量 baseline，因此功能必须保留独立紧急 flag，不能对外承诺准确率。
 
-运行时记录脱敏 provider/model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt 或供应商响应。0027 把幂等 claim 与 provider-backed assessment reservation 分开：确定性完全匹配、已完成重放和未发出外部请求的租约都保持 `quota_counted=false/quota_counted_at=null`，仅在真实 OpenRouter 请求发出前按用户原子写入 true/当前时间；滚动窗口不再误用较早的 assessment 创建时间。同一 UUID 的网络/供应商重试不重复占产品额度。默认 20 次/用户/分钟、滚动 24 小时 500 次；429 携带精确恢复秒数。整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。真实请求超时/供应商错误仍保留该次额度事实，但不记学习错误。虽然 model ID 含 `:free`，仍必须按“价格/额度可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
+运行时记录脱敏 provider/model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt、reasoning 或供应商响应。0027 把幂等 claim 与 provider-backed assessment reservation 分开：确定性完全匹配、已完成重放和未发出外部请求的租约都保持 `quota_counted=false/quota_counted_at=null`，仅在真实 OpenRouter 请求发出前按用户原子写入 true/当前时间；滚动窗口不再误用较早的 assessment 创建时间。同一 UUID 的网络/供应商重试不重复占产品额度。默认 20 次/用户/分钟、滚动 24 小时 500 次；429 携带精确恢复秒数。整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。真实请求超时/供应商错误仍保留该次额度事实，但不记学习错误。当前模型目录价格为 0，但仍必须按“价格/额度/模型身份可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
 
-### 2.7 Fish Audio 中文 STT 生产边界
+### 2.8 Fish Audio 中文 STT 生产边界
 
 0037 只在 translation-first spelling 的翻译输入框中启用 OpenRouter `fish-audio/transcribe-1`。请求固定走 `/api/v1/audio/transcriptions`，使用 `language=zh`，模型、语言和 Bearer key 只由 NestJS 配置；识别文本只填入输入框，不自动发送，也不能直接形成 attempt、retry pool、进度、积分或徽章。用户编辑并明确提交后，才进入上节既有语义判分链。
 

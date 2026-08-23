@@ -5,7 +5,7 @@
 > - **作用**：避免“当前实现、最终蓝图、历史复盘、操作手册”相互覆盖或产生状态冲突。
 > - **何时更新**：新增、删除、重命名文档，或某类文档的负责人/权威范围变化时。
 
-最后核对：2026-08-23。生产数据库已到 0053，0052–0053 安全时间列 contract 已生效；当前不可变应用仍为此前稳定 release。仓库 0046–0051 对应的可恢复长任务、知识图谱/节点问答、任务清理、跨设备布局与 Luna 原文件流水线尚未通过真实 provider gate 并切流。
+最后核对：2026-08-23。生产数据库已到 0053，0052–0053 安全时间列 contract 已生效；当前不可变应用仍为此前稳定 release。仓库 0046–0051 对应的可恢复长任务、知识图谱/节点问答、任务清理、跨设备布局与 Luna 原文件流水线尚未切流；0054–0055 候选另增加 Ox Alpha 原图第三流水线和 Courses 翻译模型替换，同样需要独立发布证据。
 
 ## 1. 事实来源优先级
 
@@ -73,7 +73,7 @@
 
 ADR 只记录已经做出的、影响多个模块或难以逆转的决策。开放问题保留在项目蓝图；决定后新增 ADR 并更新相关当前文档。
 
-最新已采用候选决策：[ADR-0013 Materials AI 异步回调、可恢复执行与知识图谱](adr/0013-materials-ai-async-callback-resume-and-knowledge-graph.md)；生产基线仍由 [ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) 对应的 0041–0043 release 提供。Accepted 表示架构决定已采用，不自动证明候选已部署；生产证据仍以架构、测试和发布记录为准。
+最新已采用候选决策：[ADR-0015 Ox Alpha 翻译判定与 Materials 原始图片流水线](adr/0015-ox-alpha-translation-and-native-image-pipeline.md)；生产基线仍由 [ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) 对应的 0041–0043 release 提供。Accepted 表示架构决定已采用，不自动证明候选已部署；生产证据仍以架构、测试和发布记录为准。
 
 ## 8. 实现笔记
 

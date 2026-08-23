@@ -1522,6 +1522,81 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     await rpc("ai_finalize_generation_job_cleanup", { p_job_id: activeDuringClear.id });
   }, 60_000);
 
+  it("验证 Ox Alpha 原图流水线的服务端权限、模型映射和 Stealth 路由门禁", async () => {
+    const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
+      const result = await admin.rpc(name, args);
+      expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
+      return result.data as T;
+    };
+    const course = await a.from("courses").insert({ code: "OX", name: "Ox Alpha RLS" })
+      .select("id").single();
+    expect(course.error).toBeNull();
+    const material = await a.from("materials").insert({
+      course_id: course.data!.id, name: "diagram.png", type: "image/png", size_bytes: 128,
+      storage_path: `${aId}/diagram.png`,
+    }).select("id").single();
+    expect(material.error).toBeNull();
+    const createArgs = {
+      p_user_id: aId, p_material_id: material.data!.id, p_idempotency_key: randomUUID(),
+      p_request_fingerprint: "a".repeat(64), p_kind: "knowledge_graph",
+      p_settings: { language: "en", detail: "comprehensive", focus: "" },
+      p_consent_version: 1, p_pipeline: "ox_alpha_native_file_v1",
+    };
+    expect((await a.rpc("ai_create_generation_job", createArgs)).error).not.toBeNull();
+    const job = (await rpc<any[]>("ai_create_generation_job", createArgs))[0];
+    expect(job).toMatchObject({
+      pipeline: "ox_alpha_native_file_v1",
+      generation_model: "stealth/ox-alpha",
+      audit_model: "stealth/ox-alpha",
+      vision_model: "stealth/ox-alpha",
+    });
+
+    const lease = randomUUID();
+    await rpc("ai_claim_generation_job", {
+      p_job_id: job.id, p_lease_token: lease, p_lease_seconds: 900,
+    });
+    await rpc("ai_mark_generation_job_accepted", { p_job_id: job.id, p_lease_token: lease });
+    const event = (purpose: string) => ({
+      eventId: randomUUID(), purpose, model: "stealth/ox-alpha",
+      requestId: `ox-${purpose}`, promptTokens: 10, completionTokens: 5, totalTokens: 15,
+      costMicroUsd: 0, durationMs: 12, zdrEnforced: true, status: "succeeded",
+      upstreamProvider: "Stealth", upstreamEndpoint: "stealth-primary",
+    });
+    await rpc("ai_record_generation_usage_v2", {
+      p_job_id: job.id, p_lease_token: lease, p_event: event("safety_audit"),
+    });
+    const graph = {
+      schemaVersion: "generated-knowledge-graph.v1", sourceMode: "native_file",
+      title: "Ox Alpha map", language: "en", overview: "Image-grounded overview.",
+      learningObjectives: ["Understand the diagram."],
+      nodes: [{
+        id: "root", title: "Root", kind: "concept", level: 0, sourceOrder: 1,
+        summary: "Root summary", explanation: "Detailed image-grounded explanation.",
+        keyDetails: ["Detail"], examples: [], formulas: [], commonMisconceptions: [],
+        checkQuestions: ["What is shown?"], keywords: ["diagram"],
+        sourceRefs: [{ blockId: "", page: null, slide: null, label: "Image 1", locatorKind: "image", locatorIndex: 1 }],
+      }],
+      edges: [],
+    };
+    const completion = {
+      p_job_id: job.id, p_lease_token: lease, p_source_sha256: "b".repeat(64),
+      p_parser_version: "none", p_audit_version: "native-file-audit.v2",
+      p_prompt_version: "knowledge-graph-native-file.v2", p_source_mode: "native_file",
+      p_canonical_document: null, p_block_count: 0, p_visual_region_count: 0,
+      p_title: graph.title, p_schema_version: graph.schemaVersion, p_artifact: graph,
+      p_primary_count: 1, p_secondary_count: 0,
+    };
+    expect((await admin.rpc("ai_complete_material_generation_job_v2", completion)).error?.message)
+      .toContain("AI_PROVIDER_ROUTING_VIOLATION");
+    await rpc("ai_record_generation_usage_v2", {
+      p_job_id: job.id, p_lease_token: lease, p_event: event("knowledge_graph_generation"),
+    });
+    const noteId = await rpc<string>("ai_complete_material_generation_job_v2", completion);
+    expect((await admin.from("notes").select("pipeline,generation_model").eq("id", noteId).single()).data)
+      .toEqual({ pipeline: "ox_alpha_native_file_v1", generation_model: "stealth/ox-alpha" });
+    await rpc("ai_delete_note", { p_user_id: aId, p_note_id: noteId });
+  }, 60_000);
+
   it("验证学习课程隔离、候补池、跨日熟练、复习日程、徽章和 +20 指纹幂等", async () => {
     const courseId = randomUUID();
     const unitId = randomUUID();
@@ -2123,7 +2198,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_correct: false,
       p_feedback: "The meaning does not match.",
       p_provider: "openrouter",
-      p_model: "google/gemma-4-26b-a4b-it:free",
+      p_model: "stealth/ox-alpha",
       p_usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
     });
     expect(rejectedTranslation).toMatchObject({
@@ -2147,7 +2222,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_correct: false,
       p_feedback: "The meaning does not match.",
       p_provider: "openrouter",
-      p_model: "google/gemma-4-26b-a4b-it:free",
+      p_model: "stealth/ox-alpha",
       p_usage: {},
     })).toMatchObject({ attempt_id: wrongTranslationId, replayed: true });
     expect((await admin.from("learning_attempts").select("id")

@@ -36,7 +36,11 @@ function harness() {
     enqueueGeneration: vi.fn().mockResolvedValue(undefined), enqueueTimeout: vi.fn(), enqueueGrading: vi.fn(),
     removeGeneration: vi.fn().mockResolvedValue(undefined), enqueueCleanup: vi.fn().mockResolvedValue(undefined),
   };
-  const flags = { materialAi: vi.fn(), materialAiLunaEnabled: vi.fn().mockReturnValue(false) };
+  const flags = {
+    materialAi: vi.fn(),
+    materialAiLunaEnabled: vi.fn().mockReturnValue(false),
+    materialAiOxAlphaEnabled: vi.fn().mockReturnValue(false),
+  };
   return { repository, queue, flags, service: new AiService(repository as any, queue as any, flags as any), attempt, context };
 }
 
@@ -61,6 +65,7 @@ describe("Materials AI public service boundary", () => {
     await expect(service.capabilities(USER, MATERIAL)).resolves.toMatchObject({
       capabilities: [
         { pipeline: "luna_native_file_v1", available: false, default: false, reasonCode: "AI_LUNA_DISABLED" },
+        { pipeline: "ox_alpha_native_file_v1", available: false, default: false, reasonCode: "AI_OX_ALPHA_DISABLED" },
         { pipeline: "document_ir_v1", available: true, default: true },
       ],
     });
@@ -68,6 +73,7 @@ describe("Materials AI public service boundary", () => {
     await expect(service.capabilities(USER, MATERIAL)).resolves.toMatchObject({
       capabilities: [
         { pipeline: "luna_native_file_v1", available: false, default: false, reasonCode: "OPENROUTER_ZDR_UNAVAILABLE" },
+        { pipeline: "ox_alpha_native_file_v1", available: false, default: false, reasonCode: "AI_OX_ALPHA_DISABLED" },
         { pipeline: "document_ir_v1", available: true, default: true },
       ],
     });
@@ -76,9 +82,44 @@ describe("Materials AI public service boundary", () => {
     await expect(service.capabilities(USER, MATERIAL)).resolves.toMatchObject({
       capabilities: [
         { pipeline: "luna_native_file_v1", available: true, default: true, provider: "OpenAI" },
+        { pipeline: "ox_alpha_native_file_v1", available: false, default: false, provider: "Stealth" },
         { pipeline: "document_ir_v1", available: true, default: false },
       ],
     });
+  });
+
+  it("offers Ox Alpha only for native image bytes and keeps Luna as the first native default", async () => {
+    const { service, repository, flags } = harness();
+    repository.ownedMaterial.mockResolvedValue({
+      id: MATERIAL, user_id: USER, name: "diagram.webp", size_bytes: 100,
+    });
+    flags.materialAiOxAlphaEnabled.mockReturnValue(true);
+    await expect(service.capabilities(USER, MATERIAL)).resolves.toMatchObject({
+      capabilities: [
+        { pipeline: "luna_native_file_v1", available: false, default: false },
+        {
+          pipeline: "ox_alpha_native_file_v1", available: true, default: true,
+          model: "stealth/ox-alpha", provider: "Stealth",
+        },
+        { pipeline: "document_ir_v1", available: true, default: false },
+      ],
+    });
+
+    process.env.MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS = "pdf,png";
+    repository.ownedMaterial.mockResolvedValue({
+      id: MATERIAL, user_id: USER, name: "lesson.pdf", size_bytes: 100,
+    });
+    await expect(service.capabilities(USER, MATERIAL)).resolves.toMatchObject({
+      capabilities: [
+        {},
+        {
+          pipeline: "ox_alpha_native_file_v1", available: false,
+          reasonCode: "AI_OX_ALPHA_FORMAT_NOT_VERIFIED",
+        },
+        { pipeline: "document_ir_v1", default: true },
+      ],
+    });
+    delete process.env.MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS;
   });
 
   it("marks active deletion for durable cleanup before hiding the task", async () => {

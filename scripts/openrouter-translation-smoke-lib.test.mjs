@@ -12,7 +12,10 @@ import {
 
 test("OpenRouter smoke uses the pinned model and strict two-case schema", () => {
   const body = buildOpenRouterSmokeBody();
-  assert.equal(body.model, "google/gemma-4-26b-a4b-it:free");
+  assert.equal(body.model, "stealth/ox-alpha");
+  assert.deepEqual(body.provider.only, ["stealth"]);
+  assert.equal(body.provider.allow_fallbacks, false);
+  assert.deepEqual(body.reasoning, { effort: "low", exclude: true });
   assert.equal(body.response_format.json_schema.strict, true);
   assert.equal(body.response_format.json_schema.schema.properties.decisions.minItems, 2);
   assert.doesNotMatch(JSON.stringify(body), /api[_-]?key/i);
@@ -20,18 +23,24 @@ test("OpenRouter smoke uses the pinned model and strict two-case schema", () => 
 
 test("OpenRouter smoke accepts the expected structured semantic decisions", () => {
   assert.deepEqual(parseOpenRouterSmokePayload({
+    provider: "Stealth",
     choices: [{ message: { content: JSON.stringify({ decisions: [
       { id: "semantic-match", correct: true },
       { id: "semantic-mismatch", correct: false },
     ] }) } }],
     usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 },
-  }), { promptTokens: 20, completionTokens: 8, totalTokens: 28 });
+  }), { upstreamProvider: "Stealth", promptTokens: 20, completionTokens: 8, totalTokens: 28 });
   assert.throws(() => parseOpenRouterSmokePayload({
+    provider: "Stealth",
     choices: [{ message: { content: JSON.stringify({ decisions: [
       { id: "semantic-match", correct: false },
       { id: "semantic-mismatch", correct: false },
     ] }) } }],
   }), /did not match/);
+  assert.throws(() => parseOpenRouterSmokePayload({
+    provider: "Other",
+    choices: [{ message: { content: "{}" } }],
+  }), /required Stealth provider/);
 });
 
 test("OpenRouter smoke retries only transient provider responses", () => {
