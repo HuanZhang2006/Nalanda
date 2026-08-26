@@ -47,3 +47,7 @@ Courses 的非字面翻译判定原先固定使用 Gemma 4 免费模型，最近
 - 本地 Supabase 双用户 E2E 验证客户端不能创建/完成 Ox 任务或伪造 provider usage，service-role 完成只有匹配 Stealth usage 才成功。
 - 真实文本 gate 使用固定同义/无关双样本；Materials gate 先读取实时 ZDR catalog，合规后才用无个人数据图片验证实际 Stealth、原始 SHA-256、注入拒绝和零残留。
 - 生产遵循只读 0054–0055 plan、加密恢复点、apply、不可变 candidate、真实门禁、私有 smoke、切流和独立公网验证。任一硬门失败都保持 Ox Materials flag 关闭并恢复上一应用 release。
+
+## 2026-08-25 输出契约修订
+
+PR #77 已把 0054–0055 应用到生产数据库，但应用候选的 Courses 翻译门因 Ox Alpha endpoint 不声明 `structured_outputs`、而请求又使用 strict `json_schema` + `require_parameters=true`，收到 HTTP 404并自动回滚。决策修订为使用 endpoint 明确声明支持的 `response_format:{type:"json_object"}`；system prompt 固定唯一对象形状，NestJS 与真实 release smoke 本地严格检查字段集合、boolean 类型、case ID/数量和预期语义。Stealth-only、禁止 fallback、data collection deny、实际 provider 校验、服务端幂等事实与失败关闭不变。供应商 HTTP 错误只记录稳定状态/code/request ID，不记录正文或用户内容。

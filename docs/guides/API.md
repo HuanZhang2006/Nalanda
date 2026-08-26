@@ -331,7 +331,7 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 }
 ```
 
-NestJS 从当前 owner/session/word 读取英文和权威 translations。用户答案经服务端 NFKC、空白和大小写规范化后若完全等于任一参考项，以 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不调用供应商；非字面答案才在请求内存中交给 OpenRouter 的 `{correct:boolean}` 结构化判定。浏览器不能提交参考答案或模型名；服务端用固定安全文案补齐 feedback，不把 provider 自由文本当权威词义。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
+NestJS 从当前 owner/session/word 读取英文和权威 translations。用户答案经服务端 NFKC、空白和大小写规范化后若完全等于任一参考项，以 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不调用供应商；非字面答案才在请求内存中交给 OpenRouter。Ox Alpha 请求使用其声明支持的 JSON Object 模式，API 在本地严格要求唯一字段 `{correct:boolean}`；额外字段、缺失字段、坏类型或坏 JSON 均失败关闭。浏览器不能提交参考答案或模型名；服务端用固定安全文案补齐 feedback，不把 provider 自由文本当权威词义。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
 
 ```json
 {
@@ -445,7 +445,7 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 
 ## 5. Materials AI、Notes、知识图谱与在线考试
 
-基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，但对应应用 release 因 Luna/OpenAI 无 ZDR endpoint 自动回退，0046–0051 新接口需以后续应用 release 证据才算公开启用。0054–0055 候选增加 Ox Alpha 原图 pipeline。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。总开关及 Luna/Ox 子开关相互独立；任一原文件模型缺少合规 ZDR endpoint 时 capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`，不会静默创建 DocumentIR job。
+基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，0054–0055 又于 2026-08-23 受保护应用并验证，但 PR #77 应用 release 因 Courses Ox Alpha 输出契约 HTTP 404 自动回退。0046–0055 新应用接口仍需以后续成功切流证据才算公开启用。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。总开关及 Luna/Ox 子开关相互独立；任一原文件模型缺少合规 ZDR endpoint 时 capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`，不会静默创建 DocumentIR job。
 
 | 方法与路径 | 输入/行为 | 关键边界 |
 |---|---|---|

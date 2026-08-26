@@ -94,7 +94,26 @@ export async function runOpenRouterSmokeRequest(request, {
     }
 
     if (!isRetryableOpenRouterSmokeStatus(response.status) || attempt === maxAttempts) {
-      throw new Error(`OpenRouter translation smoke failed with HTTP ${response.status} after ${attempt} attempts`);
+      let upstreamCode = null;
+      try {
+        const payload = JSON.parse(await response.text());
+        const candidate = payload?.error?.code ?? payload?.code;
+        if (typeof candidate === "string" || typeof candidate === "number") {
+          upstreamCode = String(candidate).slice(0, 80);
+        }
+      } catch {
+        // Release diagnostics must never echo a provider response body. A
+        // missing structured code is represented by the HTTP status alone.
+      }
+      const requestId = response.headers.get("request-id")
+        || response.headers.get("x-request-id");
+      const detail = [
+        upstreamCode ? `code=${upstreamCode}` : null,
+        requestId ? `requestId=${requestId}` : null,
+      ].filter(Boolean).join(", ");
+      throw new Error(
+        `OpenRouter translation smoke failed with HTTP ${response.status} after ${attempt} attempts${detail ? ` (${detail})` : ""}`,
+      );
     }
     const delayMs = openRouterSmokeRetryDelay({
       attempt,
@@ -132,32 +151,7 @@ export function buildOpenRouterSmokeBody(model = DEFAULT_OPENROUTER_TRANSLATION_
       require_parameters: true,
     },
     response_format: {
-      type: "json_schema",
-      json_schema: {
-        name: "nalanda_translation_smoke",
-        strict: true,
-        schema: {
-          type: "object",
-          additionalProperties: false,
-          properties: {
-            decisions: {
-              type: "array",
-              minItems: 2,
-              maxItems: 2,
-              items: {
-                type: "object",
-                additionalProperties: false,
-                properties: {
-                  id: { type: "string", enum: ["semantic-match", "semantic-mismatch"] },
-                  correct: { type: "boolean" },
-                },
-                required: ["id", "correct"],
-              },
-            },
-          },
-          required: ["decisions"],
-        },
-      },
+      type: "json_object",
     },
     messages: [
       {
@@ -165,7 +159,8 @@ export function buildOpenRouterSmokeBody(model = DEFAULT_OPENROUTER_TRANSLATION_
         content: [
           "Judge whether each learner translation expresses at least one accepted meaning.",
           "Accept synonyms and natural paraphrases, but reject unrelated meanings.",
-          "Return only the requested structured result.",
+          "Return exactly one JSON object with no markdown and no additional fields.",
+          "The object must be {\"decisions\":[{\"id\":\"semantic-match\",\"correct\":boolean},{\"id\":\"semantic-mismatch\",\"correct\":boolean}]}.",
         ].join(" "),
       },
       {
@@ -201,7 +196,30 @@ export function parseOpenRouterSmokePayload(payload) {
   } catch {
     throw new Error("OpenRouter response is not valid JSON");
   }
-  const decisions = Array.isArray(parsed?.decisions) ? parsed.decisions : [];
+  if (
+    !parsed
+    || typeof parsed !== "object"
+    || Array.isArray(parsed)
+    || Object.keys(parsed).length !== 1
+    || !("decisions" in parsed)
+  ) {
+    throw new Error("OpenRouter semantic decisions did not match the required local schema");
+  }
+  const decisions = Array.isArray(parsed.decisions) ? parsed.decisions : [];
+  if (
+    decisions.length !== 2
+    || decisions.some((entry) => (
+      !entry
+      || typeof entry !== "object"
+      || Array.isArray(entry)
+      || Object.keys(entry).sort().join(",") !== "correct,id"
+      || !["semantic-match", "semantic-mismatch"].includes(entry.id)
+      || typeof entry.correct !== "boolean"
+    ))
+    || new Set(decisions.map((entry) => entry.id)).size !== 2
+  ) {
+    throw new Error("OpenRouter semantic decisions did not match the required local schema");
+  }
   const byId = new Map(decisions.map((entry) => [entry?.id, entry?.correct]));
   if (byId.get("semantic-match") !== true || byId.get("semantic-mismatch") !== false) {
     throw new Error("OpenRouter semantic decisions did not match the release fixture");
