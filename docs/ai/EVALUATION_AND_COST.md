@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-23。生产数据库已到 0053，但不可变应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭；仓库 0046–0051 对应候选增加 202 callback、可恢复 checkpoint/费用重放、知识图谱/节点问答、任务清理、跨设备布局和 Luna 原文件流水线。0054–0055 候选增加 Ox Alpha/Stealth 原图第三流水线，并把 Courses 非字面翻译从 Gemma 更换为 Ox Alpha；这些尚未通过完整 CI、真实 provider 与受保护切流。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-25。生产数据库已到 0055，但 PR #77 不可变应用候选在 Courses Ox Alpha 翻译真实门返回 HTTP 404 后回滚，当前应用仍为此前稳定 release，Materials AI/Luna/Ox 开关保持关闭。DocumentIR、资源 canary 与 Japan East Azure 在该候选已通过，不能替代应用切流证据。修复候选把 Courses Ox 从不受支持的 strict JSON Schema 改为 JSON Object + 本地严格 schema；仍需新的完整 CI、真实 provider 与受保护切流。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -129,7 +129,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 ### 2.7 OpenRouter 翻译语义前测当前边界
 
-用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定 `stealth/ox-alpha`、temperature 0、低档 mandatory reasoning 和严格 JSON schema `{correct:boolean}`，并锁定 Stealth 上游且禁止 fallback。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback，避免把自由文本输出当词义或因空 feedback 丢弃有效判定。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
+用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定 `stealth/ox-alpha`、temperature 0、低档 mandatory reasoning 和模型声明支持的 JSON Object 模式，并锁定 Stealth 上游且禁止 fallback。Nalanda 随后在本地严格验证对象只含 boolean `correct`，缺失、额外字段、错误类型或无效 JSON 都失败关闭并可在同一预算内重试一次。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
 
 最低固定评测集需包含：
 

@@ -211,7 +211,7 @@ GitHub 管理员/Actions 权限也应启用 MFA、最小化可写角色，并定
 2. 暂时关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`、`FEATURE_MATERIAL_AI_LUNA`、`FEATURE_MATERIAL_AI_OX_ALPHA` 和 `FEATURE_MATERIAL_AI`；普通拼写、既有 Notes 与客观考试仍可用。
 3. 安全更新 GitHub `production` secret；经受控部署分别原子更新 API 与 Materials AI env，确认 `OPENROUTER_FAKE=false`、`MATERIAL_AI_FAKE_PROVIDER=false`。不得把 key 放在参数或日志。
 4. 用无个人数据 fixture 分别执行 structured 文本判分 gate 和“Azure 合成苹果 WAV → 待激活 Nalanda STT API”gate；只记录 model/耗时/usage/布尔断言，不打印输入、transcript 或响应正文。任一失败都不激活待发布 release。
-5. 在待激活 image 运行 `smoke-openrouter-translation.mjs`，用固定合成样本验证指定 model 的 structured JSON：语义近义回答为 true、无关回答为 false。再经真实 Courses API 验证同 UUID replay 不再次调用 provider、正确翻译后的权威 spelling attempt 与临时用户清理。
+5. 在待激活 image 运行 `smoke-openrouter-translation.mjs`，用固定合成样本验证指定 model 的 JSON Object + 本地严格 schema：语义近义回答为 true、无关回答为 false，且实际 provider 为 Stealth。再经真实 Courses API 验证同 UUID replay 不再次调用 provider、正确翻译后的权威 spelling attempt 与临时用户清理。
 6. 用固定 PDF/DOCX/PPTX/chart/injection/safe-course/grading suite 验证 DeepSeek/MiMo strict schema、ZDR、只发送失败范围、引用和成本；再用 Luna PDF/图片门禁验证 inline 原始字节、PDF native parser、实际 OpenAI upstream；Ox 只用原始图片验证 Stealth upstream、mandatory reasoning、no fallback 和取消清理。另独立运行 Ox 翻译双样本与 Fish STT gate。先恢复总开关，最后按实时 ZDR catalog 分别恢复原文件子开关；逐个观察 provider error/latency/token/STT/AI usage。
 7. 撤销旧 key 并重复两类真实 smoke。若失败，保持功能关闭，不把 key 下发 Web 或改成客户端自行判分/识别。
 

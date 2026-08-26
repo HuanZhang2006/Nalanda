@@ -200,6 +200,8 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 
 最终撤权已在新的 PR 中按严格追加顺序实现，并将生产数据库应用到 0053：0052 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0053 断言最终精确 grant、合法内容/Schedule 写入、service-role 与时间 trigger。0044–0045 保持历史空号，没有使用 `--include-all` 补插已经越过 0051 的生产 history。独立 plan、恢复点、apply、RLS/权限和公网 smoke 证据见 8.14。
 
+2026-08-23 的 run `32628757656` 先保留加密恢复点，再只应用 0054–0055；远端 history、本地/远端一致性、dry-run 无待迁移和 public schema lint 均通过。随后应用候选因 Courses Ox Alpha 输出契约收到 OpenRouter HTTP 404而自动恢复上一 Web/API；数据库没有倒退，继续采用 0055 向前兼容 contract。修复只涉及应用/真实门，不追加无意义回滚迁移。
+
 #### 0041–0043 Materials AI 专项顺序
 
 1. plan 必须只列生产尚未应用的 0041–0043；0043 逐表/RLS/grant/RPC/FK 断言必须在空库与 0007 升级两条路径通过。
