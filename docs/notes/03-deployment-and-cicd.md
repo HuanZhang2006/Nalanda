@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-23。生产数据库已到 0053，0052–0053 时间列 Stage B 已生效；不可变应用仍为此前稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733`，Materials AI/Luna flag 均保持关闭。PR #75 的完整 Materials/Azure 门已在第二次候选通过，但 Gemma 免费模型持续 HTTP 429，候选仍在切流前自动回退；数据库 apply、PR 合并和真实门部分通过均不能冒充应用上线。
+> - **状态基线**：2026-08-25。生产数据库已到 0055；不可变应用仍为此前稳定 release，Materials AI/Luna/Ox flags 保持关闭。PR #77 的 DocumentIR、220 页资源 canary 和 Japan East Azure 通过，但 Courses Ox Alpha 请求因不兼容的 strict JSON Schema 收到 HTTP 404，候选在切流前自动恢复上一 Web/API。当前修复候选改用 JSON Object + 本地严格 schema；数据库 apply、PR 合并和真实门部分通过均不能冒充应用上线。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -291,5 +291,13 @@ docker system df
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 0046–0051 与 0052–0053 数据库均已前向应用；0054–0055 仍是候选。Gemma 已按独立产品决策在代码中替换为 Ox Alpha，但必须重新走完整不可变 release，不能据代码变更推断已上线。Stripe Webhook 仍属于后续能力。
+- 0046–0055 数据库均已前向应用。Gemma 已按独立产品决策在代码中替换为 Ox Alpha，但 PR #77 应用候选已因输出参数不兼容回滚，必须由新的修复 SHA 重新走完整不可变 release，不能据数据库或代码变更推断已上线。Stripe Webhook 仍属于后续能力。
+
+### 8.16 PR #77 / 0054–0055 与 Ox Alpha 输出契约回滚（2026-08-23）
+
+- PR #77 合并为 `85beab02d84d2b7b42948a0ab4a923ea13646109`，main CI `32627507536` 通过；只读 plan `32628178552` 只列 0054–0055。
+- apply/deploy run `32628757656` 保留恢复点并把远端 history 推进到 0055，随后 dry-run 显示无待迁移且 public schema lint 通过。
+- 候选 220 页 canary、DocumentIR DeepSeek/MiMo suite 和 Japan East Azure 通过；Luna 与 Materials Ox 因 `OPENROUTER_ZDR_UNAVAILABLE` 正确保持 false。
+- Courses Ox Alpha 翻译 smoke 以 `response_format.type=json_schema`、`require_parameters=true` 请求，但实时 endpoint 只声明通用 `response_format`，OpenRouter 返回 HTTP 404。保护脚本恢复上一 Web/API，并确认公网 root/health 为 200、Supabase/Redis ok、匿名 `/api/me` 为 401；候选没有切流。
+- 修复候选使用 `response_format.type=json_object`，仍固定 Stealth-only/no fallback/deny collection/required parameters，并由 API 与发布 smoke 在本地严格验证唯一字段、类型和语义 case。非 2xx 日志只允许状态、结构化 code 和 request ID。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。

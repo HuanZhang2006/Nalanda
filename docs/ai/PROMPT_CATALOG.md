@@ -3,7 +3,7 @@
 > **本文内容：**集中记录 Nalanda 当前生产、发布门禁和测试中所有发送给 AI/语音供应商的自然语言 prompt、动态输入模板、输出 schema、安全约束、模型、代码位置与版本边界；同时区分不属于 AI prompt 的浏览器对话框和题目字段。  
 > **作用：**作为全项目唯一的 prompt 人工维护入口，回答“每一环节实际给模型发送了什么”，并要求 prompt、代码、schema、评测和发布证据同步演进，避免在多个蓝图或实现笔记中维护互相冲突的副本。  
 > **何时更新：**任何 system/user prompt、模型、供应商、动态字段、schema、temperature/token/tool/reasoning/ZDR 参数、安全分类、版本号或真实评测样本变化时，必须与实现同一 PR 更新；新增 AI 能力必须先登记再启用。  
-> **状态基线：**2026-08-23。生产数据库已到 0053，但生产应用已回退到此前稳定 release，Materials AI/Luna 开关保持关闭；知识图、节点问答和固定 Luna/OpenAI 原文件 prompt 的新应用候选尚未切流。0054–0055 候选新增 Ox Alpha/Stealth 原图 prompt envelope，并把 Courses 非字面翻译从 Gemma 换为 Ox Alpha；它们仍需完整 CI、真实 provider 与受保护发布，不能写成线上事实。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
+> **状态基线：**2026-08-25。生产数据库已到 0055，但 PR #77 应用候选在 Courses Ox Alpha strict JSON Schema 请求收到 HTTP 404 后回滚，Materials AI/Luna/Ox 开关保持关闭。当前修复候选只把 Courses 判定输出改为 JSON Object，并由 API/发布 smoke 在本地严格验证 schema；它仍需完整 CI、真实 provider 与受保护发布，不能写成线上事实。Courses 文件 AI 导入、Knowledge list、独立 Quiz 和通用 AI Create 仍未实现。
 
 ## 1. 维护规则与范围
 
@@ -45,7 +45,7 @@ Catalog ID 是本文的稳定评审标识，不会发送给模型。当前代码
 | `MAT-NATIVE-EXAM-V1` | 原文件试卷生成 | Luna/OpenAI-only 或 Ox Alpha/Stealth-only | 有，另带完整原文件 | `generated_native_exam_v1` | 0049–0051 + 0054–0055 候选 |
 | `MAT-NATIVE-GRAPH-V1` | 原文件知识图生成 | Luna/OpenAI-only 或 Ox Alpha/Stealth-only | 有，另带完整原文件 | `generated_native_knowledge_graph_v1` | 0049–0051 + 0054–0055 候选 |
 | `MAT-NATIVE-REPAIR-V1` | 原文件产物最多一次修复 | Luna/OpenAI-only 或 Ox Alpha/Stealth-only | 有，另带完整原文件 | 与原产物相同 | 0049–0051 + 0054–0055 候选，按需 |
-| `COURSE-TRANSLATION-JUDGE-V1` | 拼写前翻译语义判定 | `stealth/ox-alpha` | 有 | `translation_judgment` | 候选，非字面匹配才调用 |
+| `COURSE-TRANSLATION-JUDGE-V1` | 拼写前翻译语义判定 | `stealth/ox-alpha` | 有 | JSON Object `{correct:boolean}` + 本地严格 schema | 修复候选，非字面匹配才调用 |
 | `COURSE-TRANSLATION-STT-V1` | 中文翻译语音转文字 | `fish-audio/transcribe-1` | 无自然语言 prompt | 音频 + `language=zh` | 生产 |
 | `COURSE-TTS-V1` | 单词/短语发音合成 | Azure Speech | SSML，不是 LLM prompt | 音频 | 生产 |
 | `COURSE-PRONUNCIATION-V1` | 发音评分 | Azure Speech | 参考文本配置，不是 LLM prompt | Azure detailed assessment | 生产 |

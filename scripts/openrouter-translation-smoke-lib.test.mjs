@@ -10,14 +10,14 @@ import {
   runOpenRouterSmokeRequest,
 } from "./openrouter-translation-smoke-lib.mjs";
 
-test("OpenRouter smoke uses the pinned model and strict two-case schema", () => {
+test("OpenRouter smoke uses the pinned model, JSON Object mode, and a locally validated two-case contract", () => {
   const body = buildOpenRouterSmokeBody();
   assert.equal(body.model, "stealth/ox-alpha");
   assert.deepEqual(body.provider.only, ["stealth"]);
   assert.equal(body.provider.allow_fallbacks, false);
   assert.deepEqual(body.reasoning, { effort: "low", exclude: true });
-  assert.equal(body.response_format.json_schema.strict, true);
-  assert.equal(body.response_format.json_schema.schema.properties.decisions.minItems, 2);
+  assert.deepEqual(body.response_format, { type: "json_object" });
+  assert.match(body.messages[0].content, /semantic-match/);
   assert.doesNotMatch(JSON.stringify(body), /api[_-]?key/i);
 });
 
@@ -41,6 +41,16 @@ test("OpenRouter smoke accepts the expected structured semantic decisions", () =
     provider: "Other",
     choices: [{ message: { content: "{}" } }],
   }), /required Stealth provider/);
+  assert.throws(() => parseOpenRouterSmokePayload({
+    provider: "Stealth",
+    choices: [{ message: { content: JSON.stringify({
+      decisions: [
+        { id: "semantic-match", correct: true },
+        { id: "semantic-mismatch", correct: false },
+      ],
+      unexpected: true,
+    }) } }],
+  }), /required local schema/);
 });
 
 test("OpenRouter smoke retries only transient provider responses", () => {
@@ -108,6 +118,24 @@ test("OpenRouter smoke keeps persistent and non-retryable failures fail-closed",
     maxDelayMs: 2,
     sleep: async () => {},
   }), /HTTP 401 after 1 attempts/);
+});
+
+test("OpenRouter smoke reports only a structured provider code and request id", async () => {
+  await assert.rejects(() => runOpenRouterSmokeRequest(async () => (
+    new Response(JSON.stringify({
+      error: { code: "model_not_found", message: "sensitive provider detail" },
+    }), { status: 404, headers: { "request-id": "request-safe-123" } })
+  ), {
+    maxAttempts: 2,
+    baseDelayMs: 1,
+    maxDelayMs: 2,
+  }), (error) => {
+    assert.match(error.message, /HTTP 404/);
+    assert.match(error.message, /code=model_not_found/);
+    assert.match(error.message, /requestId=request-safe-123/);
+    assert.doesNotMatch(error.message, /sensitive provider detail/);
+    return true;
+  });
 });
 
 test("OpenRouter smoke retries a timeout while consuming a successful response body", async () => {

@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-23。生产数据库已受保护应用到 0053；0052–0053 已完成时间列 Stage B，原预留 0044–0045 没有补插。最新 main 的应用候选在同一 protected run 及一次 failed-job rerun 中均被真实 Materials AI PPTX gate 拦截，当前应用安全恢复到 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，API/AI/Web、Supabase 和 Redis 健康。数据库权限上线不等于候选应用切流。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-25。生产数据库已受保护应用到 0055；0052–0055 已完成时间列 Stage B 与 Ox pipeline contract，原预留 0044–0045 没有补插。PR #77 应用候选在真实 Courses Ox Alpha 翻译门收到 OpenRouter HTTP 404 后自动恢复到此前稳定 release，API/AI/Web、Supabase 和 Redis 已独立确认健康。DocumentIR、资源 canary 与 Japan East Azure 在该候选通过，Luna/Ox Materials 因 ZDR 不可用保持关闭；任何单项通过和数据库上线都不等于候选应用切流。当前修复候选只把 Courses Ox 输出改成模型支持的 JSON Object，并继续在本地严格验证 schema。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 2026-08-14 候选代码（尚未部署）包含 0046–0051：0046–0048 将生成/评分改为 202 接收 + 持久回调并增加双层断点、增量 usage、知识点图谱和节点问答；0049–0051 增加 Luna 原文件流水线、provider provenance、可确认清理的任务删除/清空及私有跨设备图布局。以下带“候选”的段落描述当前分支，不改变上述生产事实。
 

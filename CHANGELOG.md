@@ -23,7 +23,7 @@
 
 ### Changed
 
-- Courses 拼写前非字面翻译语义判定由 Gemma 4 改为固定 `stealth/ox-alpha`，锁定 Stealth provider、禁止 fallback、拒绝数据收集并使用 strict boolean schema；完全匹配仍由服务端确定性零 token 判定，模型不能直接写进度或奖励。Materials 的 Ox 原图能力使用独立 flag/ZDR 门禁，当前无合规 ZDR endpoint 时保持关闭，不能用文本 smoke 替代。
+- Courses 拼写前非字面翻译语义判定由 Gemma 4 改为固定 `stealth/ox-alpha`，锁定 Stealth provider、禁止 fallback、拒绝数据收集并使用该模型声明支持的 JSON Object 模式；Nalanda 对 `{correct:boolean}` 执行本地严格字段/类型校验。完全匹配仍由服务端确定性零 token 判定，模型不能直接写进度或奖励。Materials 的 Ox 原图能力使用独立 flag/ZDR 门禁，当前无合规 ZDR endpoint 时保持关闭，不能用文本 smoke 替代。
 - 在线考试的选择与草稿保存不再判分或返回任何答案/解析；只有整卷二次确认提交或到期自动交卷后，服务端才在同一提交事务内批改全部客观题，并把主观题合并为一次模型评分。`in_progress` 响应强制 `results=[]`。
 - Luna Note 的节点问答会在来源仍存在时重新附原文件；来源删除后只使用持久图谱、选中节点和邻接关系。Luna 试卷主观评分继续使用 Luna/OpenAI，但不重复发送源材料。
 - 清理额度规则统一：queued 删除释放 reservation；worker 已接收的 processing 删除/Cancel 消耗一次；历史删除不回退额度、不删除 My Notes，并保留 provider usage 审计。
@@ -34,6 +34,8 @@
 - Materials 与 My Notes 在本阶段固定全英文并保持既有 class/token/字体/动画；不扩大为全站 React 或视觉迁移。
 
 ### Fixed
+
+- 修复 PR #77 候选把 Ox Alpha 不支持的 `json_schema` 结构化输出与 `require_parameters=true` 同时发送，导致真实 Courses 翻译门在 OpenRouter 以 HTTP 404 拒绝并自动回滚的问题。交互 API 与真实发布 smoke 现在都使用模型元数据声明支持的 `response_format:{type:"json_object"}`，并在本地严格拒绝额外字段、缺失字段、错误类型、重复/未知 smoke case；Stealth-only、no fallback、provider 校验、幂等数据库事实及失败关闭边界不变。非 2xx 诊断只记录 HTTP 状态、结构化上游 code 和 request ID，不记录答案、参考翻译、prompt、供应商 message 或 API key。
 
 - 修复试卷生成/语义 repair 偶发返回不存在的 `sourceRef.blockId`，导致题数/总分正确的候选在结构门以 `SOURCE_REFERENCE` 失败的问题。worker 现在只保留 DocumentIR allowlist 内的引用、用服务端 block 元数据规范 locator；只有稳定 question ID 相同且 repair 删除全部有效引用时才恢复该题 repair 前引用，或在整份 DocumentIR 恰好只有一个 block 时选择这个唯一可能的 allowlisted block。多 block、跨题/换 ID 仍不猜测，最终必须重新通过结构校验和语义复核，不能用机械规范化伪造 grounding。
 - 修复真实 Materials AI 发布门禁把最终 `AI_EXAM_VALIDATION_FAILED` 压缩成单一 code，导致无法区分题数/总分/引用等结构错误与 grounding/答案/干扰项等语义错误的问题。worker 现在只返回稳定类别、门禁阶段和题数/总分计数，不返回课件、题目、答案、prompt、reviewer 原文或 provider body；真实门禁仍严格失败关闭并只允许一次 repair。

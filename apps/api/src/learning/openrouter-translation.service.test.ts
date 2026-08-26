@@ -57,7 +57,7 @@ afterEach(() => {
 });
 
 describe("OpenRouter spelling translation adapter", () => {
-  it("uses structured output, completes the claimed decision, and never persists the raw answer", async () => {
+  it("uses JSON Object mode with strict local validation, completes the claimed decision, and never persists the raw answer", async () => {
     process.env.OPENROUTER_API_KEY = "test-secret";
     process.env.PUBLIC_ORIGIN = "https://nalanda.online";
     const { service, learning, flags } = harness();
@@ -65,7 +65,6 @@ describe("OpenRouter spelling translation adapter", () => {
       provider: "Stealth",
       choices: [{ message: { content: JSON.stringify({
         correct: true,
-        feedback: "This paraphrase expresses the accepted meaning.",
       }) } }],
       usage: { prompt_tokens: 41, completion_tokens: 13, total_tokens: 54 },
     }), { status: 200, headers: { "Content-Type": "application/json" } })));
@@ -90,11 +89,8 @@ describe("OpenRouter spelling translation adapter", () => {
       data_collection: "deny",
       require_parameters: true,
     });
-    expect(body.response_format.json_schema.strict).toBe(true);
-    expect(body.response_format.json_schema.schema.required).toEqual(["correct"]);
-    expect(body.response_format.json_schema.schema.properties).toEqual({
-      correct: { type: "boolean" },
-    });
+    expect(body.response_format).toEqual({ type: "json_object" });
+    expect(body.messages[0].content).toContain('{"correct":boolean}');
     expect(body.messages[1].content).toContain("一种常见水果");
     expect(JSON.stringify(body)).not.toContain("test-secret");
     expect(learning.completeSpellingTranslationAssessment).toHaveBeenCalledWith(
@@ -283,6 +279,53 @@ describe("OpenRouter spelling translation adapter", () => {
     expect(fetch).toHaveBeenCalledTimes(2);
     expect(learning.releaseSpellingTranslationAssessment).toHaveBeenCalledOnce();
     expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
+  });
+
+  it("rejects additional provider fields under the local strict schema", async () => {
+    process.env.OPENROUTER_API_KEY = "test-secret";
+    const { service, learning } = harness();
+    vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
+      new Response(JSON.stringify({
+        provider: "Stealth",
+        choices: [{ message: { content: JSON.stringify({
+          correct: true,
+          explanation: "must not be trusted",
+        }) } }],
+      }), { status: 200 })));
+
+    await expect(service.assess("user-a", sessionId, request("一种常见的果实"))).rejects.toMatchObject({
+      response: { code: "TRANSLATION_PROVIDER_INVALID" },
+    });
+    expect(fetch).toHaveBeenCalledTimes(2);
+    expect(learning.releaseSpellingTranslationAssessment).toHaveBeenCalledOnce();
+    expect(learning.completeSpellingTranslationAssessment).not.toHaveBeenCalled();
+  });
+
+  it("logs only sanitized provider HTTP diagnostics", async () => {
+    process.env.OPENROUTER_API_KEY = "test-secret";
+    const { service, learning } = harness();
+    const warn = vi.spyOn((service as any).logger, "warn").mockImplementation(() => undefined);
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      error: { code: "model_not_found", message: "secret upstream detail" },
+    }), {
+      status: 404,
+      headers: { "request-id": "request-safe-123" },
+    })));
+
+    await expect(service.assess("user-a", sessionId, request("一种常见的果实"))).rejects.toMatchObject({
+      response: { code: "TRANSLATION_PROVIDER_ERROR" },
+    });
+    expect(warn).toHaveBeenCalledWith(JSON.stringify({
+      event: "learning_spelling_translation_provider_http_error",
+      provider: "openrouter",
+      model: "stealth/ox-alpha",
+      status: 404,
+      upstreamCode: "model_not_found",
+      requestId: "request-safe-123",
+    }));
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("secret upstream detail");
+    expect(String(warn.mock.calls[0]?.[0])).not.toContain("一种常见的果实");
+    expect(learning.releaseSpellingTranslationAssessment).toHaveBeenCalledOnce();
   });
 
   it("validates answer length before claiming database state or calling the provider", async () => {
