@@ -445,7 +445,7 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 
 ## 5. Materials AI、Notes、知识图谱与在线考试
 
-基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，0054–0055 又于 2026-08-23 受保护应用并验证，但 PR #77 应用 release 因 Courses Ox Alpha 输出契约 HTTP 404 自动回退。0046–0055 新应用接口仍需以后续成功切流证据才算公开启用。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。总开关及 Luna/Ox 子开关相互独立；任一原文件模型缺少合规 ZDR endpoint 时 capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`，不会静默创建 DocumentIR job。
+基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，0054–0055 又于 2026-08-23 受保护应用并验证。PR #78 已修复 Courses Ox Alpha JSON Object 契约并合并，但 main run `32931681321` 的应用候选又因 DocumentIR DOCX 语义质量门失败而自动回退；0046–0055 新应用接口仍需以后续成功切流证据才算公开启用。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。总开关及 Luna/Ox 子开关相互独立；任一原文件模型缺少合规 ZDR endpoint 时 capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`，不会静默创建 DocumentIR job。
 
 | 方法与路径 | 输入/行为 | 关键边界 |
 |---|---|---|

@@ -6,7 +6,7 @@
 > - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
 > - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
 
-最后核对：2026-08-25。生产数据库已受保护应用到 0055；0052–0055 已完成时间列 Stage B 与 Ox pipeline contract，原预留 0044–0045 没有补插。PR #77 应用候选在真实 Courses Ox Alpha 翻译门收到 OpenRouter HTTP 404 后自动恢复到此前稳定 release，API/AI/Web、Supabase 和 Redis 已独立确认健康。DocumentIR、资源 canary 与 Japan East Azure 在该候选通过，Luna/Ox Materials 因 ZDR 不可用保持关闭；任何单项通过和数据库上线都不等于候选应用切流。当前修复候选只把 Courses Ox 输出改成模型支持的 JSON Object，并继续在本地严格验证 schema。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+最后核对：2026-08-26。生产数据库已受保护应用到 0055；0052–0055 已完成时间列 Stage B 与 Ox pipeline contract，原预留 0044–0045 没有补插。PR #78 已把 Courses Ox 输出修复为模型支持的 JSON Object 并合并，但 main run `32931681321` 的不可变应用候选在真实 DocumentIR DOCX 门禁失败后自动恢复到此前稳定 release，API/AI/Web、Supabase 和 Redis 已独立确认健康。失败候选的初始结构问题是题型数量；旧 repair 没有收到 source block 正文，结构转绿后才暴露全面语义缺陷。当前 Unreleased 修复让 repair 使用完整来源，并只在结构 repair 后首次发现语义问题时增加一次有界语义 repair；Luna/Ox Materials 因 ZDR 不可用仍保持关闭。任何本地通过、单项门禁或数据库上线都不等于候选应用切流。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
 
 2026-08-14 候选代码（尚未部署）包含 0046–0051：0046–0048 将生成/评分改为 202 接收 + 持久回调并增加双层断点、增量 usage、知识点图谱和节点问答；0049–0051 增加 Luna 原文件流水线、provider provenance、可确认清理的任务删除/清空及私有跨设备图布局。以下带“候选”的段落描述当前分支，不改变上述生产事实。
 
@@ -164,11 +164,14 @@ JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验
   → 拼接完整 DocumentIR 并再次安全审查
   → DeepSeek 按版本化 prompt 生成 GeneratedExamV1 或 GeneratedKnowledgeGraphV1
   → 试卷按服务端设置确定性归一化元数据、重复 ID 与可行的 marks 分配
-  → schema/题数或节点/边、答案/解释、来源与语义验证（最多一次修复）
+  → schema/题数或节点/边、答案/解释、来源与语义验证
+  → 来源感知的有界修复：初始结构/语义各一次；结构修复后新发现语义缺陷可再修复一次
   → 单事务保存 Notes 并 consume；失败/cancel 则 release
 ```
 
 首轮审查不是安全豁免：`material-safety-audit.v2` 仅在没有确定性正文/focus 注入信号、所有报告位置均属于解析器声明的失败范围时，暂缓处置 `uncertain` 并进入视觉恢复。解析器失败范围始终触发恢复，即使模型漏回 `failedRanges`；缺少可渲染区域则失败。恢复结果拼回后必须通过严格二次审查，任何 `uncertain/malicious` 仍以 `PROMPT_INJECTION_REJECTED` 终止。
+
+DocumentIR 试卷的 `exam-generate.v4` 在生成和 repair 中都把 source blocks 当作不可信证据而非指令。repair payload 必须同时携带完整 allowlisted `sourceBlocks`、`allowedBlockIds`、`repairGate` 和当前候选；只给 ID 会让模型在补题时失去事实来源。每次 repair 后先重跑确定性结构校验，结构通过后再重跑语义审查。第二次修复仅允许处理“首轮结构 repair 后才新发现”的语义缺陷；第二次语义审查仍失败便终止，因此没有降低 grounding、答案、干扰项或解释质量门槛，也不会形成无界 provider 重试。
 
 Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责投递。候选实现把 `parsed/audited/document_ready/artifact_ready/answer_ready` 保存到有 TTL 的私有数据库 checkpoint；worker 在同一 0700 目录保留更高阶段的短期恢复副本和 usage spool。API 回调短时中断时，下一 lease 先补记成本并恢复已验证结果，不重复付费阶段。成功/非重试终态立即清目录，默认 24 小时到期由数据库 reconciler 与 worker sweeper 双向清理。
 

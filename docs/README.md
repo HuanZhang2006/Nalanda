@@ -5,7 +5,7 @@
 > - **作用**：避免“当前实现、最终蓝图、历史复盘、操作手册”相互覆盖或产生状态冲突。
 > - **何时更新**：新增、删除、重命名文档，或某类文档的负责人/权威范围变化时。
 
-最后核对：2026-08-25。生产数据库已到 0055，0052–0055 contract 已生效；当前不可变应用仍为此前稳定 release。PR #77 的受保护候选已通过 DocumentIR、资源 canary 和 Japan East Azure，但 Courses Ox Alpha 翻译门因不兼容的 `json_schema` 请求返回 HTTP 404并自动回滚。当前修复候选改用 JSON Object + 本地严格 schema，仍须重新取得 CI、真实供应商、切流和公网独立证据。
+最后核对：2026-08-26。生产数据库已到 0055，0052–0055 contract 已生效；当前不可变应用仍为此前稳定 release。PR #78 的 Ox Alpha JSON Object 修复已合并，但 main run `32931681321` 在真实 DocumentIR DOCX 试卷语义门禁失败后自动回滚。当前 Unreleased `exam-generate.v4` 修复结构 repair 缺少来源正文及其后没有语义修复阶段的问题；仍须重新取得完整 CI、真实供应商、切流和公网独立证据。
 
 ## 1. 事实来源优先级
 
