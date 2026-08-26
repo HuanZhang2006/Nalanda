@@ -23,7 +23,7 @@
 | [0012](0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) | Materials AI durable queue + OpenRouter ZDR + 2G Office 渲染 | Accepted | 0041–0043 已于 2026-08-11 受保护发布 |
 | [0013](0013-materials-ai-async-callback-resume-and-knowledge-graph.md) | Materials AI 异步回调、双层断点与知识图谱 | Accepted | 0046–0048 候选，尚未部署 |
 | [0014](0014-materials-ai-luna-native-lifecycle-and-graph-layout.md) | Luna 原文件、任务清理、可保存图布局与整卷批改 | Accepted | 0049–0051 候选，尚未部署 |
-| [0015](0015-ox-alpha-translation-and-native-image-pipeline.md) | Ox Alpha 翻译判定 + Materials 原始图片第三流水线 | Accepted | 0054–0055 候选，尚未部署 |
+| [0015](0015-ox-alpha-translation-and-native-image-pipeline.md) | Ox Alpha 翻译判定 + Materials 原始图片第三流水线 | Accepted | 0054–0055 已部署到数据库；PR #77 应用候选因 Courses 输出契约 404 回滚，修复候选待真实门/切流 |
 
 ## 状态定义
 

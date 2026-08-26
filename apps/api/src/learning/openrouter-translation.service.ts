@@ -81,7 +81,11 @@ function parseDecision(payload: unknown): ProviderDecision {
   const value = decision && typeof decision === "object"
     ? decision as Record<string, unknown>
     : {};
-  if (typeof value.correct !== "boolean") {
+  if (
+    typeof value.correct !== "boolean"
+    || Object.keys(value).length !== 1
+    || !("correct" in value)
+  ) {
     throw new BadGatewayException({
       code: "TRANSLATION_PROVIDER_INVALID",
       message: "翻译判分服务返回了无效结果",
@@ -169,19 +173,7 @@ export class OpenRouterTranslationService {
         require_parameters: true,
       },
       response_format: {
-        type: "json_schema",
-        json_schema: {
-          name: "translation_judgment",
-          strict: true,
-          schema: {
-            type: "object",
-            additionalProperties: false,
-            properties: {
-              correct: { type: "boolean" },
-            },
-            required: ["correct"],
-          },
-        },
+        type: "json_object",
       },
       messages: [
         {
@@ -191,7 +183,7 @@ export class OpenRouterTranslationService {
             "Accept synonyms, paraphrases, different word order, and harmless grammatical variation.",
             "Reject unrelated, opposite, materially incomplete, or empty meanings.",
             "Use only the supplied term and accepted translations.",
-            "Return only the requested boolean judgment.",
+            "Return exactly one JSON object with no markdown and no additional fields: {\"correct\":boolean}.",
           ].join(" "),
         },
         {
@@ -241,6 +233,28 @@ export class OpenRouterTranslationService {
         }, 503);
       }
       if (!response.ok) {
+        const requestId = response.headers.get("request-id")
+          || response.headers.get("x-request-id")
+          || null;
+        const upstreamCode = await response.text().then((raw) => {
+          try {
+            const parsed = JSON.parse(raw) as Record<string, any>;
+            const candidate = parsed?.error?.code ?? parsed?.code;
+            return typeof candidate === "string" || typeof candidate === "number"
+              ? String(candidate).slice(0, 80)
+              : null;
+          } catch {
+            return null;
+          }
+        }).catch(() => null);
+        this.logger.warn(JSON.stringify({
+          event: "learning_spelling_translation_provider_http_error",
+          provider: "openrouter",
+          model: config.model,
+          status: response.status,
+          upstreamCode,
+          requestId,
+        }));
         throw new BadGatewayException({
           code: "TRANSLATION_PROVIDER_ERROR",
           message: "翻译判分服务暂不可用",
