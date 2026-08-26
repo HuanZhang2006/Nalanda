@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-25。生产数据库已到 0055，但 PR #77 不可变应用候选在 Courses Ox Alpha 翻译真实门返回 HTTP 404 后回滚，当前应用仍为此前稳定 release，Materials AI/Luna/Ox 开关保持关闭。DocumentIR、资源 canary 与 Japan East Azure 在该候选已通过，不能替代应用切流证据。修复候选把 Courses Ox 从不受支持的 strict JSON Schema 改为 JSON Object + 本地严格 schema；仍需新的完整 CI、真实 provider 与受保护切流。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-08-26。生产数据库已到 0055；PR #78 已修复 Courses Ox Alpha JSON Object 契约并合并，但应用候选在真实 DocumentIR DOCX 试卷门禁失败后自动回滚，当前应用仍为此前稳定 release，Materials AI/Luna/Ox 开关保持关闭。失败候选的题数与总分已正确，初始结构门为 `QUESTION_TYPE_COUNT`，结构 repair 后才暴露五类语义缺陷；本次 Unreleased 修复为 repair 提供完整来源并增加一次严格有界的后续语义修复。真实 provider 与受保护切流尚未重新证明。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -21,7 +21,7 @@
 - FastAPI 只有内部 token 生成/评分路由，确定性解析 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片，并以 `DocumentIR` 保留页/幻灯片/块/来源；
 - 首次 DeepSeek 审查与解析器诊断取失败范围并集，只把这些页/slide/region 的渲染图发送 MiMo，拼接完整 IR 后再次审查；
 - 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters，关闭 reasoning/tool/Web/跨模型 fallback；同一模型按吞吐量优先、只在满足全部过滤器的 provider endpoint 间故障转移；
-- `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；来源引用只可规范到 DocumentIR allowlist，repair 全部丢失有效引用时仅可按相同稳定 question ID 恢复 repair 前引用，或在整份 IR 只有一个 block 时选取唯一 allowlisted block；允许一次结构化 repair，修复结果必须重复同一归一化/结构/语义门禁；
+- `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；来源引用只可规范到 DocumentIR allowlist，repair 全部丢失有效引用时仅可按相同稳定 question ID 恢复 repair 前引用，或在整份 IR 只有一个 block 时选取唯一 allowlisted block；repair 始终收到完整 allowlisted source blocks。初始结构或语义缺陷各有一次修复机会，只有当结构修复后首次发现新语义缺陷时才允许一次额外语义修复，之后仍必须重复同一归一化/结构/语义门禁；
 - `GeneratedKnowledgeGraphV1` 保存前把模型的相对 hierarchy levels 以最小值归零，并在 worker 与数据库两层一致验证 pipeline `sourceMode`、level-0 root、节点/边唯一 ID、端点、来源顺序和引用；该机械步骤不改标题、解释、关系、引用或相对层级；
 - 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
 - 生产 0043 每任务 0700 临时目录在 `finally` 删除并清理一小时 orphan；0046–0051 候选仅在可恢复故障下保留验证过的 checkpoint/usage spool 到配置 TTL，成功、不可恢复失败、Delete/Cancel 或过期清理；持久 parse cache、DB checkpoint 与布局是分开的私有产品数据；
@@ -43,9 +43,9 @@
   → 仅失败范围 MiMo visual_extract.v1
   → 拼回完整 DocumentIR
   → 第二次 DeepSeek safety audit
-  → DeepSeek exam-generate.v3
+  → DeepSeek exam-generate.v4
   → 服务端机械约束归一化
-  → schema/分数/答案/来源 validator + 语义复核 + 最多一次 repair
+  → schema/分数/答案/来源 validator + 语义复核 + 来源感知的有界分阶段 repair
   → 私有 Notes + quota consume
 ```
 
@@ -70,6 +70,8 @@ provider usage 只留 model、token、micro-USD、latency、request ID、用途�
 随后 PR #74 的 main run `32585659792` attempt 1 证明混合/repair 引用修复可通过真实 PDF/DOCX/PPTX/chart、注入、安全教材、评分和图谱门；Japan East Azure 也返回 accuracy 98、pronunciation 98.8，但独立 Gemma 翻译 smoke 持续 429 后回退。仅重跑失败 job 的 attempt 2 在单 block PDF 上同时出现初次与 repair 全无效引用，诊断为 initial/final `SOURCE_REFERENCE`；这不是多 block 的 grounding 歧义，因为服务端 allowlist 只有一个真实 block。新机械规则只在 `len(blocks)==1` 时选择这个唯一 block并进入语义复核；两个及以上 block 仍必须由模型提供有效 ID，否则失败关闭。它不能让语义复核不支持的题目通过，也不能消除独立 Gemma 429 门。
 
 PR #75 的 main run `32587844503` attempt 1 通过本地完整门禁与 220 页 canary，但固定单 block PDF 的初次候选为 6 题，repair 后仍为 6 题，因设置要求 5 题而在最终结构门以 `QUESTION_TYPE_COUNT` 失败；这说明来源引用修复没有放宽题型数量。唯一一次失败 job 重跑的 attempt 2 随后通过 PDF/DOCX/PPTX/chart、注入拒绝、安全教材、评分和 9-node graph，证明单 block 引用会继续接受结构与语义复核；Luna 仍因 OpenAI-only ZDR 不可用而保持关闭，Japan East Azure 返回 accuracy 98、pronunciation 98.8。最终 Gemma 免费模型在 5/10/20/40 秒有界退避后仍连续 HTTP 429，候选再次回退。持续限流是独立供应商可用性硬门，不得以跳过 smoke、改模型或去掉失败关闭来冒充上线。
+
+2026-08-26 的 PR #78 main run `32931681321` 通过 quality、0007→0055、空库/lint、双用户 RLS/Storage、fake Chromium与生产镜像，且本次没有新 migration。候选 canary 通过后，固定 PDF 已完成，DOCX 的初次生成以 `QUESTION_TYPE_COUNT` 进入 repair；repair 后题数为 5、总分为 20、最终结构 code 为空，但最终语义门同时报告 `ANSWERABILITY`、`ANSWER_CORRECTNESS`、`DISTRACTOR_QUALITY`、`EXPLANATION_QUALITY` 与 `SOURCE_GROUNDING`，随后自动回滚。检查发现旧 repair payload 只有 `allowedBlockIds`、没有 block 正文，而且工作流在结构 repair 后首次发现语义问题时已经耗尽唯一 repair。`exam-generate.v4` 让 repair 收到完整 `sourceBlocks` 和明确 `repairGate`，要求最小修改与逐题来源支撑；仅对“结构 repair 后新发现语义缺陷”增加一次语义 repair，之后重新执行结构和语义双门并失败关闭。该本地修复不能替代新的真实 DOCX/PPTX gate。
 
 ### 2.2 Luna 原文件候选闭环
 

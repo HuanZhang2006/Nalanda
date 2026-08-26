@@ -3,7 +3,7 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-23。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
+> **状态基线：**2026-08-26。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
@@ -35,10 +35,11 @@
 
 ### Fixed
 
+- 修复 DocumentIR 试卷在初次生成只有题型数量错误时，repair 仅收到 source block ID、无法读取来源正文，导致结构转绿后答案/干扰项/解析/引用全面失去 grounding 的链路缺口。`exam-generate.v4` 的结构与语义 repair 均携带完整 allowlisted `sourceBlocks` 和显式 `repairGate`，要求最小修改与逐题来源支撑；若结构 repair 后才首次发现语义缺陷，只允许一次额外语义 repair，之后重新执行结构和语义双门并失败关闭，不形成无限重试或降低质量标准。
 - 修复 PR #77 候选把 Ox Alpha 不支持的 `json_schema` 结构化输出与 `require_parameters=true` 同时发送，导致真实 Courses 翻译门在 OpenRouter 以 HTTP 404 拒绝并自动回滚的问题。交互 API 与真实发布 smoke 现在都使用模型元数据声明支持的 `response_format:{type:"json_object"}`，并在本地严格拒绝额外字段、缺失字段、错误类型、重复/未知 smoke case；Stealth-only、no fallback、provider 校验、幂等数据库事实及失败关闭边界不变。非 2xx 诊断只记录 HTTP 状态、结构化上游 code 和 request ID，不记录答案、参考翻译、prompt、供应商 message 或 API key。
 
 - 修复试卷生成/语义 repair 偶发返回不存在的 `sourceRef.blockId`，导致题数/总分正确的候选在结构门以 `SOURCE_REFERENCE` 失败的问题。worker 现在只保留 DocumentIR allowlist 内的引用、用服务端 block 元数据规范 locator；只有稳定 question ID 相同且 repair 删除全部有效引用时才恢复该题 repair 前引用，或在整份 DocumentIR 恰好只有一个 block 时选择这个唯一可能的 allowlisted block。多 block、跨题/换 ID 仍不猜测，最终必须重新通过结构校验和语义复核，不能用机械规范化伪造 grounding。
-- 修复真实 Materials AI 发布门禁把最终 `AI_EXAM_VALIDATION_FAILED` 压缩成单一 code，导致无法区分题数/总分/引用等结构错误与 grounding/答案/干扰项等语义错误的问题。worker 现在只返回稳定类别、门禁阶段和题数/总分计数，不返回课件、题目、答案、prompt、reviewer 原文或 provider body；真实门禁仍严格失败关闭并只允许一次 repair。
+- 修复真实 Materials AI 发布门禁把最终 `AI_EXAM_VALIDATION_FAILED` 压缩成单一 code，导致无法区分题数/总分/引用等结构错误与 grounding/答案/干扰项等语义错误的问题。worker 现在只返回稳定类别、门禁阶段和题数/总分计数，不返回课件、题目、答案、prompt、reviewer 原文或 provider body；诊断不会改变当前来源感知、有界且最终失败关闭的 repair 策略。
 - 固定 PDF/DOCX/PPTX 真实供应商样本由不足以稳定支撑五道题的三条事实扩展为八个独立、无个人数据的学习科学事实，避免把过薄 fixture 自身造成的随机不可出题误判成服务故障；题数、答案、语义、引用和费用门禁没有放宽。
 - 修复真实登录生产 smoke 中知识图最低层级从 `1` 开始、通过 worker 校验后却被完成 RPC 以 SQLSTATE `22023` 拒绝，任务随后停在 `saving` 直到 15 分钟门禁超时的问题。`knowledge-graph.v2` 与 `knowledge-graph-native-file.v2` 现在在不改节点内容、引用、顺序或相对层级的前提下，把最小 level 确定性归零；DocumentIR validator 同时补齐 `sourceMode=document_ir` 与 level-0 root 检查，和数据库保存 contract 保持一致。
 - 完成回调若仍被数据库以结果结构约束拒绝，会原子写入对应的试卷/图谱/问答/评分 validation failure 并返回成功确认，使 worker 清理 checkpoint/spool，而不是把永久性错误误当 callback outage 无限恢复；provider 路由违规同样终止且保留 usage，过期 lease 映射 409 让 worker 安全退出。
@@ -64,6 +65,7 @@
 
 ### Testing
 
+- PR #78 合并为 main `1281510c94b4da5a765211df8467f9a26be393f0` 后，run [`32931681321`](https://github.com/1590703336/Nalanda/actions/runs/32931681321) 通过 quality、0007→0055、空库/database lint、双用户 RLS/Storage、fake Chromium与生产镜像，且没有 migration 变更。application candidate 的 220 页 canary通过，但真实 DOCX 初次输出以 `QUESTION_TYPE_COUNT` 进入 repair；repair 后结构已满足 5 题/20 分，最终语义门仍报告五类质量缺陷，候选自动回滚且尚未运行 Ox 翻译 gate。向前修复本地 Python suite 现覆盖结构 repair 获取完整 source blocks、结构后新语义问题的一次有界 repair，以及持续不合格时严格终止；新的真实 provider/candidate/cutover 证据仍未产生。
 - PR #75 合并为 main `ad4b98b041ccb38954ac3bba705b26a92b70cca2` 后，run [`32587844503`](https://github.com/1590703336/Nalanda/actions/runs/32587844503) 通过 quality、0007→0053、空库/database lint、双用户 RLS/Storage、fake Chromium和生产镜像，且没有 migration 变更。application attempt 1 的 220 页 canary 通过，但固定 PDF 在一次 repair 后仍为 6 题而设置要求 5 题，以 `QUESTION_TYPE_COUNT` 失败并回退；唯一一次失败 job 重跑的 attempt 2 通过完整 DeepSeek/MiMo Materials suite、注入/安全教材、评分、9-node graph 与 Japan East Azure（accuracy 98、pronunciation 98.8），Luna 因 OpenAI-only ZDR 不可用保持 false，随后 Gemma 免费模型连续五次 HTTP 429并再次回退。两次均未切流；独立核对确认旧 Web/API/AI、false flags、公网 health/auth 和候选清理正常，因此 PR #75 已合并但未部署到生产。
 - PR #74 合并为 main `5b4cad883b628fd21cc1d104227be6dfb746834f` 后，run [`32585659792`](https://github.com/1590703336/Nalanda/actions/runs/32585659792) 通过 quality、0007→0053、空库/lint、双用户 RLS/Storage 和 fake Chromium。生产 attempt 1 的真实 Materials suite、220 页 canary和 Japan East Azure均通过，但 Gemma 翻译 smoke 在 5 次有界退避后仍为 HTTP 429并回退；同 SHA 仅重跑失败 job 的 attempt 2 又在单 block PDF 首次生成及 repair 都返回无效引用时失败为 `SOURCE_REFERENCE`。两次候选均未切流且生产独立 health 正常。唯一 block 回归修复本地通过 ruff 与 78 个 Python 测试；真实 provider、Gemma、Azure、登录 smoke、切流和公网独立验证仍须由新 PR/main run 证明。
 - PR #71 合并后的 main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) 首次执行通过完整 fake/local 门禁和真实 Materials provider suite，但 Japan East Azure TTS 返回 HTTP 401，候选在切流前自动回退。用户要求重试后的 attempt 2 通过 220 页资源 canary（主/子进程峰值 107,868,160/221,601,792 bytes），随后固定 DOCX 试卷初次语义复核失败、一次 repair 后只剩最终结构 code `SOURCE_REFERENCE`，再次在切流前回退。新回归本地通过 ruff 与 77 个 Python 测试，覆盖引用去重/规范化、同题恢复、换题 ID 失败关闭及恢复后第二次语义复核；真实 provider、Azure、候选激活和公网独立验证仍须由新的 main run 证明。

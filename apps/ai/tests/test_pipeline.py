@@ -980,6 +980,164 @@ async def test_single_source_block_recovers_invalid_generation_refs_then_runs_se
 
 
 @pytest.mark.asyncio
+async def test_structural_repair_receives_source_evidence_and_gets_one_bounded_semantic_repair():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+    source = document("Retrieval practice strengthens later access to stored information.")
+
+    class StructuralThenSemanticRepairClient:
+        purposes: list[str] = []
+        repair_calls = 0
+        review_calls = 0
+
+        async def structured(
+            self,
+            *,
+            purpose,
+            result_type,
+            user_content,
+            system,
+            **_kwargs,
+        ):
+            self.purposes.append(purpose)
+            value = pipeline._fake_exam(settings, "t1-b1")
+            if purpose == "exam_generation":
+                # Preserve the total count while violating the requested type
+                # distribution, matching the production DOCX failure shape.
+                question = value["sections"][0]["questions"][-1]
+                question["type"] = "true_false"
+                question["options"] = ["True", "False"]
+                question["acceptedAnswers"] = ["true"]
+            elif purpose == "exam_repair":
+                self.repair_calls += 1
+                payload = json.loads(user_content.split("\n", 1)[1])
+                assert payload["sourceBlocks"][0]["text"] == source.blocks[0].text
+                assert payload["allowedBlockIds"] == ["t1-b1"]
+                assert "SOURCE_BLOCKS" in system
+                assert payload["repairGate"] == (
+                    "structural" if self.repair_calls == 1 else "semantic_after_structural"
+                )
+            elif purpose == "exam_review":
+                self.review_calls += 1
+                value = (
+                    {
+                        "valid": False,
+                        "issues": [
+                            "q5 answer and explanation are not supported by its cited source block"
+                        ],
+                    }
+                    if self.review_calls == 1
+                    else {"valid": True, "issues": []}
+                )
+            else:
+                raise AssertionError(f"unexpected purpose: {purpose}")
+            return result_type.model_validate(value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=pipeline.TEXT_MODEL,
+                    requestId=f"test-{purpose}-{len(self.purposes)}",
+                    promptTokens=1,
+                    completionTokens=1,
+                    totalTokens=2,
+                    costMicroUsd=1,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
+
+    client = StructuralThenSemanticRepairClient()
+    usage: list[UsageEvent] = []
+    exam = await pipeline.generate_exam(client, source, settings, usage)
+
+    assert validate_exam(exam, settings, {"t1-b1"}) == []
+    assert client.purposes == [
+        "exam_generation",
+        "exam_repair",
+        "exam_review",
+        "exam_repair",
+        "exam_review",
+    ]
+    assert [event.purpose for event in usage] == client.purposes
+
+
+@pytest.mark.asyncio
+async def test_semantic_repair_after_structural_repair_remains_fail_closed_and_bounded():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+
+    class NeverGroundedClient:
+        purposes: list[str] = []
+
+        async def structured(self, *, purpose, result_type, **_kwargs):
+            self.purposes.append(purpose)
+            value = pipeline._fake_exam(settings, "t1-b1")
+            if purpose == "exam_generation":
+                value["sections"][0]["questions"][-1]["type"] = "true_false"
+                value["sections"][0]["questions"][-1]["acceptedAnswers"] = ["true"]
+            elif purpose == "exam_review":
+                value = {
+                    "valid": False,
+                    "issues": ["answer is not supported by the cited source"],
+                }
+            return result_type.model_validate(value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=pipeline.TEXT_MODEL,
+                    requestId=f"test-{purpose}-{len(self.purposes)}",
+                    promptTokens=1,
+                    completionTokens=1,
+                    totalTokens=2,
+                    costMicroUsd=1,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
+
+    client = NeverGroundedClient()
+    with pytest.raises(PipelineError) as caught:
+        await pipeline.generate_exam(client, document("Source"), settings, [])
+
+    assert caught.value.code == "AI_EXAM_VALIDATION_FAILED"
+    assert client.purposes == [
+        "exam_generation",
+        "exam_repair",
+        "exam_review",
+        "exam_repair",
+        "exam_review",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_exam_repair_restores_same_question_valid_refs_then_rechecks_semantics():
     settings = ExamSettings(
         language="en",
