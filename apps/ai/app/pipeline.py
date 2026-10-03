@@ -736,9 +736,8 @@ Follow the requested type counts, duration, difficulty, language and exact total
 Every question must cite at least one exact source block ID. Do not cite knowledge not present in
 the material. Every correct answer and explanation must be fully supported by that question's cited
 blocks, and every distractor must be unambiguously false or inferior under those same blocks.
-Before returning, recount every question type and the total marks against settings. Provide correct
-answers, explanations and grading rubrics, but never expose them in the learner session. Return only
-the strict GeneratedExamV1 JSON schema."""
+Provide correct answers, explanations and grading rubrics, but never expose them in the learner
+session. Return only the strict GeneratedExamV1 JSON schema."""
     fake_exam = _fake_exam(settings, next(iter(block_ids)))
     exam, events = await client.structured(
         purpose="exam_generation",

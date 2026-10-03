@@ -20,6 +20,7 @@ TEXT_MODEL = "deepseek/deepseek-v4-flash-0731"
 VISION_MODEL = "xiaomi/mimo-v2.5"
 LUNA_MODEL = "openai/gpt-6-luna"
 LUNA_PROVIDER = "Azure"
+ROUTED_QUANTIZATIONS = ("fp8", "fp16", "bf16", "fp32", "unknown")
 
 
 def fake_enabled() -> bool:
@@ -129,6 +130,11 @@ class OpenRouterClient:
         if provider_only:
             payload["provider"]["only"] = provider_only
             payload["provider"]["allow_fallbacks"] = allow_fallbacks
+        else:
+            # Routed models may be served by aggressively quantized endpoints.
+            # Those have produced runaway strict-JSON streams that hit the
+            # output ceiling, so keep routing on fp8-or-better precision.
+            payload["provider"]["quantizations"] = list(ROUTED_QUANTIZATIONS)
         if plugins:
             payload["plugins"] = plugins
         started = self._now()
