@@ -39,6 +39,7 @@
 
 ### Fixed
 
+- 真实 provider gate 的固定图表 fixture 改用 28px 字体：原 Pillow 默认 ~10px 位图字体让 MiMo 在 run `37158999212` 合理地报告不可读区域（`AI_VISUAL_UNREADABLE`），而产品规则对任何不可读区域失败关闭。产品规则不变。
 - 修复受保护发布 run `37156943711`：throughput 排序反复把 DeepSeek 试卷生成路由到同一个输出失控的 Wafer endpoint（四次均 10.5k token 截断）。非锁定路由在结构化输出失败后把该上游加入 `provider.ignore` 再重试；Luna 等锁定路由不受影响。
 - 修复 GPT-6 Luna 请求在 `require_parameters=true` 下被 OpenRouter 以 HTTP 404（`OPENROUTER_MODEL_UNAVAILABLE`）拒绝：Azure endpoint 只支持 `max_completion_tokens` 且所有 GPT-6 Luna endpoint 都不支持 `temperature`；Luna 请求改用 `max_completion_tokens` 并省略 `temperature`，原文件门禁失败时输出逐次尝试的上游元数据。（受保护发布 run `37154031417` 中 DocumentIR 全部 fixture 已通过。）
 - 修复受保护发布 run `37150425945`/`37151943226` 中 DocumentIR 试卷生成连续以 `AI_OUTPUT_TRUNCATED`（30k token 上限）后 `OPENROUTER_UNREACHABLE` 失败：试卷输出上限按题数收敛、路由排除 fp4 量化 endpoint、移除易诱发失控输出的“返回前重新计数”提示句，并让真实 provider gate 输出逐次尝试的上游/endpoint/token/耗时（不含正文）。
