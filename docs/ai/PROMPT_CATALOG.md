@@ -41,11 +41,11 @@ Catalog ID 是本文的稳定评审标识，不会发送给模型。当前代码
 | `MAT-GRAPH-REVIEW-V1` | 图谱 groundedness/详细度/顺序复核 | DeepSeek | 有 | `knowledge_graph_review_v1` | 0046–0048 候选 |
 | `MAT-GRAPH-REPAIR-V1` | 图谱最多一次结构化修复 | DeepSeek | 有 | `generated_knowledge_graph_repair_v1` | 0046–0048 候选，按需 |
 | `MAT-NODE-QUESTION-V1` | 所选知识节点问答 | DeepSeek | 有 | `knowledge_node_answer_v1` | 0046–0048 候选 |
-| `MAT-NATIVE-AUDIT-V1` | 原文件注入审查 | Luna/OpenAI-only 或 Ox Alpha/Stealth-only | 有，另带完整原文件 | `native_material_audit_v1` | 0049–0051 + 0054–0055 候选 |
-| `MAT-NATIVE-EXAM-V1` | 原文件试卷生成 | Luna/OpenAI-only 或 Ox Alpha/Stealth-only | 有，另带完整原文件 | `generated_native_exam_v1` | 0049–0051 + 0054–0055 候选 |
-| `MAT-NATIVE-GRAPH-V1` | 原文件知识图生成 | Luna/OpenAI-only 或 Ox Alpha/Stealth-only | 有，另带完整原文件 | `generated_native_knowledge_graph_v1` | 0049–0051 + 0054–0055 候选 |
-| `MAT-NATIVE-REPAIR-V1` | 原文件产物最多一次修复 | Luna/OpenAI-only 或 Ox Alpha/Stealth-only | 有，另带完整原文件 | 与原产物相同 | 0049–0051 + 0054–0055 候选，按需 |
-| `COURSE-TRANSLATION-JUDGE-V1` | 拼写前翻译语义判定 | `stealth/ox-alpha` | 有 | JSON Object `{correct:boolean}` + 本地严格 schema | 修复候选，非字面匹配才调用 |
+| `MAT-NATIVE-AUDIT-V1` | 原文件注入审查 | GPT-6 Luna / Azure-only ZDR | 有，另带完整原文件 | `native_material_audit_v1` | 0049–0051 + 0056–0057 候选 |
+| `MAT-NATIVE-EXAM-V1` | 原文件试卷生成 | GPT-6 Luna / Azure-only ZDR | 有，另带完整原文件 | `generated_native_exam_v1` | 0049–0051 + 0056–0057 候选 |
+| `MAT-NATIVE-GRAPH-V1` | 原文件知识图生成 | GPT-6 Luna / Azure-only ZDR | 有，另带完整原文件 | `generated_native_knowledge_graph_v1` | 0049–0051 + 0056–0057 候选 |
+| `MAT-NATIVE-REPAIR-V1` | 原文件产物最多一次修复 | GPT-6 Luna / Azure-only ZDR | 有，另带完整原文件 | 与原产物相同 | 0049–0051 + 0056–0057 候选，按需 |
+| `COURSE-TRANSLATION-JUDGE-V1` | 拼写前翻译语义判定 | `nvidia/nemotron-3-super-120b-a12b:free` | 有 | JSON Object `{correct:boolean}` + 本地严格 schema | 候选，非字面匹配才调用 |
 | `COURSE-TRANSLATION-STT-V1` | 中文翻译语音转文字 | `fish-audio/transcribe-1` | 无自然语言 prompt | 音频 + `language=zh` | 生产 |
 | `COURSE-TTS-V1` | 单词/短语发音合成 | Azure Speech | SSML，不是 LLM prompt | 音频 | 生产 |
 | `COURSE-PRONUNCIATION-V1` | 发音评分 | Azure Speech | 参考文本配置，不是 LLM prompt | Azure detailed assessment | 生产 |
@@ -310,7 +310,7 @@ User message：`UNTRUSTED_QUESTION_CONTEXT_JSON\n{"question":<untrusted>,"select
 
 ## 4. Luna 原文件候选 prompt
 
-Luna 固定 `openai/gpt-5.6-luna`、`provider.only=["openai"]`、`allow_fallbacks=false`、ZDR、拒绝数据收集、strict schema、reasoning off 和 no tools/Web。worker 下载后只校验 MIME/大小/SHA-256；不运行 parser/OCR/LibreOffice/DocumentIR/parse cache。PDF 附 `file-parser.native`，图片使用 `image_url`，其它经真实门禁允许的格式使用原 MIME `file`；都以内联 data URL 发送，不使用 Files API。
+Luna 固定 `openai/gpt-6-luna`、`provider.only=["azure"]`、`allow_fallbacks=false`、ZDR、拒绝数据收集、strict schema、reasoning off 和 no tools/Web。worker 下载后只校验 MIME/大小/SHA-256；不运行 parser/OCR/LibreOffice/DocumentIR/parse cache。PDF 附 `file-parser.native`，图片使用 `image_url`，其它经真实门禁允许的格式使用原 MIME `file`；都以内联 data URL 发送，不使用 Files API。
 
 ### 4.1 `MAT-NATIVE-AUDIT-V1`
 
@@ -369,7 +369,7 @@ User content 是 `UNTRUSTED_REPAIR_JSON\n{"settings":...,"issues":...,"artifact"
 
 ### 4.5 Luna 节点问答与主观评分
 
-`MAT-NODE-QUESTION-V1` 的 system prompt 不变。若 Note pipeline 为 Luna 且源材料仍存在，user content 在服务端节点/相邻图上下文后追加完整原文件；来源已删除时只发送已保存图谱上下文并明确来源不可用。Luna 主观评分复用 `MAT-EXAM-GRADE-V1`，只发送题目、model answer、rubric 与 learner answer，不重复发送源文件；两者都锁 OpenAI-only。考试所有主观题在整卷提交后合并为一次请求。
+`MAT-NODE-QUESTION-V1` 的 system prompt 不变。若 Note pipeline 为 Luna 且源材料仍存在，user content 在服务端节点/相邻图上下文后追加完整原文件；来源已删除时只发送已保存图谱上下文并明确来源不可用。Luna 主观评分复用 `MAT-EXAM-GRADE-V1`，只发送题目、model answer、rubric 与 learner answer，不重复发送源文件；两者都锁 Azure-only。考试所有主观题在整卷提交后合并为一次请求。
 
 ## 5. Materials provider envelope
 
@@ -377,26 +377,26 @@ User content 是 `UNTRUSTED_REPAIR_JSON\n{"settings":...,"issues":...,"artifact"
 
 ```jsonc
 {
-  "model": "<fixed TEXT_MODEL, VISION_MODEL, LUNA_MODEL or OX_ALPHA_MODEL>",
+  "model": "<fixed TEXT_MODEL, VISION_MODEL or LUNA_MODEL>",
   "messages": [
     { "role": "system", "content": "<catalog prompt>" },
     { "role": "user", "content": "<prefixed JSON or multimodal content>" }
   ],
   "temperature": 0,
-  "reasoning": "<legacy/Luna: disabled; Ox Alpha: {effort: low, exclude: true}>",
+  "reasoning": "<legacy/Luna: disabled>",
   "tool_choice": "none",
   "response_format": { "type": "json_schema", "json_schema": { "name": "<schema name>", "strict": true, "schema": "<Pydantic schema>" } },
-  "provider": { "zdr": true, "data_collection": "deny", "require_parameters": true, "allow_fallbacks": "<legacy true; native false>", "only": "<Luna: [openai]; Ox Alpha: [stealth]>" }
+  "provider": { "zdr": true, "data_collection": "deny", "require_parameters": true, "allow_fallbacks": "<legacy true; native false>", "only": "<Luna: [azure]>" }
 }
 ```
 
-旧流水线 `allow_fallbacks=true` 只允许同一个固定模型在满足全部过滤器的 endpoint 间切换，不提供跨模型 fallback。Luna 强制 `only=["openai"]`，Ox Alpha 强制 `only=["stealth"]`，两者均禁止 fallback，并在响应/usage 回调与数据库完成 RPC 再次验证真实 upstream；违规成本仍记录但结果不保存。Ox Alpha 当前只允许原始图片，不把 PDF/Office 伪装成其模型元数据未声明支持的原生 file。prompt、正文和 raw response 不进入普通日志或 usage 表。
+旧流水线 `allow_fallbacks=true` 只允许同一个固定模型在满足全部过滤器的 endpoint 间切换，不提供跨模型 fallback。Luna 强制 `only=["azure"]`（GPT-6 Luna 唯一的 ZDR 上游）并禁止 fallback，在响应/usage 回调与数据库完成 RPC 再次验证真实 upstream 为 Azure；违规成本仍记录但结果不保存。prompt、正文和 raw response 不进入普通日志或 usage 表。
 
 ## 6. Courses 相关供应商输入
 
 ### 6.1 `COURSE-TRANSLATION-JUDGE-V1`：翻译语义判定
 
-若用户答案经过 NFKC、空白和大小写规范化后精确等于任一服务端参考翻译，服务端直接判对，不调用模型。只有非字面同义/改写才调用固定 `stealth/ox-alpha`；请求锁定 `provider.only=["stealth"]`、禁止 fallback、拒绝数据收集，并使用 `reasoning.effort=low` 与 `exclude=true`。
+若用户答案经过 NFKC、空白和大小写规范化后精确等于任一服务端参考翻译，服务端直接判对，不调用模型。只有非字面同义/改写才调用固定免费 `nvidia/nemotron-3-super-120b-a12b:free`；请求锁定 `provider.only=["nvidia"]`、禁止 fallback、`reasoning.enabled=false`。免费 endpoint 可能记录提示词，因此不声明 deny collection，只发送最小词义上下文。
 
 System prompt（数组用单个空格拼接后的实际文本）：
 
@@ -459,9 +459,9 @@ User message：
 
 ## 7. 发布门禁与测试 prompt
 
-### 7.1 Ox Alpha 真实发布 smoke
+### 7.1 翻译判定真实发布 smoke
 
-[`scripts/openrouter-translation-smoke-lib.mjs`](../../scripts/openrouter-translation-smoke-lib.mjs) 使用独立的固定双样本 prompt 验证 Ox Alpha structured output、Stealth-only 路由和 mandatory reasoning 契约，不是生产判题模板。
+[`scripts/openrouter-translation-smoke-lib.mjs`](../../scripts/openrouter-translation-smoke-lib.mjs) 使用独立的固定双样本 prompt 验证免费 Nemotron 的 JSON Object 输出、Nvidia-only 路由和关闭 reasoning 的契约，不是生产判题模板。
 
 System prompt：
 
@@ -473,7 +473,7 @@ User message 固定包含一个语义匹配和一个不匹配的 `apple` 样本�
 
 ### 7.2 Materials 真实发布 smoke
 
-[`scripts/smoke-material-ai-provider.py`](../../scripts/smoke-material-ai-provider.py) 不定义另一套业务 prompt；它通过内部 worker复用第 3–4 节。生产旧路径 fixture 包含 PDF、DOCX、PPTX、图表、注入、安全教学和评分；候选 Luna gate 另以固定 PDF/图片验证原始字节、native parser、实际 OpenAI upstream、图谱/试卷 strict schema、注入拒绝、节点问答和取消清理。Ox Alpha gate 只对模型元数据真实声明支持的图片原字节运行，并必须证明实际 Stealth upstream；当前 ZDR catalog 没有合规 Ox endpoint 时稳定记录 `OPENROUTER_ZDR_UNAVAILABLE` 并保持子开关关闭，不能把跳过称为通过。只有真实 gate 与受保护发布完成后，对应 prompt 才可改标生产。
+[`scripts/smoke-material-ai-provider.py`](../../scripts/smoke-material-ai-provider.py) 不定义另一套业务 prompt；它通过内部 worker复用第 3–4 节。生产旧路径 fixture 包含 PDF、DOCX、PPTX、图表、注入、安全教学和评分；候选 Luna gate 先确认 ZDR catalog 含 GPT-6 Luna 的 Azure endpoint，再以固定 PDF/图片验证原始字节、native parser、实际 Azure upstream、图谱/试卷 strict schema、注入拒绝、节点问答和取消清理。catalog 没有 Azure endpoint 时稳定记录 `OPENROUTER_ZDR_UNAVAILABLE` 并保持子开关关闭，不能把跳过称为通过。只有真实 gate 与受保护发布完成后，对应 prompt 才可改标生产。
 
 ### 7.3 Adapter 单元测试
 

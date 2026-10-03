@@ -3,7 +3,7 @@
 > **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
 > **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
 > **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-08-26。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
+> **状态基线：**2026-10-03。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
 
 格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
 
@@ -11,10 +11,10 @@
 
 ### Added
 
-- 追加候选迁移 0054–0055 与第三条 `ox_alpha_native_file_v1`：固定 `stealth/ox-alpha`、Stealth-only/no-fallback、低档 mandatory reasoning，复用 Luna 的原字节安全审查/生成/repair/checkpoint/清理编排；API 与 worker 双层只允许 PNG/JPEG/WebP，数据库完成事务要求匹配用途的 Stealth usage，全部新签名继续 service-role-only。
+- 追加候选迁移 0056–0057：退役 0054–0055 引入的 `ox_alpha_native_file_v1`（三张 pipeline constraint 与全部 service-role RPC 收敛回 DocumentIR/Luna），Luna job 改写 `openai/gpt-6-luna`，三个完成 RPC 改为要求 Azure usage；签名不变，0057 失败关闭验证约束、模型映射、路由门与权限。见 [ADR-0016](docs/adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)。
 - 新增并在生产数据库应用 Stage B 迁移 0052–0053：在 0051 后严格追加，撤销 authenticated 对 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE 权限，并失败关闭验证最终内容列、Schedule 列、service-role 与时间维护 trigger。原预留的 0044–0045 保持未使用，没有补插远端 migration history。
 - 追加候选迁移 0049–0051：为 job/Note 增加显式 `pipeline`，为成本事件记录实际 upstream provider/endpoint，新增 `deleting` 清理状态、私有 `knowledge_graph_layouts`、任务删除/清空/取消清理事务、Luna 完成路由门和精确权限断言；旧签名继续保留用于数据库先行和应用回滚。
-- 新增 `luna_native_file_v1`：固定 `openai/gpt-5.6-luna`、`provider.only=["openai"]`、无 fallback、ZDR/deny collection/require parameters、禁用工具/Web，并以内联 base64 原文件处理已通过门禁 allowlist 的 PDF/图片。它不调用确定性解析、OCR、LibreOffice、DocumentIR 或 parse cache，且不会使用具有远端留存语义的 Files API。
+- 新增 `luna_native_file_v1`：固定 `openai/gpt-6-luna`、`provider.only=["azure"]`（GPT-6 Luna 唯一 ZDR 上游）、无 fallback、ZDR/deny collection/require parameters、禁用工具/Web，并以内联 base64 原文件处理已通过门禁 allowlist 的 PDF/图片。它不调用确定性解析、OCR、LibreOffice、DocumentIR 或 parse cache，且不会使用具有远端留存语义的 Files API。
 - 知识图改为动态 React Flow + ELK 分层画布，支持平移、缩放、拖动/键盘移动节点、适应视图、自动整理、无重叠碰撞消解、外部 hover/click 详情和带 revision 的跨设备布局保存；fake-provider Chromium 路径加入 250 节点及活动删除夹具。
 - AI 队列增加逐条 Delete 与 Clear history 的应用内确认；worker 使用可取消 task registry/Office 进程组并在确认 usage spool 落账后清理 0700 目录。
 - Materials 新增 “Organize knowledge points”：固定 DeepSeek 生成按来源顺序、带严格引用的 `GeneratedKnowledgeGraphV1`，My Notes 以交互图谱、hover 解释、点击详情呈现，并可对选定节点发起限定来源的问答。Knowledge list 与独立 Quiz 继续显示 Coming soon。
@@ -23,15 +23,19 @@
 
 ### Changed
 
-- Courses 拼写前非字面翻译语义判定由 Gemma 4 改为固定 `stealth/ox-alpha`，锁定 Stealth provider、禁止 fallback、拒绝数据收集并使用该模型声明支持的 JSON Object 模式；Nalanda 对 `{correct:boolean}` 执行本地严格字段/类型校验。完全匹配仍由服务端确定性零 token 判定，模型不能直接写进度或奖励。Materials 的 Ox 原图能力使用独立 flag/ZDR 门禁，当前无合规 ZDR endpoint 时保持关闭，不能用文本 smoke 替代。
+- Courses 拼写前非字面翻译语义判定由 Gemma 4 改为固定免费 `nvidia/nemotron-3-super-120b-a12b:free`，锁定 Nvidia provider、禁止 fallback、关闭 reasoning 并使用 JSON Object 模式；Nalanda 对 `{correct:boolean}` 执行本地严格字段/类型校验。免费 endpoint 不承诺 deny collection，请求只含最小词义上下文。完全匹配仍由服务端确定性零 token 判定，模型不能直接写进度或奖励。（中间候选曾使用 `stealth/ox-alpha`，从未上线，现已移除。）
 - 在线考试的选择与草稿保存不再判分或返回任何答案/解析；只有整卷二次确认提交或到期自动交卷后，服务端才在同一提交事务内批改全部客观题，并把主观题合并为一次模型评分。`in_progress` 响应强制 `results=[]`。
-- Luna Note 的节点问答会在来源仍存在时重新附原文件；来源删除后只使用持久图谱、选中节点和邻接关系。Luna 试卷主观评分继续使用 Luna/OpenAI，但不重复发送源材料。
+- Luna Note 的节点问答会在来源仍存在时重新附原文件；来源删除后只使用持久图谱、选中节点和邻接关系。Luna 试卷主观评分继续使用 GPT-6 Luna/Azure，但不重复发送源材料。
 - 清理额度规则统一：queued 删除释放 reservation；worker 已接收的 processing 删除/Cancel 消耗一次；历史删除不回退额度、不删除 My Notes，并保留 provider usage 审计。
 - API→FastAPI 生成与评分改为 30 秒内返回 202，后续由内部 token 回调 progress/usage/checkpoint/complete/fail；兼容同步路由暂留供旧应用回退和直接 provider gate 使用。
 - BullMQ 单并发槽现在持有到 Postgres 终态或 lease 到期，不会因 FastAPI 的 202 提前把 backlog 塞进进程内存；worker 以 1200/240 秒限制生成/评分总执行时间，生成超时可从 durable checkpoint 续跑。
 - 可恢复错误在默认 24 小时内复用同一 job。数据库保存阶段 checkpoint，worker 0700 目录另保存已验证结果和 usage spool；成功、非重试终态和过期均清理，重试重新预留、成功才消费 Free quota。
 - 恢复调度会先扣除该 job/attempt 已持久化的 provider cost，再把剩余预算交给 worker；worker 同时把上次回调失败留下的 usage spool 计入本地硬门，API 暂时不可用也不能借恢复流程重置单次成本上限。
 - Materials 与 My Notes 在本阶段固定全英文并保持既有 class/token/字体/动画；不扩大为全站 React 或视觉迁移。
+
+### Removed
+
+- 移除 Ox Alpha（`stealth/ox-alpha`，已从 OpenRouter 下线、生产从未启用）的全部代码、类型、UI、环境变量（`FEATURE_MATERIAL_AI_OX_ALPHA`、`MATERIAL_AI_OX_ALPHA_*`）、发布门禁与 smoke；安装/激活/回滚脚本只剥离旧键。
 
 ### Fixed
 
@@ -76,7 +80,7 @@
 
 ### Security
 
-- Ox Alpha 的模型/provider/reasoning/格式能力均由服务端固定；客户端不能选择模型或直接执行 0054–0055 工作流。Materials Ox 在实时 ZDR catalog 不合规时失败关闭，非图片即使被运维误加 allowlist 也会由 API/worker 拒绝。
+- Luna 的模型/provider/reasoning/格式能力均由服务端固定；客户端不能选择模型或直接执行 Materials AI 工作流。Luna 在实时 ZDR catalog 没有 Azure endpoint 时失败关闭；first-party OpenAI 上游的 usage 会被数据库完成事务视为路由违规。
 - 2026-08-22 go/no-go 复核确认兼容观察已超过 24 小时；现网与最新 Web 均不提交两个时间字段，Redis PING/AOF/noeviction 正常、无 error/eviction，points ledger/Profile projection 差异为 0。只读 plan run `32581192318` 仅列 0052–0053；protected run `32581805613` 在 artifact `9478168126` 后应用并验证到 0053。该 run 的最新应用候选两次均被真实 Materials AI PPTX gate 拦截并自动恢复 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，因此数据库权限已上线，但最新 main 应用没有切流。
 - 新 checkpoint 表不开放客户端读取；知识问答仅 owner 可读且不能由客户端写。所有新 RPC 撤销 `public/anon/authenticated` EXECUTE，问题和来源内容继续按不可信数据处理，不能改变模型、工具或 system prompt。
 

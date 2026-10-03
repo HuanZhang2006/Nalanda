@@ -153,7 +153,7 @@ function aiJobsHtml() {
     ${state.jobs.slice(0, 10).map((job) => `<div class="list-row" style="padding:11px 0">
       <div class="stat-ic" style="margin:0">${job.status === "succeeded" ? ICON("check") : job.status === "failed" ? ICON("close") : ICON("sparkles")}</div>
       <div class="fill"><div style="font-weight:650;font-size:13px">${esc(job.materialName)}</div>
-        <div class="faint" style="font-size:11.5px">${esc(jobKind[job.kind] || job.kind)} · ${esc(stage[job.stage] || job.stage)} · ${esc(job.pipeline === "luna_native_file_v1" ? "Luna native file" : job.pipeline === "ox_alpha_native_file_v1" ? "Ox Alpha native image" : "Document IR")}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
+        <div class="faint" style="font-size:11.5px">${esc(jobKind[job.kind] || job.kind)} · ${esc(stage[job.stage] || job.stage)} · ${esc(job.pipeline === "luna_native_file_v1" ? "Luna native file" : "Document IR")}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
         <div class="bar" style="margin-top:6px"><i style="width:${Math.max(0, Math.min(100, job.progress))}%"></i></div>
         ${job.errorCode ? `<div class="course-feedback wrong" style="margin-top:7px">${esc(job.errorCode)} · ${esc(materialAiErrorText(job.errorCode, job.errorMessage || l("Try again later.", "请稍后重试。"), l))}</div>` : ""}
       </div>
@@ -372,18 +372,16 @@ function pipelineSelector(capabilityResponse) {
     || capabilities.find((item) => item.available)?.pipeline
     || "document_ir_v1";
   const labels = {
-    luna_native_file_v1: ["Luna native file", "Sends the original file directly to GPT-5.6 Luna through the OpenAI provider."],
-    ox_alpha_native_file_v1: ["Ox Alpha native image", "Sends original image bytes directly to Ox Alpha through the Stealth provider."],
+    luna_native_file_v1: ["Luna native file", "Sends the original file directly to GPT-6 Luna through the Azure Zero Data Retention provider."],
     document_ir_v1: ["Document IR", "Uses deterministic extraction, targeted visual recovery, and DeepSeek generation."],
   };
   return `<fieldset style="border:0;margin:0 0 16px;padding:0"><legend class="eyebrow" style="margin-bottom:7px">Processing pipeline</legend>
     <div class="grid g-2">${capabilities.map((item) => {
       const copy = labels[item.pipeline] || [item.pipeline, item.model];
       const reason = item.reasonCode === "AI_LUNA_DISABLED" ? "Luna is not enabled yet."
-        : item.reasonCode === "AI_OX_ALPHA_DISABLED" ? "Ox Alpha is not enabled yet."
         : item.reasonCode === "OPENROUTER_ZDR_UNAVAILABLE"
           ? "No compliant Zero Data Retention endpoint is currently available. Document IR remains available."
-          : item.reasonCode === "AI_LUNA_FORMAT_NOT_VERIFIED" || item.reasonCode === "AI_OX_ALPHA_FORMAT_NOT_VERIFIED"
+          : item.reasonCode === "AI_LUNA_FORMAT_NOT_VERIFIED"
             ? "This file format has not passed the native-input gate."
             : "";
       return `<label class="card card-pad row gap-10" style="padding:12px;align-items:flex-start;${item.available ? "cursor:pointer" : "opacity:.55"}">

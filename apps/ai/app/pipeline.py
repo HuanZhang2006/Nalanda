@@ -17,7 +17,7 @@ import httpx
 from pydantic import ValidationError
 
 from .errors import PipelineError
-from .openrouter import LUNA_MODEL, OX_ALPHA_MODEL, TEXT_MODEL, VISION_MODEL, OpenRouterClient
+from .openrouter import LUNA_MODEL, LUNA_PROVIDER, TEXT_MODEL, VISION_MODEL, OpenRouterClient
 from .parsers import (
     MAX_IMAGE_BYTES,
     PARSER_VERSION,
@@ -54,7 +54,7 @@ NATIVE_AUDIT_VERSION = "native-file-audit.v2"
 NATIVE_EXAM_PROMPT_VERSION = "exam-native-file.v2"
 NATIVE_GRAPH_PROMPT_VERSION = "knowledge-graph-native-file.v2"
 NATIVE_IMAGE_EXTENSIONS = {"png", "jpg", "jpeg", "webp"}
-NATIVE_PIPELINES = {"luna_native_file_v1", "ox_alpha_native_file_v1"}
+NATIVE_PIPELINES = {"luna_native_file_v1"}
 INJECTION_PATTERNS = [
     re.compile(pattern, re.I)
     for pattern in (
@@ -70,14 +70,9 @@ INJECTION_PATTERNS = [
 
 def _native_route(pipeline: str) -> tuple[str, list[str], str, dict[str, Any]]:
     if pipeline == "luna_native_file_v1":
-        return LUNA_MODEL, ["openai"], "OpenAI", {"enabled": False}
-    if pipeline == "ox_alpha_native_file_v1":
-        # Ox Alpha declares reasoning mandatory. Low effort keeps enough of the
-        # completion budget for the strict artifact while excluding the hidden
-        # reasoning trace from the response and logs.
-        return OX_ALPHA_MODEL, ["stealth"], "Stealth", {
-            "effort": "low", "exclude": True
-        }
+        # GPT-6 Luna's only Zero Data Retention endpoints on OpenRouter are
+        # Azure-hosted. Pin that provider so ZDR never silently degrades.
+        return LUNA_MODEL, [LUNA_PROVIDER.casefold()], LUNA_PROVIDER, {"enabled": False}
     raise PipelineError("AI_PIPELINE_UNAVAILABLE", "The native-file pipeline is invalid", 422)
 
 
@@ -1456,32 +1451,15 @@ async def _native_source_for_job(
     await _progress(request, "validating", 4, "VALIDATING_NATIVE_SOURCE")
     suffix = Path(request.material.name).suffix.lower()
     extension = suffix.lstrip(".")
-    env_name = (
-        "MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS"
-        if request.pipeline == "ox_alpha_native_file_v1"
-        else "MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS"
-    )
-    defaults = "png,jpg,jpeg,webp" if request.pipeline == "ox_alpha_native_file_v1" else "pdf,png"
     allowed_extensions = {
         item.strip().lower().lstrip(".")
-        for item in os.getenv(env_name, defaults).split(",")
+        for item in os.getenv("MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS", "pdf,png").split(",")
         if item.strip()
     }
-    if request.pipeline == "ox_alpha_native_file_v1":
-        # The current official model contract is text+image+video->text and has
-        # no `file` input. Prevent a configuration typo from routing PDFs or
-        # Office files through OpenRouter parsing while calling it native.
-        allowed_extensions &= NATIVE_IMAGE_EXTENSIONS
     if not extension or extension not in allowed_extensions:
-        code = (
-            "AI_OX_ALPHA_FORMAT_NOT_VERIFIED"
-            if request.pipeline == "ox_alpha_native_file_v1"
-            else "AI_LUNA_FORMAT_NOT_VERIFIED"
-        )
-        label = "Ox Alpha native-image" if request.pipeline == "ox_alpha_native_file_v1" else "Luna native-file"
         raise PipelineError(
-            code,
-            f"{label} processing is not enabled for this source format",
+            "AI_LUNA_FORMAT_NOT_VERIFIED",
+            "Luna native-file processing is not enabled for this source format",
         )
     if extension in NATIVE_IMAGE_EXTENSIONS and request.material.sizeBytes > MAX_IMAGE_BYTES:
         raise PipelineError("AI_FILE_SIZE_UNSUPPORTED", "Images must be no larger than 10 MB")

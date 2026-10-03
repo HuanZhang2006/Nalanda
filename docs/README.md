@@ -5,7 +5,7 @@
 > - **作用**：避免“当前实现、最终蓝图、历史复盘、操作手册”相互覆盖或产生状态冲突。
 > - **何时更新**：新增、删除、重命名文档，或某类文档的负责人/权威范围变化时。
 
-最后核对：2026-08-26。生产数据库已到 0055，0052–0055 contract 已生效；当前不可变应用仍为此前稳定 release。PR #78 的 Ox Alpha JSON Object 修复已合并，但 main run `32931681321` 在真实 DocumentIR DOCX 试卷语义门禁失败后自动回滚。当前 Unreleased `exam-generate.v4` 修复结构 repair 缺少来源正文及其后没有语义修复阶段的问题；仍须重新取得完整 CI、真实供应商、切流和公网独立证据。
+最后核对：2026-10-03。生产数据库已到 0055，0052–0055 contract 已生效；当前不可变应用仍为此前稳定 release。main run `32931681321` 在真实 DocumentIR DOCX 试卷语义门禁失败后自动回滚。当前 Unreleased `exam-generate.v4` 修复结构 repair 缺少来源正文及其后没有语义修复阶段的问题，0056–0057 退役 Ox Alpha 并把 Luna 升级为 GPT-6 Luna + Azure ZDR；仍须重新取得完整 CI、真实供应商、切流和公网独立证据。
 
 ## 1. 事实来源优先级
 
@@ -73,7 +73,7 @@
 
 ADR 只记录已经做出的、影响多个模块或难以逆转的决策。开放问题保留在项目蓝图；决定后新增 ADR 并更新相关当前文档。
 
-最新已采用候选决策：[ADR-0015 Ox Alpha 翻译判定与 Materials 原始图片流水线](adr/0015-ox-alpha-translation-and-native-image-pipeline.md)；生产基线仍由 [ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) 对应的 0041–0043 release 提供。Accepted 表示架构决定已采用，不自动证明候选已部署；生产证据仍以架构、测试和发布记录为准。
+最新已采用候选决策：[ADR-0016 退役 Ox Alpha 与 GPT-6 Luna（Azure ZDR）](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)，它替代 [ADR-0015](adr/0015-ox-alpha-translation-and-native-image-pipeline.md)；生产基线仍由 [ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) 对应的 0041–0043 release 提供。Accepted 表示架构决定已采用，不自动证明候选已部署；生产证据仍以架构、测试和发布记录为准。
 
 ## 8. 实现笔记
 

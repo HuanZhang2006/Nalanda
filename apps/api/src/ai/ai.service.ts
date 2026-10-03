@@ -17,8 +17,7 @@ import { gradeObjective } from "./exam-grading";
 
 const SUPPORTED = new Set(["pdf", "docx", "pptx", "md", "markdown", "html", "htm", "txt", "json", "csv", "png", "jpg", "jpeg", "webp"]);
 const IMAGE = new Set(["png", "jpg", "jpeg", "webp"]);
-const LUNA_MODEL = "openai/gpt-5.6-luna";
-const OX_ALPHA_MODEL = "stealth/ox-alpha";
+const LUNA_MODEL = "openai/gpt-6-luna";
 const MAX_GRAPH_LAYOUT_COORDINATE = 100_000;
 const MAX_GRAPH_LAYOUT_NODES = 250;
 const MAX_GRAPH_NODE_ID_LENGTH = 80;
@@ -44,44 +43,23 @@ export class AiService {
     return new Set(configured.split(",").map((value) => value.trim().toLowerCase()).filter(Boolean));
   }
 
-  private oxAlphaNativeExtensions() {
-    // OpenRouter's live model metadata currently advertises text/image/video,
-    // but not native `file` input. Keep this path limited to original image
-    // bytes even if an operator accidentally adds PDF or Office extensions.
-    const configured = process.env.MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS
-      || "png,jpg,jpeg,webp";
-    return new Set(
-      configured.split(",")
-        .map((value) => value.trim().toLowerCase())
-        .filter((value) => IMAGE.has(value)),
-    );
-  }
-
   private nativeDisabledReason() {
     return process.env.MATERIAL_AI_LUNA_DISABLED_REASON_CODE === "OPENROUTER_ZDR_UNAVAILABLE"
       ? "OPENROUTER_ZDR_UNAVAILABLE"
       : "AI_LUNA_DISABLED";
   }
 
-  private oxAlphaDisabledReason() {
-    return process.env.MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE === "OPENROUTER_ZDR_UNAVAILABLE"
-      ? "OPENROUTER_ZDR_UNAVAILABLE"
-      : "AI_OX_ALPHA_DISABLED";
-  }
-
   private capabilityRows(material: Record<string, any>) {
     const ext = extension(String(material.name || ""));
     const lunaEnabled = this.flags.materialAiLunaEnabled();
     const lunaAvailable = lunaEnabled && this.lunaNativeExtensions().has(ext);
-    const oxAlphaEnabled = this.flags.materialAiOxAlphaEnabled();
-    const oxAlphaAvailable = oxAlphaEnabled && this.oxAlphaNativeExtensions().has(ext);
     return [
       {
         pipeline: "luna_native_file_v1" as const,
         available: lunaAvailable,
         default: lunaAvailable,
         model: LUNA_MODEL,
-        provider: "OpenAI",
+        provider: "Azure",
         reasonCode: lunaAvailable
           ? null
           : lunaEnabled
@@ -89,21 +67,9 @@ export class AiService {
             : this.nativeDisabledReason(),
       },
       {
-        pipeline: "ox_alpha_native_file_v1" as const,
-        available: oxAlphaAvailable,
-        default: !lunaAvailable && oxAlphaAvailable,
-        model: OX_ALPHA_MODEL,
-        provider: "Stealth",
-        reasonCode: oxAlphaAvailable
-          ? null
-          : oxAlphaEnabled
-            ? "AI_OX_ALPHA_FORMAT_NOT_VERIFIED"
-            : this.oxAlphaDisabledReason(),
-      },
-      {
         pipeline: "document_ir_v1" as const,
         available: true,
-        default: !lunaAvailable && !oxAlphaAvailable,
+        default: !lunaAvailable,
         model: "deepseek/deepseek-v4-flash-0731",
         provider: "OpenRouter routed ZDR provider",
         reasonCode: null,
@@ -162,9 +128,6 @@ export class AiService {
     }
     if (pipeline === "luna_native_file_v1") {
       return "Luna native-file processing is not available for this format";
-    }
-    if (pipeline === "ox_alpha_native_file_v1") {
-      return "Ox Alpha native-image processing is not available for this format";
     }
     return "The selected AI pipeline is unavailable";
   }

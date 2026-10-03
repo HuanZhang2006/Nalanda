@@ -268,11 +268,18 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 同一 SHA 仅重跑一次失败 job。attempt 2 的 canary 再次通过，真实 DeepSeek/MiMo gate 完成 PDF/DOCX/PPTX/chart、注入拒绝、安全教材、评分和 9-node graph；Luna 因 OpenAI-only ZDR 不可用保持 false，Japan East Azure 返回 accuracy 98、pronunciation 98.8。随后 Gemma 免费模型在五次有界尝试后仍为 HTTP 429，候选第二次回退，Courses 与登录用户 smoke 因顺序门禁尚未执行。
 - 两次均未切 Web/API。独立主机与公网核对确认 Web 软链和 API/AI image 仍为 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，两个 Materials flag 为 false，Supabase/Redis/AI health ok，匿名 `/api/me` 401、首页 200，attempt 2 候选目录与 `web.next` 均已清除。因此 PR #75 已合并但未部署；不得第三次盲目重跑或弱化 Gemma 硬门。
 
-### 2026-08-23 · Ox Alpha 三流水线候选（尚未发布）
+### 2026-08-23 · Ox Alpha 三流水线候选（从未发布；2026-10-03 已退役）
 
 - 当前分支把 Courses 非字面翻译从 Gemma 改为固定 `stealth/ox-alpha`，并增加 0054–0055 与 `ox_alpha_native_file_v1`。Materials 能力矩阵成为 DocumentIR、Luna 原文件、Ox Alpha 原图三条显式 pipeline；Ox 固定 Stealth-only/no-fallback/mandatory reasoning，且 API/worker 只允许 PNG/JPEG/WebP。
 - 实时模型元数据没有 file modality，实时 ZDR catalog 也没有 Ox endpoint。因此受保护发布必须把“Ox 文本翻译真实 smoke”和“Materials Ox 原图 ZDR gate”分开：前者失败会阻断应用切流；后者当前应稳定保持子开关 false 并记录 `OPENROUTER_ZDR_UNAVAILABLE`，不能放宽 ZDR 或用文本 smoke 冒充原图可用。
 - 本段只记录候选设计和已核对的供应商能力，不是 CI、数据库 apply、应用切流或公网验证证据。完成后必须补充 PR/main run、0054–0055 只读 plan、恢复 artifact、protected apply、真实门禁、release/image/Web symlink 和独立公网结果。
+
+### 2026-10-03 · 0056–0057 退役 Ox Alpha、GPT-6 Luna（候选）
+
+- Ox Alpha 已从 OpenRouter 实时目录下线，生产只读查询确认没有任何 Ox job/Note/usage 行。0056–0057 退役该流水线；deploy workflow、env 安装脚本和 smoke 不再写入或检查 Ox，只在激活/回滚时剥离旧键。
+- Luna 改为 `openai/gpt-6-luna` 并锁定 Azure：实时 ZDR catalog 中 GPT-6 Luna 只有 `azure`、`azure/us`、`azure/eu` 三个 ZDR endpoint。provider gate 只有发现 Azure ZDR endpoint 才运行 Luna 原文件 fixture 并允许打开子开关。
+- Courses 翻译 smoke 改验证免费 `nvidia/nemotron-3-super-120b-a12b:free` 的 Nvidia-only JSON Object 判定。
+- 同一候选包含 `exam-generate.v4` 的 DocumentIR repair 修复。发布顺序：PR CI → merge → workflow_dispatch `apply_database_migrations=true`（恢复点、0056–0057 apply/verify、应用候选与全部真实门禁）。本段在受保护 run 完成前不是生产证据。
 
 ## 8. 运维速查
 

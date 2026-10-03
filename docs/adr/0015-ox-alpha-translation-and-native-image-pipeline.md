@@ -4,7 +4,7 @@
 > **作用：**固定模型、provider、reasoning、能力矩阵、ZDR、隐私、完成事务和发布门禁，避免把文本可用性误写成原文件能力。
 > **何时更新：**Ox Alpha 模型身份/能力/价格、Stealth 路由、reasoning、ZDR catalog、允许格式、翻译数据边界或生产发布状态变化时。
 
-- **状态：**Accepted / implemented in unreleased code；0054–0055 尚未完成受保护发布
+- **状态：**Superseded by [ADR-0016](0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)（2026-10-03）；0054–0055 已应用到生产数据库但应用从未启用 Ox，0056–0057 将其完全退役。下文为历史决策原文。
 - **日期：**2026-08-23
 - **决策者：**Nalanda owner
 - **范围：**Courses、Materials、My Notes、NestJS、FastAPI、Supabase、发布门禁

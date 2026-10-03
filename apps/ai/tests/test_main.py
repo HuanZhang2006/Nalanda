@@ -302,7 +302,7 @@ async def test_cancel_flushes_spooled_provider_cost_before_purging(monkeypatch, 
     workdir.mkdir(parents=True)
     event = UsageEvent(
         purpose="exam_generation",
-        model="openai/gpt-5.6-luna",
+        model="openai/gpt-6-luna",
         requestId="provider-request-before-cancel",
         promptTokens=10,
         completionTokens=20,
@@ -311,7 +311,7 @@ async def test_cancel_flushes_spooled_provider_cost_before_purging(monkeypatch, 
         durationMs=100,
         zdrEnforced=True,
         status="succeeded",
-        upstreamProvider="OpenAI",
+        upstreamProvider="Azure",
     )
     (workdir / f"usage-{event.eventId}.json").write_text(event.model_dump_json())
     callbacks: list[dict] = []
@@ -358,9 +358,9 @@ async def test_cancel_keeps_usage_spool_when_api_cannot_ack_cost(monkeypatch, tm
     workdir = main._workdir(request_value.jobId)
     workdir.mkdir(parents=True)
     event = UsageEvent(
-        purpose="exam_generation", model="openai/gpt-5.6-luna",
+        purpose="exam_generation", model="openai/gpt-6-luna",
         costMicroUsd=42, durationMs=100, zdrEnforced=True, status="succeeded",
-        upstreamProvider="OpenAI",
+        upstreamProvider="Azure",
     )
     (workdir / f"usage-{event.eventId}.json").write_text(event.model_dump_json())
 

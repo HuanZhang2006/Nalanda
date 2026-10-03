@@ -6,7 +6,7 @@
 > - **何时更新**：拼写设置语义、模型/供应商、prompt/schema、输入留存、配额、attempt/revision 契约、发布状态或替代 ADR 变化时。
 > - **状态**：Accepted；2026-07-28。0019–0020 与应用已完成受保护生产发布。
 
-> **2026-08-23 补充：**服务端权威、确定性完全匹配、幂等与隐私边界继续有效；首个 Gemma 模型选择已由 [ADR-0015](0015-ox-alpha-translation-and-native-image-pipeline.md) 替换为固定 Ox Alpha/Stealth。历史决策原文保留。
+> **2026-08-23 / 2026-10-03 补充：**服务端权威、确定性完全匹配、幂等与隐私边界继续有效；首个 Gemma 模型选择先由 [ADR-0015](0015-ox-alpha-translation-and-native-image-pipeline.md) 替换为 Ox Alpha，再由 [ADR-0016](0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md) 替换为免费 `nvidia/nemotron-3-super-120b-a12b:free`。历史决策原文保留。
 
 ## 背景
 
