@@ -69,7 +69,7 @@
 
 ## 9. 后续 TODO（迁移方向）
 
-生产 0041–0043 在不扩大 React 收敛范围的前提下增加 Materials AI 与 React `NotesView`。0046–0051 候选在同一边界增加 DocumentIR/Luna、图谱、任务 Delete/Clear 和整卷批改；0054–0055 候选把能力矩阵扩为 DocumentIR/Luna/Ox Alpha 三条显式 pipeline。Materials/My Notes 始终显示英文并复用原 class/token/字体/焦点/响应式规则。历史 Demo 继续分组，账号变化会清理 consent、polling 和 IndexedDB 草稿。
+生产 0041–0043 在不扩大 React 收敛范围的前提下增加 Materials AI 与 React `NotesView`。0046–0051 候选在同一边界增加 DocumentIR/Luna、图谱、任务 Delete/Clear 和整卷批改；0054–0055 曾加入的 Ox Alpha 第三条 pipeline 已由 0056–0057 退役，能力矩阵回到 DocumentIR/Luna 两条显式 pipeline（Luna 为 GPT-6 Luna + Azure ZDR）。Materials/My Notes 始终显示英文并复用原 class/token/字体/焦点/响应式规则。历史 Demo 继续分组，账号变化会清理 consent、polling 和 IndexedDB 草稿。
 
 这不是全站 React 迁移：Home、Create、Note Market 等 legacy/mock 边界仍存在。不得因为 Notes 局部真实化就删除其它原型数据或改变原设计。
 

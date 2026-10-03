@@ -4,7 +4,7 @@
 > - **内容**：记录当前 `nalanda.online` 的仓库部署拓扑、CI 步骤、服务器约束和历史故障。
 > - **作用**：作为现有生产部署的实现复盘；可执行发布/回滚以 operations 手册为准。
 > - **何时更新**：workflow、服务器、域名/TLS、compose、健康检查、部署身份或回滚方式变化时。
-> - **状态基线**：2026-08-25。生产数据库已到 0055；不可变应用仍为此前稳定 release，Materials AI/Luna/Ox flags 保持关闭。PR #77 的 DocumentIR、220 页资源 canary 和 Japan East Azure 通过，但 Courses Ox Alpha 请求因不兼容的 strict JSON Schema 收到 HTTP 404，候选在切流前自动恢复上一 Web/API。当前修复候选改用 JSON Object + 本地严格 schema；数据库 apply、PR 合并和真实门部分通过均不能冒充应用上线。
+> - **状态基线**：2026-08-26。生产数据库已到 0055；不可变应用仍为此前稳定 release，Materials AI/Luna/Ox flags 保持关闭。PR #78 的 Ox Alpha JSON Object 修复已合并，但 main run `32931681321` 在真实 DocumentIR DOCX 门禁发现结构 repair 缺少来源正文、且结构后新语义缺陷没有修复阶段，候选在切流前自动恢复上一 Web/API。当前 Unreleased `exam-generate.v4` 修复这条链路；数据库 apply、PR 合并、本地测试和真实门部分通过均不能冒充应用上线。
 
 > 目标：把应用部署到自有服务器、用新域名 `nalanda.online` 访问、不影响服务器上已有的多个项目，并做到「push 到 main 自动部署」。
 
@@ -268,11 +268,18 @@ Markdown 变更仍不触发应用部署；独立 `docs` workflow 会运行文档
 - 同一 SHA 仅重跑一次失败 job。attempt 2 的 canary 再次通过，真实 DeepSeek/MiMo gate 完成 PDF/DOCX/PPTX/chart、注入拒绝、安全教材、评分和 9-node graph；Luna 因 OpenAI-only ZDR 不可用保持 false，Japan East Azure 返回 accuracy 98、pronunciation 98.8。随后 Gemma 免费模型在五次有界尝试后仍为 HTTP 429，候选第二次回退，Courses 与登录用户 smoke 因顺序门禁尚未执行。
 - 两次均未切 Web/API。独立主机与公网核对确认 Web 软链和 API/AI image 仍为 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1`，两个 Materials flag 为 false，Supabase/Redis/AI health ok，匿名 `/api/me` 401、首页 200，attempt 2 候选目录与 `web.next` 均已清除。因此 PR #75 已合并但未部署；不得第三次盲目重跑或弱化 Gemma 硬门。
 
-### 2026-08-23 · Ox Alpha 三流水线候选（尚未发布）
+### 2026-08-23 · Ox Alpha 三流水线候选（从未发布；2026-10-03 已退役）
 
 - 当前分支把 Courses 非字面翻译从 Gemma 改为固定 `stealth/ox-alpha`，并增加 0054–0055 与 `ox_alpha_native_file_v1`。Materials 能力矩阵成为 DocumentIR、Luna 原文件、Ox Alpha 原图三条显式 pipeline；Ox 固定 Stealth-only/no-fallback/mandatory reasoning，且 API/worker 只允许 PNG/JPEG/WebP。
 - 实时模型元数据没有 file modality，实时 ZDR catalog 也没有 Ox endpoint。因此受保护发布必须把“Ox 文本翻译真实 smoke”和“Materials Ox 原图 ZDR gate”分开：前者失败会阻断应用切流；后者当前应稳定保持子开关 false 并记录 `OPENROUTER_ZDR_UNAVAILABLE`，不能放宽 ZDR 或用文本 smoke 冒充原图可用。
 - 本段只记录候选设计和已核对的供应商能力，不是 CI、数据库 apply、应用切流或公网验证证据。完成后必须补充 PR/main run、0054–0055 只读 plan、恢复 artifact、protected apply、真实门禁、release/image/Web symlink 和独立公网结果。
+
+### 2026-10-03 · 0056–0057 退役 Ox Alpha、GPT-6 Luna（候选）
+
+- Ox Alpha 已从 OpenRouter 实时目录下线，生产只读查询确认没有任何 Ox job/Note/usage 行。0056–0057 退役该流水线；deploy workflow、env 安装脚本和 smoke 不再写入或检查 Ox，只在激活/回滚时剥离旧键。
+- Luna 改为 `openai/gpt-6-luna` 并锁定 Azure：实时 ZDR catalog 中 GPT-6 Luna 只有 `azure`、`azure/us`、`azure/eu` 三个 ZDR endpoint。provider gate 只有发现 Azure ZDR endpoint 才运行 Luna 原文件 fixture 并允许打开子开关。
+- Courses 翻译 smoke 改验证免费 `nvidia/nemotron-3-super-120b-a12b:free` 的 Nvidia-only JSON Object 判定。
+- 同一候选包含 `exam-generate.v4` 的 DocumentIR repair 修复。发布顺序：PR CI → merge → workflow_dispatch `apply_database_migrations=true`（恢复点、0056–0057 apply/verify、应用候选与全部真实门禁）。本段在受保护 run 完成前不是生产证据。
 
 ## 8. 运维速查
 
@@ -291,7 +298,7 @@ docker system df
 
 - 切 GHCR + 构建缓存，减小每次部署的镜像传输。
 - 把不可变 image/release 同步到异地 registry，并制定容量/保留清理；接 Sentry/日志。
-- 0046–0055 数据库均已前向应用。Gemma 已按独立产品决策在代码中替换为 Ox Alpha，但 PR #77 应用候选已因输出参数不兼容回滚，必须由新的修复 SHA 重新走完整不可变 release，不能据数据库或代码变更推断已上线。Stripe Webhook 仍属于后续能力。
+- 0046–0055 数据库均已前向应用。Gemma 已按独立产品决策在代码中替换为 Ox Alpha；PR #78 修复已合并，但应用候选又被独立的 DocumentIR 语义质量门拦截。必须由包含 `exam-generate.v4` 的新 SHA 重新走完整不可变 release，不能据数据库或代码变更推断已上线。Stripe Webhook 仍属于后续能力。
 
 ### 8.16 PR #77 / 0054–0055 与 Ox Alpha 输出契约回滚（2026-08-23）
 
@@ -301,3 +308,10 @@ docker system df
 - Courses Ox Alpha 翻译 smoke 以 `response_format.type=json_schema`、`require_parameters=true` 请求，但实时 endpoint 只声明通用 `response_format`，OpenRouter 返回 HTTP 404。保护脚本恢复上一 Web/API，并确认公网 root/health 为 200、Supabase/Redis ok、匿名 `/api/me` 为 401；候选没有切流。
 - 修复候选使用 `response_format.type=json_object`，仍固定 Stealth-only/no fallback/deny collection/required parameters，并由 API 与发布 smoke 在本地严格验证唯一字段、类型和语义 case。非 2xx 日志只允许状态、结构化 code 和 request ID。
 - 将本地 Supabase RLS 门禁扩展为定期托管 staging E2E，并覆盖生产同版本配置漂移。
+
+### 8.17 PR #78 与 DocumentIR DOCX 语义门回滚（2026-08-26）
+
+- PR #78 以 `1281510c94b4da5a765211df8467f9a26be393f0` 合并；main run [`32931681321`](https://github.com/1590703336/Nalanda/actions/runs/32931681321) 的 quality、0007→0055 升级、空库/lint、双用户 RLS/Storage、fake Chromium、Web/API/AI 镜像与 220 页 canary均通过。本次没有新 migration，数据库步骤正确跳过。
+- 固定 PDF 通过后，DOCX 初次试卷以 `QUESTION_TYPE_COUNT` 进入 repair。repair 后实际/期望均为 5 题、20 分，最终结构 code 为空，但最终语义门报告可作答性、答案正确性、干扰项、解析和来源 grounding 五类缺陷，因此候选在 Ox 翻译真实 smoke 前即停止。
+- 自动回滚恢复上一 Web/API，失败 incoming 已清除；独立公网检查为 root 200、API health 200（Supabase/Redis ok）、AI health 200、匿名 `/api/me` 401，旧前端 asset 仍在服务。
+- 根因是旧 repair payload 只有 `allowedBlockIds`，没有 source block 正文；结构 repair 补题时无法可靠依据材料，而且工作流在 repair 后首次发现语义缺陷时已无修复阶段。`exam-generate.v4` 改为携带完整来源与显式 repair gate；只有结构 repair 后新发现的语义问题可获得一次额外 repair，随后继续严格执行结构与语义门禁。新的真实发布证据产生前，保持功能关闭。

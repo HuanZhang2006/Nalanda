@@ -6,7 +6,7 @@
 
 ## 1. 权威来源与范围
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至候选 `20260823000055_verify_material_ai_ox_alpha_pipeline.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 仍以受保护发布证据为准，本文更新时已确认线上到 0053，0054–0055 尚不能写成已应用。
+本页按 `supabase/migrations/20260620000001_profiles.sql` 至候选 `20261003000057_verify_material_ai_luna_gpt6_retire_ox_alpha.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 仍以受保护发布证据为准，本文更新时已确认线上到 0055，0056–0057 尚不能写成已应用。
 
 - **生产结构**：生产 0043 包含 0039–0040 安全/限流与 0041–0043 Materials AI/Notes/考试实体、事务和验证，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
 - **未实现目标**：Courses AI 文件导入、Knowledge list、独立 Quiz、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。仓库 0046–0051 候选已增加 Materials 知识图谱/节点问答、长任务恢复、Luna 原文件流水线、任务清理生命周期和跨设备图谱布局，但在受保护发布完成前不得描述为生产事实。
@@ -643,7 +643,7 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 | `_ai_create_user_plan` | Auth user AFTER INSERT | 为新用户幂等建立 Free plan；普通角色无 EXECUTE |
 | `ai_get_quota_summary`, `ai_create/claim/update/complete/fail/cancel_generation_job` | Materials AI service-only RPC | 原子 reservation、lease、stage/event、结果/缓存/usage、consume/release；崩溃租约三次后失败并退款 |
 | `ai_mark_generation_job_accepted`, `ai_record_generation_usage_v2`, `ai_checkpoint_generation_job_v2`, `ai_checkpoint_exam_grading`, `ai_retry_generation_job`, `ai_expire_generation_checkpoints`（候选） | Materials AI service-only RPC | 202 接收后续租、按 UUID 增量记费用与真实 upstream/pipeline、保存 DocumentIR/Luna 各自的已验证 checkpoint、同一 job 期限内恢复，以及过期 checkpoint/残留清理；过期/重试耗尽必须持久终态并释放 reservation |
-| `ai_create_generation_job(...,pipeline)`, `ai_complete_material_generation_job_v2`, `ai_complete_knowledge_question_job_v2`, `ai_complete_exam_grading_v2`（候选） | Materials AI service-only RPC | 固定三流水线契约；Luna/Ox 成功提交前分别必须存在匹配用途的 OpenAI/Stealth upstream usage，避免路由违规结果进入 Notes/成绩 |
+| `ai_create_generation_job(...,pipeline)`, `ai_complete_material_generation_job_v2`, `ai_complete_knowledge_question_job_v2`, `ai_complete_exam_grading_v2`（候选） | Materials AI service-only RPC | 固定 DocumentIR/Luna 双流水线契约（0056 退役 Ox）；Luna 创建时固定 `openai/gpt-6-luna`，成功提交前必须存在匹配用途的 Azure upstream usage，避免路由违规结果进入 Notes/成绩 |
 | `ai_delete_generation_job`, `ai_clear_generation_history`, `ai_record_generation_cleanup_failure`, `ai_finalize_generation_job_cleanup`（候选） | Materials AI service-only RPC | 原子结算额度、进入 deleting、持久重试清理并在 worker 确认 purge 后硬删除；历史清除不触碰 active job 或已生成 Note，usage ledger 保留 |
 | `ai_get_knowledge_graph_layout`, `ai_save_knowledge_graph_layout`（候选） | Knowledge graph service-only RPC | owner、artifact SHA-256 与 revision 校验；冲突返回当前布局，内容版本变化时保留可合并节点坐标并重置 revision |
 | `ai_create_knowledge_question_job`（候选） | Knowledge Q&A service-only RPC | 校验 graph/note/node owner、原子预留 Free generation quota、建立幂等 job 与只读问答事实 |

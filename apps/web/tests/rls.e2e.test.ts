@@ -1409,10 +1409,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     await rpc("ai_claim_generation_job", { p_job_id: nativeJob.id, p_lease_token: lease, p_lease_seconds: 900 });
     await rpc("ai_mark_generation_job_accepted", { p_job_id: nativeJob.id, p_lease_token: lease });
     const providerEvent = (purpose: string) => ({
-      eventId: randomUUID(), purpose, model: "openai/gpt-5.6-luna",
+      eventId: randomUUID(), purpose, model: "openai/gpt-6-luna",
       requestId: `rls-${purpose}`, promptTokens: 10, completionTokens: 5, totalTokens: 15,
       costMicroUsd: 7, durationMs: 12, zdrEnforced: true, status: "succeeded",
-      upstreamProvider: "OpenAI", upstreamEndpoint: "openai-primary",
+      upstreamProvider: "Azure", upstreamEndpoint: "azure-primary",
     });
     const graph = {
       schemaVersion: "generated-knowledge-graph.v1", sourceMode: "native_file",
@@ -1445,7 +1445,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     });
     const noteId = await rpc<string>("ai_complete_material_generation_job_v2", completionArgs);
     expect((await admin.from("notes").select("pipeline,generation_model").eq("id", noteId).single()).data)
-      .toEqual({ pipeline: "luna_native_file_v1", generation_model: "openai/gpt-5.6-luna" });
+      .toEqual({ pipeline: "luna_native_file_v1", generation_model: "openai/gpt-6-luna" });
     expect((await rpc<any>("ai_get_quota_summary", { p_user_id: aId })).generation.consumed)
       .toBe(quotaBefore.generation.consumed + 1);
 
@@ -1522,13 +1522,13 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     await rpc("ai_finalize_generation_job_cleanup", { p_job_id: activeDuringClear.id });
   }, 60_000);
 
-  it("验证 Ox Alpha 原图流水线的服务端权限、模型映射和 Stealth 路由门禁", async () => {
+  it("拒绝已退役的 Ox Alpha 流水线，并要求 Luna 使用 Azure ZDR 上游", async () => {
     const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
       const result = await admin.rpc(name, args);
       expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
       return result.data as T;
     };
-    const course = await a.from("courses").insert({ code: "OX", name: "Ox Alpha RLS" })
+    const course = await a.from("courses").insert({ code: "LUNA", name: "Luna routing RLS" })
       .select("id").single();
     expect(course.error).toBeNull();
     const material = await a.from("materials").insert({
@@ -1536,38 +1536,46 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       storage_path: `${aId}/diagram.png`,
     }).select("id").single();
     expect(material.error).toBeNull();
-    const createArgs = {
+    const createArgs = (pipeline: string) => ({
       p_user_id: aId, p_material_id: material.data!.id, p_idempotency_key: randomUUID(),
       p_request_fingerprint: "a".repeat(64), p_kind: "knowledge_graph",
       p_settings: { language: "en", detail: "comprehensive", focus: "" },
-      p_consent_version: 1, p_pipeline: "ox_alpha_native_file_v1",
-    };
-    expect((await a.rpc("ai_create_generation_job", createArgs)).error).not.toBeNull();
-    const job = (await rpc<any[]>("ai_create_generation_job", createArgs))[0];
-    expect(job).toMatchObject({
-      pipeline: "ox_alpha_native_file_v1",
-      generation_model: "stealth/ox-alpha",
-      audit_model: "stealth/ox-alpha",
-      vision_model: "stealth/ox-alpha",
+      p_consent_version: 1, p_pipeline: pipeline,
     });
+    expect((await admin.rpc("ai_create_generation_job", createArgs("ox_alpha_native_file_v1"))).error?.message)
+      .toContain("INVALID_REQUEST");
+    expect((await admin.from("ai_provider_usage_events").insert({
+      user_id: aId, job_id: randomUUID(), event_id: randomUUID(), purpose: "safety_audit",
+      model: "stealth/ox-alpha", pipeline: "ox_alpha_native_file_v1", status: "succeeded",
+      duration_ms: 1,
+    })).error?.message).toContain("ai_provider_usage_events_pipeline_check");
 
+    const job = (await rpc<any[]>("ai_create_generation_job", createArgs("luna_native_file_v1")))[0];
+    expect(job).toMatchObject({
+      pipeline: "luna_native_file_v1",
+      generation_model: "openai/gpt-6-luna",
+      audit_model: "openai/gpt-6-luna",
+      vision_model: "openai/gpt-6-luna",
+    });
     const lease = randomUUID();
     await rpc("ai_claim_generation_job", {
       p_job_id: job.id, p_lease_token: lease, p_lease_seconds: 900,
     });
     await rpc("ai_mark_generation_job_accepted", { p_job_id: job.id, p_lease_token: lease });
-    const event = (purpose: string) => ({
-      eventId: randomUUID(), purpose, model: "stealth/ox-alpha",
-      requestId: `ox-${purpose}`, promptTokens: 10, completionTokens: 5, totalTokens: 15,
-      costMicroUsd: 0, durationMs: 12, zdrEnforced: true, status: "succeeded",
-      upstreamProvider: "Stealth", upstreamEndpoint: "stealth-primary",
+    const event = (purpose: string, upstreamProvider: string) => ({
+      eventId: randomUUID(), purpose, model: "openai/gpt-6-luna",
+      requestId: `luna-${purpose}-${upstreamProvider}`, promptTokens: 10, completionTokens: 5,
+      totalTokens: 15, costMicroUsd: 1, durationMs: 12, zdrEnforced: true, status: "succeeded",
+      upstreamProvider, upstreamEndpoint: `${upstreamProvider.toLowerCase()}-primary`,
     });
-    await rpc("ai_record_generation_usage_v2", {
-      p_job_id: job.id, p_lease_token: lease, p_event: event("safety_audit"),
-    });
+    for (const purpose of ["safety_audit", "knowledge_graph_generation"]) {
+      await rpc("ai_record_generation_usage_v2", {
+        p_job_id: job.id, p_lease_token: lease, p_event: event(purpose, "OpenAI"),
+      });
+    }
     const graph = {
       schemaVersion: "generated-knowledge-graph.v1", sourceMode: "native_file",
-      title: "Ox Alpha map", language: "en", overview: "Image-grounded overview.",
+      title: "Luna map", language: "en", overview: "Image-grounded overview.",
       learningObjectives: ["Understand the diagram."],
       nodes: [{
         id: "root", title: "Root", kind: "concept", level: 0, sourceOrder: 1,
@@ -1578,23 +1586,18 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       }],
       edges: [],
     };
-    const completion = {
+    // A first-party OpenAI endpoint has no Zero Data Retention guarantee for
+    // GPT-6 Luna, so its usage must block the artifact even though it is paid.
+    expect((await admin.rpc("ai_complete_material_generation_job_v2", {
       p_job_id: job.id, p_lease_token: lease, p_source_sha256: "b".repeat(64),
       p_parser_version: "none", p_audit_version: "native-file-audit.v2",
       p_prompt_version: "knowledge-graph-native-file.v2", p_source_mode: "native_file",
       p_canonical_document: null, p_block_count: 0, p_visual_region_count: 0,
       p_title: graph.title, p_schema_version: graph.schemaVersion, p_artifact: graph,
       p_primary_count: 1, p_secondary_count: 0,
-    };
-    expect((await admin.rpc("ai_complete_material_generation_job_v2", completion)).error?.message)
-      .toContain("AI_PROVIDER_ROUTING_VIOLATION");
-    await rpc("ai_record_generation_usage_v2", {
-      p_job_id: job.id, p_lease_token: lease, p_event: event("knowledge_graph_generation"),
-    });
-    const noteId = await rpc<string>("ai_complete_material_generation_job_v2", completion);
-    expect((await admin.from("notes").select("pipeline,generation_model").eq("id", noteId).single()).data)
-      .toEqual({ pipeline: "ox_alpha_native_file_v1", generation_model: "stealth/ox-alpha" });
-    await rpc("ai_delete_note", { p_user_id: aId, p_note_id: noteId });
+    })).error?.message).toContain("AI_PROVIDER_ROUTING_VIOLATION");
+    await rpc("ai_delete_generation_job", { p_user_id: aId, p_job_id: job.id });
+    await rpc("ai_finalize_generation_job_cleanup", { p_job_id: job.id });
   }, 60_000);
 
   it("验证学习课程隔离、候补池、跨日熟练、复习日程、徽章和 +20 指纹幂等", async () => {
@@ -2198,7 +2201,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_correct: false,
       p_feedback: "The meaning does not match.",
       p_provider: "openrouter",
-      p_model: "stealth/ox-alpha",
+      p_model: "nvidia/nemotron-3-super-120b-a12b:free",
       p_usage: { promptTokens: 10, completionTokens: 4, totalTokens: 14 },
     });
     expect(rejectedTranslation).toMatchObject({
@@ -2222,7 +2225,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       p_correct: false,
       p_feedback: "The meaning does not match.",
       p_provider: "openrouter",
-      p_model: "stealth/ox-alpha",
+      p_model: "nvidia/nemotron-3-super-120b-a12b:free",
       p_usage: {},
     })).toMatchObject({ attempt_id: wrongTranslationId, replayed: true });
     expect((await admin.from("learning_attempts").select("id")

@@ -18,7 +18,7 @@
 | NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter/队列/配额，以及翻译判分与 Fish Audio STT endpoint/body、中文提示、WAV/revision 校验、quota、timeout/非法响应和无正文持久化 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
 | Redis 集成 | 真实 Redis 7.4 验证 Lua 滑动窗口并发原子性、过期和 token lock；未显式开启时只跳过这两项，不得称为 Redis E2E | 本地/CI Redis | `RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 RATE_LIMIT_HMAC_SECRET=<32+ bytes> pnpm --filter @nalanda/api test` |
 | Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
-| OpenRouter 供应商 smoke | 文本脚本验证 Ox Alpha JSON Object 语义判分及本地严格 schema；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应；非 2xx 只输出状态、结构化 code 与 request ID | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
+| OpenRouter 供应商 smoke | 文本脚本验证免费 Nemotron 的 JSON Object 语义判分、Nvidia-only 路由及本地严格 schema；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应；非 2xx 只输出状态、结构化 code 与 request ID | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
 | FastAPI 自动测试 | ruff + pytest 覆盖 DocumentIR、Luna/Ox 原始字节、provider 锁、reasoning、注入、schema、checkpoint/cancel/purge 和 internal auth | 否；provider fake | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
 | 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest/FastAPI，对一次性 Supabase + 真 Redis + provider fake 运行 Courses，以及 Materials→三流水线能力矩阵→250 节点图→任务删除/清历史→整卷考试 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
 
@@ -303,9 +303,7 @@ FEATURE_LEARNING_AUDIO_PREWARM_ENABLED=true \
 FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
 FEATURE_MATERIAL_AI=true \
 FEATURE_MATERIAL_AI_LUNA=true \
-FEATURE_MATERIAL_AI_OX_ALPHA=true \
 MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png \
-MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS=png,jpg,jpeg,webp \
 AZURE_SPEECH_FAKE=true \
 OPENROUTER_FAKE=true \
 REDIS_URL=redis://127.0.0.1:6379/14 \
@@ -361,7 +359,7 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、OpenAI-only/no-fallback/ZDR、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。试卷回归另覆盖请求元数据、重复 section/question ID、错误 marks 合计的确定性归一化，确认不改题目内容；source refs 回归覆盖移除 allowlist 外引用、采用服务端 block locator、同一稳定 question ID 的 repair 前引用恢复、单 block 全无效引用选择唯一来源并实际运行语义复核，以及多 block/换题 ID 继续失败关闭。reviewer 的非空 issues 不会被矛盾的 `valid=true` 掩盖；最终失败诊断只能包含稳定结构 code、语义 category 与题数/总分计数，不能包含课件、题目、答案、prompt、reviewer 原文或 provider body。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
+当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、Azure-only/no-fallback/ZDR、OpenAI 上游视为路由违规、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。试卷回归另覆盖请求元数据、重复 section/question ID、错误 marks 合计的确定性归一化，确认不改题目内容；source refs 回归覆盖移除 allowlist 外引用、采用服务端 block locator、同一稳定 question ID 的 repair 前引用恢复、单 block 全无效引用选择唯一来源并实际运行语义复核，以及多 block/换题 ID 继续失败关闭。DocumentIR repair 回归还必须模拟“总题数正确但题型数量错误”：断言结构 repair 收到完整 `sourceBlocks` 与 `repairGate=structural`；若随后首次语义审查失败，只允许一次 `semantic_after_structural` repair，并在第二次审查通过后返回。持续语义失败必须在恰好两次 repair 后终止，不能循环或绕过门禁。reviewer 的非空 issues 不会被矛盾的 `valid=true` 掩盖；最终失败诊断只能包含稳定结构 code、语义 category 与题数/总分计数，不能包含课件、题目、答案、prompt、reviewer 原文或 provider body。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
 
 启动带开发配置的 `uvicorn` 后：
 
@@ -420,7 +418,7 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 python3 scripts/smoke-material-ai-provider.py
 ```
 
-`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。Luna 发布还必须在子开关关闭时先读取 OpenRouter 官方 ZDR endpoint catalog；catalog 没有 Luna + first-party OpenAI 时，门禁只能产生 `OPENROUTER_ZDR_UNAVAILABLE` 并保持子开关 false。只有 catalog 合规后，才继续用固定无个人数据 PDF/图片逐格式证明实际 provider=OpenAI、PDF native parser、原始 SHA-256、不转换、严格 schema、注入拒绝和取消无残留；不支持格式继续留在 allowlist 外。fake CI、旧 DeepSeek/MiMo gate、真实 Luna gate、登录用户 smoke 与公网 health 是互不替代的证据。
+`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。Luna 发布还必须在子开关关闭时先读取 OpenRouter 官方 ZDR endpoint catalog；catalog 没有 `openai/gpt-6-luna` + Azure 时，门禁只能产生 `OPENROUTER_ZDR_UNAVAILABLE` 并保持子开关 false。只有 catalog 合规后，才继续用固定无个人数据 PDF/图片逐格式证明实际 provider=Azure、PDF native parser、原始 SHA-256、不转换、严格 schema、注入拒绝和取消无残留；不支持格式继续留在 allowlist 外。fake CI、旧 DeepSeek/MiMo gate、真实 Luna gate、登录用户 smoke 与公网 health 是互不替代的证据。
 
 独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
 
@@ -462,7 +460,7 @@ python3 scripts/smoke-material-ai-provider.py
 | OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
 | 其它 AI 产物（未来） | 新 schema、parser/prompt/eval + API/RLS/jsdom/Playwright + 真实 provider gate；不得复用试卷 gate 推断质量 |
 | Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；每次关键发布另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
-| Materials AI 图谱/生命周期/Luna（0046–0051 候选） | ELK/React Flow unit + Materials/My Notes jsdom + Python 原始字节/provider lock/cancel/checkpoint + API delete/clear/202/layout/整卷批改 + 真实 Redis + 0007→latest/空库/lint/RLS + fake Chromium 250 节点/移动端/任务清理；发布前另跑真实 DeepSeek/MiMo 和 Luna OpenAI-only PDF/图片/逐格式/注入/取消/usage gate、2G canary与登录用户 smoke |
+| Materials AI 图谱/生命周期/Luna（0046–0051、0056–0057 候选） | ELK/React Flow unit + Materials/My Notes jsdom + Python 原始字节/provider lock/cancel/checkpoint + API delete/clear/202/layout/整卷批改 + 真实 Redis + 0007→latest/空库/lint/RLS + fake Chromium 250 节点/移动端/任务清理；发布前另跑真实 DeepSeek/MiMo 和 Luna Azure-only PDF/图片/逐格式/注入/取消/usage gate、2G canary与登录用户 smoke |
 | nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
 | points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
 
@@ -499,6 +497,8 @@ python3 scripts/smoke-material-ai-provider.py
 同日 PR #74 run `32585020750` 和 main run `32585659792` 通过 docs、quality、0007→0053、空库/lint、双用户 RLS/Storage 与 fake Chromium。生产 attempt 1 的真实 Materials suite、canary 和 Azure 均通过，Gemma 翻译在五次有界重试后仍 429并回退；attempt 2 又在只有一个 DocumentIR block 的 PDF 上以 initial/final `SOURCE_REFERENCE` 失败并回退。唯一 block 修复的本地门禁为 ruff 和 78 个 Python 测试；下一真实 run 必须同时证明单 block 引用通过结构+语义门、多个 block 仍不猜测，以及 Gemma、后续 Courses、登录 smoke 和切流全部完成。
 
 PR #75 run `32587211309` 通过 docs、quality（3m52s）和 0007→0053/空库/lint/RLS/Storage/fake Chromium（8m12s），main run `32587844503` 再次通过 quality（4m6s）和本地数据库/浏览器（7m26s），且没有 migration 变更。production attempt 1 的固定 PDF 在 repair 后仍多出一道题，以 `QUESTION_TYPE_COUNT` 失败关闭；唯一一次失败 job 重跑的 attempt 2 通过 220 页 canary、全部真实 Materials 样本与语义门、Japan East Azure，但 Gemma 免费模型连续五次 429后回退。该证据证明唯一 block 引用回归已越过真实门，同时也证明真实供应商硬门没有被 fake 测试、结构规范化或重跑绕过；Courses/登录 smoke、切流和公网新版本验证仍未发生。
+
+2026-08-26 的 PR #78 通过完整 PR checks 后以 `1281510c94b4da5a765211df8467f9a26be393f0` 合并。main run [`32931681321`](https://github.com/1590703336/Nalanda/actions/runs/32931681321) 的 quality（4m19s）与 0007→0055/空库/lint/RLS/Storage/fake Chromium（7m43s）通过且无新 migration；220 页 canary通过。真实 DocumentIR DOCX 的初始结构 code 为 `QUESTION_TYPE_COUNT`，旧 repair 后题数 5、总分 20、最终结构 code 为空，但最终语义类别同时包含可作答性、答案、干扰项、解析和来源 grounding，候选因此自动回滚，Ox 翻译真实 smoke 尚未执行。检查确认旧 repair 请求只含 allowlisted block ID 而无正文，且结构 repair 后新出现的语义问题没有修复阶段。`exam-generate.v4` 回归覆盖完整来源、最小结构修改、一次有界后续语义 repair 和持续失败关闭；真实 DOCX/PPTX、后续供应商门禁与生产切流仍须由新 main run 独立证明。
 
 随后 PR #69 完整 CI 与 main run `31838779292` 的本地数据库/RLS/fake Chromium、真实 provider fixture、220 页 canary和 Azure/Courses gate通过，但登录生产 smoke 的知识图产生 3 nodes/2 valid edges 且没有 level-0 root。数据库完成 RPC 以 `22023` 拒绝，job 停在 `saving`，15 分钟 smoke 超时后候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 自动回退且未切 Web。回归现在覆盖：DocumentIR/native graph level 机械归零、root/sourceMode 与 DB contract 对齐、checkpoint 恢复后仍归一化、永久 result/routing 拒绝进入终态，以及 lost lease 返回 409；新真实 run 前仍不得报告应用上线。
 

@@ -39,7 +39,7 @@ Nalanda 遵循目的限定、最小收集、最小权限、默认私密、可解
 | Materials AI 解析/产物（生产 0041） | 私有 `ai_material_parse_cache`、`notes/note_materials/note_artifacts` | 同文件复用 DocumentIR；保存用户请求的完整试卷/答案/来源 | cache 随 material CASCADE；删除来源可保留到 Unfiled 或连结果删除；用户可删除 Notes |
 | 在线考试（生产 0041） | `exam_attempts/answers/operations`、浏览器 IndexedDB draft | deadline、草稿、成绩、AI feedback 和幂等重放 | note/Auth 删除 CASCADE；登出不让草稿跨账号提交；完整 DSAR/一键删除仍未实现 |
 | AI provider 计量（生产 0041） | `ai_provider_usage_events` | model/token/micro-USD/latency/request ID/ZDR/status | 不含 prompt/正文/答案/raw response；删除 Note/答卷后保留不可变 subject UUID 与成本事实，防止通过删除内容绕过预算；随 Auth 用户删除 CASCADE |
-| AI 恢复、知识图谱与原文件 pipeline（0046–0051、0054–0055 候选） | DB checkpoint/节点问答/跨设备布局，worker 0700 checkpoint/usage spool，graph artifact；Luna/Ox 请求内原文件 | 恢复已验证阶段、记录私有图谱/问答/布局；Luna 把允许的完整 PDF/图片 inline 发送 OpenRouter/OpenAI，Ox 只把允许的原始图片发送 OpenRouter/Stealth | DB checkpoint 有 owner/expiry；local 副本不备份且终态/Delete/TTL 清除；layout/Q&A 随 note/user CASCADE；不使用 Files API；usage 保留计量/真实 upstream但不保存 prompt/正文/reasoning/raw response |
+| AI 恢复、知识图谱与原文件 pipeline（0046–0051、0056–0057 候选） | DB checkpoint/节点问答/跨设备布局，worker 0700 checkpoint/usage spool，graph artifact；Luna 请求内原文件 | 恢复已验证阶段、记录私有图谱/问答/布局；Luna 把允许的完整 PDF/图片 inline 发送 OpenRouter/Azure 托管的 GPT-6 Luna（ZDR） | DB checkpoint 有 owner/expiry；local 副本不备份且终态/Delete/TTL 清除；layout/Q&A 随 note/user CASCADE；不使用 Files API；usage 保留计量/真实 upstream但不保存 prompt/正文/reasoning/raw response |
 | 支付数据 | 当前无 Stripe/订单表 | 未实现 | 未来仅保存必要 Stripe ID/状态，不保存卡号/CVC |
 | 限流/滥用审计（生产 0039） | 私有 Redis、`api_abuse_events` | 短时滑动窗口、分布式扫描锁、路由组/规则/桶级聚合 | IP/规范化邮箱只保存独立 secret 派生 HMAC；不保存原 IP、邮箱、正文或课程数据；DB 聚合默认 30 天，Redis key/AOF 是可重建运行副本 |
 | 运维数据 | 主机/容器/GitHub/Supabase 日志 | 部署和排障 | 普通日志不得记录原 IP/邮箱/正文/secret；当前仍缺统一导出和删除编排 |
@@ -136,7 +136,7 @@ Supabase anon key 是公开客户端配置，但 service-role/JWT secret 属 Res
 
 ## 8. 第三方与跨境处理
 
-当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。DocumentIR 路径把完整规范化 DocumentIR 发给 DeepSeek、仅失败范围图像发给 MiMo。Luna 路径若未来启用，会把用户选择的完整 PDF/图片 inline 发给 OpenRouter 并强制实际 OpenAI upstream；Ox Alpha 路径只允许原始图片并强制实际 Stealth upstream；都不使用 Files API，也不会因“省去解析”而减少第三方数据范围。2026-08-23 实时 catalog 尚未提供所需 Luna/OpenAI 或 Ox/Stealth ZDR endpoint，因此两个原文件子开关都应保持关闭。所有路径都不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。ZDR/deny collection/strict routing 是技术控制，不替代留存、训练、子处理者、跨境、删除与用户告知的正式审查。
+当前运行依赖 GitHub、部署主机、Supabase、Azure Speech、OpenRouter 和同机私有 Redis；Speech 已在 `japaneast` 启用，用户 WAV 只在请求内存中转发且响应后丢弃。DocumentIR 路径把完整规范化 DocumentIR 发给 DeepSeek、仅失败范围图像发给 MiMo。Luna 路径启用后会把用户选择的完整 PDF/图片 inline 发给 OpenRouter 并强制实际 Azure upstream（GPT-6 Luna 唯一 ZDR endpoint）；不使用 Files API，也不会因“省去解析”而减少第三方数据范围。实时 catalog 不提供 Azure ZDR endpoint 时 Luna 子开关保持关闭。Courses 翻译判定把英文词、参考译文和学习者答案发送给免费 Nemotron（Nvidia），该免费 endpoint 不承诺 deny collection。所有路径都不发送邮箱、学校、service-role、Redis key、credits 或用户可选模型。ZDR/deny collection/strict routing 是技术控制，不替代留存、训练、子处理者、跨境、删除与用户告知的正式审查。
 
 AI 请求默认只传完成任务所需的片段和随机内部 ID，不发送 service-role、支付信息或不必要 profile。支付通过 Stripe 托管页面/令牌化；Nalanda 不收集或存储完整卡号/CVC。
 

@@ -221,18 +221,25 @@ Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分�
 2. 恢复点成功上传并完成解密/SHA 校验后才 apply。应用后核对旧 0041–0043 同步 worker RPC 仍存在，新应用可用 202 回调协议，上一不可变应用 release 仍可忽略新增表运行。
 3. 先保持 `FEATURE_MATERIAL_AI=false` 启动候选 API/AI；验证 explicit Undici transport timeout、内部 callback token、数据库 checkpoint、worker 本地 checkpoint/usage spool、TTL sweep 和 terminal cleanup。不得通过把所有错误统一延长到 20 分钟来掩盖不可达、响应头 timeout 或无 callback。
 4. 人工注入 API callback 断线：provider 已返回后终止 callback，确认同一 job/新 lease 从 `artifact_ready` 或 `answer_ready` 恢复、不再次调用 provider、event UUID 只写一条费用记录，完成后 DB/local checkpoint 均清除。再验证超过 TTL 的 Resume 返回稳定终态、释放 reservation 且不复活旧产物。
-5. 真实 DeepSeek/MiMo gate 分开验证旧流水线试卷与知识图谱；Luna 子开关保持 false，先读取 OpenRouter 官方 ZDR catalog。若没有 Luna + first-party OpenAI endpoint，则记录 `OPENROUTER_ZDR_UNAVAILABLE`、继续保持 Luna false，并只允许已经通过的 DocumentIR 发布；不得关闭 ZDR、改用 Azure 或静默降级。只有 catalog 合规后，才逐格式用无个人数据原文件证明实际 upstream 为 OpenAI、PDF `file-parser.native`、inline 原始 SHA-256 未转换、严格 schema、注入拒绝、取消后无残留。未过门禁格式不得加入 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS`。
+5. 真实 DeepSeek/MiMo gate 分开验证旧流水线试卷与知识图谱；Luna 子开关保持 false，先读取 OpenRouter 官方 ZDR catalog。若没有 `openai/gpt-6-luna` + Azure endpoint，则记录 `OPENROUTER_ZDR_UNAVAILABLE`、继续保持 Luna false，并只允许已经通过的 DocumentIR 发布；不得关闭 ZDR、改用非 ZDR provider 或静默降级。只有 catalog 合规后，才逐格式用无个人数据原文件证明实际 upstream 为 Azure、PDF `file-parser.native`、inline 原始 SHA-256 未转换、严格 schema、注入拒绝、取消后无残留。未过门禁格式不得加入 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS`。（GPT-5.6 Luna/OpenAI-only 时期的规则见 ADR-0014，已由 ADR-0016 修订。）
 6. 验证任务生命周期：queued 删除释放 reservation；worker accepted 后 Delete/旧 Cancel 都消费一次；Clear 只删除 terminal；deleting 在 task、HTTPX/Office、checkpoint、spool 与 0700 目录全部 purge 前持续可见。usage ledger 在硬删 job 后仍存在且路由违规也计成本。
 7. 最后先开启 `FEATURE_MATERIAL_AI`，再仅对私有 gate 用户开启/验证 Luna，完成双 pipeline 的 exam/knowledge graph、250 节点桌面与移动图、布局保存、node Q&A、整卷交卷后统一批改、delete/clear 和同 job Resume。全部通过后才把 `FEATURE_MATERIAL_AI_LUNA=true` 设为默认，并独立核对公网 Web、health、401、release/image/Web symlink。
 8. 数据库仍只 forward-fix。应用异常先关闭 `FEATURE_MATERIAL_AI_LUNA`，必要时再关闭总开关并恢复上一不可变 release；0046–0051 表保留。不得 drop checkpoint/layout/usage rows，也不得手工修改额度或任务状态来“回滚”。
 
-#### 0054–0055 Ox Alpha 追加发布
+#### 0054–0055 Ox Alpha 追加发布（历史；已由 0056–0057 退役）
 
 1. 只读 plan 必须精确显示 0054–0055；任何其他待应用 migration 都是 stop rule。恢复点加密、上传、解密与 SHA 验证完成后才允许 apply。
 2. 空库和 0007→latest 要证明三张 pipeline constraint 接受 `ox_alpha_native_file_v1`，创建/完成/checkpoint RPC 固定 `stealth/ox-alpha` 与 Stealth usage，且 public/anon/authenticated 都不能执行新签名。
 3. 候选启动时 `FEATURE_MATERIAL_AI_OX_ALPHA=false`。实时 ZDR catalog 没有 Ox/Stealth endpoint 时记录 `OPENROUTER_ZDR_UNAVAILABLE` 并保持关闭；不得关闭 ZDR、允许 fallback 或把 Courses 文本 smoke 当 Materials 原图证据。
 4. 若未来 catalog 合规，只用无个人数据 PNG/JPEG/WebP 逐格式验证原始 SHA-256、Stealth upstream、mandatory reasoning、strict schema、注入拒绝、checkpoint/cancel/purge。PDF/Office 必须保持不可选。
 5. 独立 Ox 翻译 smoke 必须证明固定 `stealth/ox-alpha` 的双样本判定、Stealth-only 路由和结构化输出。该硬门失败时不得切流；应用回滚不会撤销已经应用的 0054–0055，数据库只 forward-fix。
+
+#### 0056–0057 退役 Ox Alpha 与 GPT-6 Luna 追加发布
+
+1. 只读 plan 必须精确显示 0056–0057；任何其他待应用 migration 都是 stop rule。恢复点加密、上传、解密与 SHA 验证完成后才允许 apply。
+2. 0056 收紧三张 pipeline constraint；apply 前已确认生产没有任何 `ox_alpha_native_file_v1` job/Note/usage 行（2026-10-03 只读查询：3 个 DocumentIR job、2 个 DocumentIR Note、11 条 DocumentIR usage）。若 plan 前出现 Ox 行，必须停止并先 forward-fix 数据。
+3. 空库和 0007→latest 要证明 constraint 拒绝 Ox，`ai_create_generation_job` 为 Luna 写入 `openai/gpt-6-luna`，三个完成 RPC 要求 Azure usage 并拒绝 OpenAI/Stealth，且 public/anon/authenticated 都不能执行。0057 失败即整次 apply 失败。
+4. RPC 签名不变，上一不可变应用继续兼容；应用异常只关闭 `FEATURE_MATERIAL_AI_LUNA`/总开关并恢复上一 release，数据库只 forward-fix。
 
 ### 8.1 2026-07-21 安全与积分发布记录
 

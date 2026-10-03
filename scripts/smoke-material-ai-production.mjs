@@ -5,7 +5,6 @@ const supabaseUrl = String(process.env.SUPABASE_URL || "").replace(/\/$/, "");
 const serviceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const apiOrigin = String(process.env.SMOKE_API_ORIGIN || "http://127.0.0.1:8411/api").replace(/\/$/, "");
 const expectLunaEnabled = String(process.env.MATERIAL_AI_EXPECT_LUNA_ENABLED || "true") === "true";
-const expectOxAlphaEnabled = String(process.env.MATERIAL_AI_EXPECT_OX_ALPHA_ENABLED || "false") === "true";
 const users = [];
 const storagePaths = [];
 
@@ -17,10 +16,10 @@ assert.equal(
   String(expectLunaEnabled),
   "Luna native-file processing did not match the protected provider gate",
 );
-assert.equal(
+assert.notEqual(
   process.env.FEATURE_MATERIAL_AI_OX_ALPHA,
-  String(expectOxAlphaEnabled),
-  "Ox Alpha native-image processing did not match the protected provider gate",
+  "true",
+  "the retired Ox Alpha pipeline must stay disabled in production",
 );
 assert.notEqual(process.env.MATERIAL_AI_FAKE_PROVIDER, "true", "production smoke refuses the fake provider");
 
@@ -132,30 +131,6 @@ async function createNativeSource(user, course) {
   return material[0];
 }
 
-async function createOxSource(user, course) {
-  // A deterministic private 1x1 PNG is sufficient for the capability and
-  // authenticated routing boundary. The worker's real chart fixture validates
-  // image semantics and artifact quality before this public smoke runs.
-  const content = Buffer.from(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl2nWQAAAAASUVORK5CYII=",
-    "base64",
-  );
-  const storagePath = `${user.id}/${randomUUID()}.png`;
-  storagePaths.push(storagePath);
-  await request("private Ox Alpha PNG upload", `${supabaseUrl}/storage/v1/object/materials/${storagePath}`, {
-    method: "POST", headers: { ...authHeaders(user.token), "Content-Type": "image/png", "x-upsert": "false" },
-    body: content,
-  });
-  const material = await request("Ox Alpha material record creation", `${supabaseUrl}/rest/v1/materials`, {
-    method: "POST", headers: { ...authHeaders(user.token), Prefer: "return=representation" },
-    body: JSON.stringify({
-      course_id: course.id, name: "release-smoke.png", type: "image/png",
-      size_bytes: content.length, storage_path: storagePath,
-    }),
-  });
-  return material[0];
-}
-
 async function waitForJob(user, jobId) {
   const deadline = Date.now() + 15 * 60_000;
   while (Date.now() < deadline) {
@@ -204,7 +179,7 @@ async function waitForKnowledgeQuestion(user, questionId) {
 }
 
 async function providerFacts(
-  jobIds, attemptId, lunaJobIds, lunaAttempt, oxAlphaJobIds, oxAlphaAttempt,
+  jobIds, attemptId, lunaJobIds, lunaAttempt,
 ) {
   const generationQuery = new URLSearchParams({
     select: "job_id,attempt_id,purpose,model,provider_request_id,total_tokens,cost_micro_usd,zdr_enforced,status,pipeline,upstream_provider,upstream_endpoint",
@@ -239,19 +214,10 @@ async function providerFacts(
   const lunaRows = rows.filter((row) => lunaJobIds.includes(row.job_id) || (lunaAttempt && row.attempt_id === attemptId));
   assert.equal(lunaRows.length > 0, expectLunaEnabled);
   assert.ok(lunaRows.every((row) => row.pipeline === "luna_native_file_v1"));
-  assert.ok(lunaRows.every((row) => row.model === "openai/gpt-5.6-luna"));
+  assert.ok(lunaRows.every((row) => row.model === "openai/gpt-6-luna"));
   const succeededLunaRows = lunaRows.filter((row) => row.status === "succeeded");
-  assert.ok(succeededLunaRows.every((row) => row.upstream_provider === "OpenAI"));
+  assert.ok(succeededLunaRows.every((row) => row.upstream_provider === "Azure"));
   assert.ok(succeededLunaRows.every((row) => typeof row.upstream_endpoint === "string" && row.upstream_endpoint));
-  const oxAlphaRows = rows.filter(
-    (row) => oxAlphaJobIds.includes(row.job_id) || (oxAlphaAttempt && row.attempt_id === attemptId),
-  );
-  assert.equal(oxAlphaRows.length > 0, oxAlphaJobIds.length > 0 || oxAlphaAttempt);
-  assert.ok(oxAlphaRows.every((row) => row.pipeline === "ox_alpha_native_file_v1"));
-  assert.ok(oxAlphaRows.every((row) => row.model === "stealth/ox-alpha"));
-  const succeededOxAlphaRows = oxAlphaRows.filter((row) => row.status === "succeeded");
-  assert.ok(succeededOxAlphaRows.every((row) => row.upstream_provider === "Stealth"));
-  assert.ok(succeededOxAlphaRows.every((row) => typeof row.upstream_endpoint === "string" && row.upstream_endpoint));
   return rows.length;
 }
 
@@ -279,7 +245,6 @@ try {
   const user = await createUser();
   const source = await createSource(user);
   const nativeMaterial = await createNativeSource(user, source.course);
-  const oxMaterial = await createOxSource(user, source.course);
   const capabilities = await request("native-file capabilities", `${apiOrigin}/materials/${nativeMaterial.id}/ai-capabilities`, {
     headers: authHeaders(user.token),
   });
@@ -288,24 +253,9 @@ try {
   assert.equal(lunaCapability.available, expectLunaEnabled);
   assert.equal(lunaCapability.default, expectLunaEnabled);
   if (!expectLunaEnabled) assert.equal(lunaCapability.reasonCode, "OPENROUTER_ZDR_UNAVAILABLE");
-  const oxCapabilities = await request("Ox Alpha capabilities", `${apiOrigin}/materials/${oxMaterial.id}/ai-capabilities`, {
-    headers: authHeaders(user.token),
-  });
-  const oxCapability = oxCapabilities.capabilities.find(
-    (entry) => entry.pipeline === "ox_alpha_native_file_v1",
-  );
-  assert.ok(oxCapability);
-  assert.equal(oxCapability.available, expectOxAlphaEnabled);
-  assert.equal(oxCapability.default, !expectLunaEnabled && expectOxAlphaEnabled);
-  if (!expectOxAlphaEnabled) {
-    assert.equal(oxCapability.reasonCode, "OPENROUTER_ZDR_UNAVAILABLE");
-  }
-  const examMaterial = expectLunaEnabled
-    ? nativeMaterial
-    : expectOxAlphaEnabled ? oxMaterial : source.material;
-  const examPipeline = expectLunaEnabled
-    ? "luna_native_file_v1"
-    : expectOxAlphaEnabled ? "ox_alpha_native_file_v1" : "document_ir_v1";
+  assert.ok(!capabilities.capabilities.some((entry) => entry.pipeline === "ox_alpha_native_file_v1"));
+  const examMaterial = expectLunaEnabled ? nativeMaterial : source.material;
+  const examPipeline = expectLunaEnabled ? "luna_native_file_v1" : "document_ir_v1";
   const created = await request("public exam generation creation", `${apiOrigin}/materials/${examMaterial.id}/ai-jobs`, {
     method: "POST", headers: authHeaders(user.token),
     body: JSON.stringify({
@@ -321,8 +271,8 @@ try {
   assert.ok(finished.noteId);
   assert.equal(finished.pipeline, examPipeline);
   assert.equal(finished.model, expectLunaEnabled
-    ? "openai/gpt-5.6-luna"
-    : expectOxAlphaEnabled ? "stealth/ox-alpha" : "deepseek/deepseek-v4-flash-0731");
+    ? "openai/gpt-6-luna"
+    : "deepseek/deepseek-v4-flash-0731");
   const note = await request("generated note", `${apiOrigin}/notes/${finished.noteId}`, { headers: authHeaders(user.token) });
   assert.equal(note.courseId, source.course.id);
   assert.equal(note.pipeline, examPipeline);
@@ -404,7 +354,7 @@ try {
       headers: authHeaders(user.token),
     });
     assert.equal(nativeGraphNote.pipeline, "luna_native_file_v1");
-    assert.equal(nativeGraphNote.model, "openai/gpt-5.6-luna");
+    assert.equal(nativeGraphNote.model, "openai/gpt-6-luna");
     assert.ok(nativeGraphNote.graph.nodes.length > 0);
     const nativeNode = nativeGraphNote.graph.nodes[0];
     nativeQuestionCreated = await request("native grounded question creation", `${apiOrigin}/notes/${nativeGraphNote.id}/knowledge-nodes/${nativeNode.id}/questions`, {
@@ -422,7 +372,6 @@ try {
     { plan: "free", generation: expectedGenerationUsage, grading: 1 });
   const trackedJobs = [created.id, graphCreated.id, questionCreated.id];
   const lunaJobIds = expectLunaEnabled ? [created.id] : [];
-  const oxAlphaJobIds = examPipeline === "ox_alpha_native_file_v1" ? [created.id] : [];
   if (nativeGraphCreated && nativeQuestionCreated) {
     trackedJobs.push(nativeGraphCreated.id, nativeQuestionCreated.id);
     lunaJobIds.push(nativeGraphCreated.id, nativeQuestionCreated.id);
@@ -432,8 +381,6 @@ try {
     attempt.id,
     lunaJobIds,
     examPipeline === "luna_native_file_v1",
-    oxAlphaJobIds,
-    examPipeline === "ox_alpha_native_file_v1",
   );
   const cleared = await request("terminal AI history cleanup", `${apiOrigin}/ai-jobs/clear-history`, {
     method: "POST", headers: authHeaders(user.token), body: "{}",
@@ -463,7 +410,6 @@ try {
     grading: "completed",
     quota: { generation: expectedGenerationUsage, grading: 1 },
     luna: { enabled: expectLunaEnabled, reasonCode: expectLunaEnabled ? null : "OPENROUTER_ZDR_UNAVAILABLE" },
-    oxAlpha: { enabled: expectOxAlphaEnabled, reasonCode: expectOxAlphaEnabled ? null : "OPENROUTER_ZDR_UNAVAILABLE" },
     knowledgeGraph: { renderedNodes: graphNote.graph.nodes.length, nativeNodes: nativeGraphNote?.graph.nodes.length || 0, groundedQuestion: "succeeded" },
     usageEvents,
     sourceAndResultsDeleted: true,

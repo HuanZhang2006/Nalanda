@@ -18,7 +18,6 @@ const ANSWER_DETAILS = new Set(["concise", "detailed"]);
 const PIPELINES = new Set<AiPipeline>([
   "document_ir_v1",
   "luna_native_file_v1",
-  "ox_alpha_native_file_v1",
 ]);
 const COUNT_KEYS = ["singleChoice", "multipleChoice", "trueFalse", "fillBlank", "shortAnswer", "essay"] as const;
 
