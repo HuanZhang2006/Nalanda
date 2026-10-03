@@ -85,9 +85,23 @@ def safe_worker_failure(response: httpx.Response) -> str:
         if key in diagnostics
     }
     diagnostic_summary = json.dumps(safe_diagnostics, separators=(",", ":"), sort_keys=True)
+    # Routing metadata only: which endpoint failed, with what code, after how
+    # many completion tokens and milliseconds. Never prompt or response text.
+    attempts = [
+        "{}@{}/{}:{}tok:{}ms".format(
+            item.get("errorCode") or item.get("status"),
+            str(item.get("upstreamProvider") or "unknown")[:40],
+            str(item.get("upstreamEndpoint") or "unknown")[:60],
+            item.get("completionTokens") if isinstance(item.get("completionTokens"), int) else "?",
+            item.get("durationMs") if isinstance(item.get("durationMs"), int) else "?",
+        )
+        for item in usage
+        if isinstance(item, dict)
+    ][:12]
     return (
         f"HTTP {response.status_code}; code={code}; "
         f"providerErrorCodes={provider_summary}; providerPurposes={purpose_summary}; "
+        f"providerAttempts={','.join(attempts) or 'none'}; "
         f"validationDiagnostics={diagnostic_summary}"
     )
 
