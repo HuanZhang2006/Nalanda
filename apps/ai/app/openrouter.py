@@ -21,6 +21,10 @@ VISION_MODEL = "xiaomi/mimo-v2.5"
 LUNA_MODEL = "openai/gpt-6-luna"
 LUNA_PROVIDER = "Azure"
 ROUTED_QUANTIZATIONS = ("fp8", "fp16", "bf16", "fp32", "unknown")
+# GPT-6 Luna endpoints accept neither sampling temperature nor, on Azure,
+# `max_tokens`. With require_parameters=true either one makes OpenRouter find
+# no endpoint (HTTP 404), so these models use the supported request shape.
+COMPLETION_TOKEN_MODELS = frozenset({LUNA_MODEL})
 
 
 def fake_enabled() -> bool:
@@ -103,8 +107,6 @@ class OpenRouterClient:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user_content},
             ],
-            "temperature": 0,
-            "max_tokens": max_tokens,
             # This pipeline needs the strict schema result, not a hidden or
             # returned chain of thought. The pinned models expose optional
             # reasoning and otherwise default it on, which can consume the
@@ -127,6 +129,11 @@ class OpenRouterClient:
                 "allow_fallbacks": True,
             },
         }
+        if model in COMPLETION_TOKEN_MODELS:
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["temperature"] = 0
+            payload["max_tokens"] = max_tokens
         if provider_only:
             payload["provider"]["only"] = provider_only
             payload["provider"]["allow_fallbacks"] = allow_fallbacks
