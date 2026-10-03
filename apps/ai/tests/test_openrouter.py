@@ -106,6 +106,9 @@ async def test_luna_locks_azure_disables_fallback_and_accounts_routing_violation
     body = json.loads(route.calls.last.request.content)
     assert body["model"] == LUNA_MODEL
     assert body["provider"]["only"] == ["azure"]
+    assert body["max_completion_tokens"] == 100
+    assert "max_tokens" not in body and "temperature" not in body
+    assert "quantizations" not in body["provider"]
     assert body["provider"]["allow_fallbacks"] is False
     assert body["provider"]["zdr"] is True
     assert body["provider"]["data_collection"] == "deny"

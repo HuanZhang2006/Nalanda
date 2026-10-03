@@ -403,7 +403,21 @@ def process_native(path: Path, kind: str, pipeline: str = "luna_native_file_v1")
     require(response.status_code == 202 and response.json().get("accepted") is True,
             f"native {kind} was not accepted: {safe_worker_failure(response)}")
     result, failed = wait_for_async_job(job_id)
-    require(failed is None, f"native {kind} failed with {failed.get('code') if failed else 'unknown'}")
+    if failed is not None:
+        attempts = [
+            "{}@{}/{}:{}tok:{}ms".format(
+                event.get("errorCode") or event.get("status"),
+                str(event.get("upstreamProvider") or "unknown")[:40],
+                str(event.get("upstreamEndpoint") or "unknown")[:60],
+                event.get("completionTokens") if isinstance(event.get("completionTokens"), int) else "?",
+                event.get("durationMs") if isinstance(event.get("durationMs"), int) else "?",
+            )
+            for item in progress_events
+            if item.get("_callbackPath") == f"/internal/ai-jobs/{job_id}/usage"
+            and isinstance(event := item.get("event"), dict)
+        ][:12]
+        require(False, f"native {kind} failed with {failed.get('code')}; "
+                       f"providerAttempts={','.join(attempts) or 'none'}")
     require(isinstance(result, dict), f"native {kind} returned no result")
     require(result.get("sourceMode") == "native_file", "native result lost source mode")
     require(result.get("parserVersion") == "none" and result.get("document") is None,
