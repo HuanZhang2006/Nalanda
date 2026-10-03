@@ -39,6 +39,7 @@
 
 ### Fixed
 
+- 修复 GPT-6 Luna 请求在 `require_parameters=true` 下被 OpenRouter 以 HTTP 404（`OPENROUTER_MODEL_UNAVAILABLE`）拒绝：Azure endpoint 只支持 `max_completion_tokens` 且所有 GPT-6 Luna endpoint 都不支持 `temperature`；Luna 请求改用 `max_completion_tokens` 并省略 `temperature`，原文件门禁失败时输出逐次尝试的上游元数据。（受保护发布 run `37154031417` 中 DocumentIR 全部 fixture 已通过。）
 - 修复受保护发布 run `37150425945`/`37151943226` 中 DocumentIR 试卷生成连续以 `AI_OUTPUT_TRUNCATED`（30k token 上限）后 `OPENROUTER_UNREACHABLE` 失败：试卷输出上限按题数收敛、路由排除 fp4 量化 endpoint、移除易诱发失控输出的“返回前重新计数”提示句，并让真实 provider gate 输出逐次尝试的上游/endpoint/token/耗时（不含正文）。
 - 修复 DocumentIR 试卷在初次生成只有题型数量错误时，repair 仅收到 source block ID、无法读取来源正文，导致结构转绿后答案/干扰项/解析/引用全面失去 grounding 的链路缺口。`exam-generate.v4` 的结构与语义 repair 均携带完整 allowlisted `sourceBlocks` 和显式 `repairGate`，要求最小修改与逐题来源支撑；若结构 repair 后才首次发现语义缺陷，只允许一次额外语义 repair，之后重新执行结构和语义双门并失败关闭，不形成无限重试或降低质量标准。
 - 修复 PR #77 候选把 Ox Alpha 不支持的 `json_schema` 结构化输出与 `require_parameters=true` 同时发送，导致真实 Courses 翻译门在 OpenRouter 以 HTTP 404 拒绝并自动回滚的问题。交互 API 与真实发布 smoke 现在都使用模型元数据声明支持的 `response_format:{type:"json_object"}`，并在本地严格拒绝额外字段、缺失字段、错误类型、重复/未知 smoke case；Stealth-only、no fallback、provider 校验、幂等数据库事实及失败关闭边界不变。非 2xx 诊断只记录 HTTP 状态、结构化上游 code 和 request ID，不记录答案、参考翻译、prompt、供应商 message 或 API key。
