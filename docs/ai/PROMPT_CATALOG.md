@@ -390,7 +390,7 @@ User content 是 `UNTRUSTED_REPAIR_JSON\n{"settings":...,"issues":...,"artifact"
 }
 ```
 
-旧流水线 `allow_fallbacks=true` 只允许同一个固定模型在满足全部过滤器的 endpoint 间切换，不提供跨模型 fallback。旧流水线另以 `quantizations=[fp8,fp16,bf16,fp32,unknown]` 排除 fp4 等激进量化 endpoint；试卷生成/repair 的输出上限为 `min(MATERIAL_AI_GENERATION_MAX_TOKENS, 3000 + 1500 × 题数)`，避免失控输出耗尽单次请求预算。Luna 强制 `only=["azure"]`（GPT-6 Luna 唯一的 ZDR 上游）并禁止 fallback，且只发送 endpoint 声明支持的参数：用 `max_completion_tokens` 代替 `max_tokens`、不发送 `temperature`，在响应/usage 回调与数据库完成 RPC 再次验证真实 upstream 为 Azure；违规成本仍记录但结果不保存。prompt、正文和 raw response 不进入普通日志或 usage 表。
+旧流水线 `allow_fallbacks=true` 只允许同一个固定模型在满足全部过滤器的 endpoint 间切换，不提供跨模型 fallback。旧流水线另以 `quantizations=[fp8,fp16,bf16,fp32,unknown]` 排除 fp4 等激进量化 endpoint；若某上游返回截断/空/坏 JSON/不符 schema 的结构化输出，同一请求的后续重试把该 provider 加入 `provider.ignore`；试卷生成/repair 的输出上限为 `min(MATERIAL_AI_GENERATION_MAX_TOKENS, 3000 + 1500 × 题数)`，避免失控输出耗尽单次请求预算。Luna 强制 `only=["azure"]`（GPT-6 Luna 唯一的 ZDR 上游）并禁止 fallback，且只发送 endpoint 声明支持的参数：用 `max_completion_tokens` 代替 `max_tokens`、不发送 `temperature`，在响应/usage 回调与数据库完成 RPC 再次验证真实 upstream 为 Azure；违规成本仍记录但结果不保存。prompt、正文和 raw response 不进入普通日志或 usage 表。
 
 ## 6. Courses 相关供应商输入
 

@@ -39,6 +39,7 @@
 
 ### Fixed
 
+- 修复受保护发布 run `37156943711`：throughput 排序反复把 DeepSeek 试卷生成路由到同一个输出失控的 Wafer endpoint（四次均 10.5k token 截断）。非锁定路由在结构化输出失败后把该上游加入 `provider.ignore` 再重试；Luna 等锁定路由不受影响。
 - 修复 GPT-6 Luna 请求在 `require_parameters=true` 下被 OpenRouter 以 HTTP 404（`OPENROUTER_MODEL_UNAVAILABLE`）拒绝：Azure endpoint 只支持 `max_completion_tokens` 且所有 GPT-6 Luna endpoint 都不支持 `temperature`；Luna 请求改用 `max_completion_tokens` 并省略 `temperature`，原文件门禁失败时输出逐次尝试的上游元数据。（受保护发布 run `37154031417` 中 DocumentIR 全部 fixture 已通过。）
 - 修复受保护发布 run `37150425945`/`37151943226` 中 DocumentIR 试卷生成连续以 `AI_OUTPUT_TRUNCATED`（30k token 上限）后 `OPENROUTER_UNREACHABLE` 失败：试卷输出上限按题数收敛、路由排除 fp4 量化 endpoint、移除易诱发失控输出的“返回前重新计数”提示句，并让真实 provider gate 输出逐次尝试的上游/endpoint/token/耗时（不含正文）。
 - 修复 DocumentIR 试卷在初次生成只有题型数量错误时，repair 仅收到 source block ID、无法读取来源正文，导致结构转绿后答案/干扰项/解析/引用全面失去 grounding 的链路缺口。`exam-generate.v4` 的结构与语义 repair 均携带完整 allowlisted `sourceBlocks` 和显式 `repairGate`，要求最小修改与逐题来源支撑；若结构 repair 后才首次发现语义缺陷，只允许一次额外语义 repair，之后重新执行结构和语义双门并失败关闭，不形成无限重试或降低质量标准。
