@@ -17,7 +17,7 @@ from urllib.parse import quote
 import httpx
 import pymupdf
 from docx import Document
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from pptx import Presentation
 
 TEXT_MODEL = "deepseek/deepseek-v4-flash-0731"
@@ -200,15 +200,19 @@ def make_fixtures(root: Path) -> dict[str, Path]:
     image_path = root / "fixed-chart.png"
     image = Image.new("RGB", (1000, 650), "white")
     draw = ImageDraw.Draw(image)
-    draw.text((60, 30), "Retrieval practice scores", fill="black")
+    # Pillow's default bitmap font is ~10px; at that size a vision model may
+    # legitimately report labels as unreadable, which the product treats as a
+    # hard failure. The fixture must be legible so the gate tests recovery.
+    font = ImageFont.load_default(size=28)
+    draw.text((60, 30), "Retrieval practice scores", fill="black", font=font)
     draw.line((100, 550, 900, 550), fill="black", width=4)
     draw.line((100, 100, 100, 550), fill="black", width=4)
     for index, (label, value) in enumerate((("No practice", 45), ("One review", 68), ("Three reviews", 88))):
         x = 180 + index * 240
         height = value * 4
         draw.rectangle((x, 550 - height, x + 110, 550), fill=(169, 113, 66))
-        draw.text((x, 565), label, fill="black")
-        draw.text((x + 38, 530 - height), str(value), fill="black")
+        draw.text((x, 565), label, fill="black", font=font)
+        draw.text((x + 38, 515 - height), str(value), fill="black", font=font)
     image.save(image_path)
 
     malicious_path = root / "fixed-injection.txt"
