@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
@@ -200,6 +201,14 @@ class OpenRouterClient:
                         event = self._usage(purpose, model, response, attempt_started, "failed", exc.code)
                         await self._emit(event)
                         failed_events.append(event)
+                        if not provider_only and event.upstreamProvider:
+                            # Throughput sorting keeps choosing the same fast
+                            # endpoint. If it produced unusable structured output
+                            # (e.g. a runaway stream), route retries elsewhere.
+                            slug = self._provider_slug(event.upstreamProvider)
+                            ignored = payload["provider"].setdefault("ignore", [])
+                            if slug and slug not in ignored:
+                                ignored.append(slug)
                         retry_delay = self._retry_delay(attempt, None)
                         remaining = deadline - self._now()
                         if (
@@ -342,6 +351,11 @@ class OpenRouterClient:
         if status_code in (401, 403):
             return "OPENROUTER_AUTH_FAILED"
         return "OPENROUTER_FAILED"
+
+    @staticmethod
+    def _provider_slug(name: str) -> str:
+        """Map an OpenRouter provider display name to its routing slug."""
+        return re.sub(r"[^a-z0-9]+", "-", name.casefold()).strip("-")
 
     @staticmethod
     def _now() -> float:

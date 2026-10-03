@@ -468,3 +468,68 @@ async def test_fake_provider_emits_idempotent_usage_before_returning(monkeypatch
     assert result.classification == "safe"
     assert persisted == usage
     assert len(persisted[0].eventId) == 36
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_routed_retry_ignores_the_provider_that_returned_runaway_output(monkeypatch):
+    monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    monkeypatch.setenv("MATERIAL_AI_PROVIDER_MAX_ATTEMPTS", "3")
+    monkeypatch.setenv("MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS", "0")
+    monkeypatch.setenv("MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS", "0")
+    monkeypatch.setattr(openrouter.asyncio, "sleep", AsyncMock())
+    truncated = {
+        "id": "runaway", "provider": "Wafer",
+        "choices": [{"message": {"content": "{"}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 100, "total_tokens": 104, "cost": 0.00001},
+    }
+    valid = {
+        "id": "valid", "provider": "Sail Research",
+        "choices": [{"message": {"content": json.dumps({
+            "classification": "safe", "rationale": "ok", "failedRanges": [], "injectionLocations": [],
+        })}}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 3, "total_tokens": 7, "cost": 0.000002},
+    }
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        side_effect=[Response(200, json=truncated), Response(200, json=valid)]
+    )
+
+    result, usage = await OpenRouterClient().structured(
+        purpose="exam_generation", model=TEXT_MODEL, schema_name="audit",
+        result_type=AuditResult, system="fixed", user_content="untrusted", max_tokens=100,
+    )
+
+    first, second = (json.loads(call.request.content) for call in route.calls)
+    assert "ignore" not in first["provider"]
+    assert second["provider"]["ignore"] == ["wafer"]
+    assert result.classification == "safe"
+    assert [event.errorCode for event in usage] == ["AI_OUTPUT_TRUNCATED", None]
+
+
+@pytest.mark.asyncio
+@respx.mock
+async def test_pinned_luna_retry_never_adds_provider_ignores(monkeypatch):
+    monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
+    monkeypatch.setenv("MATERIAL_AI_PROVIDER_MAX_ATTEMPTS", "2")
+    monkeypatch.setenv("MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS", "0")
+    monkeypatch.setenv("MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS", "0")
+    monkeypatch.setattr(openrouter.asyncio, "sleep", AsyncMock())
+    truncated = {
+        "id": "runaway", "provider": "Azure",
+        "choices": [{"message": {"content": "{"}, "finish_reason": "length"}],
+        "usage": {"prompt_tokens": 4, "completion_tokens": 100, "total_tokens": 104, "cost": 0.00001},
+    }
+    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
+        side_effect=[Response(200, json=truncated), Response(200, json=truncated)]
+    )
+
+    with pytest.raises(PipelineError):
+        await OpenRouterClient().structured(
+            purpose="safety_audit", model=LUNA_MODEL, schema_name="audit",
+            result_type=AuditResult, system="fixed", user_content="untrusted", max_tokens=100,
+            provider_only=["azure"], required_upstream_provider="Azure", allow_fallbacks=False,
+        )
+
+    assert all("ignore" not in json.loads(call.request.content)["provider"] for call in route.calls)
