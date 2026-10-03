@@ -32,6 +32,7 @@ test("Materials AI real-provider gate covers fixed formats, ZDR evidence, inject
   assert.match(source, /safe_worker_failure/);
   assert.match(source, /providerErrorCodes/);
   assert.match(source, /providerPurposes/);
+  assert.match(source, /providerAttempts/);
   assert.match(source, /validationDiagnostics/);
   assert.match(source, /finalSemanticCategories/);
   assert.match(source, /Spaced practice distributes study sessions/);

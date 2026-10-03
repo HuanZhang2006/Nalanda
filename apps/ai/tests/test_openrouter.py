@@ -61,6 +61,7 @@ async def test_openrouter_requires_strict_schema_zdr_and_no_tools(monkeypatch):
         "data_collection": "deny",
         "require_parameters": True,
         "sort": "throughput",
+        "quantizations": ["fp8", "fp16", "bf16", "fp32", "unknown"],
         "allow_fallbacks": True,
     }
     assert len(usage) == 1
