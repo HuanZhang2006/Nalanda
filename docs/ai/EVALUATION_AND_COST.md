@@ -3,7 +3,7 @@
 > **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
 > **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
 > **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-08-26。生产数据库已到 0055；PR #78 已修复 Courses Ox Alpha JSON Object 契约并合并，但应用候选在真实 DocumentIR DOCX 试卷门禁失败后自动回滚，当前应用仍为此前稳定 release，Materials AI/Luna/Ox 开关保持关闭。失败候选的题数与总分已正确，初始结构门为 `QUESTION_TYPE_COUNT`，结构 repair 后才暴露五类语义缺陷；本次 Unreleased 修复为 repair 提供完整来源并增加一次严格有界的后续语义修复。真实 provider 与受保护切流尚未重新证明。Courses 文件 AI 导入仍未实现。
+> **状态基线：**2026-10-03。生产数据库已到 0055；应用候选在真实 DocumentIR DOCX 试卷门禁失败后自动回滚，当前应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭。失败候选的题数与总分已正确，初始结构门为 `QUESTION_TYPE_COUNT`，结构 repair 后才暴露五类语义缺陷；本次 Unreleased 修复为 repair 提供完整来源并增加一次严格有界的后续语义修复，同时退役 Ox Alpha、把 Luna 升级为 GPT-6 Luna + Azure ZDR。真实 provider 与受保护切流尚未重新证明。Courses 文件 AI 导入仍未实现。
 
 ## 1. 范围和非目标
 
@@ -75,19 +75,18 @@ PR #75 的 main run `32587844503` attempt 1 通过本地完整门禁与 220 页 
 
 ### 2.2 Luna 原文件候选闭环
 
-`luna_native_file_v1` 固定 `openai/gpt-5.6-luna`，并要求 `provider.only=["openai"]`、`allow_fallbacks=false`、ZDR、拒绝数据收集、strict schema 和 no tools/Web。worker 从 private Storage 下载后只校验 MIME、大小与 SHA-256；不得运行 parser/OCR/LibreOffice/DocumentIR/parse cache。PDF 使用 inline `type:file` 与 `file-parser.native`，图片使用 inline `image_url`；不使用会形成远端持久文件的 Files API。响应中的真实 upstream 必须为 OpenAI，usage 事件持久记录 provider/endpoint/pipeline；路由违规已发生的成本仍落账，但产物不得保存。
+`luna_native_file_v1` 固定 `openai/gpt-6-luna`，并要求 `provider.only=["azure"]`、`allow_fallbacks=false`、ZDR、拒绝数据收集、strict schema 和 no tools/Web。worker 从 private Storage 下载后只校验 MIME、大小与 SHA-256；不得运行 parser/OCR/LibreOffice/DocumentIR/parse cache。PDF 使用 inline `type:file` 与 `file-parser.native`，图片使用 inline `image_url`；不使用会形成远端持久文件的 Files API。响应中的真实 upstream 必须为 Azure，usage 事件持久记录 provider/endpoint/pipeline；路由违规已发生的成本仍落账，但产物不得保存。GPT-6 Luna 目录价（Azure）约为输入 $0.10/M、输出 $0.50/M tokens，约为 GPT-5.6 Luna 的一半。
 
 Luna 顺序固定为原文件安全审查→原文件生成→本地 schema/题数/分值或节点/边/来源验证→至多一次携带同一原文件的 repair→保存。checkpoint 只保存审查结论或已验证 artifact，不保存 prompt/源文件正文；源文件仍在 private Storage。创建接口先读 capabilities，只有真实逐格式门禁通过的扩展名可选；不支持格式明确禁用并允许用户显式选择旧流水线，禁止转换或静默 fallback。
 
 真实 Luna 门禁至少按 PDF、图片和每个候选扩展名分别记录：原始 SHA-256、wire MIME/sourceMode、actual provider/endpoint、native parser、schema 通过率、注入拒绝/安全教材误杀、source locator 支持、token/费用、P50/P95、取消/超时残留。试卷与图谱要分开评测；图谱另测 250 节点层级/顺序/交叉边，考试只在整卷提交后批改，主观题一次合并评分。fake provider 不计入模型质量或格式支持证据。
 
-2026-08-14 真实发布 run `31824832947` 的 2G canary 通过，但首个 Luna PDF 试卷在安全审查前即失败为 `OPENROUTER_ZDR_UNAVAILABLE`；应用自动回退且未启用 Luna。随后读取 OpenRouter 官方 `/api/v1/endpoints/zdr`，同一模型只有 Azure/Azure EU，未包含 first-party OpenAI。因为本架构同时要求 OpenAI-only 与 ZDR，这一状态必须解释为“能力不可用”，不能删去 ZDR、改 provider 或把 `data_collection=deny` 冒充 ZDR。后续发布每次重新读取 catalog；只有 OpenAI ZDR endpoint 出现并完成真实 PDF/图片全门禁后才开放。
+2026-08-14 真实发布 run `31824832947` 的 2G canary 通过，但首个 GPT-5.6 Luna PDF 试卷在安全审查前即失败为 `OPENROUTER_ZDR_UNAVAILABLE`；应用自动回退且未启用 Luna。官方 `/api/v1/endpoints/zdr` 中同一模型只有 Azure/Azure EU，未包含 first-party OpenAI。2026-10-03 起（[ADR-0016](../adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)）Luna 改为 GPT-6 Luna 并锁定 Azure ZDR endpoint；后续发布每次重新读取 catalog，只有 Azure ZDR endpoint 存在并完成真实 PDF/图片全门禁后才开放，不能删去 ZDR 或把 `data_collection=deny` 冒充 ZDR。
 
-### 2.3 Ox Alpha 原始图片候选闭环
+### 2.3 Ox Alpha 原始图片候选（已退役）
 
-`ox_alpha_native_file_v1` 复用 Luna 的原文件安全审查、生成、strict schema、一次修复、checkpoint 和清理流程，但固定模型为 `stealth/ox-alpha`、`provider.only=["stealth"]`、`allow_fallbacks=false`，完成事务要求 usage 的实际 upstream 为 Stealth。模型实时元数据只声明 `text/image/video`，没有 `file`，因此 API 与 worker 都把 allowlist 硬限制为 PNG/JPEG/WebP 原字节；即使运维误把 PDF/Office 加入环境变量也会拒绝，不能通过转 PDF、转文本或 DocumentIR 冒充原文件能力。Ox Alpha 要求 reasoning，当前使用 `effort=low` 且 `exclude=true`，不把推理正文保存或返回。
+0054–0055 曾增加 `ox_alpha_native_file_v1`。实时 ZDR catalog 始终没有合规 endpoint，模型其后从 OpenRouter 下线；生产从未创建 Ox job。0056–0057 已移除该流水线的数据库值、RPC 分支、API/Web/worker 代码、环境变量和发布门禁。
 
-Materials 原文件处理仍要求 ZDR。2026-08-23 实时 ZDR catalog 未提供 Ox Alpha endpoint，因此候选必须保持 `FEATURE_MATERIAL_AI_OX_ALPHA=false` 并返回 `OPENROUTER_ZDR_UNAVAILABLE`；这与 Courses 翻译判定的独立数据边界不同，后者只发送服务端英文词、参考翻译和用户答案并使用 `data_collection=deny`。真实发布门必须分别证明“Ox 文本翻译可用”和“Materials Ox ZDR 原图可用”，不能用前者替代后者。
 
 ### 2.4 Courses 文件导入的目标闭环（未实现）
 
@@ -131,7 +130,7 @@ Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发�
 
 ### 2.7 OpenRouter 翻译语义前测当前边界
 
-用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定 `stealth/ox-alpha`、temperature 0、低档 mandatory reasoning 和模型声明支持的 JSON Object 模式，并锁定 Stealth 上游且禁止 fallback。Nalanda 随后在本地严格验证对象只含 boolean `correct`，缺失、额外字段、错误类型或无效 JSON 都失败关闭并可在同一预算内重试一次。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
+用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定免费 `nvidia/nemotron-3-super-120b-a12b:free`、temperature 0、`reasoning.enabled=false` 和 JSON Object 模式，并锁定 Nvidia 上游且禁止 fallback。免费 endpoint 不承诺 deny collection，因此请求只含最小词义上下文、不含账号标识。Nalanda 随后在本地严格验证对象只含 boolean `correct`，缺失、额外字段、错误类型或无效 JSON 都失败关闭并可在同一预算内重试一次。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
 
 最低固定评测集需包含：
 

@@ -6,8 +6,7 @@ import { initMaterials, mountMaterials } from "./materials";
 const capabilities = {
   materialId: "m1",
   capabilities: [
-    { pipeline: "luna_native_file_v1", available: true, default: true, model: "openai/gpt-5.6-luna", provider: "OpenAI", reasonCode: null },
-    { pipeline: "ox_alpha_native_file_v1", available: false, default: false, model: "stealth/ox-alpha", provider: "Stealth", reasonCode: "AI_OX_ALPHA_FORMAT_NOT_VERIFIED" },
+    { pipeline: "luna_native_file_v1", available: true, default: true, model: "openai/gpt-6-luna", provider: "Azure", reasonCode: null },
     { pipeline: "document_ir_v1", available: true, default: false, model: "deepseek/deepseek-v4-flash-0731", provider: "OpenRouter routed ZDR provider", reasonCode: null },
   ],
 };
@@ -15,18 +14,8 @@ const capabilities = {
 const compliantDisabledCapabilities = {
   materialId: "m1",
   capabilities: [
-    { pipeline: "luna_native_file_v1", available: false, default: false, model: "openai/gpt-5.6-luna", provider: "OpenAI", reasonCode: "OPENROUTER_ZDR_UNAVAILABLE" },
-    { pipeline: "ox_alpha_native_file_v1", available: false, default: false, model: "stealth/ox-alpha", provider: "Stealth", reasonCode: "OPENROUTER_ZDR_UNAVAILABLE" },
+    { pipeline: "luna_native_file_v1", available: false, default: false, model: "openai/gpt-6-luna", provider: "Azure", reasonCode: "OPENROUTER_ZDR_UNAVAILABLE" },
     { pipeline: "document_ir_v1", available: true, default: true, model: "deepseek/deepseek-v4-flash-0731", provider: "OpenRouter routed ZDR provider", reasonCode: null },
-  ],
-};
-
-const oxCapabilities = {
-  materialId: "m1",
-  capabilities: [
-    { pipeline: "luna_native_file_v1", available: false, default: false, model: "openai/gpt-5.6-luna", provider: "OpenAI", reasonCode: "AI_LUNA_FORMAT_NOT_VERIFIED" },
-    { pipeline: "ox_alpha_native_file_v1", available: true, default: true, model: "stealth/ox-alpha", provider: "Stealth", reasonCode: null },
-    { pipeline: "document_ir_v1", available: true, default: false, model: "deepseek/deepseek-v4-flash-0731", provider: "OpenRouter routed ZDR provider", reasonCode: null },
   ],
 };
 
@@ -160,36 +149,6 @@ describe("资料错误处理", () => {
     expect(documentIr?.checked).toBe(true);
     expect(document.body.textContent).toContain("No compliant Zero Data Retention endpoint is currently available");
     expect(document.body.textContent).toContain("Document IR remains available");
-  });
-
-  it("renders Ox Alpha as a distinct native-image pipeline and selects it only when available", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
-      const url = String(input);
-      if (url.includes("/api/materials/m1/ai-capabilities")) {
-        return new Response(JSON.stringify(oxCapabilities), {
-          status: 200, headers: { "Content-Type": "application/json" },
-        });
-      }
-      if (url.includes("/api/profile/ai-quota")) return new Response(JSON.stringify({
-        plan: "free", localDate: "2026-08-10", timezone: "UTC", resetsAt: "2026-08-11T00:00:00Z",
-        generation: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
-        grading: { limit: 10, consumed: 0, reserved: 0, remaining: 10 },
-      }), { status: 200, headers: { "Content-Type": "application/json" } });
-      if (url.includes("/api/ai-jobs")) return new Response("[]", { status: 200 });
-      return new Response("{}", { status: 200 });
-    }));
-    const root = document.createElement("div"); document.body.appendChild(root);
-    initMaterials(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
-    mountMaterials(root); await flush(16);
-
-    click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
-    await vi.waitFor(() => expect(document.querySelector('[data-ai-choice="exam"]')).not.toBeNull());
-    click(document.querySelector('[data-ai-choice="exam"]'));
-    const ox = document.querySelector<HTMLInputElement>('input[value="ox_alpha_native_file_v1"]');
-    expect(ox?.disabled).toBe(false);
-    expect(ox?.checked).toBe(true);
-    expect(document.body.textContent).toContain("Ox Alpha native image");
-    expect(document.body.textContent).toContain("original image bytes");
   });
 
   it("requires the versioned disclosure independently for each account", async () => {
@@ -328,7 +287,7 @@ describe("资料错误处理", () => {
 
   it("requires in-app confirmation, interrupts one active job, and clears only terminal history", async () => {
     const active = { id: "job-active", materialId: "m1", materialName: "Week 1.pdf", courseId: "c1", kind: "exam",
-      pipeline: "luna_native_file_v1", model: "openai/gpt-5.6-luna", status: "processing", stage: "generating", progress: 70,
+      pipeline: "luna_native_file_v1", model: "openai/gpt-6-luna", status: "processing", stage: "generating", progress: 70,
       queuePosition: null, settings: {}, errorCode: null, errorMessage: null, noteId: null, retryable: false,
       resumeUntil: null, checkpointStage: "native_audited", createdAt: "2026-08-10T00:00:00Z",
       startedAt: "2026-08-10T00:00:01Z", finishedAt: null };

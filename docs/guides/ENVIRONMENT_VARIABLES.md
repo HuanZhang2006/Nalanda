@@ -42,12 +42,10 @@
 | `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation/grading processor | worker 的 progress/usage/checkpoint/complete/fail 回调 API 内网基址，生产为 `http://api:3000/api`。 |
 | `AI_INTERNAL_TOKEN` | 生产必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
 | `FEATURE_MATERIAL_AI` | 安装默认 false；当前生产 true | 公开配置 | Materials AI API/Web | 总开关；部署安装后先保持 false，只在 readiness/canary/真实 gate 通过后开启。 |
-| `FEATURE_MATERIAL_AI_LUNA` | 安装/回滚默认 false | 公开配置 | Materials AI API/Web | `luna_native_file_v1` 独立开关；只有实时 ZDR catalog 和真实原文件 gate 都证明 first-party OpenAI endpoint 可用后才开启，不影响显式旧流水线。 |
+| `FEATURE_MATERIAL_AI_LUNA` | 安装/回滚默认 false | 公开配置 | Materials AI API/Web | `luna_native_file_v1` 独立开关；只有实时 ZDR catalog 和真实原文件 gate 都证明 GPT-6 Luna 的 Azure ZDR endpoint 可用后才开启，不影响显式旧流水线。 |
 | `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` | 候选，`pdf,png` | 受限配置 | API capabilities/create + AI worker validation | 真实逐格式门禁通过的 Luna 原文件扩展名 allowlist；API 与 worker 必须一致，不能为“让 UI 可选”而加入未经验证的格式。 |
 | `MATERIAL_AI_LUNA_DISABLED_REASON_CODE` | `AI_LUNA_DISABLED`；生产门禁可设 `OPENROUTER_ZDR_UNAVAILABLE` | 公开运维配置 | Materials AI capabilities/create | 子开关关闭时给前端的稳定原因；只接受这两个值，不能由客户端设置，也不能替代 feature flag。 |
-| `FEATURE_MATERIAL_AI_OX_ALPHA` | 安装/回滚默认 false | 公开配置 | Materials AI API/Web | `ox_alpha_native_file_v1` 独立开关；只有实时 ZDR catalog 与真实 Stealth 原图 gate 都通过后才开启。 |
-| `MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS` | 候选，`png,jpg,jpeg,webp` | 受限配置 | API capabilities/create + AI worker validation | Ox Alpha 原图 allowlist。代码仍与图片集合取交集；模型元数据未声明 file，因此 PDF/Office 即使误配也不会开放。 |
-| `MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE` | `AI_OX_ALPHA_DISABLED`；生产门禁可设 `OPENROUTER_ZDR_UNAVAILABLE` | 公开运维配置 | Materials AI capabilities/create | Ox 子开关关闭原因；不能由客户端设置，也不能用来绕过 ZDR。 |
+| `FEATURE_MATERIAL_AI_OX_ALPHA` 及 `MATERIAL_AI_OX_ALPHA_*` | 已退役（0056–0057） | — | — | 安装、激活与回滚脚本只剥离旧键、不再写入；应用不再读取。 |
 | `MATERIAL_AI_MONTHLY_BUDGET_USD` | 可选，20 | 受限配置 | AI processor | provider usage 成功费用达到全局月预算后停止新调用。 |
 | `MATERIAL_AI_GENERATION_MAX_COST_USD` | 可选，0.50 | 受限配置 | generation processor | 单次生成费用硬门；超限不保存结果并释放用户 quota reservation。 |
 | `MATERIAL_AI_GRADING_MAX_COST_USD` | 可选，0.05 | 受限配置 | grading processor | 单次主观题评分费用硬门。 |
@@ -85,12 +83,12 @@
 | `LEARNING_AUDIO_SYNTHESIS_VERSION` | 可选，`1` | 受限配置 | 进入全局 SHA-256 缓存键；更换 voice/SSML/后处理语义时递增以安全重建，不原地覆盖旧键。 |
 | `AZURE_SPEECH_FAKE` | **仅测试**，默认 false | 测试配置 | 生成固定 WAV/评分；任何共享、staging 供应商 smoke 或生产必须未设置/false，API 在 `NODE_ENV=production` 时显式拒绝 true。 |
 | `OPENROUTER_API_KEY` | 翻译前测、语音输入或 Materials AI 启用时必需 | **最高机密** | 服务端能力复用同一 secret；Materials AI worker 在隔离 `.ai.env` 获得副本。绝不能进入 Web bundle、数据库、日志或提交。 |
-| `OPENROUTER_MODEL` | 可选，`stealth/ox-alpha` | 受限配置 | 语义评判模型；请求固定 Stealth-only、无 fallback、低档 mandatory reasoning，生产 gate 验证模型、路由和 schema。 |
+| `OPENROUTER_MODEL` | 可选，`nvidia/nemotron-3-super-120b-a12b:free` | 受限配置 | 语义评判模型；请求固定 Nvidia-only、无 fallback、关闭 reasoning，生产 gate 验证模型、路由和 schema。免费 endpoint 不承诺 deny collection。 |
 | `OPENROUTER_BASE_URL` | 可选，`https://openrouter.ai/api/v1` | 公开配置 | OpenRouter API 基址；只允许 API 读取。 |
 | `OPENROUTER_TIMEOUT_MS` | 可选，12,000 | 公开配置 | 单次评判硬超时，实现限制 1,000–30,000 ms；超时释放数据库租约且不记学习错误。 |
-| `OPENROUTER_SMOKE_MAX_ATTEMPTS` | 可选，5 | 受限发布配置 | 只控制受保护发布的真实 Ox Alpha 翻译 gate，限制 1–6 次；不改变用户请求重试或产品额度。仅网络错误及 408/425/429/5xx 可重试，持续失败仍阻断发布。 |
-| `OPENROUTER_SMOKE_ATTEMPT_TIMEOUT_MS` | 可选，30000 | 受限发布配置 | 真实 Ox Alpha 发布门禁单次请求（含响应正文读取）的超时，限制 5–60 秒；与交互 API 的 `OPENROUTER_TIMEOUT_MS` 分离。 |
-| `OPENROUTER_SMOKE_TOTAL_BUDGET_MS` | 可选，180000 | 受限发布配置 | 真实 Ox Alpha 发布门禁全部尝试与退避共享的 wall-clock 硬预算，限制不低于单次超时且不超过 300 秒；耗尽后失败关闭。 |
+| `OPENROUTER_SMOKE_MAX_ATTEMPTS` | 可选，5 | 受限发布配置 | 只控制受保护发布的真实翻译判定 gate，限制 1–6 次；不改变用户请求重试或产品额度。仅网络错误及 408/425/429/5xx 可重试，持续失败仍阻断发布。 |
+| `OPENROUTER_SMOKE_ATTEMPT_TIMEOUT_MS` | 可选，30000 | 受限发布配置 | 真实翻译判定发布门禁单次请求（含响应正文读取）的超时，限制 5–60 秒；与交互 API 的 `OPENROUTER_TIMEOUT_MS` 分离。 |
+| `OPENROUTER_SMOKE_TOTAL_BUDGET_MS` | 可选，180000 | 受限发布配置 | 真实翻译判定发布门禁全部尝试与退避共享的 wall-clock 硬预算，限制不低于单次超时且不超过 300 秒；耗尽后失败关闭。 |
 | `OPENROUTER_SMOKE_RETRY_BASE_MS` | 可选，5,000 | 受限发布配置 | 真实翻译 gate 的指数退避起点，限制 1,000–30,000 ms。 |
 | `OPENROUTER_SMOKE_RETRY_MAX_MS` | 可选，60,000 | 受限发布配置 | 单次 gate 退避及可接受 `Retry-After` 上限，限制至 120,000 ms；供应商要求等待更久时失败关闭。 |
 | `OPENROUTER_ASSESSMENTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户一分钟真实 provider 评判上限；确定性完全匹配、UUID 幂等重放和仅领取租约都不计数。 |
@@ -142,7 +140,7 @@
 | `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS` | **候选**，30000 | 成本配置 | 知识图谱生成/repair 最大 completion tokens，三条 pipeline 共用上限。 |
 | `MATERIAL_AI_RESUME_TTL_SECONDS` | **候选**，86400 | 受限配置 | worker orphan 与本地 checkpoint/spool 的保留期限；需和 API 一致。 |
 
-模型 ID不是用户变量：旧流水线固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`；Luna 固定 `openai/gpt-5.6-luna`；Ox Alpha 固定 `stealth/ox-alpha`。Luna/Ox 分别锁 `provider.only=["openai"]`/`["stealth"]`，都禁止 fallback、要求 ZDR/拒绝数据收集/严格 schema/no tools，并核对响应真实 upstream；路由不符时即使已记 usage 也拒绝保存产物。Ox 使用低档 mandatory reasoning 且不持久化 reasoning。旧流水线的同模型 provider 故障转移语义保持不变。任何模型或路由变更均需 ADR、评测、成本和隐私复审。
+模型 ID不是用户变量：旧流水线固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`；Luna 固定 `openai/gpt-6-luna` 并锁 `provider.only=["azure"]`，禁止 fallback、要求 ZDR/拒绝数据收集/严格 schema/no tools，并核对响应真实 upstream；路由不符时即使已记 usage 也拒绝保存产物。Courses 翻译判定固定免费 `nvidia/nemotron-3-super-120b-a12b:free` + Nvidia-only。旧流水线的同模型 provider 故障转移语义保持不变。任何模型或路由变更均需 ADR、评测、成本和隐私复审。
 
 ## 5. 数据库迁移运维变量
 

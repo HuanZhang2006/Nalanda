@@ -6,7 +6,7 @@
 > - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
 > - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
 
-最后核对：2026-08-26。生产数据库已受保护应用到 0055；0052–0055 已上线，原预留 0044–0045 保持未使用。PR #78 已合并 Courses Ox Alpha JSON Object 修复，但 main run `32931681321` 在真实 DocumentIR DOCX 门禁发现“结构 repair 无来源正文、结构后新语义缺陷无修复阶段”后自动恢复旧 Web/API。当前 Unreleased `exam-generate.v4` 使用完整来源与严格有界的后续语义 repair；不能把数据库迁移、本地测试、部分真实门通过或修复合并写成应用/Luna/Ox 已上线。
+最后核对：2026-10-03。生产数据库已受保护应用到 0055；0052–0055 已上线，原预留 0044–0045 保持未使用。main run `32931681321` 在真实 DocumentIR DOCX 门禁发现“结构 repair 无来源正文、结构后新语义缺陷无修复阶段”后自动恢复旧 Web/API。当前 Unreleased `exam-generate.v4` 使用完整来源与严格有界的后续语义 repair，并由 0056–0057 退役 Ox Alpha、把 Luna 升级为 GPT-6 Luna + Azure ZDR（[ADR-0016](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)）；不能把数据库迁移、本地测试、部分真实门通过或修复合并写成应用/Luna 已上线。
 
 2026-08-14 代码与数据库已占用 0046–0051：0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；0049–0051 实现 Luna 原文件、可取消清理、provider provenance 和跨设备图布局。数据库已应用，应用仍需成功的不可变 release；Luna 另受实时 ZDR/OpenAI 门禁约束。Stage B 采用 0052–0053，避免为填补 0044–0045 空号引入 `--include-all` 或改写既有 migration history。
 
@@ -256,9 +256,9 @@ NestJS API（业务边界、配额、订单、任务、管理）
 - Materials/My Notes 保持英文和原有视觉；不把本阶段扩大成全站 React/i18n 重写。
 - 图谱使用 React Flow + ELK，提供无重叠分层、pan/zoom、拖动/键盘、外部详情和 revision 跨设备保存；考试只有整卷提交/超时后才统一批改。
 - job 支持应用内二次确认的 Delete/Clear history；活动清理必须等 worker 取消网络/Office、落账 usage 并删除临时目录后才消失，已接收任务按规则 consume 一次。
-- 能力矩阵允许用户显式选择 DocumentIR、`luna_native_file_v1` 或 `ox_alpha_native_file_v1`。Luna 只对真实门禁的 PDF/图片 allowlist 开放；Ox Alpha 只对其能力元数据声明支持的原始图片开放。两者均 inline 原字节、固定模型、锁定实际上游、要求 ZDR 且禁止 fallback，不静默转换或降级。
+- 能力矩阵允许用户显式选择 DocumentIR 或 `luna_native_file_v1`。Luna 只对真实门禁的 PDF/图片 allowlist 开放，inline 原字节、固定 GPT-6 Luna、锁定 Azure ZDR 上游且禁止 fallback，不静默转换或降级。
 
-验收进度：0046–0051 空库/升级/RLS、fake Chromium、只读 plan、恢复点、生产 apply 和 2G canary已完成。0054–0055 的 Ox Alpha 三流水线扩展仍属 Unreleased。真实 Luna/OpenAI 原文件门禁确认当前无 first-party OpenAI ZDR endpoint；2026-08-23 Ox Alpha ZDR catalog 同样没有合规 endpoint，因此两个原文件子开关都必须保持 false，DocumentIR 仍可独立发布。仍需新的完整 CI、真实 DeepSeek/MiMo、Ox 文本翻译、DocumentIR 应用 release、生产登录 smoke 和独立公网核验。未来只有对应 catalog 合规并跑完逐格式真实门禁后，原文件 pipeline 才能从“已实现但不可用”改为上线。
+验收进度：0046–0051 空库/升级/RLS、fake Chromium、只读 plan、恢复点、生产 apply 和 2G canary已完成。0054–0055 的 Ox Alpha 扩展由 0056–0057 退役（Unreleased）。GPT-5.6 Luna 的真实门禁确认无 first-party OpenAI ZDR endpoint；GPT-6 Luna 改锁 Azure ZDR endpoint。仍需新的完整 CI、真实 DeepSeek/MiMo、免费 Nemotron 翻译、Luna Azure 原文件门禁、DocumentIR 应用 release、生产登录 smoke 和独立公网核验。Azure catalog 不合规或逐格式门禁未通过前，Luna 只能是“已实现但不可用”。
 
 ### 阶段 C：四类产物与学习闭环
 

@@ -12,10 +12,10 @@ import {
 
 test("OpenRouter smoke uses the pinned model, JSON Object mode, and a locally validated two-case contract", () => {
   const body = buildOpenRouterSmokeBody();
-  assert.equal(body.model, "stealth/ox-alpha");
-  assert.deepEqual(body.provider.only, ["stealth"]);
+  assert.equal(body.model, "nvidia/nemotron-3-super-120b-a12b:free");
+  assert.deepEqual(body.provider.only, ["nvidia"]);
   assert.equal(body.provider.allow_fallbacks, false);
-  assert.deepEqual(body.reasoning, { effort: "low", exclude: true });
+  assert.deepEqual(body.reasoning, { enabled: false });
   assert.deepEqual(body.response_format, { type: "json_object" });
   assert.match(body.messages[0].content, /semantic-match/);
   assert.doesNotMatch(JSON.stringify(body), /api[_-]?key/i);
@@ -23,15 +23,15 @@ test("OpenRouter smoke uses the pinned model, JSON Object mode, and a locally va
 
 test("OpenRouter smoke accepts the expected structured semantic decisions", () => {
   assert.deepEqual(parseOpenRouterSmokePayload({
-    provider: "Stealth",
+    provider: "Nvidia",
     choices: [{ message: { content: JSON.stringify({ decisions: [
       { id: "semantic-match", correct: true },
       { id: "semantic-mismatch", correct: false },
     ] }) } }],
     usage: { prompt_tokens: 20, completion_tokens: 8, total_tokens: 28 },
-  }), { upstreamProvider: "Stealth", promptTokens: 20, completionTokens: 8, totalTokens: 28 });
+  }), { upstreamProvider: "Nvidia", promptTokens: 20, completionTokens: 8, totalTokens: 28 });
   assert.throws(() => parseOpenRouterSmokePayload({
-    provider: "Stealth",
+    provider: "Nvidia",
     choices: [{ message: { content: JSON.stringify({ decisions: [
       { id: "semantic-match", correct: false },
       { id: "semantic-mismatch", correct: false },
@@ -40,9 +40,9 @@ test("OpenRouter smoke accepts the expected structured semantic decisions", () =
   assert.throws(() => parseOpenRouterSmokePayload({
     provider: "Other",
     choices: [{ message: { content: "{}" } }],
-  }), /required Stealth provider/);
+  }), /required Nvidia provider/);
   assert.throws(() => parseOpenRouterSmokePayload({
-    provider: "Stealth",
+    provider: "Nvidia",
     choices: [{ message: { content: JSON.stringify({
       decisions: [
         { id: "semantic-match", correct: true },

@@ -32,11 +32,9 @@ test("Materials AI installer separates worker secrets and starts the public feat
   const worker = await readFile(join(root, ".ai.env"), "utf8");
   assert.match(api, /^FEATURE_MATERIAL_AI=false$/m);
   assert.match(api, /^FEATURE_MATERIAL_AI_LUNA=false$/m);
-  assert.match(api, /^FEATURE_MATERIAL_AI_OX_ALPHA=false$/m);
+  assert.doesNotMatch(api, /OX_ALPHA/);
   assert.match(api, /^MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png$/m);
   assert.match(api, /^MATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED$/m);
-  assert.match(api, /^MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS=png,jpg,jpeg,webp$/m);
-  assert.match(api, /^MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE=AI_OX_ALPHA_DISABLED$/m);
   assert.doesNotMatch(api, /^MATERIAL_AI_LUNA_DISABLED_REASON_CODE=stale$/m);
   assert.match(api, /^AI_SERVICE_URL=http:\/\/ai:8000$/m);
   assert.match(api, /^MATERIAL_AI_RESUME_TTL_SECONDS=86400$/m);
@@ -46,7 +44,7 @@ test("Materials AI installer separates worker secrets and starts the public feat
   assert.match(worker, new RegExp(`^AI_INTERNAL_TOKEN=${token}$`, "m"));
   assert.match(worker, /^SUPABASE_URL=https:\/\/fixture\.supabase\.co$/m);
   assert.match(worker, /^MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png$/m);
-  assert.match(worker, /^MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS=png,jpg,jpeg,webp$/m);
+  assert.doesNotMatch(worker, /OX_ALPHA/);
   assert.match(worker, /^MATERIAL_AI_PROVIDER_MAX_ATTEMPTS=4$/m);
   assert.match(worker, /^MATERIAL_AI_JOB_TIMEOUT_SECONDS=1200$/m);
   assert.match(worker, /^MATERIAL_AI_GRADING_TIMEOUT_SECONDS=240$/m);

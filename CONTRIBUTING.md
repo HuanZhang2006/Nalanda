@@ -72,7 +72,7 @@ PR 描述至少包含：
 - UI 写操作要有 loading、成功、空、错误、重试和重复点击保护；登出/换账号必须清空用户级缓存与订阅。
 - API 只返回稳定错误码，不把上游细节暴露给客户端；使用关联 ID 支持排障。
 - Python 输出必须通过 Pydantic schema；模型/prompt/parser 版本随结果记录，禁止用静态桩冒充真实生成。
-- Materials AI 文件/focus/答案均是不可信数据。DocumentIR 仅对失败范围视觉恢复；Luna 禁止 parser/OCR/转换/Files API，固定 OpenAI-only/no fallback 并验证真实 upstream。安全/结构/provider失败按任务是否已派发结算 Free reservation，不能由客户端降级或消费 credits。
+- Materials AI 文件/focus/答案均是不可信数据。DocumentIR 仅对失败范围视觉恢复；Luna 禁止 parser/OCR/转换/Files API，固定 GPT-6 Luna + Azure ZDR/no fallback 并验证真实 upstream。安全/结构/provider失败按任务是否已派发结算 Free reservation，不能由客户端降级或消费 credits。
 - AI 任务 Delete/Cancel 必须经过数据库额度结算与 worker cancel/purge 确认；不得只删除 UI 行、跳过 usage flush 或把 processing 任务当 queued 退款。考试草稿不得判分或返回答案，只有统一交卷事务可以形成结果。
 - 无障碍至少覆盖键盘操作、焦点、表单 label、状态提示、对比度和 reduced motion。
 - 用户可见文字默认考虑中英双语目标；当前未完成 i18n 时，不得声称已经支持双语界面。

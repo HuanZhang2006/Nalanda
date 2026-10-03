@@ -57,8 +57,7 @@ export type AiPlanCode = "free";
 export type AiQuotaKind = "generation" | "grading";
 export type AiPipeline =
   | "document_ir_v1"
-  | "luna_native_file_v1"
-  | "ox_alpha_native_file_v1";
+  | "luna_native_file_v1";
 export type AiGenerationStatus =
   | "queued"
   | "processing"

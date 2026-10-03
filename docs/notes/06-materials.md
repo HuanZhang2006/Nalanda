@@ -96,7 +96,7 @@ API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/
 
 候选 API 只等待 worker 202 接收，后续由内部认证 callback 持久化 progress、usage、checkpoint 与 terminal result，避免单个生成占用五分钟以上 HTTP。显式 Undici Agent 将 connect/accept/headers/body timeout 分开，响应头超时映射 `AI_WORKER_TIMEOUT`；用户可在 `resumeUntil` 前点击 Resume 继续同一 job。数据库 checkpoint 与 worker 0700 local checkpoint/usage spool 合并最高有效阶段，已完成 provider 阶段不重复调用，usage event UUID 不重复计费；终态或默认 24 小时 TTL 清理残留。
 
-“Organize knowledge points” 的旧 pipeline 与试卷共用解析/审查/失败范围视觉恢复；Luna pipeline 直接校验并 inline 发送原始文件，不运行 parser/OCR/DocumentIR、不使用 Files API，固定 OpenAI-only/no fallback。两者都生成 `GeneratedKnowledgeGraphV1`，节点按 sourceOrder 与 level 排列并包含详细解释、关键点、例子、公式、误区、自测和来源。
+“Organize knowledge points” 的旧 pipeline 与试卷共用解析/审查/失败范围视觉恢复；Luna pipeline 直接校验并 inline 发送原始文件，不运行 parser/OCR/DocumentIR、不使用 Files API，固定 GPT-6 Luna + Azure-only ZDR/no fallback。两者都生成 `GeneratedKnowledgeGraphV1`，节点按 sourceOrder 与 level 排列并包含详细解释、关键点、例子、公式、误区、自测和来源。
 
 My Notes 动态加载 React Flow + ELK：支持画布 pan/zoom、节点拖动、fit/auto arrange、键盘移动、250 节点与移动端；初始布局和拖动保存都做碰撞消解。图中只显示类型/标题，hover/聚焦临时在画布外 inspector 显示详情，点击固定并允许 node Q&A，`Esc` 取消；坐标/viewport 按 user/note/artifact version/revision 跨设备保存。整个 Materials/My Notes 候选 UI 固定英文并复用原有字体/token。
 

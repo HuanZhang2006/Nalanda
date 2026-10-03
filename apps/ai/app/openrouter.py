@@ -18,8 +18,8 @@ from .schemas import UsageEvent
 T = TypeVar("T", bound=BaseModel)
 TEXT_MODEL = "deepseek/deepseek-v4-flash-0731"
 VISION_MODEL = "xiaomi/mimo-v2.5"
-LUNA_MODEL = "openai/gpt-5.6-luna"
-OX_ALPHA_MODEL = "stealth/ox-alpha"
+LUNA_MODEL = "openai/gpt-6-luna"
+LUNA_PROVIDER = "Azure"
 
 
 def fake_enabled() -> bool:
@@ -364,11 +364,11 @@ class OpenRouterClient:
         raw_provider = body.get("provider")
         upstream_provider = raw_provider if isinstance(raw_provider, str) and raw_provider else None
         if upstream_provider and upstream_provider.casefold() == "openai":
-            # Persist one canonical value so the database completion gate is
-            # case-stable while still rejecting every non-OpenAI provider.
             upstream_provider = "OpenAI"
-        elif upstream_provider and upstream_provider.casefold() == "stealth":
-            upstream_provider = "Stealth"
+        elif upstream_provider and upstream_provider.casefold() == "azure":
+            # Persist one canonical value so the database completion gate is
+            # case-stable while still rejecting every non-Azure Luna provider.
+            upstream_provider = "Azure"
         raw_endpoint = body.get("provider_endpoint") or body.get("endpoint")
         upstream_endpoint = raw_endpoint if isinstance(raw_endpoint, str) and raw_endpoint else None
         raw_cost = usage.get("cost")
