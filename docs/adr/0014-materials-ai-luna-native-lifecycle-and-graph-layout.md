@@ -4,7 +4,7 @@
 > **作用：**固定供应商路由、原文件处理、费用审计、额度结算、过程文件清理、布局持久化和考试答案暴露边界。
 > **何时更新：**模型/provider、原文件能力矩阵、任务删除/额度规则、图布局引擎/存储契约、考试批改时机或生产发布状态变化时。
 
-- **状态：**Accepted / implemented in unreleased code；0049–0051 尚未完成受保护发布
+- **状态：**Accepted / implemented in unreleased code；0049–0051 数据库已发布。第 2 条模型与路由已由 [ADR-0016](0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md) 修订为 `openai/gpt-6-luna` + Azure-only ZDR，下文保留原决策文本。
 - **日期：**2026-08-14
 - **决策者：**Nalanda owner
 - **范围：**Materials、My Notes、NestJS AI、FastAPI worker、Supabase、发布门禁

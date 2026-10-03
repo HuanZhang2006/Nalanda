@@ -279,7 +279,6 @@ jobs:
             printf 'SUPABASE_URL=https://fixture.supabase.co\n'
             printf 'MATERIAL_AI_FAKE_PROVIDER=false\n'
             printf 'MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png\n'
-            printf 'MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS=png,jpg,jpeg,webp\n'
           } > "$fixture/.ai.env"
           {
             printf 'REDIS_URL=redis://:%064d@redis:6379/0\n' 0
@@ -497,9 +496,7 @@ jobs:
           FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true \
           FEATURE_MATERIAL_AI=true \
           FEATURE_MATERIAL_AI_LUNA=true \
-          FEATURE_MATERIAL_AI_OX_ALPHA=true \
           MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS=pdf,png \
-          MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS=png,jpg,jpeg,webp \
           AZURE_SPEECH_FAKE=true \
           OPENROUTER_FAKE=true \
           MATERIAL_AI_FAKE_PROVIDER=true \
@@ -987,7 +984,7 @@ jobs:
             if [[ -f "$root/.env" ]]; then
               rollback_api_env="$(mktemp "$root/.env.rollback.XXXXXX")"
               awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA|FEATURE_MATERIAL_AI_OX_ALPHA|MATERIAL_AI_LUNA_DISABLED_REASON_CODE|MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE)=/' "$root/.env" > "$rollback_api_env"
-              printf 'FEATURE_MATERIAL_AI=false\nFEATURE_MATERIAL_AI_LUNA=false\nFEATURE_MATERIAL_AI_OX_ALPHA=false\nMATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED\nMATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE=AI_OX_ALPHA_DISABLED\n' >> "$rollback_api_env"
+              printf 'FEATURE_MATERIAL_AI=false\nFEATURE_MATERIAL_AI_LUNA=false\nMATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED\n' >> "$rollback_api_env"
               chmod 600 "$rollback_api_env"
               mv "$rollback_api_env" "$root/.env"
             fi
@@ -1188,7 +1185,6 @@ jobs:
             --env-file "$root/.env" \
             --env-file "$root/.ai.env" \
             -e MATERIAL_AI_ALLOW_LUNA_DISABLED=true \
-            -e MATERIAL_AI_ALLOW_OX_ALPHA_DISABLED=true \
             -e MATERIAL_AI_WORKER_URL=http://ai:8000 \
             -e MATERIAL_AI_SMOKE_CALLBACK_HOST=nalanda-material-ai-smoke \
             --entrypoint python \
@@ -1202,16 +1198,14 @@ jobs:
           value=json.load(sys.stdin)
           assert value.get("ok") is True
           luna=value.get("lunaAvailable")
-          ox=value.get("oxAlphaAvailable")
-          assert isinstance(luna, bool) and isinstance(ox, bool)
+          assert isinstance(luna, bool)
           luna_reason=value.get("lunaReasonCode") or "none"
-          ox_reason=value.get("oxAlphaReasonCode") or "none"
-          print(str(luna).lower(), luna_reason, str(ox).lower(), ox_reason)
+          print(str(luna).lower(), luna_reason)
           ' <<< "$provider_gate_output")" || {
             rollback_application "real Materials AI provider gate returned invalid evidence" || true
             exit 1
           }
-          read -r luna_enabled luna_reason ox_alpha_enabled ox_alpha_reason <<< "$provider_gate_facts"
+          read -r luna_enabled luna_reason <<< "$provider_gate_facts"
           if [[ "$luna_enabled" == "false" && "$luna_reason" != "OPENROUTER_ZDR_UNAVAILABLE" ]]; then
             rollback_application "Luna provider gate failed for an unreviewed reason" || true
             exit 1
@@ -1220,17 +1214,8 @@ jobs:
             rollback_application "Luna provider gate returned an invalid activation decision" || true
             exit 1
           fi
-          if [[ "$ox_alpha_enabled" == "false" && "$ox_alpha_reason" != "OPENROUTER_ZDR_UNAVAILABLE" ]]; then
-            rollback_application "Ox Alpha provider gate failed for an unreviewed reason" || true
-            exit 1
-          fi
-          if [[ "$ox_alpha_enabled" != "true" && "$ox_alpha_enabled" != "false" ]]; then
-            rollback_application "Ox Alpha provider gate returned an invalid activation decision" || true
-            exit 1
-          fi
           echo "Materials AI provider gate: $provider_gate_output"
           echo "Luna activation decision: enabled=$luna_enabled reason=$luna_reason"
-          echo "Ox Alpha activation decision: enabled=$ox_alpha_enabled reason=$ox_alpha_reason"
           if compose_exec_no_stdin ai \
             sh -ec 'find /tmp/nalanda-material-ai -mindepth 1 -maxdepth 1 -type d -name "job-*" -print -quit | grep -q .'; then
             rollback_application "Materials AI temporary job directory was not cleaned" || true
@@ -1282,10 +1267,6 @@ jobs:
             rollback_application "Luna native-file candidate did not start behind its closed feature flag" || true
             exit 1
           fi
-          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI_OX_ALPHA)" != "false" ]]; then
-            rollback_application "Ox Alpha native-image candidate did not start behind its closed feature flag" || true
-            exit 1
-          fi
           if ! assert_ai_health http://127.0.0.1:8411/api/health/ai; then
             docker compose --env-file "$next_env" -f "$next_compose" logs --tail=100 ai api || true
             rollback_application "API-to-worker readiness failed" || true
@@ -1305,21 +1286,16 @@ jobs:
           fi
 
           # All private gates passed. Document IR may activate independently;
-          # Luna remains closed if the live ZDR catalog has no first-party
-          # OpenAI endpoint. No alternate provider or silent pipeline fallback
-          # is permitted.
+          # Luna remains closed if the live ZDR catalog has no Azure endpoint
+          # for GPT-6 Luna. No alternate provider or silent pipeline fallback
+          # is permitted. The retired Ox Alpha keys are stripped, not written.
           enabled_env="$(mktemp "$root/.env.material-ai-enabled.XXXXXX")"
           awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA|FEATURE_MATERIAL_AI_OX_ALPHA|MATERIAL_AI_LUNA_DISABLED_REASON_CODE|MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE)=/' "$root/.env" > "$enabled_env"
-          printf 'FEATURE_MATERIAL_AI=true\nFEATURE_MATERIAL_AI_LUNA=%s\nFEATURE_MATERIAL_AI_OX_ALPHA=%s\n' "$luna_enabled" "$ox_alpha_enabled" >> "$enabled_env"
+          printf 'FEATURE_MATERIAL_AI=true\nFEATURE_MATERIAL_AI_LUNA=%s\n' "$luna_enabled" >> "$enabled_env"
           if [[ "$luna_enabled" == "true" ]]; then
             printf 'MATERIAL_AI_LUNA_DISABLED_REASON_CODE=AI_LUNA_DISABLED\n' >> "$enabled_env"
           else
             printf 'MATERIAL_AI_LUNA_DISABLED_REASON_CODE=%s\n' "$luna_reason" >> "$enabled_env"
-          fi
-          if [[ "$ox_alpha_enabled" == "true" ]]; then
-            printf 'MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE=AI_OX_ALPHA_DISABLED\n' >> "$enabled_env"
-          else
-            printf 'MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE=%s\n' "$ox_alpha_reason" >> "$enabled_env"
           fi
           chmod 600 "$enabled_env"
           mv "$enabled_env" "$root/.env"
@@ -1341,10 +1317,6 @@ jobs:
             rollback_application "Luna native-file feature flag did not match the provider gate" || true
             exit 1
           fi
-          if [[ "$(compose_exec_no_stdin api printenv FEATURE_MATERIAL_AI_OX_ALPHA)" != "$ox_alpha_enabled" ]]; then
-            rollback_application "Ox Alpha native-image feature flag did not match the provider gate" || true
-            exit 1
-          fi
           if ! docker run --rm \
             --network host \
             --env-file "$root/.env" \
@@ -1363,7 +1335,6 @@ jobs:
             --env-file "$root/.ai.env" \
             -e SMOKE_API_ORIGIN=http://127.0.0.1:8411/api \
             -e MATERIAL_AI_EXPECT_LUNA_ENABLED="$luna_enabled" \
-            -e MATERIAL_AI_EXPECT_OX_ALPHA_ENABLED="$ox_alpha_enabled" \
             --entrypoint node \
             -v "$incoming/smoke-material-ai-production.mjs:/tmp/smoke-material-ai-production.mjs:ro" \
             "nalanda-api:$sha" /tmp/smoke-material-ai-production.mjs; then

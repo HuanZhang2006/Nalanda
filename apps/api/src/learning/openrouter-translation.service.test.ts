@@ -62,7 +62,7 @@ describe("OpenRouter spelling translation adapter", () => {
     process.env.PUBLIC_ORIGIN = "https://nalanda.online";
     const { service, learning, flags } = harness();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      provider: "Stealth",
+      provider: "Nvidia",
       choices: [{ message: { content: JSON.stringify({
         correct: true,
       }) } }],
@@ -80,13 +80,12 @@ describe("OpenRouter spelling translation adapter", () => {
     );
     const providerRequest = vi.mocked(fetch).mock.calls[0];
     const body = JSON.parse(String((providerRequest[1] as RequestInit).body));
-    expect(body.model).toBe("stealth/ox-alpha");
+    expect(body.model).toBe("nvidia/nemotron-3-super-120b-a12b:free");
     expect(body.max_tokens).toBe(512);
-    expect(body.reasoning).toEqual({ effort: "low", exclude: true });
+    expect(body.reasoning).toEqual({ enabled: false });
     expect(body.provider).toEqual({
-      only: ["stealth"],
+      only: ["nvidia"],
       allow_fallbacks: false,
-      data_collection: "deny",
       require_parameters: true,
     });
     expect(body.response_format).toEqual({ type: "json_object" });
@@ -99,7 +98,7 @@ describe("OpenRouter spelling translation adapter", () => {
       expect.objectContaining({
         correct: true,
         provider: "openrouter",
-        model: "stealth/ox-alpha",
+        model: "nvidia/nemotron-3-super-120b-a12b:free",
         usage: { promptTokens: 41, completionTokens: 13, totalTokens: 54 },
       }),
     );
@@ -154,7 +153,7 @@ describe("OpenRouter spelling translation adapter", () => {
     process.env.OPENROUTER_API_KEY = "test-secret";
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      provider: "Stealth",
+      provider: "Nvidia",
       choices: [{ message: { content: JSON.stringify({
         correct: true,
       }) } }],
@@ -180,7 +179,7 @@ describe("OpenRouter spelling translation adapter", () => {
     const { service, learning } = harness();
     learning.completeSpellingTranslationAssessment.mockResolvedValue(result(false));
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      provider: "Stealth",
+      provider: "Nvidia",
       choices: [{
         message: {
           content: [{ type: "text", text: JSON.stringify({ correct: false }) }],
@@ -205,11 +204,11 @@ describe("OpenRouter spelling translation adapter", () => {
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        provider: "Stealth",
+        provider: "Nvidia",
         choices: [{ message: { reasoning: "provider returned no content" } }],
       }), { status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
-        provider: "Stealth",
+        provider: "Nvidia",
         choices: [{ message: { content: JSON.stringify({
           correct: true,
         }) } }],
@@ -270,7 +269,7 @@ describe("OpenRouter spelling translation adapter", () => {
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
       new Response(JSON.stringify({
-        provider: "Stealth",
+        provider: "Nvidia",
         choices: [{ message: { content: "not-json" } }],
       }), { status: 200 })));
     await expect(service.assess("user-a", sessionId, request("一种常见的果实"))).rejects.toMatchObject({
@@ -286,7 +285,7 @@ describe("OpenRouter spelling translation adapter", () => {
     const { service, learning } = harness();
     vi.stubGlobal("fetch", vi.fn().mockImplementation(async () =>
       new Response(JSON.stringify({
-        provider: "Stealth",
+        provider: "Nvidia",
         choices: [{ message: { content: JSON.stringify({
           correct: true,
           explanation: "must not be trusted",
@@ -318,7 +317,7 @@ describe("OpenRouter spelling translation adapter", () => {
     expect(warn).toHaveBeenCalledWith(JSON.stringify({
       event: "learning_spelling_translation_provider_http_error",
       provider: "openrouter",
-      model: "stealth/ox-alpha",
+      model: "nvidia/nemotron-3-super-120b-a12b:free",
       status: 404,
       upstreamCode: "model_not_found",
       requestId: "request-safe-123",

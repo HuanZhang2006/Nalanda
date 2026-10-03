@@ -162,82 +162,12 @@ async def test_luna_native_pipeline_sends_exact_original_bytes_and_never_calls_d
     assert [call["purpose"] for call in captured] == ["safety_audit", "exam_generation"]
     for call in captured:
         assert call["model"] == pipeline.LUNA_MODEL
-        assert call["provider_only"] == ["openai"]
-        assert call["required_upstream_provider"] == "OpenAI"
+        assert call["provider_only"] == ["azure"]
+        assert call["required_upstream_provider"] == "Azure"
         assert call["allow_fallbacks"] is False
         assert call["plugins"] == [{"id": "file-parser", "pdf": {"engine": "native"}}]
         file_part = next(part for part in call["user_content"] if part["type"] == "file")
         assert file_part["file"]["file_data"] == f"data:application/pdf;base64,{encoded}"
-
-
-@pytest.mark.asyncio
-async def test_ox_alpha_native_pipeline_sends_original_image_bytes_with_stealth_route(
-    monkeypatch, tmp_path: Path
-):
-    monkeypatch.setenv("MATERIAL_AI_FAKE_PROVIDER", "true")
-    original_bytes = b"\x89PNG\r\n\x1a\nexact-image-bytes"
-    request = native_exam_request().model_copy(update={
-        "pipeline": "ox_alpha_native_file_v1",
-        "material": native_exam_request().material.model_copy(update={
-            "name": "diagram.png", "type": "image/png", "sizeBytes": len(original_bytes),
-        }),
-    })
-    captured: list[dict] = []
-    original_structured = pipeline.OpenRouterClient.structured
-
-    async def fake_download(_url: str, destination: Path, _expected_size: int):
-        destination.write_bytes(original_bytes)
-        return "e" * 64, len(original_bytes)
-
-    def forbidden_parser(*_args, **_kwargs):
-        raise AssertionError("Ox Alpha native-image processing must not call a parser")
-
-    async def no_callback(*_args, **_kwargs):
-        return None
-
-    async def capture(self, **kwargs):
-        captured.append(kwargs)
-        return await original_structured(self, **kwargs)
-
-    monkeypatch.setattr(pipeline, "download_material", fake_download)
-    monkeypatch.setattr(pipeline, "parse_material", forbidden_parser)
-    monkeypatch.setattr(pipeline, "_worker_callback", no_callback)
-    monkeypatch.setattr(pipeline.OpenRouterClient, "structured", capture)
-
-    result = await pipeline.process_material_job(request, tmp_path)
-
-    encoded = base64.b64encode(original_bytes).decode("ascii")
-    assert result["sourceMode"] == "native_file"
-    assert [call["purpose"] for call in captured] == ["safety_audit", "exam_generation"]
-    for call in captured:
-        assert call["model"] == pipeline.OX_ALPHA_MODEL
-        assert call["provider_only"] == ["stealth"]
-        assert call["required_upstream_provider"] == "Stealth"
-        assert call["allow_fallbacks"] is False
-        assert call["reasoning"] == {"effort": "low", "exclude": True}
-        assert call["plugins"] is None
-        image_part = next(part for part in call["user_content"] if part["type"] == "image_url")
-        assert image_part["image_url"]["url"] == f"data:image/png;base64,{encoded}"
-
-
-@pytest.mark.asyncio
-async def test_ox_alpha_native_pipeline_rejects_pdf_even_if_operator_allowlists_it(
-    monkeypatch, tmp_path: Path
-):
-    request = native_exam_request().model_copy(update={"pipeline": "ox_alpha_native_file_v1"})
-    monkeypatch.setenv("MATERIAL_AI_OX_ALPHA_ALLOWED_EXTENSIONS", "pdf,png")
-
-    async def forbidden_download(*_args, **_kwargs):
-        raise AssertionError("Ox Alpha must reject non-native file modalities before download")
-
-    async def no_callback(*_args, **_kwargs):
-        return None
-
-    monkeypatch.setattr(pipeline, "download_material", forbidden_download)
-    monkeypatch.setattr(pipeline, "_worker_callback", no_callback)
-    with pytest.raises(PipelineError) as caught:
-        await pipeline._native_source_for_job(request, tmp_path)
-    assert caught.value.code == "AI_OX_ALPHA_FORMAT_NOT_VERIFIED"
 
 
 @pytest.mark.asyncio
@@ -977,6 +907,164 @@ async def test_single_source_block_recovers_invalid_generation_refs_then_runs_se
         for question in section.questions
         for ref in question.sourceRefs
     } == {"t1-b1"}
+
+
+@pytest.mark.asyncio
+async def test_structural_repair_receives_source_evidence_and_gets_one_bounded_semantic_repair():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+    source = document("Retrieval practice strengthens later access to stored information.")
+
+    class StructuralThenSemanticRepairClient:
+        purposes: list[str] = []
+        repair_calls = 0
+        review_calls = 0
+
+        async def structured(
+            self,
+            *,
+            purpose,
+            result_type,
+            user_content,
+            system,
+            **_kwargs,
+        ):
+            self.purposes.append(purpose)
+            value = pipeline._fake_exam(settings, "t1-b1")
+            if purpose == "exam_generation":
+                # Preserve the total count while violating the requested type
+                # distribution, matching the production DOCX failure shape.
+                question = value["sections"][0]["questions"][-1]
+                question["type"] = "true_false"
+                question["options"] = ["True", "False"]
+                question["acceptedAnswers"] = ["true"]
+            elif purpose == "exam_repair":
+                self.repair_calls += 1
+                payload = json.loads(user_content.split("\n", 1)[1])
+                assert payload["sourceBlocks"][0]["text"] == source.blocks[0].text
+                assert payload["allowedBlockIds"] == ["t1-b1"]
+                assert "SOURCE_BLOCKS" in system
+                assert payload["repairGate"] == (
+                    "structural" if self.repair_calls == 1 else "semantic_after_structural"
+                )
+            elif purpose == "exam_review":
+                self.review_calls += 1
+                value = (
+                    {
+                        "valid": False,
+                        "issues": [
+                            "q5 answer and explanation are not supported by its cited source block"
+                        ],
+                    }
+                    if self.review_calls == 1
+                    else {"valid": True, "issues": []}
+                )
+            else:
+                raise AssertionError(f"unexpected purpose: {purpose}")
+            return result_type.model_validate(value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=pipeline.TEXT_MODEL,
+                    requestId=f"test-{purpose}-{len(self.purposes)}",
+                    promptTokens=1,
+                    completionTokens=1,
+                    totalTokens=2,
+                    costMicroUsd=1,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
+
+    client = StructuralThenSemanticRepairClient()
+    usage: list[UsageEvent] = []
+    exam = await pipeline.generate_exam(client, source, settings, usage)
+
+    assert validate_exam(exam, settings, {"t1-b1"}) == []
+    assert client.purposes == [
+        "exam_generation",
+        "exam_repair",
+        "exam_review",
+        "exam_repair",
+        "exam_review",
+    ]
+    assert [event.purpose for event in usage] == client.purposes
+
+
+@pytest.mark.asyncio
+async def test_semantic_repair_after_structural_repair_remains_fail_closed_and_bounded():
+    settings = ExamSettings(
+        language="en",
+        difficulty="mixed",
+        durationMinutes=60,
+        totalMarks=20,
+        questionCounts={
+            "singleChoice": 5,
+            "multipleChoice": 0,
+            "trueFalse": 0,
+            "fillBlank": 0,
+            "shortAnswer": 0,
+            "essay": 0,
+        },
+        answerDetail="detailed",
+        focus="",
+    )
+
+    class NeverGroundedClient:
+        purposes: list[str] = []
+
+        async def structured(self, *, purpose, result_type, **_kwargs):
+            self.purposes.append(purpose)
+            value = pipeline._fake_exam(settings, "t1-b1")
+            if purpose == "exam_generation":
+                value["sections"][0]["questions"][-1]["type"] = "true_false"
+                value["sections"][0]["questions"][-1]["acceptedAnswers"] = ["true"]
+            elif purpose == "exam_review":
+                value = {
+                    "valid": False,
+                    "issues": ["answer is not supported by the cited source"],
+                }
+            return result_type.model_validate(value), [
+                UsageEvent(
+                    purpose=purpose,
+                    model=pipeline.TEXT_MODEL,
+                    requestId=f"test-{purpose}-{len(self.purposes)}",
+                    promptTokens=1,
+                    completionTokens=1,
+                    totalTokens=2,
+                    costMicroUsd=1,
+                    durationMs=1,
+                    zdrEnforced=True,
+                    status="succeeded",
+                )
+            ]
+
+    client = NeverGroundedClient()
+    with pytest.raises(PipelineError) as caught:
+        await pipeline.generate_exam(client, document("Source"), settings, [])
+
+    assert caught.value.code == "AI_EXAM_VALIDATION_FAILED"
+    assert client.purposes == [
+        "exam_generation",
+        "exam_repair",
+        "exam_review",
+        "exam_repair",
+        "exam_review",
+    ]
 
 
 @pytest.mark.asyncio

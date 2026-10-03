@@ -331,7 +331,7 @@ active session 的 `unitId` 一定指向现存单元；若课程编辑删除了�
 }
 ```
 
-NestJS 从当前 owner/session/word 读取英文和权威 translations。用户答案经服务端 NFKC、空白和大小写规范化后若完全等于任一参考项，以 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不调用供应商；非字面答案才在请求内存中交给 OpenRouter。Ox Alpha 请求使用其声明支持的 JSON Object 模式，API 在本地严格要求唯一字段 `{correct:boolean}`；额外字段、缺失字段、坏类型或坏 JSON 均失败关闭。浏览器不能提交参考答案或模型名；服务端用固定安全文案补齐 feedback，不把 provider 自由文本当权威词义。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
+NestJS 从当前 owner/session/word 读取英文和权威 translations。用户答案经服务端 NFKC、空白和大小写规范化后若完全等于任一参考项，以 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不调用供应商；非字面答案才在请求内存中交给 OpenRouter 免费 `nvidia/nemotron-3-super-120b-a12b:free`（Nvidia-only、无 fallback、关闭 reasoning）。请求使用 JSON Object 模式，API 在本地严格要求唯一字段 `{correct:boolean}`，并要求响应 provider 为 Nvidia；额外字段、缺失字段、坏类型或坏 JSON 均失败关闭。浏览器不能提交参考答案或模型名；服务端用固定安全文案补齐 feedback，不把 provider 自由文本当权威词义。数据库只持久化用户答案 SHA-256、provider/model、boolean、简短反馈、token usage、租约和首次响应，不保存输入原文。回答正确时 revision 不推进，随后必须用**同一 UUID**提交 spelling attempt；回答错误时服务端立即用该 UUID 原子记录一次 spelling 错误并返回：
 
 ```json
 {
@@ -445,11 +445,11 @@ NestJS 从当前 owner/session/word 读取英文和权威 translations。用户�
 
 ## 5. Materials AI、Notes、知识图谱与在线考试
 
-基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，0054–0055 又于 2026-08-23 受保护应用并验证，但 PR #77 应用 release 因 Courses Ox Alpha 输出契约 HTTP 404 自动回退。0046–0055 新应用接口仍需以后续成功切流证据才算公开启用。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。总开关及 Luna/Ox 子开关相互独立；任一原文件模型缺少合规 ZDR endpoint 时 capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`，不会静默创建 DocumentIR job。
+基础试卷/考试接口已随生产 0041–0043 发布；0049–0051 数据库已于 2026-08-14 受保护应用，0054–0055 又于 2026-08-23 受保护应用并验证。main run `32931681321` 的应用候选因 DocumentIR DOCX 语义质量门失败而自动回退；0046–0057 新应用接口仍需以后续成功切流证据才算公开启用。全部使用 Supabase Bearer JWT，响应为 camelCase，错误为 `{ code, message, fieldErrors? }`。总开关与 Luna 子开关相互独立；Luna 缺少 Azure ZDR endpoint 时 capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`，不会静默创建 DocumentIR job。已退役的 `ox_alpha_native_file_v1` 以 `INVALID_AI_JOB` 拒绝。
 
 | 方法与路径 | 输入/行为 | 关键边界 |
 |---|---|---|
-| `POST /api/materials/:id/ai-jobs` | 生产支持 `kind=exam`；候选增加 `kind=knowledge_graph`，并要求显式 `pipeline=document_ir_v1|luna_native_file_v1|ox_alpha_native_file_v1`。均含 UUID `idempotencyKey`、版本化同意与 settings | owner、格式/25MB、每日 generation reservation、单用户 active job；同 key 重放不重复预留；未通过 capability 的原文件格式返回稳定 400 |
+| `POST /api/materials/:id/ai-jobs` | 生产支持 `kind=exam`；候选增加 `kind=knowledge_graph`，并要求显式 `pipeline=document_ir_v1|luna_native_file_v1`。均含 UUID `idempotencyKey`、版本化同意与 settings | owner、格式/25MB、每日 generation reservation、单用户 active job；同 key 重放不重复预留；未通过 capability 的原文件格式返回稳定 400 |
 | `GET /api/materials/:id/ai-capabilities` | 返回三条 pipeline 的 available/default/model/provider/reasonCode | owner-only；Luna 与 Ox 各自要求子 flag、逐格式 allowlist、实时 ZDR catalog 与真实 provider gate；Ox 仅允许图片；不可用不会自动创建 DocumentIR job |
 | `GET /api/ai-jobs?limit=50` | 最近任务及阶段/进度/稳定错误/结果引用 | owner-only；limit 被服务器夹紧 |
 | `GET /api/ai-jobs/:id` | 单任务 | owner-only |
@@ -499,7 +499,7 @@ FastAPI 的请求/响应 Pydantic 模型 `extra=forbid`；内部 token 常量时
 
 Postgres `generation_jobs`/`exam_attempts` 是 durable 事实，BullMQ 只保存 UUID；reconciler 重投 queued/过期 lease并保持单一执行槽到终态/租约到期。候选 usage 请求增加 UUID `eventId`，断线重放使用唯一约束不重复计费；完成与失败前必须 flush。worker 另在 0700 目录短期保存 usage spool 和已验证 checkpoint，并把生成/评分的已验证结果同步到私有 DB checkpoint；终态/TTL 清除且本地副本不得备份。月度默认总预算 US$20，单生成/评分上限 US$0.50/US$0.05；usage ledger 不保存 prompt、正文、回答或原始模型响应。
 
-Luna 请求固定 `openai/gpt-5.6-luna` 和实际 OpenAI provider。PDF 以 inline `type:file` + native parser，图片以 inline `image_url`；原字节只在当前任务目录存在，不进入 DocumentIR/parse cache，也不上传 OpenRouter Files API。usage 记录 `pipeline/upstreamProvider/upstreamEndpoint`；任何成功事件显示非 OpenAI 上游都会以 `AI_PROVIDER_ROUTING_VIOLATION` 拒绝完成，已发生费用仍留在 ledger。
+Luna 请求固定 `openai/gpt-6-luna` 和实际 Azure provider（GPT-6 Luna 唯一 ZDR 上游）。PDF 以 inline `type:file` + native parser，图片以 inline `image_url`；原字节只在当前任务目录存在，不进入 DocumentIR/parse cache，也不上传 OpenRouter Files API。usage 记录 `pipeline/upstreamProvider/upstreamEndpoint`；任何成功事件显示非 Azure 上游（包括 first-party OpenAI）都会以 `AI_PROVIDER_ROUTING_VIOLATION` 拒绝完成，已发生费用仍留在 ledger。
 
 候选稳定错误新增：`AI_WORKER_TIMEOUT`（内部 transport 超时）、`AI_WORKER_UNREACHABLE`、`AI_CALLBACK_UNAVAILABLE`、`AI_JOB_NOT_RESUMABLE`、`AI_RESUME_EXPIRED`、`AI_WORKER_RETRY_EXHAUSTED`、`AI_KNOWLEDGE_GRAPH_VALIDATION_FAILED`、`KNOWLEDGE_NODE_NOT_FOUND`、`AI_LUNA_DISABLED`、`AI_LUNA_FORMAT_NOT_VERIFIED`、`AI_PROVIDER_ROUTING_VIOLATION`、`GRAPH_LAYOUT_REVISION_CONFLICT`、`GRAPH_ARTIFACT_CHANGED`。retry/layout 冲突为 409；安全/格式/路由错误不可恢复。
 

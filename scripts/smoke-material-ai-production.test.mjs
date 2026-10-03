@@ -7,15 +7,13 @@ test("Materials AI production smoke uses public auth, exam grading, knowledge gr
   assert.match(source, /FEATURE_MATERIAL_AI.*"true"/);
   assert.match(source, /MATERIAL_AI_EXPECT_LUNA_ENABLED/);
   assert.match(source, /FEATURE_MATERIAL_AI_LUNA/);
-  assert.match(source, /MATERIAL_AI_EXPECT_OX_ALPHA_ENABLED/);
-  assert.match(source, /FEATURE_MATERIAL_AI_OX_ALPHA/);
+  assert.doesNotMatch(source, /MATERIAL_AI_EXPECT_OX_ALPHA_ENABLED|stealth\/ox-alpha/);
   assert.match(source, /OPENROUTER_ZDR_UNAVAILABLE/);
   assert.match(source, /MATERIAL_AI_FAKE_PROVIDER.*"true"/);
   assert.match(source, /ai-capabilities/);
   assert.match(source, /pipeline: "luna_native_file_v1"/);
-  assert.match(source, /openai\/gpt-5\.6-luna/);
-  assert.match(source, /ox_alpha_native_file_v1/);
-  assert.match(source, /upstream_provider === "OpenAI"/);
+  assert.match(source, /openai\/gpt-6-luna/);
+  assert.match(source, /upstream_provider === "Azure"/);
   assert.match(source, /\/materials\/\$\{source\.material\.id\}\/ai-jobs/);
   assert.match(source, /\/exam-attempts\/\$\{attempt\.id\}\/answers/);
   assert.match(source, /\/exam-attempts\/\$\{attempt\.id\}\/submit/);

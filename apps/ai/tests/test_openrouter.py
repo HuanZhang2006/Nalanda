@@ -7,7 +7,7 @@ from httpx import Response
 
 from app import openrouter
 from app.errors import PipelineError
-from app.openrouter import LUNA_MODEL, OX_ALPHA_MODEL, TEXT_MODEL, OpenRouterClient
+from app.openrouter import LUNA_MODEL, TEXT_MODEL, OpenRouterClient
 from app.schemas import AuditResult
 
 
@@ -70,7 +70,7 @@ async def test_openrouter_requires_strict_schema_zdr_and_no_tools(monkeypatch):
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_luna_locks_openai_disables_fallback_and_accounts_routing_violation(monkeypatch):
+async def test_luna_locks_azure_disables_fallback_and_accounts_routing_violation(monkeypatch):
     monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
     persisted = []
@@ -81,7 +81,7 @@ async def test_luna_locks_openai_disables_fallback_and_accounts_routing_violatio
     route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
         return_value=Response(200, json={
             "id": "luna-wrong-provider",
-            "provider": "NotOpenAI",
+            "provider": "openai",
             "provider_endpoint": "wrong-endpoint",
             "choices": [{"message": {"content": json.dumps({
                 "classification": "safe", "rationale": "ok",
@@ -97,14 +97,14 @@ async def test_luna_locks_openai_disables_fallback_and_accounts_routing_violatio
             result_type=AuditResult, system="fixed", user_content=[
                 {"type": "text", "text": "untrusted"},
                 {"type": "file", "file": {"filename": "x.pdf", "file_data": "data:application/pdf;base64,AA=="}},
-            ], max_tokens=100, provider_only=["openai"],
-            required_upstream_provider="OpenAI", allow_fallbacks=False,
+            ], max_tokens=100, provider_only=["azure"],
+            required_upstream_provider="Azure", allow_fallbacks=False,
             plugins=[{"id": "file-parser", "pdf": {"engine": "native"}}],
         )
 
     body = json.loads(route.calls.last.request.content)
     assert body["model"] == LUNA_MODEL
-    assert body["provider"]["only"] == ["openai"]
+    assert body["provider"]["only"] == ["azure"]
     assert body["provider"]["allow_fallbacks"] is False
     assert body["provider"]["zdr"] is True
     assert body["provider"]["data_collection"] == "deny"
@@ -112,19 +112,19 @@ async def test_luna_locks_openai_disables_fallback_and_accounts_routing_violatio
     assert body["plugins"] == [{"id": "file-parser", "pdf": {"engine": "native"}}]
     assert caught.value.code == "AI_PROVIDER_ROUTING_VIOLATION"
     assert len(persisted) == 1
-    assert persisted[0].upstreamProvider == "NotOpenAI"
+    assert persisted[0].upstreamProvider == "OpenAI"
     assert persisted[0].upstreamEndpoint == "wrong-endpoint"
     assert persisted[0].costMicroUsd == 3
 
 
 @pytest.mark.asyncio
 @respx.mock
-async def test_luna_canonicalizes_verified_openai_provider_name(monkeypatch):
+async def test_luna_canonicalizes_verified_azure_provider_name(monkeypatch):
     monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
     monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
     respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
         return_value=Response(200, json={
-            "id": "luna-openai-provider", "provider": "openai", "provider_endpoint": "openai-primary",
+            "id": "luna-azure-provider", "provider": "azure", "provider_endpoint": "azure-primary",
             "choices": [{"message": {"content": json.dumps({
                 "classification": "safe", "rationale": "ok",
                 "failedRanges": [], "injectionLocations": [],
@@ -136,45 +136,12 @@ async def test_luna_canonicalizes_verified_openai_provider_name(monkeypatch):
     _result, usage = await OpenRouterClient().structured(
         purpose="safety_audit", model=LUNA_MODEL, schema_name="native_audit",
         result_type=AuditResult, system="fixed", user_content="untrusted",
-        max_tokens=100, provider_only=["openai"],
-        required_upstream_provider="OpenAI", allow_fallbacks=False,
+        max_tokens=100, provider_only=["azure"],
+        required_upstream_provider="Azure", allow_fallbacks=False,
     )
 
-    assert usage[0].upstreamProvider == "OpenAI"
-    assert usage[0].upstreamEndpoint == "openai-primary"
-
-
-@pytest.mark.asyncio
-@respx.mock
-async def test_ox_alpha_locks_stealth_and_keeps_mandatory_reasoning_low(monkeypatch):
-    monkeypatch.delenv("MATERIAL_AI_FAKE_PROVIDER", raising=False)
-    monkeypatch.setenv("OPENROUTER_API_KEY", "test-only-key")
-    route = respx.post("https://openrouter.ai/api/v1/chat/completions").mock(
-        return_value=Response(200, json={
-            "id": "ox-stealth-provider", "provider": "stealth",
-            "provider_endpoint": "stealth-primary",
-            "choices": [{"message": {"content": json.dumps({
-                "classification": "safe", "rationale": "ok",
-                "failedRanges": [], "injectionLocations": [],
-            })}}],
-            "usage": {"prompt_tokens": 5, "completion_tokens": 2, "total_tokens": 7, "cost": 0},
-        })
-    )
-
-    _result, usage = await OpenRouterClient().structured(
-        purpose="safety_audit", model=OX_ALPHA_MODEL, schema_name="native_audit",
-        result_type=AuditResult, system="fixed", user_content="untrusted",
-        max_tokens=100, provider_only=["stealth"],
-        required_upstream_provider="Stealth", allow_fallbacks=False,
-        reasoning={"effort": "low", "exclude": True},
-    )
-
-    body = json.loads(route.calls.last.request.content)
-    assert body["model"] == OX_ALPHA_MODEL
-    assert body["provider"]["only"] == ["stealth"]
-    assert body["provider"]["allow_fallbacks"] is False
-    assert body["reasoning"] == {"effort": "low", "exclude": True}
-    assert usage[0].upstreamProvider == "Stealth"
+    assert usage[0].upstreamProvider == "Azure"
+    assert usage[0].upstreamEndpoint == "azure-primary"
 
 
 @pytest.mark.asyncio

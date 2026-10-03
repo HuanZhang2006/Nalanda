@@ -1,4 +1,5 @@
-export const DEFAULT_OPENROUTER_TRANSLATION_MODEL = "stealth/ox-alpha";
+export const DEFAULT_OPENROUTER_TRANSLATION_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
+export const OPENROUTER_TRANSLATION_PROVIDER = "Nvidia";
 
 const RETRYABLE_SMOKE_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504]);
 
@@ -142,12 +143,11 @@ export function buildOpenRouterSmokeBody(model = DEFAULT_OPENROUTER_TRANSLATION_
     model,
     temperature: 0,
     max_tokens: 768,
-    reasoning: { effort: "low", exclude: true },
+    reasoning: { enabled: false },
     tool_choice: "none",
     provider: {
-      only: ["stealth"],
+      only: [OPENROUTER_TRANSLATION_PROVIDER.toLowerCase()],
       allow_fallbacks: false,
-      data_collection: "deny",
       require_parameters: true,
     },
     response_format: {
@@ -185,8 +185,11 @@ export function buildOpenRouterSmokeBody(model = DEFAULT_OPENROUTER_TRANSLATION_
 }
 
 export function parseOpenRouterSmokePayload(payload) {
-  if (typeof payload?.provider !== "string" || payload.provider.toLowerCase() !== "stealth") {
-    throw new Error("OpenRouter translation smoke did not use the required Stealth provider");
+  if (
+    typeof payload?.provider !== "string"
+    || payload.provider.toLowerCase() !== OPENROUTER_TRANSLATION_PROVIDER.toLowerCase()
+  ) {
+    throw new Error("OpenRouter translation smoke did not use the required Nvidia provider");
   }
   const content = payload?.choices?.[0]?.message?.content;
   if (typeof content !== "string") throw new Error("OpenRouter response has no message content");
@@ -225,7 +228,7 @@ export function parseOpenRouterSmokePayload(payload) {
     throw new Error("OpenRouter semantic decisions did not match the release fixture");
   }
   return {
-    upstreamProvider: "Stealth",
+    upstreamProvider: OPENROUTER_TRANSLATION_PROVIDER,
     promptTokens: Number.isSafeInteger(payload?.usage?.prompt_tokens)
       ? payload.usage.prompt_tokens : null,
     completionTokens: Number.isSafeInteger(payload?.usage?.completion_tokens)

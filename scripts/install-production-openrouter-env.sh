@@ -22,7 +22,7 @@ awk '
 {
   printf 'FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true\n'
   printf 'OPENROUTER_API_KEY=%s\n' "$openrouter_key"
-  printf 'OPENROUTER_MODEL=stealth/ox-alpha\n'
+  printf 'OPENROUTER_MODEL=nvidia/nemotron-3-super-120b-a12b:free\n'
   printf 'OPENROUTER_BASE_URL=https://openrouter.ai/api/v1\n'
   printf 'OPENROUTER_TIMEOUT_MS=12000\n'
   printf 'OPENROUTER_ASSESSMENTS_PER_MINUTE=20\n'

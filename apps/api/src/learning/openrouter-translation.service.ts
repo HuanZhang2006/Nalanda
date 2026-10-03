@@ -17,7 +17,10 @@ import { FeatureFlagsService } from "./feature-flags.service";
 import { LearningService } from "./learning.service";
 import { assertUuid } from "./learning.util";
 
-const DEFAULT_MODEL = "stealth/ox-alpha";
+const DEFAULT_MODEL = "nvidia/nemotron-3-super-120b-a12b:free";
+// The free model is served by a single first-party endpoint. Pin it so a
+// response can never come from an unreviewed provider.
+const PROVIDER_SLUG = "nvidia";
 const DEFAULT_BASE_URL = "https://openrouter.ai/api/v1";
 
 type ProviderDecision = {
@@ -47,7 +50,7 @@ function safeTokenCount(value: unknown) {
 
 function parseDecision(payload: unknown): ProviderDecision {
   const root = payload && typeof payload === "object" ? payload as Record<string, any> : {};
-  if (typeof root.provider !== "string" || root.provider.toLocaleLowerCase() !== "stealth") {
+  if (typeof root.provider !== "string" || root.provider.toLocaleLowerCase() !== PROVIDER_SLUG) {
     throw new BadGatewayException({
       code: "TRANSLATION_PROVIDER_INVALID",
       message: "翻译判分服务未使用指定供应商",
@@ -164,12 +167,13 @@ export class OpenRouterTranslationService {
       model: config.model,
       temperature: 0,
       max_tokens: 512,
-      reasoning: { effort: "low", exclude: true },
+      // A one-field boolean judgment needs no chain of thought; disabling it
+      // keeps latency inside the interactive timeout.
+      reasoning: { enabled: false },
       tool_choice: "none",
       provider: {
-        only: ["stealth"],
+        only: [PROVIDER_SLUG],
         allow_fallbacks: false,
-        data_collection: "deny",
         require_parameters: true,
       },
       response_format: {

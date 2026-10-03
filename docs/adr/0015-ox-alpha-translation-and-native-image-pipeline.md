@@ -4,7 +4,7 @@
 > **作用：**固定模型、provider、reasoning、能力矩阵、ZDR、隐私、完成事务和发布门禁，避免把文本可用性误写成原文件能力。
 > **何时更新：**Ox Alpha 模型身份/能力/价格、Stealth 路由、reasoning、ZDR catalog、允许格式、翻译数据边界或生产发布状态变化时。
 
-- **状态：**Accepted / implemented in unreleased code；0054–0055 尚未完成受保护发布
+- **状态：**Superseded by [ADR-0016](0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)（2026-10-03）；0054–0055 已应用到生产数据库但应用从未启用 Ox，0056–0057 将其完全退役。下文为历史决策原文。
 - **日期：**2026-08-23
 - **决策者：**Nalanda owner
 - **范围：**Courses、Materials、My Notes、NestJS、FastAPI、Supabase、发布门禁
@@ -50,4 +50,4 @@ Courses 的非字面翻译判定原先固定使用 Gemma 4 免费模型，最近
 
 ## 2026-08-25 输出契约修订
 
-PR #77 已把 0054–0055 应用到生产数据库，但应用候选的 Courses 翻译门因 Ox Alpha endpoint 不声明 `structured_outputs`、而请求又使用 strict `json_schema` + `require_parameters=true`，收到 HTTP 404并自动回滚。决策修订为使用 endpoint 明确声明支持的 `response_format:{type:"json_object"}`；system prompt 固定唯一对象形状，NestJS 与真实 release smoke 本地严格检查字段集合、boolean 类型、case ID/数量和预期语义。Stealth-only、禁止 fallback、data collection deny、实际 provider 校验、服务端幂等事实与失败关闭不变。供应商 HTTP 错误只记录稳定状态/code/request ID，不记录正文或用户内容。
+PR #77 已把 0054–0055 应用到生产数据库，但应用候选的 Courses 翻译门因 Ox Alpha endpoint 不声明 `structured_outputs`、而请求又使用 strict `json_schema` + `require_parameters=true`，收到 HTTP 404并自动回滚。PR #78 已把决策落实为 endpoint 明确声明支持的 `response_format:{type:"json_object"}`；system prompt 固定唯一对象形状，NestJS 与真实 release smoke 本地严格检查字段集合、boolean 类型、case ID/数量和预期语义。其 main 候选在运行 Ox smoke 前被独立的 DocumentIR DOCX 质量门拦截，因此该契约尚无生产真实调用和切流证据。Stealth-only、禁止 fallback、data collection deny、实际 provider 校验、服务端幂等事实与失败关闭不变。供应商 HTTP 错误只记录稳定状态/code/request ID，不记录正文或用户内容。
