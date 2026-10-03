@@ -1493,3 +1493,19 @@ async def test_grading_provider_payload_excludes_internal_callback_credentials(m
     assert "do-not-send-this-internal-token" not in content
     assert "callbacks" not in content
     assert "budgetMicroUsd" not in content
+
+
+def test_exam_output_budget_scales_with_question_count_and_respects_ceiling(monkeypatch):
+    def settings(total: int) -> ExamSettings:
+        return ExamSettings(
+            language="en", difficulty="mixed", durationMinutes=60, totalMarks=max(20, total),
+            questionCounts={"singleChoice": total, "multipleChoice": 0, "trueFalse": 0,
+                            "fillBlank": 0, "shortAnswer": 0, "essay": 0},
+            answerDetail="detailed", focus="",
+        )
+
+    monkeypatch.delenv("MATERIAL_AI_GENERATION_MAX_TOKENS", raising=False)
+    assert pipeline._exam_output_token_budget(settings(5)) == 10_500
+    assert pipeline._exam_output_token_budget(settings(100)) == 30_000
+    monkeypatch.setenv("MATERIAL_AI_GENERATION_MAX_TOKENS", "8000")
+    assert pipeline._exam_output_token_budget(settings(5)) == 8_000
