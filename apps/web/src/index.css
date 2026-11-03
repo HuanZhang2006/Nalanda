@@ -1,4 +1,4 @@
-/* 全局基线（明暗主题、排版、组件）由 @nalanda/ui/nalanda.css 提供 */
+/* The global baseline (light/dark themes, typography, components) comes from @nalanda/ui/nalanda.css */
 #root {
   min-height: 100vh;
 }

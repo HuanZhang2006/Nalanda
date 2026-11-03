@@ -4,7 +4,7 @@ import type { User } from "@supabase/supabase-js";
 import { mountNalanda } from "./legacy/app";
 import { supabase } from "./lib/supabase";
 
-// 挂载移植自原型的完整应用（壳 + 全部视图），用真实登录用户 + 退出回调参数化
+// Mounts the full app ported from the prototype (shell + every view), parameterized by the signed-in user and a sign-out callback
 export function NalandaApp({ user, onSignOut }: { user: User; onSignOut: () => void }) {
   const ref = useRef<HTMLDivElement>(null);
   const signOutRef = useRef(onSignOut);
@@ -18,7 +18,7 @@ export function NalandaApp({ user, onSignOut }: { user: User; onSignOut: () => v
       onSignOut: () => signOutRef.current(),
     });
     return cleanup;
-    // 令牌刷新不重挂，但同一 React 树内切换账号时必须销毁旧会话状态。
+    // Token refreshes do not remount, but switching accounts within the same React tree must destroy the old session state.
   }, [user.id, user.email]);
 
   return <div className="app" ref={ref} />;

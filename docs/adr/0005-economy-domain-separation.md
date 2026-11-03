@@ -1,45 +1,46 @@
-# ADR-0005：分离 points、credits、VIP、法币支付与创作者应付
+# ADR-0005: Separate points, credits, VIP, fiat payments, and creator payables
 
-> **本文内容：**记录 Nalanda 经济域中五种概念必须分账的决策。  
-> **作用：**消除旧蓝图和原型中“积分/credits/收益”混用，建立实现钱包、订阅、退款和分成的不可破坏边界。  
-> **何时更新：**兑换、定价、VIP 权益、支付方式、退款、分成或创作者结算政策变化时；实质变化必须新建 ADR。  
-> **实现提示：**决策已接受；当前 points 已有受保护事件账本，但 credits/VIP/支付/创作者应付仍无商业账本，不能启用真实交易。
+> **About this document**
+> - **Contents**: Records the decision that five concepts in Nalanda's economy must be kept in separate ledgers.
+> - **Purpose**: Removes the mixing of "points/credits/earnings" in the old blueprint and prototype, and establishes unbreakable boundaries for implementing wallets, subscriptions, refunds, and revenue share.
+> - **When to update**: When redemption, pricing, VIP entitlements, payment methods, refunds, revenue share, or creator settlement policies change; material changes require a new ADR.
+> - **Implementation note**: The decision is accepted; points now have a protected event ledger, but credits/VIP/payments/creator payables still have no commercial ledger, so real transactions must not be enabled.
 
-- **状态：**Accepted
-- **日期：**2026-07-10
-- **决策者：**项目维护者
-- **范围：**成长、AI 消耗、市场、订阅、Stripe、创作者结算
-- **规范：**[POINTS_CREDITS_VIP_PAYMENTS.md](../product/POINTS_CREDITS_VIP_PAYMENTS.md)
+- **Status:** Accepted
+- **Date:** 2026-07-10
+- **Deciders:** Project maintainer
+- **Scope:** Growth, AI consumption, market, subscriptions, Stripe, creator settlement
+- **Specification:** [POINTS_CREDITS_VIP_PAYMENTS.md](../product/POINTS_CREDITS_VIP_PAYMENTS.md)
 
-## 背景
+## Context
 
-现有 profile 同时有 `points`、`credits`、等级和 `vip_until`；原型把 credits 用于 AI 和笔记市场，并展示创作者赚取 credits；架构蓝图又提出 Stripe 充值、VIP 与 Connect 提现。如果复用一个可变余额，用户行为奖励可能获得现金价值，退款/争议无法精确冲正，VIP 也可能被客户端伪造。
+The existing profile holds `points`, `credits`, level, and `vip_until` together; the prototype uses credits for AI and the note market and shows creators earning credits; the architecture blueprint also proposes Stripe top-ups, VIP, and Connect payouts. Reusing one mutable balance would let behavior rewards gain cash value, make refunds/disputes impossible to reverse precisely, and allow VIP to be forged by the client.
 
-## 决策
+## Decision
 
-- **Points** 是不可转让、不可购买、不可提现、无现金价值的成长信誉，只驱动等级/徽章；不得转换为 credits 或 VIP。
-- **Credits** 是平台封闭消费单位，用于 AI 与数字内容；余额必须由不可变 credit ledger/lot 推导，普通客户端不能写。
-- **VIP** 是有期限的 entitlement，由可信订阅/订单状态派生；不是余额，不改变数据权限、审核规则，也不自动包含第三方市场内容。
-- **Fiat payment** 以订单、Payment 和 Stripe Webhook 为事实链；内部 credits 不是 Stripe 金额记录。
-- **Creator payable** 使用独立应付账本，以货币最小单位结算并通过 Stripe Connect 打款；市场 UI 可用 credits 定价，但不得把可提现收益混入普通 credits 钱包。
-- 所有变更都需要业务幂等键、不可变记录和冲正；禁止以直接更新 profile 数字作为完成状态。
+- **Points** are non-transferable, non-purchasable, non-withdrawable growth reputation with no cash value; they only drive levels/badges and must never convert into credits or VIP.
+- **Credits** are the platform's closed-loop spending unit for AI and digital content; balances must be derived from an immutable credit ledger/lots, and ordinary clients cannot write them.
+- **VIP** is a time-bound entitlement derived from trusted subscription/order state; it is not a balance, does not change data permissions or moderation rules, and does not automatically include third-party market content.
+- **Fiat payments** use orders, Payments, and Stripe webhooks as the chain of record; internal credits are not Stripe amount records.
+- **Creator payables** use a separate payable ledger, settle in the smallest currency unit, and pay out through Stripe Connect; the market UI may price in credits, but withdrawable earnings must never be mixed into the ordinary credits wallet.
+- Every change needs a business idempotency key, immutable records, and reversals; directly updating profile numbers as the completion state is forbidden.
 
-## 考虑过的方案
+## Options considered
 
-- **points 与 credits 合并：**体验简单，但会把可刷行为变为经济价值，无法安全接受。
-- **创作者直接收到可提现 credits：**UI 简单，但混淆消费者储值与平台应付，退款、合规和对账风险高。
-- **所有购买都直接使用法币：**账务直接，但不符合已定的 AI/笔记 credits 体验，且微交易费用高。
+- **Merge points and credits:** Simple experience, but turns farmable behavior into economic value; not safely acceptable.
+- **Creators receive withdrawable credits directly:** Simple UI, but mixes consumer stored value with platform payables, with high refund, compliance, and reconciliation risk.
+- **Pay for everything directly in fiat:** Straightforward accounting, but does not match the chosen AI/note credits experience, and microtransaction fees are high.
 
-## 后果
+## Consequences
 
-边界清晰、可对账和可冲正；代价是需要多本账、lot 分配、订单状态机和 UI 清晰文案。任何“赠送 points 抵现”“VIP 可看全部创作者内容”或“改 profile 余额补偿”的需求都必须先修改规则和 ADR。
+Boundaries are clear, reconcilable, and reversible; the cost is multiple ledgers, lot allocation, order state machines, and clear UI copy. Any request such as "let gifted points offset cash", "VIP sees all creator content", or "compensate by editing the profile balance" must first change the rules and the ADR.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **当前：**0008 已保护 Profile 服务端字段，并为帖子/转发/评论/点赞/任务建立 `point_entries`、稳定业务键、净额幂等和冲正；`credits`、`vip_until` 仍只是只读缓存，支付仍是假数据。生产 0041–0043 Materials AI 只使用每日 Free 次数，明确不读取或消费 credits。
-- **当前风险：**历史 opening 已由生产 0009 追加 reversal 归零；生产 0039 已启用每日上限、人工审核冲正和只待审协同检测，但阈值不是内容质量判断或自动处罚。credits/VIP 仍没有账本、订单、Webhook 或结算。
-- **目标：**受保护发布并观察 points 反滥用，补完整审核/申诉，再实现订单/credits/订阅/应付账本，最后启用 Stripe 和商业 UI；任何阶段不得用假余额连接真实支付。
+- **Current:** 0008 protects Profile server fields and creates `point_entries`, stable business keys, net idempotency, and reversals for posts/reposts/comments/likes/tasks; `credits` and `vip_until` are still read-only caches, and payments are still fake data. Production 0041–0043 Materials AI only uses daily Free runs and explicitly never reads or consumes credits.
+- **Current risks:** Historical openings were zeroed by reversals appended in production 0009; production 0039 enabled daily caps, manual-review reversals, and pending-review-only coordination detection, but the thresholds are not content-quality judgements or automatic penalties. Credits/VIP still have no ledger, orders, webhooks, or settlement.
+- **Target:** Release and observe points anti-abuse under protection, complete moderation/appeals, then implement order/credits/subscription/payable ledgers, and only then enable Stripe and the commercial UI; no phase may connect fake balances to real payments.
 
-## 验证与复审
+## Verification and review
 
-属性测试应证明账本守恒、重复事件无副作用、退款使用冲正、points 永不进入经济账、VIP 过期一致、Stripe 与内部订单可每日对账。涉及税务、储值、提现或目标市场变化时必须法律/财务复审。
+Property tests should prove ledger conservation, no side effects from duplicate events, refunds via reversals, points never entering the economic ledger, consistent VIP expiry, and daily reconciliation between Stripe and internal orders. Tax, stored value, payouts, or target-market changes require legal/finance review.

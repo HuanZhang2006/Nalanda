@@ -1,41 +1,41 @@
-# ADR-0011：私有 Redis 请求保护与不可变 Points 决策
+# ADR-0011: Private Redis request protection and immutable Points decisions
 
-> **本文内容：** 记录 Nalanda 为注册/Courses/API 增加私有 Redis 滑动窗口，并把 points 每日奖励决策、审核冲正和协同信号放入 PostgreSQL 受控工作流的架构决定。
->
-> **作用：** 固定实时流量控制与长期业务审计的职责边界，避免把 Redis 当事实库、把客户端反馈当奖励权威，或让 service-role 绕过审核流程。
-> **何时更新：** Redis 拓扑/算法/故障策略、路由分组、points 上限/账本、管理员授权、协同检测、审计保留或两阶段发布方式变化时。
+> **About this document**
+> - **Contents**: Records the architecture decision to add a private Redis sliding window for sign-up/Courses/API, and to put points daily-reward decisions, moderation reversals, and coordination signals into a controlled PostgreSQL workflow.
+> - **Purpose**: Fixes the responsibility boundary between real-time traffic control and long-term business auditing, so Redis is never treated as the database of record, client feedback never becomes reward authority, and the service role cannot bypass the moderation workflow.
+> - **When to update**: When the Redis topology/algorithm/failure policy, route groups, points caps/ledger, admin authorization, coordination detection, audit retention, or two-phase release approach changes.
 
-- **状态：** Accepted / Stage B deployed；0039–0040 与兼容应用已于 `2026-08-10T09:35:34Z` 受保护生产发布，2026-08-22 go/no-go 通过；最终撤权随后按严格追加顺序以 0052–0053 生产应用，原预留 0044–0045 没有补插历史。
-- **日期：** 2026-08-10
-- **决策者：** Nalanda owner
+- **Status:** Accepted / Stage B deployed; 0039–0040 and the compatible app had a protected production release at `2026-08-10T09:35:34Z`, and the go/no-go passed on 2026-08-22; the final revocation was then applied to production as 0052–0053 in strict append order, without back-filling the originally reserved 0044–0045 into the history.
+- **Date:** 2026-08-10
+- **Deciders:** Nalanda owner
 
-## 背景
+## Context
 
-本 ADR 通过前，生产 0038 已有 append-only points 账本和稳定业务键，但没有每日奖励上限、人工审核冲正或协同行为信号。注册使用 service-role 创建已确认用户，Courses 包含克隆、举报和外部供应商成本路径；仅靠 nginx 突发限制不能形成 user/email 维度的原子窗口，也不能保存隐私最小化的长期滥用审计。上述缺口中的本 ADR 范围已由生产 0039 收口。
+Before this ADR, production 0038 already had an append-only points ledger and stable business keys, but no daily reward caps, manual-review reversals, or coordination signals. Sign-up uses the service role to create confirmed users, and Courses includes clone, report, and external-provider cost paths; nginx burst limits alone cannot provide atomic windows per user/email, nor keep privacy-minimized long-term abuse audits. The part of these gaps within this ADR's scope was closed by production 0039.
 
-同时，帖子、Feedback 和 Schedule 仍有过宽的直接 PostgREST 写面。安全收口必须保持现有 Web 兼容，不能把数据库 contract 权限与应用更新放在同一次不可观察发布中。
+At the same time, posts, Feedback, and Schedule still had overly broad direct PostgREST write surfaces. The security lockdown had to stay compatible with the existing Web app and could not ship database contract permissions and the app update in a single unobservable release.
 
-## 决策
+## Decision
 
-1. 生产 compose 增加无宿主机端口、密码认证、AOF `everysec`、`noeviction` 的 Redis 7.4。Redis 只保存短期滑动窗口、审计聚合计数和 scanner 分布式锁，不保存奖励、审核或内容事实。
-2. Nest 鉴权后以 Lua 原子滑动窗口限流：认证路由按 user UUID，公开/突发按 HMAC IP，注册另按 HMAC 规范化 email。HMAC secret 与 Redis password 独立轮换，原值不进入数据库或结构化应用日志。
-3. Redis 故障时注册、写入、公开 Courses、克隆/举报和会产生供应商成本的读取 fail-closed；真正的私有只读 fail-open并记录 `rate_limit_degraded`。readiness 必须同时真实验证 Supabase 与 Redis。
-4. PostgreSQL 以冻结的 `point_daily_windows` 和永久 `point_daily_award_claims` 保存首次奖励决定；Redis 不参与 points 正确性。原创/转发/评论/点赞/任务每日数量为 3/10/10/20/10，课程完成继续使用永久词集合指纹且不设日上限。
-5. 审核只经 allowlist 管理 API 和 service-only RPC；`point_moderation_actions` 追加留痕。service-role 对 window/claim/action/signal/API audit 表只有 SELECT，不能通过 PostgREST 改写事实。普通奖励取得共享 moderation gate，审核取得独占 gate 并先锁 Profile、再锁状态；restore 不补发 cap=0 claim，不恢复已删除来源，重复动作记录为 0 变化审计。
-6. 协同 scanner 只生成去重的 pending signal，不自动冻结、冲正、隐藏或处罚。管理员的 signal review 同样经窄 RPC 写数据库时间与 reviewer。
-7. 帖子/Feedback/Schedule 使用列级 grant、RLS 与防御 trigger。0039–0040 为 expand：旧 Web 可继续提交 `posts.updated_at`/`study_tasks.done_at`，但值被数据库覆盖；观察通过后的 0052–0053 只撤销这两个 authenticated UPDATE grant 并验证最终权限，Materials AI 与该 contract 无关。
+1. The production compose file adds Redis 7.4 with no host port, password authentication, AOF `everysec`, and `noeviction`. Redis only stores short-lived sliding windows, audit aggregate counters, and scanner distributed locks — never rewards, moderation, or content facts.
+2. After authentication, Nest applies an atomic Lua sliding-window rate limit: authenticated routes by user UUID, public/burst routes by HMAC IP, and sign-up additionally by HMAC of the normalized email. The HMAC secret and Redis password rotate independently, and raw values never enter the database or structured application logs.
+3. When Redis fails, sign-up, writes, public Courses, clone/report, and reads that incur provider cost fail closed; truly private reads fail open and record `rate_limit_degraded`. Readiness must genuinely verify both Supabase and Redis.
+4. PostgreSQL stores first-reward decisions in frozen `point_daily_windows` and permanent `point_daily_award_claims`; Redis plays no part in points correctness. The daily counts for original posts/reposts/comments/likes/tasks are 3/10/10/20/10; course completion keeps using a permanent word-set fingerprint with no daily cap.
+5. Moderation only goes through an allowlisted admin API and service-only RPCs; `point_moderation_actions` keeps an append-only trail. The service role has only SELECT on the window/claim/action/signal/API audit tables and cannot rewrite facts through PostgREST. Ordinary rewards take a shared moderation gate; moderation takes an exclusive gate and locks the Profile first, then the state; restore does not re-issue cap=0 claims or restore deleted sources, and repeated actions are recorded as zero-change audits.
+6. The coordination scanner only creates deduplicated pending signals and never automatically freezes, reverses, hides, or penalizes. An admin's signal review also writes the database time and reviewer through a narrow RPC.
+7. Posts/Feedback/Schedule use column grants, RLS, and defensive triggers. 0039–0040 is the expand phase: the old Web app can still submit `posts.updated_at`/`study_tasks.done_at`, but the database overwrites the values; after observation passes, 0052–0053 only revoke those two authenticated UPDATE grants and verify the final permissions. Materials AI is unrelated to this contract.
 
-## 结果与取舍
+## Results and trade-offs
 
-- Redis 丢失只影响短期窗口和锁，不能改变 ledger；AOF 降低重启窗口丢失，但不被当成强一致业务备份。
-- fail-closed 会在 Redis 故障时牺牲部分写入可用性，这是保护注册、供应商成本和重复副作用的有意选择；私有纯读取仍可降级。
-- 每用户 profile 行锁让 cap 并发决策简单且可验证，但会串行化同一用户的所有 points 事件；监控必须观察锁等待和 attempt/points RPC p95。
-- 迁移前业务键只在首条 transition 为正时承认实际发奖；0008/0009 占位若已留下负 transition，0039 以显式 append-only 补偿归零。这增加一类迁移分录，但避免隐藏负债侵蚀未来合法奖励并保留完整审计链。
-- HMAC 轮换会切断旧 actor 的跨轮换关联；轮换前后的数据库桶不尝试反推或重新识别原始 IP/email。
-- 仅标记的协同阈值会有误报/漏报，因此信号不能直接形成处罚，完整审核 UI、申诉与内容质量模型留待后续。
+- Losing Redis only affects short-lived windows and locks and cannot change the ledger; AOF reduces window loss on restart but is not treated as a strongly consistent business backup.
+- Failing closed sacrifices some write availability when Redis fails; this is a deliberate choice to protect sign-up, provider cost, and duplicate side effects. Purely private reads can still degrade.
+- A per-user profile row lock keeps concurrent cap decisions simple and verifiable, but serializes all points events for the same user; monitoring must watch lock waits and attempt/points RPC p95.
+- For business keys created before the migration, a reward is acknowledged only when the first transition is positive; where 0008/0009 placeholders left a negative transition, 0039 zeroes it with an explicit append-only compensation. This adds one class of migration entry but prevents hidden debt from eroding future legitimate rewards while keeping a complete audit chain.
+- HMAC rotation cuts the cross-rotation link for old actors; database buckets before and after rotation never attempt to reverse or re-identify raw IPs/emails.
+- Flag-only coordination thresholds will have false positives/negatives, so signals cannot directly produce penalties; a full moderation UI, appeals, and a content-quality model are left for later.
 
-## 验证与发布
+## Verification and release
 
-- CI 使用真实 Redis service 验证 Lua 并发/过期/lock，使用一次性 Supabase 验证精确 grants、双用户负向路径、cap 并发、时区/重建、root suppress/restore 和 pending signal；浏览器供应商仍为 fake。
-- 第一阶段已完成：只读 migration plan → 加密恢复点 → apply 0039–0040 → Redis PING/AOF/private network → 新 API readiness/auth/限流/admin 拒绝 → 真实既有供应商 gate → 激活兼容应用；证据见部署记录 run `31372888441`。
-- 从 `2026-08-10T09:35:34Z` 起的观察已超过 24 小时；2026-08-22 复核 Redis/AOF/noeviction、误限流审计、points projection 和受支持 Web 时间字段依赖后通过 go/no-go。0052–0053 随后通过完整 CI、plan `32581192318`、恢复 artifact `9478168126` 和 apply `32581805613` 上线；数据库始终 forward-fix，应用仍可回退上一兼容 release。
+- CI uses a real Redis service to verify Lua concurrency/expiry/locks, and a throwaway Supabase to verify exact grants, two-user negative paths, cap concurrency, time zones/rebuilds, root suppress/restore, and pending signals; browser providers are still fakes.
+- Phase one is complete: read-only migration plan → encrypted recovery point → apply 0039–0040 → Redis PING/AOF/private network → new API readiness/auth/rate limits/admin denial → real existing-provider gate → activate the compatible app; evidence is in deployment run `31372888441`.
+- Observation from `2026-08-10T09:35:34Z` exceeded 24 hours; the 2026-08-22 review of Redis/AOF/noeviction, false rate-limit audits, the points projection, and supported Web timestamp-field dependencies passed the go/no-go. 0052–0053 then shipped through full CI, plan `32581192318`, recovery artifact `9478168126`, and apply `32581805613`; the database is always fixed forward, and the app can still roll back to the previous compatible release.

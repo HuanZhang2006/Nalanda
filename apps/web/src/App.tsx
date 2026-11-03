@@ -3,19 +3,25 @@ import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseConfigured } from "./lib/supabase";
 import { NalandaApp } from "./NalandaApp";
 import { PublicCourseShare } from "./features/courses/PublicCourseShare";
+import { useI18n } from "./i18n";
 
 type Mode = "signin" | "signup";
+// English and Chinese text, so a visible error follows later language switches.
+type Message = [string, string];
 
-const REG_ERR: Record<string, string> = {
-  EMAIL_TAKEN: "该邮箱已注册，请切换到「登录」",
-  WEAK_PASSWORD: "密码至少 6 位",
-  INVALID_EMAIL: "邮箱格式不正确",
-  UPSTREAM_UNREACHABLE: "服务暂时不可用，请稍后再试",
-  RATE_LIMITED: "注册请求过于频繁，请按提示等待后重试",
-  RATE_LIMIT_UNAVAILABLE: "注册保护服务暂不可用，请稍后重试",
+const REG_ERR: Record<string, Message> = {
+  EMAIL_TAKEN: ["This email is already registered. Switch to Sign in.", "该邮箱已注册，请切换到「登录」"],
+  WEAK_PASSWORD: ["Use a password with at least 6 characters.", "密码至少 6 位"],
+  INVALID_EMAIL: ["Enter a valid email address.", "邮箱格式不正确"],
+  UPSTREAM_UNREACHABLE: ["The service is temporarily unavailable. Please try again later.", "服务暂时不可用，请稍后再试"],
+  RATE_LIMITED: ["Too many sign-up attempts. Wait as indicated and try again.", "注册请求过于频繁，请按提示等待后重试"],
+  RATE_LIMIT_UNAVAILABLE: ["Sign-up protection is temporarily unavailable. Please retry shortly.", "注册保护服务暂不可用，请稍后重试"],
 };
+const SESSION_READ_FAILED: Message = ["Could not read your sign-in state. Refresh and try again.", "无法读取登录状态，请刷新重试"];
+const SIGN_OUT_FAILED: Message = ["Sign-out failed. Check your connection and try again.", "退出登录失败，请检查网络后重试"];
 
 export function App() {
+  const { l, toggleLocale, languageLabel } = useI18n();
   const [session, setSession] = useState<Session | null>(null);
   const [ready, setReady] = useState(false);
   const [theme, setThemeState] = useState("light");
@@ -25,7 +31,7 @@ export function App() {
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
-  const [err, setErr] = useState("");
+  const [err, setErr] = useState<Message | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -37,23 +43,23 @@ export function App() {
     supabase!.auth.getSession()
       .then(({ data, error }) => {
         if (!active) return;
-        if (error) setErr("无法读取登录状态，请刷新重试");
+        if (error) setErr(SESSION_READ_FAILED);
         if (data.session) restoreRequestedPath();
         setSession(data.session);
         setReady(true);
       })
       .catch(() => {
         if (!active) return;
-        setErr("无法读取登录状态，请刷新重试");
+        setErr(SESSION_READ_FAILED);
         setReady(true);
       });
     const { data: sub } = supabase!.auth.onAuthStateChange((_e, s) => {
       if (!active) return;
       if (s) restoreRequestedPath();
       setSession(s);
-      // submit 成功依赖 auth 事件完成跳转；任何会话切换都要结束按钮 loading。
+      // A successful submit relies on the auth event to navigate; any session change must end the button loading state.
       setLoading(false);
-      if (s) setErr("");
+      if (s) setErr(null);
     });
     return () => {
       active = false;
@@ -69,12 +75,12 @@ export function App() {
   }, []);
 
   const signOut = useCallback(async () => {
-    setErr("");
+    setErr(null);
     try {
       const { error } = await supabase!.auth.signOut();
-      if (error) setErr("退出登录失败，请检查网络后重试");
+      if (error) setErr(SIGN_OUT_FAILED);
     } catch {
-      setErr("退出登录失败，请检查网络后重试");
+      setErr(SIGN_OUT_FAILED);
     }
   }, []);
 
@@ -86,7 +92,7 @@ export function App() {
 
   async function submit() {
     if (!canSubmit) return;
-    setErr(""); setLoading(true);
+    setErr(null); setLoading(true);
     try {
       if (mode === "signup") {
         const r = await fetch("/api/auth/register", {
@@ -98,19 +104,24 @@ export function App() {
           const j = await r.json().catch(() => ({}));
           const code = (j && (j.code || (j.message && j.message.code))) || "";
           const retry = Number(j?.retryAfterSeconds || 0);
-          setErr(`${REG_ERR[code] || "注册失败，请重试"}${retry > 0 ? `（约 ${retry} 秒后恢复）` : ""}`);
+          const [english, chinese] = REG_ERR[code] || ["Sign-up failed. Please try again.", "注册失败，请重试"];
+          setErr(retry > 0
+            ? [`${english} (available again in about ${retry} seconds)`, `${chinese}（约 ${retry} 秒后恢复）`]
+            : [english, chinese]);
           setLoading(false);
           return;
         }
       }
       const { error } = await supabase!.auth.signInWithPassword({ email: em, password });
       if (error) {
-        setErr(mode === "signup" ? "注册成功，但自动登录失败，请用「登录」重试" : "邮箱或密码错误");
+        setErr(mode === "signup"
+          ? ["Your account was created, but automatic sign-in failed. Use Sign in to try again.", "注册成功，但自动登录失败，请用「登录」重试"]
+          : ["Incorrect email or password.", "邮箱或密码错误"]);
         setLoading(false);
       }
-      // 成功后 onAuthStateChange 触发，组件切换到应用
+      // On success onAuthStateChange fires and the component switches to the app.
     } catch {
-      setErr("网络错误，请重试");
+      setErr(["Network error. Please try again.", "网络错误，请重试"]);
       setLoading(false);
     }
   }
@@ -120,15 +131,20 @@ export function App() {
   if (session) return (
     <>
       <NalandaApp user={session.user} onSignOut={signOut} />
-      {err && <div role="alert" style={sessionErrBox}>{err}</div>}
+      {err && <div role="alert" style={sessionErrBox}>{l(...err)}</div>}
     </>
   );
 
   return (
     <div style={screen}>
-      <button onClick={toggleTheme} style={themeBtn} title="切换主题" aria-label="切换主题">
-        {theme === "dark" ? "☀" : "☾"}
-      </button>
+      <div style={cornerControls}>
+        <button onClick={toggleLocale} style={cornerBtn} title={l("Switch to Chinese", "切换到英文")} aria-label={l("Switch to Chinese", "切换到英文")}>
+          {languageLabel}
+        </button>
+        <button onClick={toggleTheme} style={cornerBtn} title={l("Toggle theme", "切换主题")} aria-label={l("Toggle theme", "切换主题")}>
+          {theme === "dark" ? "☀" : "☾"}
+        </button>
+      </div>
 
       <div style={card}>
         <div style={{ textAlign: "center", marginBottom: 22 }}>
@@ -148,49 +164,49 @@ export function App() {
 
         {!supabaseConfigured ? (
           <p style={{ fontSize: 13, color: "var(--ink-soft)", textAlign: "center" }}>
-            未配置 Supabase：请在 <code>apps/web/.env.local</code> 设置后重启。
+            {l("Supabase is not configured. Set it in ", "未配置 Supabase：请在 ")}<code>apps/web/.env.local</code>{l(" and restart.", " 设置后重启。")}
           </p>
         ) : !ready ? (
-          <p style={{ color: "var(--ink-faint)", textAlign: "center" }}>加载中…</p>
+          <p style={{ color: "var(--ink-faint)", textAlign: "center" }}>{l("Loading…", "加载中…")}</p>
         ) : (
           <>
             <div style={seg}>
               {(["signin", "signup"] as Mode[]).map((m) => (
-                <button key={m} onClick={() => { setMode(m); setErr(""); }}
+                <button key={m} onClick={() => { setMode(m); setErr(null); }}
                   style={{ ...segBtn, ...(mode === m ? segBtnActive : {}) }}>
-                  {m === "signin" ? "登录" : "注册"}
+                  {m === "signin" ? l("Sign in", "登录") : l("Sign up", "注册")}
                 </button>
               ))}
             </div>
 
-            <label style={lbl}>邮箱</label>
+            <label style={lbl}>{l("Email", "邮箱")}</label>
             <input style={field} type="email" autoComplete="email" placeholder="you@school.edu"
               value={email} onChange={(e) => setEmail(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && submit()} />
 
-            <label style={{ ...lbl, marginTop: 12 }}>密码</label>
+            <label style={{ ...lbl, marginTop: 12 }}>{l("Password", "密码")}</label>
             <div style={{ position: "relative" }}>
               <input style={{ ...field, paddingRight: 56 }} type={showPw ? "text" : "password"}
                 autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                placeholder={mode === "signup" ? "至少 6 位" : "密码"}
+                placeholder={mode === "signup" ? l("At least 6 characters", "至少 6 位") : l("Password", "密码")}
                 value={password} onChange={(e) => setPassword(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && submit()} />
               <button type="button" onClick={() => setShowPw((v) => !v)} style={pwToggle}>
-                {showPw ? "隐藏" : "显示"}
+                {showPw ? l("Hide", "隐藏") : l("Show", "显示")}
               </button>
             </div>
 
-            {err && <div style={errBox}>{err}</div>}
+            {err && <div style={errBox}>{l(...err)}</div>}
 
             <button onClick={submit} disabled={!canSubmit} style={{ ...primary, ...(canSubmit ? {} : disabledBtn) }}>
-              {loading ? "处理中…" : mode === "signin" ? "登录" : "注册并进入"}
+              {loading ? l("Working…", "处理中…") : mode === "signin" ? l("Sign in", "登录") : l("Sign up and continue", "注册并进入")}
             </button>
 
             <p style={{ fontSize: 12, color: "var(--ink-faint)", textAlign: "center", marginTop: 14 }}>
-              {mode === "signin" ? "还没有账号？" : "已有账号？"}{" "}
-              <a onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setErr(""); }}
+              {mode === "signin" ? l("No account yet?", "还没有账号？") : l("Already have an account?", "已有账号？")}{" "}
+              <a onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setErr(null); }}
                 style={{ color: "var(--accent)", cursor: "pointer", fontWeight: 600 }}>
-                {mode === "signin" ? "去注册" : "去登录"}
+                {mode === "signin" ? l("Sign up", "去注册") : l("Sign in", "去登录")}
               </a>
             </p>
           </>
@@ -211,8 +227,9 @@ const screen: CSSProperties = {
   minHeight: "100vh", display: "grid", placeItems: "center", padding: 24,
   background: "var(--bg)", fontFamily: "var(--font-sans)", position: "relative",
 };
-const themeBtn: CSSProperties = {
-  position: "absolute", top: 18, right: 18, width: 38, height: 38, borderRadius: 10,
+const cornerControls: CSSProperties = { position: "absolute", top: 18, right: 18, display: "flex", gap: 8 };
+const cornerBtn: CSSProperties = {
+  minWidth: 38, height: 38, padding: "0 8px", borderRadius: 10,
   border: "1px solid var(--border)", background: "var(--card)", color: "var(--ink-soft)",
   cursor: "pointer", fontSize: 16,
 };

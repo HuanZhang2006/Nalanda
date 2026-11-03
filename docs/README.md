@@ -1,112 +1,112 @@
-# Nalanda 文档中心
+# Nalanda Documentation Hub
 
-> **文档定位**
-> - **内容**：索引项目全部长期文档，说明每类文档的权威范围、阅读顺序和维护责任。
-> - **作用**：避免“当前实现、最终蓝图、历史复盘、操作手册”相互覆盖或产生状态冲突。
-> - **何时更新**：新增、删除、重命名文档，或某类文档的负责人/权威范围变化时。
+> **About this document**
+> - **Contents**: Indexes every long-lived document in the project and explains each category's scope of authority, reading order, and maintenance responsibility.
+> - **Purpose**: Prevents "current implementation, final blueprint, historical retrospective, and runbook" from overriding each other or contradicting each other's status.
+> - **When to update**: When a document is added, deleted, or renamed, or a category's owner/scope of authority changes.
 
-最后核对：2026-10-03。生产数据库已到 0055，0052–0055 contract 已生效；当前不可变应用仍为此前稳定 release。main run `32931681321` 在真实 DocumentIR DOCX 试卷语义门禁失败后自动回滚。当前 Unreleased `exam-generate.v4` 修复结构 repair 缺少来源正文及其后没有语义修复阶段的问题，0056–0057 退役 Ox Alpha 并把 Luna 升级为 GPT-6 Luna + Azure ZDR；仍须重新取得完整 CI、真实供应商、切流和公网独立证据。
+Last checked: 2026-10-03. The production database is at 0055 and the 0052–0055 contract is in effect; the current immutable app is still the earlier stable release. main run `32931681321` rolled back automatically after the real DocumentIR DOCX test-paper semantic gate failed. The current Unreleased `exam-generate.v4` fixes the structural repair lacking the source text and the absence of a semantic repair stage after it, and 0056–0057 retire Ox Alpha and upgrade Luna to GPT-6 Luna + Azure ZDR; full CI, real provider, cutover, and independent public evidence still have to be obtained again.
 
-## 1. 事实来源优先级
+## 1. Source-of-truth priority
 
-同一内容出现冲突时，按下列规则处理：
+When the same content conflicts, resolve it as follows:
 
-1. **当前代码、迁移和部署配置**是运行事实。
-2. [当前实现架构](ARCHITECTURE.md)、[ERD](guides/ERD.md)、[API](guides/API.md)解释当前事实。
-3. [最终项目蓝图](PROJECT_BLUEPRINT.md)定义目标和开发顺序，不证明功能已经实现。
-4. `notes/` 是历史实现复盘；内容过时应修正或明确标注，不覆盖当前架构。
-5. `operations/` 是执行发布、恢复、告警和密钥工作的操作手册。
-6. ADR 记录“为什么这样决定”，CHANGELOG 记录“什么发生了变化”。
+1. **Current code, migrations, and deployment configuration** are the runtime facts.
+2. The [current architecture](ARCHITECTURE.md), [ERD](guides/ERD.md), and [API](guides/API.md) explain the current facts.
+3. The [final project blueprint](PROJECT_BLUEPRINT.md) defines goals and development order and does not prove a feature is implemented.
+4. `notes/` are historical implementation retrospectives; outdated content should be corrected or clearly labeled, and never overrides the current architecture.
+5. `operations/` are runbooks for releases, recovery, alerting, and secret work.
+6. ADRs record "why we decided this", and the CHANGELOG records "what changed".
 
-只有同时有代码、测试和部署证据的能力才能写成“已验证/已上线”。
+Only capabilities with code, test, and deployment evidence together may be described as "verified/live".
 
-## 2. 建议阅读顺序
+## 2. Suggested reading order
 
-首次加入项目：
+When you first join the project:
 
-1. 仓库根 [README](../README.md)
-2. [最终项目蓝图](PROJECT_BLUEPRINT.md)
-3. [当前实现架构](ARCHITECTURE.md)
-4. [从零本地开发](guides/LOCAL_DEVELOPMENT.md)
-5. [测试指南](guides/TESTING.md)
-6. 按任务阅读 ERD/API、实现笔记和 operations 手册
+1. The repository root [README](../README.md)
+2. The [final project blueprint](PROJECT_BLUEPRINT.md)
+3. The [current architecture](ARCHITECTURE.md)
+4. [Local development from scratch](guides/LOCAL_DEVELOPMENT.md)
+5. The [testing guide](guides/TESTING.md)
+6. Then the ERD/API, implementation notes, and operations runbooks as your task requires
 
-## 3. 核心说明
+## 3. Core references
 
-| 文档 | 权威范围 | 主要维护者 | 更新触发 |
+| Document | Scope of authority | Main maintainer | Update trigger |
 |---|---|---|---|
-| [项目蓝图](PROJECT_BLUEPRINT.md) | 最终产品、目标架构、路线图、待实现功能 | 产品/技术负责人 | 范围、阶段、关键决策变化 |
-| [当前架构](ARCHITECTURE.md) | 真实运行架构和模块边界 | 技术负责人 | 服务/数据/部署边界变化 |
-| [ERD](guides/ERD.md) | 表、关系、删除行为、RLS | 数据库变更作者 | 每个 schema/RLS 迁移 |
-| [API](guides/API.md) | 当前 Nest/FastAPI/直接 Supabase 接口 | API 作者 | 接口、鉴权、错误变化 |
-| [环境变量](guides/ENVIRONMENT_VARIABLES.md) | 变量来源、消费者、机密级别 | 服务/运维作者 | 新增、删除、轮换变量 |
+| [Project blueprint](PROJECT_BLUEPRINT.md) | Final product, target architecture, roadmap, features to implement | Product/tech lead | Scope, phases, or key decisions change |
+| [Current architecture](ARCHITECTURE.md) | The real runtime architecture and module boundaries | Tech lead | Service/data/deployment boundaries change |
+| [ERD](guides/ERD.md) | Tables, relationships, delete behavior, RLS | Author of the database change | Every schema/RLS migration |
+| [API](guides/API.md) | Current Nest/FastAPI/direct Supabase interfaces | API author | Endpoints, auth, or errors change |
+| [Environment variables](guides/ENVIRONMENT_VARIABLES.md) | Variable sources, consumers, secrecy level | Service/ops author | Variables added, removed, or rotated |
 
-## 4. 开发与测试
+## 4. Development and testing
 
-- [从零本地开发](guides/LOCAL_DEVELOPMENT.md)
-- [环境变量矩阵](guides/ENVIRONMENT_VARIABLES.md)
-- [可执行测试指南](guides/TESTING.md)
-- [贡献指南](../CONTRIBUTING.md)
-- [变更记录](../CHANGELOG.md)
+- [Local development from scratch](guides/LOCAL_DEVELOPMENT.md)
+- [Environment variable matrix](guides/ENVIRONMENT_VARIABLES.md)
+- [Runnable testing guide](guides/TESTING.md)
+- [Contributing guide](../CONTRIBUTING.md)
+- [Changelog](../CHANGELOG.md)
 
-## 5. 数据与运行
+## 5. Data and operations
 
-- [数据库发布与回滚](operations/DATABASE_RELEASE_ROLLBACK.md)
-- [备份与恢复](operations/BACKUP_RECOVERY.md)
-- [监控与告警](operations/OBSERVABILITY_ALERTING.md)
-- [密钥轮换](operations/SECRET_ROTATION.md)
-- [当前生产部署](../infra/deploy/README.md)
-- [2G 混合部署模板](../infra/hybrid-2g/README.md)
+- [Database release and rollback](operations/DATABASE_RELEASE_ROLLBACK.md)
+- [Backup and recovery](operations/BACKUP_RECOVERY.md)
+- [Monitoring and alerting](operations/OBSERVABILITY_ALERTING.md)
+- [Secret rotation](operations/SECRET_ROTATION.md)
+- [Current production deployment](../infra/deploy/README.md)
+- [2 GB hybrid deployment template](../infra/hybrid-2g/README.md)
 
-## 6. 安全、隐私与治理
+## 6. Security, privacy, and governance
 
-- [安全政策](../SECURITY.md)
-- [隐私与数据删除](governance/PRIVACY_AND_DATA_DELETION.md)
-- [内容审核](governance/CONTENT_MODERATION.md)
-- [AI 评测与成本](ai/EVALUATION_AND_COST.md)
-- [AI Prompt 统一目录](ai/PROMPT_CATALOG.md)
-- [points / credits / VIP / 支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)
+- [Security policy](../SECURITY.md)
+- [Privacy and data deletion](governance/PRIVACY_AND_DATA_DELETION.md)
+- [Content moderation](governance/CONTENT_MODERATION.md)
+- [AI evaluation and cost](ai/EVALUATION_AND_COST.md)
+- [Unified AI prompt catalog](ai/PROMPT_CATALOG.md)
+- [Points / credits / VIP / payment rules](product/POINTS_CREDITS_VIP_PAYMENTS.md)
 
-## 7. 决策记录
+## 7. Decision records
 
-- [ADR 索引](adr/README.md)
+- [ADR index](adr/README.md)
 
-ADR 只记录已经做出的、影响多个模块或难以逆转的决策。开放问题保留在项目蓝图；决定后新增 ADR 并更新相关当前文档。
+ADRs only record decisions already made that affect multiple modules or are hard to reverse. Open questions stay in the project blueprint; once decided, add an ADR and update the relevant current documents.
 
-最新已采用候选决策：[ADR-0016 退役 Ox Alpha 与 GPT-6 Luna（Azure ZDR）](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)，它替代 [ADR-0015](adr/0015-ox-alpha-translation-and-native-image-pipeline.md)；生产基线仍由 [ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md) 对应的 0041–0043 release 提供。Accepted 表示架构决定已采用，不自动证明候选已部署；生产证据仍以架构、测试和发布记录为准。
+Latest adopted candidate decision: [ADR-0016 Retire Ox Alpha and GPT-6 Luna (Azure ZDR)](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md), which supersedes [ADR-0015](adr/0015-ox-alpha-translation-and-native-image-pipeline.md); the production baseline is still the 0041–0043 release that corresponds to [ADR-0012](adr/0012-materials-ai-durable-queue-zdr-and-2g-office-rendering.md). Accepted means the architecture decision is adopted and does not automatically prove the candidate is deployed; production evidence still comes from the architecture, tests, and release records.
 
-## 8. 实现笔记
+## 8. Implementation notes
 
-[实现笔记索引](notes/README.md)包含：
+The [implementation notes index](notes/README.md) covers:
 
 - 01 monorepo
-- 02 认证
-- 03 部署/CI
-- 04 原型移植
-- 05 数据库/RLS
+- 02 authentication
+- 03 deployment/CI
+- 04 prototype port
+- 05 database/RLS
 - 06 Materials
-- 07 剩余 mock
-- 08 通知/反馈/Profile
+- 07 remaining mocks
+- 08 notifications/feedback/Profile
 - 09 Community
 - 10 Schedule
-- 11 Courses 英语单词学习
+- 11 Courses English vocabulary learning
 
-实现笔记适合学习函数级逻辑和历史踩坑，但测试命令、当前接口和生产操作必须跳转到相应权威文档。
+Implementation notes are good for learning function-level logic and historical pitfalls, but test commands, current interfaces, and production operations must point to the corresponding authoritative documents.
 
-## 9. 文档写作契约
+## 9. Documentation writing contract
 
-每份长期 Markdown 必须在标题后说明：
+Every long-lived Markdown file must state, right after the title:
 
-- **内容**：文档覆盖什么、不覆盖什么。
-- **作用**：读者何时使用它、它是否是权威来源。
-- **何时更新**：哪些代码、产品或运维变化必须同步。
+- **Contents**: What the document covers and what it does not.
+- **Purpose**: When readers use it and whether it is an authoritative source.
+- **When to update**: Which code, product, or operations changes must be reflected in it.
 
-正文必须：
+The body must:
 
-- 区分 `当前`、`目标`、`历史`。
-- 对命令、路径、变量和状态机给出可验证依据。
-- 不记录真实 secret；示例统一使用占位值。
-- 不把一次人工测试写成永久“已验证”；链接到可执行测试。
-- 变更功能时同步 README/架构/ERD/API/测试/CHANGELOG 中适用的部分。
+- Distinguish `current`, `target`, and `historical`.
+- Provide verifiable evidence for commands, paths, variables, and state machines.
+- Never record real secrets; examples always use placeholder values.
+- Never write a one-off manual test as permanently "verified"; link to runnable tests.
+- When changing a feature, update the applicable parts of README/architecture/ERD/API/tests/CHANGELOG.
 
-仓库使用 `node scripts/check-docs.mjs` 校验上述开头字段和相对链接。
+The repository uses `node scripts/check-docs.mjs` to validate the opening fields above and relative links.

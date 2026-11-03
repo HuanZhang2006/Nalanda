@@ -14,7 +14,7 @@ async function bootstrap() {
   // exactly that hop so IP rate limits cannot be replaced by a client-supplied
   // X-Forwarded-For chain.
   app.getHttpAdapter().getInstance().set("trust proxy", 1);
-  app.setGlobalPrefix("api"); // 匹配 Caddy 的 /api/* 路由
+  app.setGlobalPrefix("api"); // Matches the Caddy /api/* route
   const allowedOrigins = (process.env.CORS_ALLOWED_ORIGINS || process.env.PUBLIC_ORIGIN || "")
     .split(",").map((value) => value.trim().replace(/\/$/, "")).filter(Boolean);
   app.enableCors({

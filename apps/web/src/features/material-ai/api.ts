@@ -23,10 +23,8 @@ const json = (body?: unknown): RequestInit => ({
   ...(body === undefined ? {} : { body: JSON.stringify(body) }),
 });
 
-// Materials and My Notes are intentionally English-only in this phase. Ask
-// the shared transport for the server's stable English message, then let the
-// feature-specific error catalog map known codes without inheriting the
-// surrounding shell locale.
+// Ask the shared transport for the server's stable message, then let the
+// feature-specific error catalog map known codes into the current locale.
 const materialApiJson = <T>(path: string, init: RequestInit = {}) =>
   apiJson<T>(path, init, true, false);
 

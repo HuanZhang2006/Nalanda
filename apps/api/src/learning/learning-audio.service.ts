@@ -103,7 +103,7 @@ export class LearningAudioService implements OnModuleInit, OnModuleDestroy {
     if ((!key || !region) && !fake) {
       throw new ServiceUnavailableException({
         code: "PRONUNCIATION_UNAVAILABLE",
-        message: "发音服务暂不可用",
+        message: "Pronunciation services are temporarily unavailable.",
       });
     }
     return {
@@ -201,7 +201,7 @@ export class LearningAudioService implements OnModuleInit, OnModuleDestroy {
       p_priority: 100,
     }).catch((error) => {
       if (error instanceof Error && /learning word not found/i.test(error.message)) {
-        throw new NotFoundException({ code: "WORD_NOT_FOUND", message: "单词不存在" });
+        throw new NotFoundException({ code: "WORD_NOT_FOUND", message: "The word was not found." });
       }
       throw error;
     });
@@ -362,20 +362,20 @@ export class LearningAudioService implements OnModuleInit, OnModuleDestroy {
     if (!response) {
       throw new BadGatewayException({
         code: "SPEECH_PROVIDER_TIMEOUT",
-        message: "发音服务连接超时",
+        message: "The pronunciation service timed out.",
       });
     }
     if (!response.ok) {
       throw new BadGatewayException({
         code: "SPEECH_PROVIDER_ERROR",
-        message: "发音服务暂不可用",
+        message: "Pronunciation services are temporarily unavailable.",
       });
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
     if (!bytes.length) {
       throw new BadGatewayException({
         code: "SPEECH_PROVIDER_ERROR",
-        message: "发音服务返回空音频",
+        message: "The pronunciation service returned empty audio.",
       });
     }
     return bytes;

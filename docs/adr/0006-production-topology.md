@@ -1,36 +1,37 @@
-# ADR-0006：当前生产采用 nginx + Web/API/AI 容器 + Redis + Supabase Cloud
+# ADR-0006: Current production uses nginx + Web/API/AI containers + Redis + Supabase Cloud
 
-> **本文内容：**记录当前已上线生产拓扑，并把它与未部署的混合/目标拓扑分开。  
-> **作用：**让部署、监控和故障排查围绕真实运行系统，而不是早期 Vercel/Railway 或 2G 脚手架假设。  
-> **何时更新：**生产入口、主机、容器、域名、Supabase、AI/Redis 部署或发布方式变化时。  
-> **状态基线：**2026-08-11；生产为 nginx + Web/API/内网 AI + 私有 Redis + Supabase Cloud。Redis 已随 0039–0040 发布，AI 已随 0041–0043 发布；敏感主机信息和密钥不写入 ADR。
+> **About this document**
+> - **Contents**: Records the production topology currently live, and separates it from the undeployed hybrid/target topologies.
+> - **Purpose**: Keeps deployment, monitoring, and troubleshooting focused on the system actually running, not the early Vercel/Railway or 2 GB scaffolding assumptions.
+> - **When to update**: When the production entry point, host, containers, domain, Supabase, AI/Redis deployment, or release method changes.
+> - **Status baseline**: 2026-08-11; production is nginx + Web/API/internal AI + private Redis + Supabase Cloud. Redis shipped with 0039–0040 and AI with 0041–0043; sensitive host details and secrets are not written into ADRs.
 
-- **状态：**Accepted
-- **日期：**2026-06-24
-- **决策者：**项目维护者
-- **范围：**当前生产部署
+- **Status:** Accepted
+- **Date:** 2026-06-24
+- **Deciders:** Project maintainer
+- **Scope:** Current production deployment
 
-## 背景
+## Context
 
-最初蓝图讨论 Vercel + Railway + Supabase，也提供 Caddy/API/AI/Redis 的 2G 混合脚手架。实际生产 CI 使用 nginx 提供静态 Web 并把 `/api` 反代给 NestJS API，业务数据继续使用 Supabase Cloud。
+The original blueprint discussed Vercel + Railway + Supabase and also provided 2 GB hybrid scaffolding with Caddy/API/AI/Redis. The actual production CI uses nginx to serve the static Web build and reverse-proxy `/api` to the NestJS API, while business data stays on Supabase Cloud.
 
-## 决策
+## Decision
 
-- 当前生产事实以 `.github/workflows/deploy.yml`、`infra/deploy/docker-compose.yml` 和 nginx 配置为准。
-- nginx 是公网入口，提供 Web 静态产物并反代 `/api`；NestJS API 运行于容器；Supabase Cloud 承担 Auth/Postgres/Storage。
-- FastAPI Materials AI 已作为无宿主端口的隔离内网容器生产运行；Stripe、pgvector、Electron、React Native 和 Supabase Realtime 仍未生产部署。ADR-0011 的同机私有 Redis 同时用于请求保护、审计聚合、扫描锁和 BullMQ UUID 投递；PostgreSQL 仍是 job/额度事实源。
-- `infra/hybrid-2g` 保留为通用候选脚手架，不是当前运行手册；生产实际 nginx/API/AI/Redis 配置以 `infra/deploy` 为准。
+- Current production facts come from `.github/workflows/deploy.yml`, `infra/deploy/docker-compose.yml`, and the nginx configuration.
+- nginx is the public entry point; it serves the Web static build and reverse-proxies `/api`. The NestJS API runs in a container, and Supabase Cloud provides Auth/Postgres/Storage.
+- The FastAPI Materials AI runs in production as an isolated internal container with no host port; Stripe, pgvector, Electron, React Native, and Supabase Realtime are still not deployed to production. The same-host private Redis from ADR-0011 serves request protection, audit aggregation, scan locks, and BullMQ UUID delivery; PostgreSQL remains the source of truth for jobs and allowances.
+- `infra/hybrid-2g` stays as generic candidate scaffolding, not the current runbook; the real production nginx/API/AI/Redis configuration is in `infra/deploy`.
 
-## 后果
+## Consequences
 
-部署路径与当前能力匹配，成本低；但单机/容器发布的可用性、回滚、观测和资源隔离有限。文档必须避免将候选配置中的环境变量或服务误报为线上依赖。
+The deployment path matches current capability at low cost, but single-host/container releases have limited availability, rollback, observability, and resource isolation. Documentation must not present environment variables or services from candidate configurations as live dependencies.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **当前：**PR/main 会执行 typecheck、Web jsdom、API readiness unit、build、本地 Supabase 升级/重建/lint/RLS E2E；新增 migration 在加密恢复点后通过受保护 environment 发布；应用以 Git SHA release 部署并自动回退上一 Web/API；health 会探测 Supabase JWKS/PostgREST。
-- **当前限制：**health 尚不证明 Storage、真实注册/登录、完整 RLS 或全部业务路径；数据库不自动逆向；Storage bytes、异地 artifact、持续监控和完整恢复演练仍缺失。
-- **目标：**继续增加 staging/canary、异地 artifact/Storage 备份、完整恢复演练、集中日志和 SLO 告警；AI/BullMQ 已完成独立门禁，Stripe 仍须另行设计和发布。
+- **Current:** PRs/main run typecheck, Web jsdom, API readiness unit tests, build, and local Supabase upgrade/rebuild/lint/RLS E2E; new migrations are released through a protected environment after an encrypted recovery point; the app deploys as a Git SHA release and automatically rolls back to the previous Web/API; health probes Supabase JWKS/PostgREST.
+- **Current limitations:** Health does not yet prove Storage, real sign-up/sign-in, full RLS, or every business path; the database is not reversed automatically; Storage bytes, off-site artifacts, continuous monitoring, and full recovery drills are still missing.
+- **Target:** Keep adding staging/canary, off-site artifact/Storage backups, full recovery drills, centralized logging, and SLO alerts; AI/BullMQ already have independent gates, and Stripe still needs its own design and release.
 
-## 验证与复审
+## Verification and review
 
-每次发布记录版本、迁移、健康/冒烟结果和回滚点。增加第二台主机、托管平台或 AI worker 时新建/更新 ADR，并同步运维文档。
+Every release records the version, migrations, health/smoke results, and rollback point. When a second host, a managed platform, or an AI worker is added, create/update an ADR and sync the operations docs.

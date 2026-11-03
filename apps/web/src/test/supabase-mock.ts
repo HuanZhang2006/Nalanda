@@ -162,32 +162,32 @@ export function defaultSeed(): Seed {
   return {
     profiles: [{
       id: "u1", username: "Alice", email: "alice@example.edu", university: "Nalanda University",
-      major: "Cognitive Science", year: "Sophomore", language: "zh", points: 160, credits: 25,
+      major: "Cognitive Science", year: "Sophomore", language: "en", points: 160, credits: 25,
       level: 3, level_name: "Scholar", streak: 2, vip_until: null,
     }],
     courses: [{ id: "c1", user_id: "u1", code: "COGS 210", name: "Foundations of Cognition", color: "#4f7d52", created_at: now }],
     materials: [{ id: "m1", user_id: "u1", course_id: "c1", name: "Week 1.pdf", type: "pdf", size_bytes: 2048, storage_path: "u1/week1.pdf", created_at: now }],
-    notifications: [{ id: "n1", user_id: "u1", title: "欢迎回来", body: "今天也继续学习吧", type: "system", read: false, created_at: now }],
-    feedback: [{ id: "f1", user_id: "u1", category: "Bug", summary: "已有反馈", body: "详情", status: "open", created_at: now }],
+    notifications: [{ id: "n1", user_id: "u1", title: "Welcome back", body: "Keep learning today", type: "system", read: false, created_at: now }],
+    feedback: [{ id: "f1", user_id: "u1", category: "Bug", summary: "Existing feedback", body: "Details", status: "open", created_at: now }],
     tags: [
       { kind: "university", value: "Nalanda University", created_at: now },
       { kind: "major", value: "Cognitive Science", created_at: now },
       { kind: "subject", value: "COGS 210", created_at: now },
-      { kind: "tag", value: "复习", created_at: now },
+      { kind: "tag", value: "review", created_at: now },
     ],
     follows: [{ follower_id: "u1", following_id: "u2", created_at: now }],
     posts: [
-      { id: "p1", user_id: "u1", author_name: "Alice", author_university: "Nalanda University", title: "我的学习方法", body: "间隔重复很有效。", kind: "experience", tags: ["复习"], repost_of: null, like_count: 1, comment_count: 1, favorite_count: 0, repost_count: 0, created_at: now },
-      { id: "p2", user_id: "u2", author_name: "Bob", author_university: "Westlake", title: "工作记忆是什么？", body: "请大家帮忙解释。", kind: "question", tags: ["COGS 210"], repost_of: null, like_count: 2, comment_count: 0, favorite_count: 1, repost_count: 0, created_at: now },
+      { id: "p1", user_id: "u1", author_name: "Alice", author_university: "Nalanda University", title: "My study method", body: "Spaced repetition works well.", kind: "experience", tags: ["review"], repost_of: null, like_count: 1, comment_count: 1, favorite_count: 0, repost_count: 0, created_at: now },
+      { id: "p2", user_id: "u2", author_name: "Bob", author_university: "Westlake", title: "What is working memory?", body: "Could someone explain it?", kind: "question", tags: ["COGS 210"], repost_of: null, like_count: 2, comment_count: 0, favorite_count: 1, repost_count: 0, created_at: now },
     ],
-    comments: [{ id: "cm1", post_id: "p1", user_id: "u2", author_name: "Bob", body: "很有帮助", created_at: now }],
+    comments: [{ id: "cm1", post_id: "p1", user_id: "u2", author_name: "Bob", body: "Very helpful", created_at: now }],
     post_likes: [{ post_id: "p2", user_id: "u1", created_at: now }],
     post_favorites: [{ post_id: "p2", user_id: "u1", created_at: now }],
     study_tasks: [
-      { id: "t1", user_id: "u1", title: "复习工作记忆", due_date: localDate(), done: false, done_at: null, course_id: "c1", material_id: "m1", goal_id: null, created_at: now },
-      { id: "t2", user_id: "u1", title: "完成练习题", due_date: localDate(1), done: false, done_at: null, course_id: "c1", material_id: null, goal_id: null, created_at: now },
+      { id: "t1", user_id: "u1", title: "Review working memory", due_date: localDate(), done: false, done_at: null, course_id: "c1", material_id: "m1", goal_id: null, created_at: now },
+      { id: "t2", user_id: "u1", title: "Finish practice questions", due_date: localDate(1), done: false, done_at: null, course_id: "c1", material_id: null, goal_id: null, created_at: now },
     ],
-    study_goals: [{ id: "g1", user_id: "u1", title: "COGS 210 期末", exam_date: localDate(3), course_id: "c1", created_at: now }],
+    study_goals: [{ id: "g1", user_id: "u1", title: "COGS 210 final", exam_date: localDate(3), course_id: "c1", created_at: now }],
   };
 }
 

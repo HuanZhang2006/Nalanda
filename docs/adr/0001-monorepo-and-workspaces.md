@@ -1,44 +1,44 @@
-# ADR-0001：使用 pnpm 与 Turborepo 管理 monorepo
+# ADR-0001: Manage the monorepo with pnpm and Turborepo
 
-> **本文内容：**记录 Web、API、AI 与共享包采用单仓库工作区的决策。  
-> **作用：**约束目录、包管理器、构建编排和共享契约的演进方式。  
-> **何时更新：**工作区工具、包边界、发布策略或多端代码组织发生实质变化时；若更换方案应新建 ADR 并替代本文。  
-> **实现提示：**Accepted 表示选型已接受；具体工作区是否存在以当前仓库为准。
+> **About this document**
+> - **Contents**: Records the decision to keep Web, API, AI, and shared packages in one repository workspace.
+> - **Purpose**: Constrains how directories, the package manager, build orchestration, and shared contracts evolve.
+> - **When to update**: When workspace tooling, package boundaries, release strategy, or multi-platform code organization changes materially; if the approach is replaced, create a new ADR that supersedes this one.
+> - **Implementation note**: Accepted means the choice is accepted; whether a given workspace exists is determined by the current repository.
 
-- **状态：**Accepted
-- **日期：**2026-06-20
-- **决策者：**项目维护者
-- **范围：**整个代码仓库
+- **Status:** Accepted
+- **Date:** 2026-06-20
+- **Deciders:** Project maintainer
+- **Scope:** The whole code repository
 
-## 背景
+## Context
 
-产品蓝图包含 React Web、NestJS API、Python AI、未来 Electron/React Native 以及共享类型和设计令牌。独立仓库会增加契约漂移、跨端变更和版本协调成本；但 Python 与 TypeScript 无法完全共享同一构建工具。
+The product blueprint includes React Web, a NestJS API, Python AI, future Electron/React Native apps, and shared types and design tokens. Separate repositories would increase contract drift, cross-platform change, and version coordination costs; however, Python and TypeScript cannot fully share one build tool.
 
-## 决策
+## Decision
 
-- 使用 `pnpm` workspace 管理 JavaScript/TypeScript 包，锁定 `pnpm-lock.yaml`。
-- 使用 Turborepo 编排 `build`、`dev`、`typecheck`、`test` 等任务。
-- 可部署应用放入 `apps/*`，可复用代码/契约放入 `packages/*`，数据库迁移放入 `supabase/*`，部署配置放入 `infra/*`。
-- Python AI 服务保留自己的依赖和测试工具，但仍在同一仓库接受统一 CI 与契约测试。
-- 共享类型不能只依赖编译期 TypeScript；跨 HTTP/Python 边界必须有运行时 schema 和契约测试。
+- Use a `pnpm` workspace for JavaScript/TypeScript packages and lock `pnpm-lock.yaml`.
+- Use Turborepo to orchestrate tasks such as `build`, `dev`, `typecheck`, and `test`.
+- Deployable apps go in `apps/*`, reusable code/contracts in `packages/*`, database migrations in `supabase/*`, and deployment configuration in `infra/*`.
+- The Python AI service keeps its own dependencies and test tooling but still runs under the same repository CI and contract tests.
+- Shared types must not rely on compile-time TypeScript alone; any HTTP/Python boundary needs runtime schemas and contract tests.
 
-## 考虑过的方案
+## Options considered
 
-- **每个服务独立仓库：**权限和发布隔离清晰，但早期团队的契约与文档同步成本更高。
-- **单体应用：**部署简单，但 AI 解析/模型依赖与 Node 核心业务生命周期差异明显。
-- **npm/yarn workspace：**可行，但项目已选择 pnpm 的严格依赖和磁盘复用能力。
+- **One repository per service:** Clear permission and release isolation, but higher contract and documentation sync cost for an early-stage team.
+- **Monolithic app:** Simple deployment, but AI parsing/model dependencies have a very different lifecycle from the Node core business logic.
+- **npm/yarn workspaces:** Workable, but the project already chose pnpm for its strict dependencies and disk reuse.
 
-## 后果
+## Consequences
 
-优点是原子提交、统一门禁和共享 UI/类型更容易。代价是 CI 必须正确处理多语言缓存和受影响包，错误的根脚本可能给出“部分通过”的假象；任一工作区缺测试脚本时，根门禁必须显式失败或报告未覆盖。
+Atomic commits, unified gates, and shared UI/types become easier. The cost is that CI must handle multi-language caches and affected packages correctly, and a wrong root script can give a false "partially passing" impression; when any workspace lacks a test script, the root gate must fail explicitly or report the gap.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **当前：**已有 `apps/web`、`apps/api`、`apps/ai`、`packages/types`、`packages/ui`，根构建/类型检查由 Turbo 编排。
-- **当前限制：**Electron、React Native、api-client、i18n/config 包尚不存在；共享 TS 类型没有被 Web/API 广泛消费，Python 契约仍可能漂移。
-- **目标：**每个工作区提供可执行测试；从单一 schema 生成或校验 TS/Python/API 契约；CI 按依赖图运行且汇总覆盖结果。
+- **Current:** `apps/web`, `apps/api`, `apps/ai`, `packages/types`, and `packages/ui` exist; root build/typecheck are orchestrated by Turbo.
+- **Current limitations:** Electron, React Native, api-client, and i18n/config packages do not exist yet; shared TS types are not widely consumed by Web/API, and Python contracts can still drift.
+- **Target:** Every workspace provides executable tests; TS/Python/API contracts are generated or validated from a single schema; CI runs along the dependency graph and aggregates coverage.
 
-## 验证与复审
+## Verification and review
 
-根目录全新安装后必须可执行 `pnpm typecheck`、`pnpm test` 和 `pnpm build`。引入独立发布周期、访问隔离或仓库规模显著增加时复审。
-
+After a fresh install at the root, `pnpm typecheck`, `pnpm test`, and `pnpm build` must all run. Review this decision when independent release cycles, access isolation, or significant repository growth are introduced.

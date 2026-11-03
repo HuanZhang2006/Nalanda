@@ -1,10 +1,11 @@
-# 产品规则文档索引
+# Product Rules Documentation Index
 
-> **本文内容：**汇总影响跨模块体验、商业行为和用户权益的规范性产品规则。  
-> **作用：**让 UI、API、数据库、客服、财务和运营使用同一术语与状态机，避免原型文案被误当成结算规则。  
-> **何时更新：**新增规则文档、定价/权益/退款/分成变化，或索引文件改名时。  
-> **状态基线：**2026-08-11；生产迁移已到 0043，Courses +20/徽章、幂等弱网答题、按意图独立续学、限时/翻译前测、中文翻译语音输入/共享波形、Unicode 拼写归一化、仅标点差异容错、显式取消、轮末错题复盘、拼写/读音考试、任意选词、考试历史和双考试精确掌握投影，以及 points 日上限/人工审核/待审协同信号均已发布。Course Market v1 只免费克隆，Materials AI 只用 Free 双额度。
+> **About this document**
+> - **Contents**: Collects normative product rules that affect cross-module experience, commercial behavior, and user entitlements.
+> - **Purpose**: Lets UI, API, database, support, finance, and operations share one vocabulary and state machine, so prototype copy is never mistaken for settlement rules.
+> - **When to update**: When a rules document is added, pricing/entitlements/refunds/revenue share change, or an indexed file is renamed.
+> - **Status baseline**: 2026-08-11; production migrations are at 0043. Courses +20/badges, idempotent answering on weak networks, intent-specific resume, timed/translation-first tests, Chinese translation voice input with a shared waveform, Unicode spelling normalization, punctuation-only tolerance, explicit cancel, end-of-round mistake review, spelling/pronunciation exams, arbitrary word selection, exam history, the dual-exam exact mastery projection, and the points daily cap/manual review/pending-review coordination signals are all released. Course Market v1 only offers free clones; Materials AI only uses the two Free allowances.
 
-- [Points / Credits / VIP / 支付统一规则](POINTS_CREDITS_VIP_PAYMENTS.md)：社区/任务/课程成长、课程徽章、免费 Course Market 边界、封闭钱包、AI/Note Market 消费、Stripe、退款、分成与对账。
+- [Points / Credits / VIP / Payments unified rules](POINTS_CREDITS_VIP_PAYMENTS.md): Community/task/course growth, course badges, the free Course Market boundary, the closed wallet, AI/Note Market spending, Stripe, refunds, revenue share, and reconciliation.
 
-产品规则变更若影响余额、资金、隐私、审核或长期兼容性，必须同时更新 ADR、API/ERD、测试、客服文案与 CHANGELOG。
+Any product rule change that affects balances, money, privacy, moderation, or long-term compatibility must update the ADR, API/ERD, tests, support copy, and CHANGELOG at the same time.

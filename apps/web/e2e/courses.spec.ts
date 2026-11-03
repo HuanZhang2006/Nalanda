@@ -542,6 +542,6 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await page.locator('#nav [data-go="market"]').click();
   await page.getByRole("button", { name: "课程市场" }).click();
   await page.getByRole("button", { name: "免费克隆" }).click();
-  await expect(page.getByRole("heading", { name: `${courseTitle}（副本）`, exact: true })).toBeVisible();
+  await expect(page.getByRole("heading", { name: `${courseTitle} (copy)`, exact: true })).toBeVisible();
   await expect(page.getByText("0%", { exact: true })).toBeVisible();
 });

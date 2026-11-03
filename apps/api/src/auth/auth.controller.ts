@@ -1,7 +1,7 @@
 import { Body, Controller, HttpCode, HttpException, Post } from "@nestjs/common";
 
-// 自建注册：用 service_role 直接创建「已确认」账号，绕开不可靠的确认邮件流程。
-// 这样注册即可立即登录；重复邮箱返回明确错误。
+// Custom sign-up: create an already-confirmed account with service_role, bypassing the unreliable confirmation-email flow.
+// Users can sign in immediately after sign-up; a duplicate email returns an explicit error.
 @Controller("auth")
 export class AuthController {
   @Post("register")

@@ -12,6 +12,7 @@ import type {
 import { DB } from "../../legacy/data";
 import { supabase } from "../../lib/supabase";
 import { ApiClientError } from "../../lib/api";
+import { formatDateTime, localize, useI18n } from "../../i18n";
 import { materialsAiApi } from "./api";
 import { materialAiErrorText } from "./errorText";
 import { clearOtherAccounts, deleteDraft, draftKey, loadDraft, saveDraft } from "./examDraftStore";
@@ -28,14 +29,10 @@ interface Props {
 }
 
 const gradient = "linear-gradient(135deg,#a97142,#d2a675)";
-const english = (englishText: string, _chineseText: string) => englishText;
-const formatEnglishDateTime = (value: string) => new Intl.DateTimeFormat("en-US", {
-  dateStyle: "medium", timeStyle: "short",
-}).format(new Date(value));
 const KnowledgeGraphCanvas = lazy(() => import("./KnowledgeGraphCanvas"));
 
 export function NotesView(props: Props) {
-  const l = english;
+  const { l } = useI18n();
   const [notes, setNotes] = useState<GeneratedNoteSummary[]>([]);
   const [courses, setCourses] = useState<Course[]>([]);
   const [filter, setFilter] = useState("all");
@@ -92,18 +89,18 @@ export function NotesView(props: Props) {
 }
 
 function RealNoteCard({ note, onOpen }: { note: GeneratedNoteSummary; onOpen: () => void }) {
-  const l = english;
+  const { l } = useI18n();
   return <button className="card ncard hoverable material-ai-note-button" onClick={onOpen}>
     <div className="ncard-top" style={{ background: gradient }}><span className="chip material-ai-demo-chip">{note.courseCode || note.courseName}</span></div>
     <div className="ncard-body"><div className="chip chip-accent">{note.kind === "ai_knowledge_graph" ? "AI knowledge map" : l("AI test paper", "AI 试卷")}</div><h3 className="serif">{note.title}</h3>
       <p className="muted">{note.kind === "ai_knowledge_graph" ? `${note.nodeCount} knowledge points · ${note.edgeCount} relationships` : `${note.questionCount} ${l("questions", "题")} · ${note.totalMarks} ${l("marks", "分")}`} · {note.sourceDeleted ? l("Source deleted", "源资料已删除") : note.materialName}</p>
-      <div className="ncard-foot"><span className="meta">{formatEnglishDateTime(note.updatedAt)}</span><span className="chip chip-outline">{l("Open", "打开")} ›</span></div>
+      <div className="ncard-foot"><span className="meta">{formatDateTime(note.updatedAt)}</span><span className="chip chip-outline">{l("Open", "打开")} ›</span></div>
     </div>
   </button>;
 }
 
 function RealNote({ noteId, userId, onBack, toast }: { noteId: string; userId: string; onBack: () => void; toast: Props["toast"] }) {
-  const l = english;
+  const { l } = useI18n();
   const [note, setNote] = useState<GeneratedNoteDetail | null>(null);
   const [attempts, setAttempts] = useState<GeneratedExamAttempt[]>([]);
   const [active, setActive] = useState<GeneratedExamAttempt | null>(null);
@@ -182,7 +179,7 @@ function KnowledgeGraphView({ noteId, graph, toast }: {
       void materialsAiApi.knowledgeQuestion(questionJob.id).then((next) => {
         if (!cancelled) setQuestionJob(next);
       }).catch((failure) => {
-        if (!cancelled) toast(materialAiErrorText(failure, "The knowledge answer could not be refreshed.", english));
+        if (!cancelled) toast(materialAiErrorText(failure, localize("The knowledge answer could not be refreshed.", "无法刷新知识点回答。"), localize));
       });
     }, document.hidden ? 10000 : 2000);
     return () => { cancelled = true; clearTimeout(timer); };
@@ -197,7 +194,7 @@ function KnowledgeGraphView({ noteId, graph, toast }: {
       });
       setQuestionJob(job);
     } catch (failure) {
-      toast(materialAiErrorText(failure, "The question could not be queued.", english));
+      toast(materialAiErrorText(failure, localize("The question could not be queued.", "无法提交问题。"), localize));
     } finally { setAsking(false); }
   };
 
@@ -269,7 +266,7 @@ function questionType(type: GeneratedExamQuestionV1["type"], l: (english: string
 function ExamSession({ userId, note, initial, onExit, toast }: {
   userId: string; note: GeneratedExamNoteDetail; initial: GeneratedExamAttempt; onExit: () => void; toast: Props["toast"];
 }) {
-  const l = english;
+  const { l } = useI18n();
   const [attempt, setAttempt] = useState(initial);
   const [answers, setAnswers] = useState<Record<string, ExamAnswerInput["value"]>>(() => Object.fromEntries(initial.answers.map((answer) => [answer.questionId, answer.value])));
   const [dirty, setDirty] = useState(false);
@@ -440,7 +437,7 @@ function ExamQuestion({ question, index, value, disabled, onChange, onBlur, resu
   onChange: (value: ExamAnswerInput["value"]) => void; onBlur: () => void;
   result?: GeneratedExamAttempt["results"][number]; full?: GeneratedExamQuestionV1;
 }) {
-  const l = english;
+  const { l } = useI18n();
   const toggleMultiple = (optionIndex: number) => {
     const current = Array.isArray(value) ? value.map(Number) : [];
     onChange(current.includes(optionIndex) ? current.filter((item) => item !== optionIndex) : [...current, optionIndex].sort((a, b) => a - b));

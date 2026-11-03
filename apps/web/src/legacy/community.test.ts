@@ -3,8 +3,8 @@ import { click, createSupabaseMock, defaultSeed, flush } from "../test/supabase-
 import { initCommunity, mountCommunity, mountPost } from "./community";
 import { showPointRewardReceipt } from "./point-receipt";
 
-describe("社区 jsdom 集成", () => {
-  it("覆盖 feed、筛选、我的子标签、composer 标签/媒体和详情评论", async () => {
+describe("community jsdom integration", () => {
+  it("covers the feed, filters, Mine sub-tabs, composer tags/media, and detail comments", async () => {
     const supabase = createSupabaseMock();
     const toast = vi.fn();
     const root = document.createElement("div");
@@ -14,35 +14,35 @@ describe("社区 jsdom 集成", () => {
 
     await mountCommunity(root);
     await flush(20);
-    expect(root.textContent).toContain("学习社区");
-    expect(root.textContent).toContain("我的学习方法");
-    expect(root.textContent).toContain("工作记忆是什么");
+    expect(root.textContent).toContain("Learning community");
+    expect(root.textContent).toContain("My study method");
+    expect(root.textContent).toContain("What is working memory");
 
     click(root.querySelector('[data-cm="filter"][data-f="question"]'));
     await flush(20);
-    expect(root.textContent).toContain("工作记忆是什么");
-    expect(root.textContent).not.toContain("我的学习方法");
+    expect(root.textContent).toContain("What is working memory");
+    expect(root.textContent).not.toContain("My study method");
 
     click(root.querySelector('[data-cm="filter"][data-f="mine"]'));
     await flush(20);
-    expect(root.textContent).toContain("我的社区");
+    expect(root.textContent).toContain("My community");
     expect(root.querySelectorAll('[data-cm="mtab"]')).toHaveLength(5);
 
     click(root.querySelector('[data-cm="mtab"][data-t="liked"]'));
     await flush(20);
-    expect(root.textContent).toContain("工作记忆是什么");
+    expect(root.textContent).toContain("What is working memory");
 
     click(root.querySelector('[data-cm="compose"]'));
-    expect(document.querySelector(".scrim")?.textContent).toContain("发帖");
-    expect(document.querySelector(".scrim")?.textContent).toContain("图片");
-    expect(document.querySelector(".scrim")?.textContent).toContain("音频");
+    expect(document.querySelector(".scrim")?.textContent).toContain("New post");
+    expect(document.querySelector(".scrim")?.textContent).toContain("Image");
+    expect(document.querySelector(".scrim")?.textContent).toContain("Audio");
 
-    click(document.querySelector('[data-tag="复习"]'));
+    click(document.querySelector('[data-tag="review"]'));
     const customTag = document.querySelector("#ps-tagnew") as HTMLInputElement;
-    customTag.value = "记忆";
+    customTag.value = "memory";
     customTag.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));
     await flush(8);
-    expect(document.querySelector('[data-tag="记忆"]')?.classList.contains("chip-accent")).toBe(true);
+    expect(document.querySelector('[data-tag="memory"]')?.classList.contains("chip-accent")).toBe(true);
 
     const file = new File(["image"], "diagram.png", { type: "image/png" });
     vi.spyOn(HTMLInputElement.prototype, "click").mockImplementation(function (this: HTMLInputElement) {
@@ -55,17 +55,17 @@ describe("社区 jsdom 集成", () => {
     expect(supabase.upload).toHaveBeenCalledOnce();
     expect(document.querySelector("#ps-media img")?.getAttribute("src")).toContain("cdn.example/u1/");
 
-    (document.querySelector("#ps-title") as HTMLInputElement).value = "新的复习帖子";
-    (document.querySelector("#ps-body") as HTMLTextAreaElement).value = "正文";
+    (document.querySelector("#ps-title") as HTMLInputElement).value = "A new review post";
+    (document.querySelector("#ps-body") as HTMLTextAreaElement).value = "Body";
     click(document.querySelector('[data-x="save"]'));
     await flush(24);
 
-    const created = supabase.tables.posts.find((post) => post.title === "新的复习帖子");
-    expect(created?.tags).toEqual(expect.arrayContaining(["复习", "记忆"]));
+    const created = supabase.tables.posts.find((post) => post.title === "A new review post");
+    expect(created?.tags).toEqual(expect.arrayContaining(["review", "memory"]));
     expect(created?.image_url).toContain("cdn.example/u1/");
 
     click(root.querySelector(`[data-cm="edit"][data-id="${created?.id}"]`));
-    (document.querySelector("#ps-body") as HTMLTextAreaElement).value = "编辑后的正文";
+    (document.querySelector("#ps-body") as HTMLTextAreaElement).value = "Edited body";
     click(document.querySelector('[data-x="save"]'));
     await flush(20);
     const postUpdate = [...supabase.operations].reverse().find((operation) =>
@@ -74,17 +74,17 @@ describe("社区 jsdom 集成", () => {
 
     await mountPost(root, "p1");
     await flush(20);
-    expect(root.textContent).toContain("很有帮助");
-    expect(root.textContent).toContain("1 条评论");
-    (root.querySelector("#cm-input") as HTMLInputElement).value = "补充一个例子";
+    expect(root.textContent).toContain("Very helpful");
+    expect(root.textContent).toContain("1 comments");
+    (root.querySelector("#cm-input") as HTMLInputElement).value = "Adding an example";
     click(root.querySelector('[data-cm="addcomment"]'));
     await flush(24);
 
-    expect(supabase.tables.comments.some((comment) => comment.body === "补充一个例子" && comment.post_id === "p1")).toBe(true);
-    expect(root.textContent).toContain("补充一个例子");
+    expect(supabase.tables.comments.some((comment) => comment.body === "Adding an example" && comment.post_id === "p1")).toBe(true);
+    expect(root.textContent).toContain("Adding an example");
   });
 
-  it("切换账号会清空筛选/互动缓存，写入失败不会产生乐观假成功", async () => {
+  it("clears filter/interaction caches on account switch, and failed writes never show optimistic success", async () => {
     const firstRoot = document.createElement("div");
     document.body.appendChild(firstRoot);
     initCommunity(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
@@ -96,7 +96,7 @@ describe("社区 jsdom 集成", () => {
     const seed = defaultSeed();
     seed.profiles = [{ id: "u2", username: "Bob", email: "bob@example.edu" }];
     seed.posts = [{
-      id: "bp1", user_id: "u2", author_name: "Bob", title: "Bob 的新会话", body: "isolated",
+      id: "bp1", user_id: "u2", author_name: "Bob", title: "Bob's new session", body: "isolated",
       kind: "experience", tags: ["OnlyBob"], repost_of: null, like_count: 0, favorite_count: 0,
       comment_count: 0, repost_count: 0, created_at: new Date().toISOString(),
     }];
@@ -113,8 +113,8 @@ describe("社区 jsdom 集成", () => {
     await flush(16);
 
     expect(secondRoot.querySelector('[data-cm="filter"][data-f="all"]')?.classList.contains("chip-accent")).toBe(true);
-    expect(secondRoot.textContent).toContain("Bob 的新会话");
-    expect(secondRoot.textContent).not.toContain("工作记忆是什么");
+    expect(secondRoot.textContent).toContain("Bob's new session");
+    expect(secondRoot.textContent).not.toContain("What is working memory");
 
     click(secondRoot.querySelector('[data-cm="like"][data-id="bp1"]'));
     await flush(12);
@@ -123,7 +123,7 @@ describe("社区 jsdom 集成", () => {
     expect(toast).toHaveBeenCalledWith(expect.stringContaining("like denied"));
   });
 
-  it("业务成功后读取积分回执，并在每日上限时立即提示但不撤销点赞", async () => {
+  it("reads the points receipt after success and warns at the daily cap without undoing the like", async () => {
     const seed = defaultSeed();
     seed.post_likes = [];
     const supabase = createSupabaseMock(seed, "u1", { rpcResults: {
@@ -143,10 +143,10 @@ describe("社区 jsdom 集成", () => {
     expect(supabase.rpc).toHaveBeenCalledWith("get_point_reward_receipt", {
       p_event_type: "like_created", p_source_id: "p2",
     });
-    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/积分奖励已达上限|points limit/i));
+    expect(toast).toHaveBeenCalledWith(expect.stringMatching(/points limit/i));
   });
 
-  it("账号切换后丢弃旧账号延迟返回的积分回执", async () => {
+  it("discards the previous account's late points receipt after an account switch", async () => {
     let resolveReceipt!: (value: unknown) => void;
     const supabase = {
       rpc: vi.fn(() => new Promise((resolve) => { resolveReceipt = resolve; })),

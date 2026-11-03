@@ -1,109 +1,109 @@
-# 05 · 数据库 / 迁移 / RLS
+# 05 · Database / migrations / RLS
 
-> **文档定位**
-> - **内容**：记录当前 Supabase/Postgres、RLS 范式、迁移清单和迁移工具局限。
-> - **作用**：作为数据层实现入门；完整关系看 ERD，正式发布/回滚看 operations 手册。
-> - **何时更新**：新增迁移、RLS 模式、迁移工具或数据库发布流程变化时。
-> - **状态基线**：2026-08-23。生产 migration history 为 0053；0039–0040 第一阶段完整性/points 与 0052–0053 最终时间列撤权均已上线。
+> **About this document**
+> - **Contents**: Records the current Supabase/Postgres setup, the RLS pattern, the migration list, and the limits of the migration tooling.
+> - **Purpose**: An introduction to the data layer; see the ERD for full relationships and the operations runbook for formal releases/rollbacks.
+> - **When to update**: When migrations are added, or the RLS pattern, migration tooling, or database release process changes.
+> - **Status baseline**: 2026-08-23. Production migration history is at 0053; the phase-one integrity/points work of 0039–0040 and the final timestamp-column revocation of 0052–0053 are both live.
 
-> 目标：数据存哪、怎么保证「每个人只能动自己的数据」（RLS），以及改表结构的工作流（迁移 + 一条命令自动应用）。鉴权相关的 profiles 表见 [02 用户系统与认证](02-auth-and-user-system.md)。
+> Goal: where data lives, how we guarantee "everyone can only touch their own data" (RLS), and the workflow for changing table structure (migrations + one command to apply them). The authentication-related profiles table is in [02 User system and authentication](02-auth-and-user-system.md).
 
-## 1. 数据库是什么
-用 **Supabase** = 托管 **PostgreSQL** + 周边（Auth、Storage、Realtime、自动生成的 PostgREST）。前端用 `supabase-js` 直接读写表，**安全靠 RLS 在数据库层兜底**，不是靠前端自觉。
+## 1. What the database is
+We use **Supabase** = hosted **PostgreSQL** + extras (Auth, Storage, Realtime, auto-generated PostgREST). The frontend reads and writes tables directly with `supabase-js`, and **security is backstopped by RLS in the database**, not by the frontend behaving.
 
-## 2. RLS（行级安全）—— 整个项目的安全基石
-开了 RLS 的表**默认拒绝一切**，必须写策略放行。统一用「owner-only」模式：
+## 2. RLS (row-level security) — the security foundation of the whole project
+A table with RLS enabled **denies everything by default**; policies must allow access explicitly. We use a uniform "owner-only" pattern:
 ```sql
 alter table public.X enable row level security;
 create policy X_all_own on public.X
-  for all to authenticated            -- 仅登录用户
-  using (user_id = auth.uid())        -- 可读/改的行
-  with check (user_id = auth.uid());  -- 可写入的行
+  for all to authenticated            -- signed-in users only
+  using (user_id = auth.uid())        -- rows that can be read/changed
+  with check (user_id = auth.uid());  -- rows that can be written
 ```
-- `auth.uid()` = 当前请求 JWT 里的用户 id，由 Supabase 解出，前端伪造不了。
-- 表上 `user_id uuid not null default auth.uid()`：插入不用传 user_id，数据库自动填当前用户。
-- 结果：A 的查询永远只返回 A 的行。
+- `auth.uid()` = the user id in the current request's JWT, decoded by Supabase and impossible for the frontend to forge.
+- Tables have `user_id uuid not null default auth.uid()`: inserts don't pass user_id, and the database fills in the current user.
+- Result: A's queries only ever return A's rows.
 
-> 心法：**前端的过滤只是体验，真正的隔离写在 RLS 里。**
+> Rule of thumb: **frontend filtering is just UX; real isolation is written in RLS.**
 
-RLS 只判断“哪一行”，不会自动判断“同一行的哪些列”。包含余额、角色、状态或审核字段的表还必须使用列级 GRANT、命令拆分策略或防御触发器；`SECURITY DEFINER` 函数必须固定 `search_path` 并撤销默认客户端 EXECUTE。
+RLS only decides "which rows", not "which columns of the same row". Tables containing balances, roles, statuses, or moderation fields must also use column-level GRANTs, per-command policies, or defensive triggers; `SECURITY DEFINER` functions must pin `search_path` and revoke default client EXECUTE.
 
-## 3. 现有迁移（`supabase/migrations/`）
-| 文件 | 内容 |
+## 3. Existing migrations (`supabase/migrations/`)
+| File | Contents |
 |---|---|
-| `0001_profiles.sql` | `profiles`（绑 auth.users）+ 注册自动建档触发器 + owner-only RLS（见 [02](02-auth-and-user-system.md)） |
-| `0002_courses_materials.sql` | `courses` / `materials` 表 + RLS；私有 Storage 桶 + 存储策略（见 [06](06-materials.md)） |
-| `0003_materials_course_check.sql` | 加固：materials 只能挂到自己拥有的课程（[06](06-materials.md) 的越权修复） |
+| `0001_profiles.sql` | `profiles` (bound to auth.users) + automatic profile trigger on sign-up + owner-only RLS (see [02](02-auth-and-user-system.md)) |
+| `0002_courses_materials.sql` | `courses` / `materials` tables + RLS; private Storage bucket + storage policies (see [06](06-materials.md)) |
+| `0003_materials_course_check.sql` | Hardening: materials can only attach to courses you own (the authorization fix in [06](06-materials.md)) |
 | `0004_notifications_feedback.sql` | notifications / feedback + owner-only RLS |
-| `0005_community.sql` | posts / comments / likes / favorites / follows + 计数触发器 |
-| `0006_points_tags_notify.sql` | points、tags、社区媒体、互动通知与等级函数 |
-| `0007_schedule.sql` | study_goals / study_tasks、streak 与完成任务触发器 |
-| `0008_security_points_ledger.sql` | Profile 敏感列白名单、内部 RPC 撤权、稳定 points 业务键、`point_entries`/`point_event_states` 与冲正触发器 |
-| `0009_reset_legacy_points.sql` | 用 append-only reversal 归零不可信 opening，并重建 Profile points/level 投影 |
-| `0010_verify_security_points_release.sql` | 只读断言 Profile 写权限、内部 RPC、opening reversal 和账本投影 |
-| `0011_learning_courses.sql` | Courses 内容/学习/复习/传播/徽章/speech usage、timezone 与 TTS cache；客户端只读私有数据 |
-| `0012_learning_course_workflows.sql` | service-role-only 原子保存/会话/答题/成长/分享/市场/审核 RPC |
-| `0013_verify_learning_courses_release.sql` | Courses RLS、写权限/RPC、badge/timezone/owner 链发布断言 |
-| `0014_learning_feedback_flow.sql` | 朗读整体分数阈值的 recognition 候补池加入/移除，以及认词候补轮推进；重申评分 RPC 仅 service-role 可执行 |
-| `0015_learning_performance_offline_audio.sql` | session revision、幂等 attempt/首次响应、单 RPC snapshot、朗读目标校验、private TTS 生成队列/配额/租约 |
-| `0016_verify_learning_performance_release.sql` | 断言 0015 结构、唯一约束、revision 触发器、队列 RLS/客户端撤权及全部新 RPC 仅 service role |
-| `0017_learning_session_intent_resume.sql` | 回填非空 `resume_key`，以 course/unit/mode/scope/排序 skills 或 schedule ID 区分 active session 意图，并替换 `learning_start_session` |
-| `0018_verify_learning_audio_review_fix.sql` | 断言 0017 列/意图唯一索引/活动排序索引、函数定义及 service-role-only 权限 |
-| `0019_learning_spelling_timer_translation.sql` | session 拼写选项、只保存答案 hash 的翻译评判事实、租约/配额/幂等响应，以及 service-only 翻译评判与 spelling wrapper RPC；保留旧签名供应用回退 |
-| `0020_verify_learning_spelling_release.sql` | 断言 0019 列、评判表 RLS/客户端撤权、新 RPC 精确签名与 service-role-only grants |
-| `0021_learning_spelling_unicode_normalization.sql` | 新增内部 Unicode 拼写归一化 helper，并让七参数权威 attempt RPC 对原始答案和课程 `term` 使用同一规范化契约；保留原始提交文本 |
-| `0022_verify_learning_spelling_unicode_normalization.sql` | 断言全角大写、Unicode 空白、撇号/连字符变体和标点保留语义，并验证 helper/七参数 RPC 只允许 service role |
-| `0023_learning_spelling_punctuation_tolerance.sql` | 新增内部标点移除/匹配 helper，以原文、移除标点、标点视为空格三路比较替换七参数权威拼写判定；不改变 HTTP/attempt/进度契约 |
-| `0024_verify_learning_spelling_punctuation_tolerance.sql` | 断言仅标点差异通过、真实字母/空格错误失败、RPC 确实使用 matcher，以及新 helper/attempt 的精确权限 |
-| `0025_learning_session_cancel.sql` | 增加 owner-only、行锁、revision 推进且保留历史事实的幂等取消学习会话 RPC |
-| `0026_verify_learning_session_cancel.sql` | 断言取消 RPC 的 owner/并发边界与 service-role-only 精确权限 |
-| `0027_learning_exam_retry_quota.sql` | 增加 exam mode/第一轮正确率事实、拼写轮末确认与重排、考试通过后的单元熟练投影，并把语义评判 claim 与真实 provider 配额预留拆开 |
-| `0028_verify_learning_exam_retry_quota.sql` | 断言 exam constraints、`quota_counted`、三组 trigger 及考试/轮次/配额 RPC 的 service-role-only 权限 |
-| `0029_learning_pronunciation_exam.sql` | 增加 `spelling/pronunciation` 考试类型、当前评分题预校验、读音首轮统计/分数清单/轮末确认和按类型写熟练度；保留 0028 五参数拼写启动与旧轮次 RPC 供应用回退 |
-| `0030_verify_learning_pronunciation_exam.sql` | 断言读音考试类型持久化、精确整数通过条件、错词分数、发音熟练投影及新增 RPC 的 service-role-only 权限 |
-| `0031_learning_exam_history_selection.sql` | 增加复习/考试自定义词集合、失败考试补练完成事实、私有 `learning_exam_word_snapshots` 与 attempt 词面快照、最近 100 场考试汇总和脱敏答题详情 RPC；选词按 owner/课程/单元/scope 校验 |
-| `0032_verify_learning_exam_history_selection.sql` | 断言 selected/history RPC 与快照结构完整存在且仅 service role 可用，并保证 `practiceCompleted` 不绕过 `examPassed` 写熟练度 |
-| `0033_learning_exam_only_mastery.sql` | 增加拼写/发音考试通过时间戳和双事实 check constraint；回填可证明的考试事实、清除旧 review/单项考试掌握，重定义 exam trigger 与 review 推进，并按 term/translations/IPA 精确撤销考试事实 |
-| `0034_verify_learning_exam_only_mastery.sql` | 断言双考试字段/约束、唯一正向投影、review 无 `learned_at` 写入、编辑撤销、snapshot 字段和 service-role-only 权限 |
-| `0035_learning_mastery_projection_guard.sql` | 用 progress trigger 强制 `learned_at` 精确等于两个考试时间中的较晚值，缺少任一事实即为空 |
-| `0036_verify_learning_mastery_projection_guard.sql` | 验证现有数据、考试/review 写入路径、精确投影和客户端/helper 权限 |
-| `0037_learning_translation_voice_input.sql` | 扩展 `learning_speech_usage.kind=translation_stt`，增加 owner/session/revision/current-word 校验与独立配额预留 RPC |
-| `0038_verify_learning_translation_voice_input.sql` | 验证 STT 用量结构、函数定义及 public/anon/authenticated 无执行/表权限 |
-| `0039_security_integrity_rate_limit_points_abuse.sql` | 帖子/Feedback/Schedule 直接写边界；冻结 points 日窗口/claim、owner receipt、审核 action、协同 signal 与 HMAC API 滥用聚合；所有内部 mutation 经 service-only 工作流 |
-| `0040_verify_security_integrity_rate_limit_points_abuse.sql` | 失败关闭验证 0039 的触发器、约束、列 grant、内部表/sequence 权限与 RPC 精确角色；漂移即中止发布 |
+| `0005_community.sql` | posts / comments / likes / favorites / follows + counter triggers |
+| `0006_points_tags_notify.sql` | points, tags, community media, interaction notifications, and level functions |
+| `0007_schedule.sql` | study_goals / study_tasks, streaks, and task-completion triggers |
+| `0008_security_points_ledger.sql` | Profile sensitive-column allowlist, internal RPC revocation, stable points business keys, `point_entries`/`point_event_states`, and reversal triggers |
+| `0009_reset_legacy_points.sql` | Zeroes the untrusted opening with append-only reversals and rebuilds the Profile points/level projection |
+| `0010_verify_security_points_release.sql` | Read-only assertions on Profile write permissions, internal RPCs, opening reversals, and the ledger projection |
+| `0011_learning_courses.sql` | Courses content/learning/review/distribution/badges/speech usage, timezone, and TTS cache; clients get read-only access to private data |
+| `0012_learning_course_workflows.sql` | Service-role-only atomic save/session/answer/growth/share/market/moderation RPCs |
+| `0013_verify_learning_courses_release.sql` | Release assertions on Courses RLS, write permissions/RPCs, and the badge/timezone/owner chain |
+| `0014_learning_feedback_flow.sql` | Adding/removing words to the recognition retry pool by the overall read-aloud score threshold, and advancing recognition retry rounds; reaffirms that the scoring RPC is executable only by service-role |
+| `0015_learning_performance_offline_audio.sql` | Session revisions, idempotent attempts/first responses, a single-RPC snapshot, read-aloud target validation, and a private TTS generation queue/quota/lease |
+| `0016_verify_learning_performance_release.sql` | Asserts 0015's structure, unique constraints, revision trigger, queue RLS/client revocation, and that every new RPC is service-role only |
+| `0017_learning_session_intent_resume.sql` | Back-fills a non-null `resume_key`, distinguishes active session intents by course/unit/mode/scope/sorted skills or schedule ID, and replaces `learning_start_session` |
+| `0018_verify_learning_audio_review_fix.sql` | Asserts 0017's column/intent unique index/active ordering index, function definitions, and service-role-only permissions |
+| `0019_learning_spelling_timer_translation.sql` | Session spelling options, translation judgement facts that store only the answer hash, leases/quotas/idempotent responses, and service-only translation judging and spelling wrapper RPCs; keeps the old signatures for app rollback |
+| `0020_verify_learning_spelling_release.sql` | Asserts 0019's columns, judgement-table RLS/client revocation, exact new RPC signatures, and service-role-only grants |
+| `0021_learning_spelling_unicode_normalization.sql` | Adds an internal Unicode spelling normalization helper and makes the seven-parameter authoritative attempt RPC apply the same normalization contract to the raw answer and the course `term`; keeps the originally submitted text |
+| `0022_verify_learning_spelling_unicode_normalization.sql` | Asserts the semantics for full-width uppercase, Unicode whitespace, apostrophe/hyphen variants, and preserved punctuation, and verifies the helper/seven-parameter RPC allow only the service role |
+| `0023_learning_spelling_punctuation_tolerance.sql` | Adds internal punctuation removal/matching helpers and replaces the seven-parameter authoritative spelling judgement with a three-way comparison (original, punctuation removed, punctuation as spaces); does not change the HTTP/attempt/progress contract |
+| `0024_verify_learning_spelling_punctuation_tolerance.sql` | Asserts that punctuation-only differences pass, real letter/space errors fail, the RPC really uses the matcher, and the exact permissions of the new helper/attempt |
+| `0025_learning_session_cancel.sql` | Adds an owner-only, row-locked, revision-advancing, idempotent cancel-learning-session RPC that keeps historical facts |
+| `0026_verify_learning_session_cancel.sql` | Asserts the cancel RPC's owner/concurrency boundaries and exact service-role-only permissions |
+| `0027_learning_exam_retry_quota.sql` | Adds exam mode/first-round accuracy facts, end-of-round spelling confirmation and reshuffling, the unit mastery projection after passing an exam, and splits the semantic judgement claim from the real provider quota reservation |
+| `0028_verify_learning_exam_retry_quota.sql` | Asserts the exam constraints, `quota_counted`, three groups of triggers, and service-role-only permissions on the exam/round/quota RPCs |
+| `0029_learning_pronunciation_exam.sql` | Adds the `spelling/pronunciation` exam types, pre-validation of the current scored question, pronunciation first-round stats/score list/end-of-round confirmation, and per-type mastery writes; keeps 0028's five-parameter spelling start and old round RPCs for app rollback |
+| `0030_verify_learning_pronunciation_exam.sql` | Asserts pronunciation exam type persistence, exact integer pass conditions, wrong-word scores, the pronunciation mastery projection, and service-role-only permissions on the new RPCs |
+| `0031_learning_exam_history_selection.sql` | Adds custom word sets for reviews/exams, a practice-completed fact for failed exams, private `learning_exam_word_snapshots` and attempt term snapshots, a summary of the latest 100 exams, and a redacted answer-detail RPC; word selection is validated by owner/course/unit/scope |
+| `0032_verify_learning_exam_history_selection.sql` | Asserts the selected/history RPCs and snapshot structure exist completely and are service-role only, and that `practiceCompleted` cannot bypass `examPassed` to write mastery |
+| `0033_learning_exam_only_mastery.sql` | Adds spelling/pronunciation exam pass timestamps and a dual-fact check constraint; back-fills provable exam facts, clears old review/single-exam mastery, redefines the exam trigger and review progression, and revokes exam facts exactly by term/translations/IPA |
+| `0034_verify_learning_exam_only_mastery.sql` | Asserts the dual-exam fields/constraint, the single positive projection, no `learned_at` writes from reviews, edit revocation, snapshot fields, and service-role-only permissions |
+| `0035_learning_mastery_projection_guard.sql` | Uses a progress trigger to force `learned_at` to equal exactly the later of the two exam times, and to be null when either fact is missing |
+| `0036_verify_learning_mastery_projection_guard.sql` | Verifies existing data, exam/review write paths, the exact projection, and client/helper permissions |
+| `0037_learning_translation_voice_input.sql` | Extends `learning_speech_usage.kind=translation_stt` and adds an owner/session/revision/current-word validated, separate quota reservation RPC |
+| `0038_verify_learning_translation_voice_input.sql` | Verifies the STT usage structure, function definitions, and that public/anon/authenticated have no execute/table permissions |
+| `0039_security_integrity_rate_limit_points_abuse.sql` | Direct-write boundaries for posts/Feedback/Schedule; frozen points daily windows/claims, owner receipts, moderation actions, coordination signals, and HMAC API abuse aggregates; every internal mutation goes through service-only workflows |
+| `0040_verify_security_integrity_rate_limit_points_abuse.sql` | Fail-closed verification of 0039's triggers, constraints, column grants, internal table/sequence permissions, and exact RPC roles; any drift aborts the release |
 
-## 4. 迁移怎么写（力求可重放）
-当前 SQL 使用以下模式降低重复执行失败的概率：
+## 4. How migrations are written (aiming to be replayable)
+Current SQL uses these patterns to reduce the chance of failure on repeated execution:
 - `create table if not exists` / `create index if not exists`
 - `drop policy if exists … ; create policy …`
 - `create or replace function` / `drop trigger if exists … ; create trigger …`
-- `create extension if not exists pgcrypto;`（`gen_random_uuid()` 需要）
+- `create extension if not exists pgcrypto;` (needed by `gen_random_uuid()`)
 
-## 5. 怎么应用迁移
-### 旧应急脚本（不属于正常发布）
-`scripts/db-push.mjs` 按文件名顺序，把每个 `.sql` 经 **Supabase Management API** 应用；必须显式确认目标项目：
+## 5. How migrations are applied
+### The legacy emergency script (not part of normal releases)
+`scripts/db-push.mjs` applies each `.sql` in filename order through the **Supabase Management API**; the target project must be confirmed explicitly:
 ```bash
 SUPABASE_ACCESS_TOKEN=sbp_xxx \
-SUPABASE_PROJECT_REF=<明确的开发/staging/已审批生产 ref> \
+SUPABASE_PROJECT_REF=<explicit dev/staging/approved production ref> \
 ALLOW_LEGACY_DB_PUSH=YES \
 node scripts/db-push.mjs
 ```
-- 令牌来自 Supabase 控制台 → Account → Access Tokens（权限很大，**当密码看待**）。
-- 现有迁移力求可重放，但 `create table if not exists` 不会修复已漂移结构，重复执行也不等于无风险、事务化或可回滚。
+- The token comes from the Supabase dashboard → Account → Access Tokens (very powerful; **treat it like a password**).
+- The existing migrations aim to be replayable, but `create table if not exists` does not fix drifted structures, and repeated execution is not risk-free, transactional, or reversible.
 
-> ⚠️ 坑：直接用默认 UA 调 `api.supabase.com/.../database/query` 会被 Cloudflare 拦（403 / `error code: 1010`）。脚本里**带浏览器 UA** 才放行。
+> ⚠️ Pitfall: calling `api.supabase.com/.../database/query` with the default UA gets blocked by Cloudflare (403 / `error code: 1010`). The script **sends a browser UA** to get through.
 
-> ⚠️ `db-push.mjs` 已移除默认 Ref 并强制 `ALLOW_LEGACY_DB_PUSH=YES`，但仍无 history；正式流程使用仓库 `config.toml` 与 Supabase CLI，并按 [数据库发布与回滚](../operations/DATABASE_RELEASE_ROLLBACK.md) 执行。
+> ⚠️ `db-push.mjs` has no default ref and requires `ALLOW_LEGACY_DB_PUSH=YES`, but still has no history; the formal process uses the repository `config.toml` and the Supabase CLI, following [database release and rollback](../operations/DATABASE_RELEASE_ROLLBACK.md).
 
-### 手动（兜底）：SQL Editor
-没令牌时：控制台 → SQL Editor → 粘贴迁移 → Run。第一版 profiles 即这样应用。
+### Manual (fallback): SQL Editor
+Without a token: dashboard → SQL Editor → paste the migration → Run. The first version of profiles was applied this way.
 
-## 6. 加一张新表的模板
+## 6. Template for a new table
 ```sql
 create table if not exists public.things (
   id uuid primary key default gen_random_uuid(),
   user_id uuid not null default auth.uid() references auth.users(id) on delete cascade,
-  -- 业务字段
+  -- business fields
   created_at timestamptz not null default now()
 );
 alter table public.things enable row level security;
@@ -111,22 +111,22 @@ drop policy if exists things_all_own on public.things;
 create policy things_all_own on public.things for all to authenticated
   using (user_id = auth.uid()) with check (user_id = auth.uid());
 ```
-若新表用外键引用了另一张「属于用户」的表，要在 `with check` 里**额外校验被引用行也归本人**（否则会出现 [06](06-materials.md) 里 0003 修复的那种越权）。
+If the new table references another "user-owned" table through a foreign key, `with check` must **additionally verify that the referenced row also belongs to the user** (otherwise you get the kind of authorization bug fixed by 0003 in [06](06-materials.md)).
 
-Courses 展示了另一种范式：客户端可 owner SELECT，但表级 INSERT/UPDATE/DELETE 全撤销；API 从已验证 JWT 派生 user ID 后调用只授予 service_role 的事务 RPC。涉及 progress、points、跨用户传播、供应商配额或审核的表应优先采用这类服务端边界，而不是复制 `for all` owner policy。
+Courses shows another pattern: clients may owner-SELECT, but table-level INSERT/UPDATE/DELETE are all revoked; the API derives the user ID from the verified JWT and calls transaction RPCs granted only to service_role. Tables involving progress, points, cross-user distribution, provider quotas, or moderation should prefer this kind of server boundary over copying a `for all` owner policy.
 
-## 7. 待改进
-- CI 已通过 CLI migration history 发布，并在生产 migration 前完成本地重建/RLS E2E、dry-run 和加密恢复点；首次生产启用仍须人工 baseline 旧历史。
-- 仍需定期 staging 演练、Storage 文件异地备份、数据库恢复演练和 schema drift 告警。
-- 0011–0013 已于 2026-07-22、0014 已于 2026-07-23、0015–0018 已于 2026-07-27 通过受保护 plan/apply 发布。队列表不授予客户端任何读写，旧答题 RPC 在稳定窗口内保留供应用回滚，数据库仍只做 forward-fix；详细 run/artifact/真实 Azure 证据见发布手册第 8 节。
-- 0019–0020 已于 2026-07-28 取得只读 plan `30366334157`、加密恢复点/apply `30367263486` 与最终应用发布 `30374301472` 证据。评判表不授予客户端任何权限，所有新 RPC 已由双用户 RLS 负向测试和 0020 精确断言同时证明；生产已到 0020。
-- 0021–0022 已于 2026-07-31 取得只读 plan `30616030488`、加密恢复 artifact `8787805291`、受保护 apply/deploy `30616540480` 和 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 证据。真实一次性 Supabase E2E 验证全角/半角全大写不增加错误或候补，0022 断言 helper/RPC 对客户端不可执行；生产已到 0022。
-- 0023–0024 已于 2026-07-31 通过 PR run `30620350644`、main run `30620879282`、只读 plan `30623522232` 和受保护 apply/deploy `30624104943` 发布。apply 前保留恢复 artifact `8790816378`；远端 history、0024 自验证、database lint 与空 dry-run 均通过，生产已到 0024。
-- 0025–0028 已于 2026-08-01 通过 PR run `30705662543`、main run `30705946921`、只读 plan `30706279006` 和受保护 apply/deploy `30706731292` 发布。apply 前保留恢复 artifact `8820657507`；远端 history、0026/0028 自验证、database lint 与空 dry-run 均通过，生产已到 0028。
-- 0029–0034 已于 2026-08-03 通过 PR #45 run `30811283164`、main run `30811817461`、只读 plan `30812467085` 和受保护 apply/deploy `30813047562` 发布。apply 前保留恢复 artifact `8855819351`；远端 history、0030/0032/0034 自验证、database lint 与空 dry-run 均通过，生产已到 0034。
-- 0035–0036 已于 2026-08-04 通过 PR #47 run `30831319634`、main run `30831964846`、只读 plan `30832581552` 和受保护 apply/deploy `30833228406` 发布。apply 前保留恢复 artifact `8864033351`；远端 history、0036 自验证、database lint 与空 dry-run 均通过，生产已到 0036。
-- 0037–0038 已于 2026-08-04 通过 PR #49 run `30904901828`、只读 plan `30906629924` 和受保护 apply/deploy `30907716733` 发布。apply 前保留恢复 artifact `8892006761`；远端 history、0038 自验证、database lint 与空 dry-run 均通过，生产已到 0038。
-- 0039–0040 已于 2026-08-10 通过 PR #51/#52、只读 plans `31368447660`/`31372198037` 和受保护 runs `31369657292`/`31372888441` 发布。首个 artifact `9055783205` 位于 apply 前，最终 artifact `9057062920` 用于修复后复核；远端 history、自验证、database lint、空 dry-run、真实 Redis 与公网 readiness 均通过，生产已到 0040。
-- 0008 已保护 `profiles` 的 points/credits/VIP/level/streak 并撤销 points/notification helpers 的客户端 EXECUTE。生产 0039–0040 已收口 `feedback.status`、帖子 owner/作者快照/计数/业务键/时间及 Schedule 关联归属。通知服务端字段和其它直接 PostgREST 表仍需持续逐表审计。
-- 0052–0053 contract 已在观察/go-no-go 后于生产数据库生效：0052 只撤销 authenticated 对 `posts.updated_at`/`study_tasks.done_at` 的兼容 UPDATE grant，0053 断言合法列、service-role 与时间 trigger。原预留 0044–0045 保持未使用，没有补插已经越过 0051 的远端 history。
-- 0008 将旧 `profiles.points` 导入 `legacy_opening` 留痕；2026-07-21 生产聚合审计发现唯一 Profile 有 11 points，owner 决定归零，0009 追加等额 reversal，既不把旧余额当成可信历史，也不删除审计轨迹。
+## 7. To improve
+- CI already releases through the CLI migration history, completing local rebuild/RLS E2E, dry-run, and an encrypted recovery point before production migrations; the first production enablement still required a manual baseline of the old history.
+- Regular staging drills, off-site Storage file backups, database recovery drills, and schema drift alerts are still needed.
+- 0011–0013 were released on 2026-07-22, 0014 on 2026-07-23, and 0015–0018 on 2026-07-27 through protected plan/apply. The queue table grants clients no read/write at all, the old answer RPCs are kept during the stability window for app rollback, and the database is still only fixed forward; detailed runs/artifacts/real Azure evidence are in section 8 of the release runbook.
+- 0019–0020 obtained read-only plan `30366334157`, encrypted recovery point/apply `30367263486`, and final app release `30374301472` evidence on 2026-07-28. The judgement table grants clients no permissions, and every new RPC is proven both by two-user RLS negative tests and by 0020's exact assertions; production is at 0020.
+- 0021–0022 obtained read-only plan `30616030488`, encrypted recovery artifact `8787805291`, protected apply/deploy `30616540480`, and release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` evidence on 2026-07-31. Real throwaway Supabase E2E verified that full-width/half-width all-caps adds no errors or retries, and 0022 asserts the helper/RPC are not client-executable; production is at 0022.
+- 0023–0024 were released on 2026-07-31 through PR run `30620350644`, main run `30620879282`, read-only plan `30623522232`, and protected apply/deploy `30624104943`. Recovery artifact `8790816378` was kept before apply; remote history, 0024 self-verification, database lint, and an empty dry-run all passed; production is at 0024.
+- 0025–0028 were released on 2026-08-01 through PR run `30705662543`, main run `30705946921`, read-only plan `30706279006`, and protected apply/deploy `30706731292`. Recovery artifact `8820657507` was kept before apply; remote history, 0026/0028 self-verification, database lint, and an empty dry-run all passed; production is at 0028.
+- 0029–0034 were released on 2026-08-03 through PR #45 run `30811283164`, main run `30811817461`, read-only plan `30812467085`, and protected apply/deploy `30813047562`. Recovery artifact `8855819351` was kept before apply; remote history, 0030/0032/0034 self-verification, database lint, and an empty dry-run all passed; production is at 0034.
+- 0035–0036 were released on 2026-08-04 through PR #47 run `30831319634`, main run `30831964846`, read-only plan `30832581552`, and protected apply/deploy `30833228406`. Recovery artifact `8864033351` was kept before apply; remote history, 0036 self-verification, database lint, and an empty dry-run all passed; production is at 0036.
+- 0037–0038 were released on 2026-08-04 through PR #49 run `30904901828`, read-only plan `30906629924`, and protected apply/deploy `30907716733`. Recovery artifact `8892006761` was kept before apply; remote history, 0038 self-verification, database lint, and an empty dry-run all passed; production is at 0038.
+- 0039–0040 were released on 2026-08-10 through PR #51/#52, read-only plans `31368447660`/`31372198037`, and protected runs `31369657292`/`31372888441`. The first artifact `9055783205` predates apply, and the final artifact `9057062920` was used for the post-fix review; remote history, self-verification, database lint, an empty dry-run, real Redis, and public readiness all passed; production is at 0040.
+- 0008 protects `profiles` points/credits/VIP/level/streak and revokes client EXECUTE on the points/notification helpers. Production 0039–0040 locked down `feedback.status`, post owner/author snapshot/counters/business key/time, and Schedule linked ownership. Notification server fields and other direct PostgREST tables still need ongoing per-table audits.
+- The 0052–0053 contract took effect in the production database after observation/go-no-go: 0052 only revokes the compatibility authenticated UPDATE grants on `posts.updated_at`/`study_tasks.done_at`, and 0053 asserts the legitimate columns, service role, and timestamp triggers. The originally reserved 0044–0045 stay unused and were not back-filled into a remote history that had already passed 0051.
+- 0008 imported the old `profiles.points` as a recorded `legacy_opening`; on 2026-07-21 a production aggregate audit found a single Profile with 11 points, the owner decided to zero it, and 0009 appended an equal reversal, neither treating the old balance as trustworthy history nor deleting the audit trail.

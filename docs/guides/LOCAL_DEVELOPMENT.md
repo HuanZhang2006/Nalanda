@@ -1,34 +1,35 @@
-# 从零开始本地开发
+# Local Development from Scratch
 
-> **本文内容：** 从空白开发机到运行 Web、NestJS API、FastAPI AI worker、Redis 和连接 Supabase 的完整步骤，并列出常见故障与最小验收方法。
-> **作用：** 让新贡献者不依赖口头信息即可建立可复现的开发环境。  
-> **何时更新：** 依赖版本、启动脚本、端口、数据库初始化方式、服务拓扑或新手必经步骤变化时；至少每个里程碑发布前复核一次。
+> **About this document**
+> - **Contents**: The full steps from a blank development machine to running the Web app, the NestJS API, the FastAPI AI worker, and Redis connected to Supabase, plus common problems and a minimal acceptance check.
+> - **Purpose**: Lets new contributors set up a reproducible development environment without relying on word of mouth.
+> - **When to update**: When dependency versions, startup scripts, ports, the database initialization method, the service topology, or required onboarding steps change; review at least before every milestone release.
 
-## 1. 状态说明
+## 1. Status conventions
 
-本文使用以下标记：
+This document uses these labels:
 
-- **当前实现**：命令和文件已经存在于仓库，可按本文执行。
-- **目标状态**：计划中的工程能力，尚不能作为现有功能使用。
+- **Current implementation**: the commands and files already exist in the repository and can be run as described.
+- **Target state**: planned engineering capabilities that cannot be used as existing features yet.
 
-当前可本地运行：React/Vite Web、NestJS API、FastAPI AI worker 与 Redis。业务数据、认证与文件存储使用 Supabase；生产 API 要求 Redis 才能通过 readiness，并用它执行限流、points 扫描锁和 BullMQ durable Postgres job UUID 投递。生产数据库已到 0055；0046–0055 对应的新应用仍因真实供应商门禁失败而回退到此前稳定 release，知识图、恢复、Luna/Ox 原文件与任务清理必须在不可变应用成功切流后才可称为生产能力。Courses 文件 AI 导入仍未实现；英语词表文本学习不依赖该 worker。
+What runs locally today: the React/Vite Web app, the NestJS API, the FastAPI AI worker, and Redis. Business data, authentication, and file storage use Supabase; the production API requires Redis to pass readiness and uses it for rate limiting, the points scan lock, and BullMQ delivery of durable Postgres job UUIDs. The production database is at 0055; the new app corresponding to 0046–0055 still rolled back to the earlier stable release after real provider gates failed, so the knowledge graph, recovery, Luna/Ox native files, and job cleanup can only be called production capabilities after the immutable app is cut over successfully. Courses AI file import is still not implemented; English word-list text learning does not depend on this worker.
 
-## 2. 前置条件
+## 2. Prerequisites
 
-| 工具 | 版本/要求 | 用途 |
+| Tool | Version/requirement | Used for |
 |---|---:|---|
-| Git | 近期稳定版 | 获取代码、查看变更 |
-| Node.js | `>=20` | Web、API、脚本 |
-| pnpm | `9.12.3` | monorepo 依赖与任务；版本见根 `package.json` |
-| Python | 推荐 `3.12` | AI 服务；生产 AI 镜像也是 Python 3.12 |
-| PostgreSQL 客户端 | 推荐与服务端主版本兼容 | 可选，用于备份、恢复与人工 SQL 检查 |
-| Docker | 近期稳定版 | 推荐的本地 Supabase、数据库迁移/RLS E2E |
-| Supabase CLI | `2.101.0`（与 CI 一致） | 启动本地栈、reset、lint、migration history |
-| Supabase 项目 | 可选的独立开发项目 | 需要验证托管环境时使用，禁止连接生产 |
+| Git | Recent stable | Getting the code, viewing changes |
+| Node.js | `>=20` | Web, API, scripts |
+| pnpm | `9.12.3` | Monorepo dependencies and tasks; version in the root `package.json` |
+| Python | `3.12` recommended | AI service; the production AI image is also Python 3.12 |
+| PostgreSQL client | Compatible with the server major version recommended | Optional, for backups, restores, and manual SQL checks |
+| Docker | Recent stable | Recommended for local Supabase and database migration/RLS E2E |
+| Supabase CLI | `2.101.0` (same as CI) | Starting the local stack, reset, lint, migration history |
+| Supabase project | An optional separate development project | When you need to verify a hosted environment; never connect to production |
 
-不用本地数据库时可连接隔离开发 Supabase；要复现 CI 的数据库/RLS 门禁必须运行 Docker。启动候选 NestJS API 时还需一个测试 Redis；可复用 Docker 或本机 Redis，禁止指向生产。
+Without a local database you can connect to an isolated development Supabase; reproducing CI's database/RLS gates requires Docker. Starting the candidate NestJS API also needs a test Redis; you can reuse Docker or a local Redis, but never point it at production.
 
-启用仓库声明的 pnpm 版本：
+Enable the pnpm version the repository declares:
 
 ```bash
 corepack enable
@@ -37,7 +38,7 @@ node --version
 pnpm --version
 ```
 
-## 3. 获取代码并安装依赖
+## 3. Get the code and install dependencies
 
 ```bash
 git clone <repository-url> Nalanda
@@ -45,20 +46,20 @@ cd Nalanda
 pnpm install --frozen-lockfile
 ```
 
-首次安装后先做一次静态验收：
+After the first install, run a static acceptance check:
 
 ```bash
 pnpm typecheck
 pnpm build
 ```
 
-根 `pnpm lint` 会对 API、Web 和共享类型运行带 `noUnusedLocals`、`noUnusedParameters` 与 `noFallthroughCasesInSwitch` 的严格 TypeScript 静态检查；它不是 ESLint，也不替代正常 typecheck/test。
+The root `pnpm lint` runs strict TypeScript static checks with `noUnusedLocals`, `noUnusedParameters`, and `noFallthroughCasesInSwitch` on the API, Web, and shared types; it is not ESLint and does not replace the normal typecheck/test.
 
-## 4. 准备 Supabase
+## 4. Prepare Supabase
 
-### 4.1 推荐：本地 Supabase
+### 4.1 Recommended: local Supabase
 
-从仓库配置启动并重建：
+Start from the repository configuration and rebuild:
 
 ```bash
 supabase start
@@ -67,23 +68,23 @@ supabase db lint --local --schema public --level error --fail-on error
 supabase status
 ```
 
-把 status 给出的 API URL 和 anon/service-role key 分别填入 Web/API 本地环境。完成开发后运行 `supabase stop --no-backup`。
+Put the API URL and anon/service-role keys from status into the Web/API local environments respectively. When you're done, run `supabase stop --no-backup`.
 
-### 4.2 可选：创建隔离托管项目
+### 4.2 Optional: create an isolated hosted project
 
-在 Supabase 创建一个只供开发使用的项目，记录：
+Create a development-only project in Supabase and note:
 
-- Project URL；
-- anon/publishable key；
-- service-role key；
-- Project Ref；
-- 仅在需要兼容旧 HS256 令牌时使用的 JWT secret。
+- Project URL;
+- anon/publishable key;
+- service-role key;
+- Project Ref;
+- The JWT secret, only if you need compatibility with legacy HS256 tokens.
 
-不要把生产 Project Ref 或生产密钥复制到个人开发环境。变量的完整用途与敏感级别见 [环境变量矩阵](./ENVIRONMENT_VARIABLES.md)。
+Never copy the production Project Ref or production keys into a personal development environment. See the [environment variable matrix](./ENVIRONMENT_VARIABLES.md) for each variable's full purpose and sensitivity.
 
-### 4.3 托管开发项目应用迁移
+### 4.3 Apply migrations to a hosted development project
 
-迁移文件位于 `supabase/migrations/`。正常路径使用 CLI history：
+Migration files live in `supabase/migrations/`. The normal path uses the CLI history:
 
 ```bash
 SUPABASE_ACCESS_TOKEN=<personal-access-token> \
@@ -93,7 +94,7 @@ supabase db push --dry-run
 supabase db push
 ```
 
-旧 Management API 脚本只供应急：
+The old Management API script is for emergencies only:
 
 ```bash
 SUPABASE_ACCESS_TOKEN=<personal-access-token> \
@@ -102,37 +103,37 @@ ALLOW_LEGACY_DB_PUSH=YES \
 node scripts/db-push.mjs
 ```
 
-注意：
+Notes:
 
-1. 必须显式传 `SUPABASE_PROJECT_REF`；脚本没有默认值并强制应急开关。
-2. 该脚本逐文件执行并在首个错误处停止；它不提供仓库级回滚，也不替代发布前备份。
-3. 它会重放全部 SQL。现有迁移以可重复执行为目标，但 `create table if not exists` 不会自动修复已经漂移的表结构。
-4. 首次接入或任何非开发环境发布前，阅读 [数据库发布与回滚](../operations/DATABASE_RELEASE_ROLLBACK.md)。
+1. `SUPABASE_PROJECT_REF` must be passed explicitly; the script has no default and requires the emergency switch.
+2. The script runs file by file and stops at the first error; it provides no repository-level rollback and does not replace a pre-release backup.
+3. It replays every SQL file. The existing migrations aim to be repeatable, but `create table if not exists` will not automatically fix a table whose structure has drifted.
+4. Before first onboarding or any non-development release, read [database release and rollback](../operations/DATABASE_RELEASE_ROLLBACK.md).
 
-也可以在一次性开发项目的 Supabase SQL Editor 中逐个执行文件，但正常本地/CI 基线是仓库的 `config.toml` 与 CLI。生产禁止用 SQL Editor 绕过 migration history 和发布恢复点。
+You can also run the files one by one in the Supabase SQL Editor of a throwaway development project, but the normal local/CI baseline is the repository's `config.toml` and the CLI. In production, never use the SQL Editor to bypass migration history and release recovery points.
 
-## 5. 配置环境变量
+## 5. Configure environment variables
 
-创建 Web 本地配置：
+Create the Web local configuration:
 
 ```bash
 cp apps/web/.env.example apps/web/.env.local
 ```
 
-至少填写：
+Fill in at least:
 
 ```dotenv
 VITE_SUPABASE_URL=https://<project-ref>.supabase.co
 VITE_SUPABASE_ANON_KEY=<development-anon-key>
 ```
 
-创建 API 本地配置：
+Create the API local configuration:
 
 ```bash
 cp apps/api/.env.example apps/api/.env
 ```
 
-当前登录/注册链路至少需要：
+The current sign-in/sign-up path needs at least:
 
 ```dotenv
 PORT=3000
@@ -141,7 +142,7 @@ RATE_LIMIT_HMAC_SECRET=<at-least-32-random-local-bytes>
 POINT_ABUSE_SCANNER_ENABLED=false
 SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<development-service-role-key>
-# 仅旧 HS256 项目需要；使用 JWKS 的项目可以留空
+# Only needed by legacy HS256 projects; leave empty for projects using JWKS
 SUPABASE_JWT_SECRET=
 PUBLIC_ORIGIN=http://localhost:5173
 FEATURE_LEARNING_COURSES_ENABLED=true
@@ -163,65 +164,65 @@ MATERIAL_AI_GRADING_MAX_COST_USD=0.05
 MATERIAL_AI_RESUME_TTL_SECONDS=86400
 ```
 
-非 production 环境前三个 Courses flags 即使省略也默认开启，但建议显式写出；语音和翻译前测始终默认关闭。要测试持久音频队列，还需打开 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED`，并使用仓库默认 `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`、`AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`、`LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`、`LEARNING_AUDIO_SYNTHESIS_VERSION=1`。要测真实 Azure，再填写开发资源的 `AZURE_SPEECH_KEY/REGION` 并开启 pronunciation；整体朗读通过线默认 70。不要为了普通课程开发复制生产 key。`AZURE_SPEECH_FAKE=true` 只供自动化，不是供应商 smoke，production 进程会拒绝它。
+Outside production, the first three Courses flags default to on even if omitted, but writing them explicitly is recommended; speech and the translation pre-test always default to off. To test the durable audio queue, also turn on `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` and use the repository defaults `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE=20`, `AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT=500000`, `LEARNING_AUDIO_PREWARM_INTERVAL_MS=3100`, and `LEARNING_AUDIO_SYNTHESIS_VERSION=1`. To test real Azure, also fill in a development resource's `AZURE_SPEECH_KEY/REGION` and turn on pronunciation; the overall read-aloud pass mark defaults to 70. Do not copy the production key for ordinary course development. `AZURE_SPEECH_FAKE=true` is only for automation, is not a provider smoke test, and is rejected by production processes.
 
-要测试真实语义翻译前测或 0037 中文语音输入，在已被 Git 忽略的 `apps/api/.env` 中填写同一个开发用 `OPENROUTER_API_KEY`，设置 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true`，并保留默认 model/base URL/timeout/配额及 `OPENROUTER_STT_MODEL=fish-audio/transcribe-1`、`OPENROUTER_STT_LANGUAGE=zh`。不要在命令行参数、浏览器 `VITE_*`、截图、issue 或测试 fixture 中放 key；文件权限建议设为 600。普通 UI/API 自动化使用 `OPENROUTER_FAKE=true`，它会为 STT 返回固定中文文本且 production 会拒绝，不能作为供应商证据。真实文本判分单请求验证使用：
+To test the real semantic translation pre-test or 0037's Chinese voice input, fill in a development `OPENROUTER_API_KEY` in the Git-ignored `apps/api/.env`, set `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED=true`, and keep the default model/base URL/timeout/quotas plus `OPENROUTER_STT_MODEL=fish-audio/transcribe-1` and `OPENROUTER_STT_LANGUAGE=zh`. Never put the key in command-line arguments, browser `VITE_*` variables, screenshots, issues, or test fixtures; file permission 600 is recommended. Ordinary UI/API automation uses `OPENROUTER_FAKE=true`, which returns fixed Chinese text for STT and is rejected in production; it cannot serve as provider evidence. Verify a single real text-grading request with:
 
 ```bash
 chmod 600 apps/api/.env
 node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 ```
 
-脚本只输出 model、耗时和 token 计量，不打印 key、用户答案或完整供应商响应。
+The script only prints the model, duration, and token metering, never the key, user answers, or the full provider response.
 
-STT 必须通过 active translation-first spelling session 调用，不能直接把 WAV 发给浏览器侧 OpenRouter。受保护发布的 `smoke-learning-audio-production.mjs` 会用 Azure 生成不含个人数据的“苹果”中文 WAV，通过候选 Nalanda API 调用真实 Fish Audio，并只断言语言、revision/word 绑定和必要关键词；本地手工验证应复用同一路径。WAV/transcript 不得保存到 fixture、日志或数据库。
+STT must be called through an active translation-first spelling session; never send a WAV to OpenRouter from the browser. The protected-release `smoke-learning-audio-production.mjs` uses Azure to generate a Chinese WAV of the word "apple" (苹果) with no personal data, calls real Fish Audio through the candidate Nalanda API, and only asserts the language, revision/word binding, and the required keyword; local manual verification should reuse the same path. WAVs/transcripts must never be saved to fixtures, logs, or the database.
 
-只验证当前 Azure/OpenRouter key 与供应商 wire contract 时可运行 `node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；它默认用 Azure 在内存中合成固定“苹果”WAV。没有本地 Azure key 时，可把已授权、16 kHz mono PCM 的临时中文 WAV 绝对路径放进 `OPENROUTER_STT_FIXTURE_WAV`；文件不得提交。脚本只输出 model、计量、字节数、耗时和关键词布尔值，不输出 key 或 transcript。该直连 smoke 不经过 Nalanda Auth/RPC，不能替代受保护候选 API gate。
+To verify only the current Azure/OpenRouter keys and the provider wire contract, run `node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`; by default it synthesizes the fixed "apple" WAV in memory with Azure. Without a local Azure key, put the absolute path of an authorized temporary 16 kHz mono PCM Chinese WAV in `OPENROUTER_STT_FIXTURE_WAV`; the file must not be committed. The script only prints the model, metering, byte count, duration, and a keyword boolean, never the key or transcript. This direct smoke test does not go through Nalanda Auth/RPCs and cannot replace the protected candidate API gate.
 
-`/api/health` 会探测 JWKS/PostgREST、校验 HMAC secret 并真实 Redis PING；Supabase 或 Redis 任一失败都返回 503。API 的 service-role key 还会调用 Courses/points 专用 RPC 和 `vocabulary-audio`，因此只能放在 API `.env`。
+`/api/health` probes JWKS/PostgREST, validates the HMAC secret, and runs a real Redis PING; if either Supabase or Redis fails, it returns 503. The API's service-role key also calls the dedicated Courses/points RPCs and `vocabulary-audio`, so it may only live in the API `.env`.
 
-所有 `.env`/`.env.local` 已被 `.gitignore` 排除。提交前仍应运行 `git status --short`，确认没有密钥文件进入暂存区。
+Every `.env`/`.env.local` is excluded by `.gitignore`. Still run `git status --short` before committing to confirm no secret file is staged.
 
-## 6. 启动服务
+## 6. Start the services
 
-建议分别打开 Redis、FastAPI worker、API、Web 四个终端。仅开发非 AI 页面时可不启动 worker，并保持 `FEATURE_MATERIAL_AI=false`。
+Open four terminals for Redis, the FastAPI worker, the API, and the Web app. If you're only developing non-AI pages, you can skip the worker and keep `FEATURE_MATERIAL_AI=false`.
 
-### 6.0 Redis（本地测试）
+### 6.0 Redis (local testing)
 
-若没有本机 Redis，可启动一个不发布到局域网的临时容器：
+Without a local Redis, start a temporary container that is not published to the LAN:
 
 ```bash
 docker run --rm --name nalanda-redis-dev -p 127.0.0.1:6379:6379 redis:7.4-alpine
 ```
 
-该无密码命令只适合本机一次性开发。生产必须使用 `infra/deploy/docker-compose.yml` 的私有网络、独立密码、AOF 和 `noeviction`；不要把生产 Redis URL 复制到本地。
+This password-less command is only suitable for one-off local development. Production must use the private network, a separate password, AOF, and `noeviction` from `infra/deploy/docker-compose.yml`; never copy the production Redis URL to your machine.
 
-### 6.1 NestJS API（端口 3000）
+### 6.1 NestJS API (port 3000)
 
-当前 API 没有 watch/dev 脚本，修改源码后需要重新构建并重启：
+The API currently has no watch/dev script; rebuild and restart after changing source:
 
 ```bash
 pnpm --filter @nalanda/api build
 pnpm --filter @nalanda/api start
 ```
 
-验证：
+Verify:
 
 ```bash
 curl -fsS http://localhost:3000/api/health
 ```
 
-健康响应必须同时含 `deps.supabase=ok` 与 `deps.redis=ok`。若只调试不依赖 API 的静态 Web，可以不启 API/Redis，但注册、Courses 和真实业务写入不会完整可用。
+The health response must contain both `deps.supabase=ok` and `deps.redis=ok`. If you're only debugging static Web pages that don't use the API, you can skip the API/Redis, but sign-up, Courses, and real business writes won't fully work.
 
-### 6.2 React/Vite Web（默认端口 5173）
+### 6.2 React/Vite Web (default port 5173)
 
 ```bash
 pnpm --filter @nalanda/web dev
 ```
 
-打开 `http://localhost:5173`。Vite 会把 `/api/*` 代理到 `http://localhost:3000`，因此注册请求不需要额外修改 URL。
+Open `http://localhost:5173`. Vite proxies `/api/*` to `http://localhost:3000`, so sign-up requests need no URL changes. The interface opens in English; use the EN/中文 button on the sign-in page or in the top bar to switch languages (the choice is remembered in `localStorage` under `nalanda-locale`).
 
-### 6.3 FastAPI Materials AI worker（端口 8000）
+### 6.3 FastAPI Materials AI worker (port 8000)
 
 ```bash
 cd apps/ai
@@ -232,21 +233,21 @@ chmod 600 .env
 .venv/bin/uvicorn app.main:app --env-file .env --reload --host 127.0.0.1 --port 8000
 ```
 
-在 `apps/ai/.env` 中填写与 API 相同的 `AI_INTERNAL_TOKEN`。普通自动化可设 `MATERIAL_AI_FAKE_PROVIDER=true`；手工真实测试才填开发用 `OPENROUTER_API_KEY`，并保持 false。机器还需 LibreOffice、Poppler 和系统字体；最接近生产的依赖由 `apps/ai/Dockerfile` 提供。
+In `apps/ai/.env`, fill in the same `AI_INTERNAL_TOKEN` as the API. Ordinary automation can set `MATERIAL_AI_FAKE_PROVIDER=true`; only manual real testing fills in a development `OPENROUTER_API_KEY` and keeps it false. The machine also needs LibreOffice, Poppler, and system fonts; the dependencies closest to production are provided by `apps/ai/Dockerfile`.
 
-验证：
+Verify:
 
 ```bash
 curl -fsS http://localhost:8000/health
 ```
 
-health 只有 OpenRouter、LibreOffice、临时磁盘和内部 token 均就绪时才 `status=ok`；production fake 会失败。worker `.env` 还应保留 `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000`、和 API 相同的 `MATERIAL_AI_RESUME_TTL_SECONDS=86400`，以及两条原文件 allowlist。生成/评分/cancel-purge 接口只允许 Nest 内部 token，禁止手工把 signed URL 或 token 留在 shell history。API 总开关打开后，从 Materials 上传无个人数据 fixture，分别验证 “Generate test paper” 与 “Organize knowledge points”。Luna/Ox 还需分别打开子开关，allowlist 只能列入已完成真实格式门禁的扩展名。
+Health reports `status=ok` only when OpenRouter, LibreOffice, temporary disk, and the internal token are all ready; a production fake fails. The worker `.env` should also keep `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS=30000`, the same `MATERIAL_AI_RESUME_TTL_SECONDS=86400` as the API, and the two native-file allowlists. The generate/grade/cancel-purge endpoints only accept Nest's internal token; never leave signed URLs or tokens in shell history manually. After the API master switch is on, upload a fixture with no personal data from Materials and verify both "Generate test paper" and "Organize knowledge points". Luna/Ox also need their sub-switches turned on, and the allowlist may only include extensions that passed real format gates.
 
-Luna 本地验证必须显式选择 `luna_native_file_v1`：worker 校验 Storage 下载的原始字节、MIME、大小与 SHA-256 后，以 inline base64 发送，不运行解析器/OCR/DocumentIR，也不使用 OpenRouter Files API。PDF 请求必须带 `file-parser.native`，provider 必须实际为 OpenAI；如果响应路由不符，usage 仍落账但产物被拒绝。fake provider 只能证明编排和 UI，不能证明上述供应商事实。
+Local Luna verification must explicitly choose `luna_native_file_v1`: the worker validates the raw bytes downloaded from Storage, MIME, size, and SHA-256, then sends them as inline base64 without running parsers/OCR/DocumentIR and without the OpenRouter Files API. PDF requests must carry `file-parser.native`, and the provider must actually be OpenAI; if the response routing doesn't match, usage is still recorded but the artifact is rejected. A fake provider can only prove orchestration and UI, not these provider facts.
 
-Ox Alpha 已于 0056–0057 退役；本地不再存在该流水线或环境变量。Luna 本地真实验证需要 OpenRouter key，并核对实际 upstream 为 Azure；catalog 没有 GPT-6 Luna 的 Azure ZDR endpoint 时预期能力为 disabled，而不是改用非 ZDR 或 DocumentIR 冒充成功。
+Ox Alpha was retired in 0056–0057; the pipeline and its environment variables no longer exist locally. Real local Luna verification needs an OpenRouter key and confirmation that the actual upstream is Azure; when the catalog has no Azure ZDR endpoint for GPT-6 Luna, the expected capability is disabled, rather than switching to non-ZDR or passing DocumentIR off as success.
 
-运行 Python 门禁：
+Run the Python gates:
 
 ```bash
 cd apps/ai
@@ -254,9 +255,9 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-## 7. 最小功能验收
+## 7. Minimal functional acceptance
 
-### 7.1 无账号写入的检查
+### 7.1 Checks without account writes
 
 ```bash
 curl -fsS http://localhost:3000/api/health
@@ -264,31 +265,31 @@ curl -fsS http://localhost:8000/health
 curl -I http://localhost:5173
 ```
 
-### 7.2 需要开发账号的检查
+### 7.2 Checks that need a development account
 
-1. 在 Web 注册一个仅用于开发的邮箱账号。
-2. 确认 `auth.users` 创建后触发生成对应 `public.profiles`。
-3. 创建课程并上传一个小型资料，确认 `materials` 私有桶路径以用户 UUID 开头。
-4. 创建学习任务并切换完成状态，确认任务与个人资料可重新加载。
-5. 发布一条无敏感内容的测试帖，再删除测试数据。
-6. 打开 Courses，创建“英语单词学习”；选择逐单元粘贴或整份多单元词表，先制造一行格式错误确认精确标红，再修正并进入 Review Course Content。
-7. 完成一个单元四阶段，刷新页面确认从 active session 恢复；建立 3 天复习并在 Schedule 看见独立复习项。
-8. 创建分享、撤销后确认旧链接失效；上架免费 Course Market，用第二个开发账号克隆并确认副本进度为 0、不能再次传播。
-9. 开启音频预热后选定单元：确认 manifest 从 pending 变 ready，当前题及后四词进入浏览器 Cache Storage；“下载单元音频”可续传、显示失败/配额暂停并可删除本地副本。浏览器即使授予 persistent storage，仍可能在存储压力下回收。
-10. 在开发者工具设 Offline 后连续完成至少两题，确认反馈立即出现且完成页显示等待同步；恢复网络后同一 attempt UUID 串行提交，刷新不会重复累计错误。完整 Web app shell/PWA 离线启动不在此功能范围。
-11. 开始包含拼写的学习/复习时分别验证：不勾选时行为不变；勾选限时并设 3 秒时，输入出现后倒计时并只自动提交一次；同时勾选翻译前测时，计时必须等语义回答通过后才开始。语义错误直接形成一次 spelling 错误，供应商超时/失败只显示可重试错误，不增加 wrong count。正确和错误结果都要同时显示英文拼写与分开的翻译。
-12. Materials 候选链路：上传无个人数据文件，创建试卷并确认内部 `/jobs` 在 provider 完成前已返回；生成知识图谱后确认节点按来源顺序、hover/detail 可读，节点提问只引用该节点来源。模拟 retryable failure 时 Resume 必须使用同一 job ID；超过 TTL 后返回稳定过期错误且 checkpoint/worker 目录最终清理。
+1. Sign up in the Web app with an email used only for development.
+2. Confirm that creating the `auth.users` row triggers the corresponding `public.profiles` row.
+3. Create a course and upload a small material, and confirm the `materials` private bucket path starts with the user UUID.
+4. Create a study task and toggle its completion, and confirm the task and profile reload.
+5. Publish a test post with no sensitive content, then delete the test data.
+6. Open Courses and create "English vocabulary"; choose per-unit paste or a whole multi-unit word list, first create a line with a format error to confirm the exact highlight, then fix it and enter Review Course Content.
+7. Complete all four stages of one unit, refresh to confirm it resumes from the active session; create a 3-day review and see the separate review item in Schedule.
+8. Create a share, revoke it, and confirm the old link no longer works; list it on the free Course Market, clone it with a second development account, and confirm the copy has 0 progress and cannot be redistributed.
+9. Select a unit after enabling audio prewarming: confirm the manifest changes from pending to ready and the current question plus the next four words enter browser Cache Storage; "Download unit audio" can resume, shows failures/quota pauses, and can delete the local copy. Even if the browser grants persistent storage, it may still evict under storage pressure.
+10. Set Offline in developer tools and complete at least two questions in a row, confirming feedback appears immediately and the completion page shows pending sync; after the network returns, the same attempt UUIDs submit serially, and refreshing does not double-count errors. Offline startup of a full Web app shell/PWA is outside this feature's scope.
+11. When starting learning/review that includes spelling, verify each case: unchecked behaves as before; with the time limit checked and set to 3 seconds, the countdown starts after the input appears and auto-submits only once; with the translation pre-test also checked, timing must wait until the semantic answer passes. A semantically wrong answer directly creates one spelling error, while provider timeouts/failures only show a retryable error without increasing the wrong count. Both correct and wrong results must show the English spelling together with the separate translations.
+12. Materials candidate path: upload a file with no personal data, create a test paper, and confirm the internal `/jobs` returned before the provider finished; after generating a knowledge graph, confirm nodes are in source order, hover/detail is readable, and node questions only cite that node's sources. When simulating a retryable failure, Resume must use the same job ID; past the TTL it returns a stable expiry error, and the checkpoint/worker directory is eventually cleaned up.
 
-本地当日无法验证“两次不同日期复习即熟练”时，不要手改生产数据；使用一次性本地 Supabase RLS fixture，测试会按 profile 时区生成两个不同 `local_date`。
+If you can't verify "mastery after reviews on two different dates" locally on the same day, don't hand-edit production data; use a throwaway local Supabase RLS fixture, which generates two different `local_date`s in the profile time zone.
 
-这些步骤会写入数据；不要对生产项目执行。自动化命令和测试分层见 [可执行测试指南](./TESTING.md)。
+These steps write data; never run them against the production project. See the [runnable testing guide](./TESTING.md) for automated commands and test layers.
 
-### 7.3 Courses 文本导入与长页面回归
+### 7.3 Courses text import and long-page regressions
 
-有单元课程提供两种互斥输入方式：
+Courses with units offer two mutually exclusive input methods:
 
-- **逐个单元粘贴**：手工新建/重命名单元，再分别粘贴词表；
-- **整份多单元词表**：一次粘贴含标题的完整文本，例如：
+- **Paste unit by unit**: create/rename units by hand, then paste each word list separately;
+- **Whole multi-unit word list**: paste the complete text with headings at once. The translations in this example are Chinese, the language the translation features currently target:
 
 ```text
 Starter Unit 1
@@ -307,98 +308,98 @@ need 需要
 eraser 橡皮
 ```
 
-编号标题可以使用 `Starter Unit 1`、`Lesson 2`、`Chapter 3`、`Module A`、`Section IV` 或对应的中文编号形式。任意自定义标题使用 `[Travel phrases]` 或 `# Travel phrases`；没有显式标记的普通文本行会按词条解析。词条仍是“每行一个英文词/短语 + 一个 ASCII 空格 + 翻译”，多个翻译以 `/` 分隔。
+Numbered headings can use `Starter Unit 1`, `Lesson 2`, `Chapter 3`, `Module A`, `Section IV`, or the equivalent Chinese numbered forms. Arbitrary custom headings use `[Travel phrases]` or `# Travel phrases`; ordinary text lines without an explicit marker are parsed as entries. An entry is still "one English word/phrase per line + one ASCII space + the translation", with multiple translations separated by `/`.
 
-开发验收时确认：
+During development acceptance, confirm:
 
-1. 整份文本拆成正确的单元，解析错误显示整份原文的行/列而非单元内相对位置。
-2. Review/Edit Course 把 `东西/事情` 显示为两个独立可编辑翻译输入；可分别删除并新增翻译。
-3. 每个现有单元的“批量粘贴单词”可追加多行，若包含已有词会显示 `DUPLICATE_EXISTING_TERM` 且不部分追加。
-4. 在至少足以超出一屏的词表中，`.content` 能滚到最底部，“添加单词”“批量粘贴单词”“添加单元”和保存按钮均可到达。
-5. 无单元模式仍使用隐藏默认单元，不把第一条词误识别为单元标题。
+1. The whole text is split into the right units, and parse errors show the line/column in the whole original text rather than a position relative to the unit.
+2. Review/Edit Course shows a two-meaning translation such as `东西/事情` as two separately editable translation inputs; each can be deleted and new translations added.
+3. Each existing unit's "Bulk paste words" can append multiple lines, and if they include an existing word it shows `DUPLICATE_EXISTING_TERM` without a partial append.
+4. In a word list long enough to exceed one screen, `.content` scrolls to the very bottom, and "Add word", "Bulk paste words", "Add unit", and the save button are all reachable.
+5. Unit-less mode still uses a hidden default unit and never mistakes the first entry for a unit heading.
 
-文件入口只展示 AI 解析占位；不要选择真实材料或期待 PDF、Word、JSON、Markdown、HTML、图片上传/解析。
+The file entry point only shows an AI parsing placeholder; do not select real materials or expect PDF, Word, JSON, Markdown, HTML, or image upload/parsing.
 
-## 8. 常见问题
+## 8. Common problems
 
-### Web 显示“未配置 Supabase”
+### The Web app shows "Supabase is not configured"
 
-- 文件必须是 `apps/web/.env.local`；
-- 变量名必须带 `VITE_`；
-- Vite 只在进程启动时读取环境变量，修改后要重启 Web；
-- 不要把 service-role key 放进任何 `VITE_*` 变量。
+- The file must be `apps/web/.env.local`;
+- Variable names must start with `VITE_`;
+- Vite only reads environment variables when the process starts; restart the Web app after changes;
+- Never put the service-role key in any `VITE_*` variable.
 
-### 注册返回 `SERVER_MISCONFIG`
+### Sign-up returns `SERVER_MISCONFIG`
 
-API 没读到 `SUPABASE_URL` 或 `SUPABASE_SERVICE_ROLE_KEY`。确认从 `apps/api` package 上下文启动，且文件名为 `apps/api/.env`。
+The API didn't read `SUPABASE_URL` or `SUPABASE_SERVICE_ROLE_KEY`. Make sure it starts in the `apps/api` package context and the file is named `apps/api/.env`.
 
-### Health 返回 `deps.redis=unavailable`
+### Health returns `deps.redis=unavailable`
 
-- 确认 Redis 已监听 `REDIS_URL` 指向的本地地址/DB；
-- `RATE_LIMIT_HMAC_SECRET` 必须至少 32 bytes；
-- 不要把生产密码写进命令历史；本地可用独立随机值；
-- Redis 故障时私有 GET 可降级继续，但注册和写入按设计返回 `RATE_LIMIT_UNAVAILABLE`，不能通过删除保护层“修好”。
+- Make sure Redis is listening on the local address/DB that `REDIS_URL` points at;
+- `RATE_LIMIT_HMAC_SECRET` must be at least 32 bytes;
+- Never write the production password into command history; use a separate random value locally;
+- When Redis fails, private GETs can degrade and continue, but sign-up and writes return `RATE_LIMIT_UNAVAILABLE` by design; you cannot "fix" this by removing the protection layer.
 
-### `/api/me` 返回 401
+### `/api/me` returns 401
 
-- 请求必须带 `Authorization: Bearer <Supabase access token>`；
-- `SUPABASE_URL` 必须指向签发该令牌的同一项目；
-- 非对称签名令牌通过项目 JWKS 验证；只有旧 HS256 项目才依赖 `SUPABASE_JWT_SECRET`；
-- 检查系统时间，明显时钟漂移会导致令牌时间校验失败。
+- The request must carry `Authorization: Bearer <Supabase access token>`;
+- `SUPABASE_URL` must point to the same project that issued the token;
+- Asymmetrically signed tokens are verified through the project JWKS; only legacy HS256 projects depend on `SUPABASE_JWT_SECRET`;
+- Check the system time; significant clock drift makes token time checks fail.
 
-### Web 能登录但表查询失败
+### The Web app signs in but table queries fail
 
-依次确认迁移已全部应用、用户有对应 `profiles`、请求携带有效会话，以及写入的 `user_id`/关联课程归属符合 RLS。完整关系和策略见 [ERD 与数据库字典](./ERD.md)。
+Confirm in order that all migrations are applied, the user has a matching `profiles` row, requests carry a valid session, and the `user_id`/linked course ownership written satisfies RLS. See the [ERD and data dictionary](./ERD.md) for full relationships and policies.
 
-### Courses 返回 `COURSES_DISABLED` 或 404
+### Courses returns `COURSES_DISABLED` or 404
 
-- 检查 API 进程实际读取的是 `apps/api/.env`，修改后重启；
-- production 模式必须显式设总开关，分享/市场还需各自子开关；
-- sharing/market 关闭故意返回 404，不能通过开放 PostgREST 绕过；
-- 确认本地数据库已 reset 到仓库最新迁移 0043，而不是停在旧 migration history；生产有证据到 0043，任何环境是否已经应用仍以 `migration list` 和发布记录为准，不能只看文件存在。
+- Check that the API process actually reads `apps/api/.env`, and restart after changes;
+- In production mode the master switch must be set explicitly, and sharing/market also need their own sub-switches;
+- sharing/market return 404 on purpose when off; they cannot be bypassed by opening PostgREST;
+- Make sure the local database has been reset to the repository's latest migration 0043 rather than stuck on an old migration history; production has evidence up to 0043, and whether any environment has applied it is still determined by `migration list` and release records, not by the files existing.
 
-### Materials AI 一直 queued、deleting、readiness 失败或返回安全错误
+### Materials AI stays queued or deleting, readiness fails, or it returns a safety error
 
-- 生产数据库基线确认到 0055，当前稳定应用仍只暴露此前成功切流能力；验证 Luna/Ox/图谱/删除生命周期或安全 contract 时，本地必须 reset 到仓库最新 0055。Redis 应在运行，API/worker 使用同一个 `AI_INTERNAL_TOKEN`，API callback 为 `http://localhost:3000/api`。
-- `FEATURE_MATERIAL_AI=false` 是默认安全状态；只在 fake/真实 worker health 就绪后本地开启。`MATERIAL_AI_FAKE_PROVIDER=true` 只能用于非 production 自动化。
-- worker health 的 `openrouter/libreoffice/tempDisk/internalAuth` 会指出依赖；低于 512MiB 空间、单 job 超 1GiB、Office >120 秒都会失败并释放额度。
-- `PROMPT_INJECTION_REJECTED` 同时覆盖 malicious/uncertain；不要通过改 prompt 或前端忽略结果绕过。安全教材明确分类为 `benign_educational` 才继续。
-- Redis 丢消息时 Postgres job 仍在，reconciler 会补投；同一用户已有 active job 返回 `AI_JOB_ACTIVE`。不要手工改数据库状态或 quota。
-- `deleting` 表示数据库已结算额度但 worker 尚未确认取消请求、Office 子进程、0700 目录、checkpoint 与 usage spool 全部清理；reconciler 会重试。不得从 UI 提前隐藏或直接删表伪造成功。
-- Luna 不可选时先查 `/api/materials/:id/ai-capabilities` 的禁用原因；总开关、Luna 子开关和扩展名 allowlist 三者都必须允许。系统不得自动转旧流水线，也不得为未通过真实门禁的格式扩大 allowlist。
+- The production database baseline is confirmed at 0055, and the current stable app still only exposes the capabilities that were cut over successfully earlier; when verifying Luna/Ox/the graph/the delete lifecycle or the security contract, reset locally to the repository's latest 0055. Redis should be running, the API/worker use the same `AI_INTERNAL_TOKEN`, and the API callback is `http://localhost:3000/api`.
+- `FEATURE_MATERIAL_AI=false` is the safe default; only turn it on locally after the fake/real worker health is ready. `MATERIAL_AI_FAKE_PROVIDER=true` may only be used for non-production automation.
+- The worker health's `openrouter/libreoffice/tempDisk/internalAuth` point to the dependency; less than 512 MiB of space, a job over 1 GiB, or Office over 120 seconds all fail and release the allowance.
+- `PROMPT_INJECTION_REJECTED` covers both malicious and uncertain; never bypass it by changing the prompt or ignoring the result in the frontend. Security teaching material continues only when clearly classified as `benign_educational`.
+- When Redis loses messages, the Postgres job is still there and the reconciler re-enqueues it; if the user already has an active job, `AI_JOB_ACTIVE` is returned. Never hand-edit database status or quota.
+- `deleting` means the database has settled the allowance but the worker hasn't yet confirmed that the cancel request, Office subprocesses, the 0700 directory, checkpoints, and usage spool are all cleaned up; the reconciler retries. Never hide it from the UI early or fake success by deleting table rows directly.
+- When Luna can't be selected, first check the disabled reason from `/api/materials/:id/ai-capabilities`; the master switch, the Luna sub-switch, and the extension allowlist must all allow it. The system must never automatically switch to the old pipeline, and the allowlist must never be widened for formats that haven't passed real gates.
 
-### 翻译前测返回禁用、超时或配额错误
+### The translation pre-test returns disabled, timeout, or quota errors
 
-- `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` 关闭时，要求 `translationFirst=true` 的 session 启动会失败；关闭该选项的拼写仍可用。
-- 确认 `OPENROUTER_API_KEY` 只在 API `.env`，model 为仓库锁定值，且没有在 production 设置 `OPENROUTER_FAKE=true`。
-- 供应商超时、5xx 或结构化响应非法不会记错，用户可用同一 attempt UUID 重试；425 表示同 UUID 的租约仍在处理，409 表示另一设备已推进 revision，429 表示持久用户配额已达到。
-- 不要把 provider 失败改成客户端“猜测判分”；服务端必须继续是错误事实、候补池和进度的权威。
+- When `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` is off, starting a session that requires `translationFirst=true` fails; spelling with that option off still works.
+- Confirm `OPENROUTER_API_KEY` is only in the API `.env`, the model is the repository-locked value, and `OPENROUTER_FAKE=true` is not set in production.
+- Provider timeouts, 5xx, or invalid structured responses do not record errors, and users can retry with the same attempt UUID; 425 means the same UUID's lease is still being processed, 409 means another device has advanced the revision, and 429 means the durable user quota has been reached.
+- Never replace provider failures with client-side "guess grading"; the server must stay the authority for error facts, the retry pool, and progress.
 
-### 翻译语音输入没有出现、识别慢或填入旧题
+### Translation voice input doesn't appear, is slow, or fills in an old question
 
-- 入口只存在于已开启 `translationFirst` 的 spelling 翻译输入框右端；普通翻译选择题、拼写输入和其它文本框故意没有麦克风。
-- 确认最新迁移含 0037–0038，API 读取同一个 `OPENROUTER_API_KEY`，STT model 为 `fish-audio/transcribe-1`、language 为 `zh`，且生产未启用 `OPENROUTER_FAKE`。
-- 录音应显示实时波形；停止或 6 秒自动停止后进入独立“识别中”状态。成功只回填文本，不会自动提交；空/非法结果、timeout、provider 5xx/429 不会形成答题错误。
-- 如果另一个设备已经推进 revision/word，数据库会在调用前返回 409；若题目在供应商响应期间变化，Web 会丢弃迟到 transcript。不要移除这两层保护来“提高成功率”。
+- The entry point only exists at the right end of the spelling translation input with `translationFirst` on; ordinary translation multiple-choice, spelling input, and other text fields deliberately have no microphone.
+- Confirm the latest migrations include 0037–0038, the API reads the same `OPENROUTER_API_KEY`, the STT model is `fish-audio/transcribe-1` with language `zh`, and production doesn't enable `OPENROUTER_FAKE`.
+- Recording should show a live waveform; after stopping or the automatic stop at 6 seconds it enters a separate "Recognizing" state. Success only fills in the text and never auto-submits; empty/invalid results, timeouts, and provider 5xx/429 do not create answer errors.
+- If another device has already advanced the revision/word, the database returns 409 before the call; if the question changes while the provider responds, the Web app discards the late transcript. Don't remove these two layers of protection to "improve the success rate".
 
-### 发音按钮降级或评分不可用
+### The pronunciation button degrades or scoring is unavailable
 
-这是允许的降级：没有 Azure 配置时浏览器 Web Speech 可朗读，文本学习继续。音频 GET 首次可能快速返回 `202 AUDIO_PENDING`，worker 生成后 manifest 才变 ready；不要把 202 当 500。评分要求 feature flag、key/region、当前 active session/当前认词卡片和 16 kHz/16-bit/单声道 PCM WAV。浏览器最多录制 6 秒，关闭 echo cancellation/noise suppression/auto gain control，不做 VAD、音量阈值、静音裁剪或本地“清晰语音”拒绝；仅做 Azure 格式必需的采样率/PCM 封装。供应商/麦克风失败不应记为学习错误。私有 TTS 对象缺失可能表现为 Storage HTTP 400 + JSON 404，应正常重建；Storage 网络/权限错误必须保持可见，不能误判为 cache miss 后重复消耗 Azure。
+This is an allowed degradation: without Azure configuration, browser Web Speech can read aloud and text learning continues. The first audio GET may quickly return `202 AUDIO_PENDING`, and the manifest only becomes ready after the worker generates it; don't treat 202 as a 500. Scoring requires the feature flag, key/region, the current active session/current recognition card, and 16 kHz/16-bit/mono PCM WAV. The browser records at most 6 seconds with echo cancellation/noise suppression/auto gain control off, and does no VAD, volume thresholds, silence trimming, or local "clear speech" rejection; it only does the sample-rate/PCM wrapping Azure requires. Provider/microphone failures should not count as learning errors. A missing private TTS object may show up as Storage HTTP 400 + JSON 404 and should be rebuilt normally; Storage network/permission errors must stay visible and must not be misread as cache misses that consume Azure repeatedly.
 
-### Courses 创建/编辑页看不到底部操作
+### The bottom actions on the Courses create/edit page can't be reached
 
-当前应用壳要求共享 `.main` 与 `.content` 都有 `min-height: 0`，并由 `.content` 的 `overflow-y: auto` 承担纵向滚动。先在浏览器开发工具中确认 `.content` 的 `scrollHeight > clientHeight` 且能改变 `scrollTop`；若不能，检查 `@nalanda/ui/nalanda.css` 是否实际加载，以及上层 flex/grid 子项是否覆盖了这些属性。不要用 Courses 专属固定高度、`100vh` 或额外 `overflow: hidden` 绕过共享滚动模型；弹窗内部滚动才是独立例外。
+The current app shell requires the shared `.main` and `.content` to both have `min-height: 0`, with `.content`'s `overflow-y: auto` handling vertical scrolling. First confirm in browser developer tools that `.content` has `scrollHeight > clientHeight` and that `scrollTop` can change; if not, check that `@nalanda/ui/nalanda.css` is actually loaded and that parent flex/grid children don't override these properties. Don't work around the shared scrolling model with Courses-specific fixed heights, `100vh`, or extra `overflow: hidden`; scrolling inside modals is the only separate exception.
 
-### `pnpm --filter @nalanda/api start` 找不到 `dist/main.js`
+### `pnpm --filter @nalanda/api start` can't find `dist/main.js`
 
-先执行 `pnpm --filter @nalanda/api build`。当前 start 脚本只运行编译产物。
+Run `pnpm --filter @nalanda/api build` first. The current start script only runs the compiled output.
 
-## 9. 当前缺口与目标状态
+## 9. Current gaps and target state
 
-- **当前**：已有 Supabase CLI 配置和可重复空库迁移；仍缺无敏感 seed/fixture 与一键业务测试数据。
-- **目标**：为 API 增加 watch 模式和统一的 `pnpm dev` 编排。
-- **当前生产链路**：CI 已加入 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI fake-provider Playwright、0041–0043 RLS 与真实 OpenRouter/2G canary 发布门；这些门禁已用于 2026-08-11 发布。0046–0051 候选又覆盖 250 节点图谱、任务 delete/clear、整卷批改和 Luna native-file；本地 fake/单元通过仍不能替代尚待执行的真实 OpenAI/生产 gate。
-- **目标**：完成 0046–0051 受保护发布，再开放 Knowledge list/Quiz、Notes 编辑/导出，并建立持续真实质量评测。
-- **目标**：提供一键清理测试数据和隔离测试账号的脚本。
+- **Current**: there is a Supabase CLI configuration and repeatable empty-database migrations; non-sensitive seeds/fixtures and one-click business test data are still missing.
+- **Target**: add a watch mode for the API and a unified `pnpm dev` orchestration.
+- **Current production path**: CI has added Python ruff/pytest, AI Docker, BullMQ/Redis, Materials AI fake-provider Playwright, 0041–0043 RLS, and real OpenRouter/2 GB canary release gates; these gates were used for the 2026-08-11 release. The 0046–0051 candidate also covers the 250-node graph, job delete/clear, whole-paper grading, and Luna native files; passing local fakes/unit tests still cannot replace the real OpenAI/production gates still to be run.
+- **Target**: complete the protected release of 0046–0051, then open the knowledge list/quiz and Notes editing/export, and build continuous real quality evaluation.
+- **Target**: provide scripts for one-click test-data cleanup and isolated test accounts.
 
-在这些能力落地前，以仓库实际脚本和本文“当前实现”描述为准。
+Until these capabilities land, the repository's actual scripts and this document's "current implementation" descriptions are authoritative.

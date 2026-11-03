@@ -1,53 +1,54 @@
-# ADR-0015：Ox Alpha 翻译判定与 Materials 原始图片流水线
+# ADR-0015: Ox Alpha translation judging and a native-image Materials pipeline
 
-> **本文内容：**记录 Courses 非字面翻译模型切换为 Ox Alpha，以及 Materials AI 增加第三条 Ox Alpha 原始图片流水线的架构决定。
-> **作用：**固定模型、provider、reasoning、能力矩阵、ZDR、隐私、完成事务和发布门禁，避免把文本可用性误写成原文件能力。
-> **何时更新：**Ox Alpha 模型身份/能力/价格、Stealth 路由、reasoning、ZDR catalog、允许格式、翻译数据边界或生产发布状态变化时。
+> **About this document**
+> - **Contents**: Records the architecture decision to switch the Courses non-literal translation model to Ox Alpha and add a third Ox Alpha native-image pipeline to Materials AI.
+> - **Purpose**: Fixes the model, provider, reasoning, capability matrix, ZDR, privacy, completion transactions, and release gates, so text availability is never misrepresented as native-file capability.
+> - **When to update**: When Ox Alpha's model identity/capabilities/price, Stealth routing, reasoning, ZDR catalog, allowed formats, translation data boundary, or production release status changes.
 
-- **状态：**Superseded by [ADR-0016](0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)（2026-10-03）；0054–0055 已应用到生产数据库但应用从未启用 Ox，0056–0057 将其完全退役。下文为历史决策原文。
-- **日期：**2026-08-23
-- **决策者：**Nalanda owner
-- **范围：**Courses、Materials、My Notes、NestJS、FastAPI、Supabase、发布门禁
-- **关联：**[ADR-0009](0009-server-side-semantic-spelling-translation-assessment.md)、[ADR-0014](0014-materials-ai-luna-native-lifecycle-and-graph-layout.md)
+- **Status:** Superseded by [ADR-0016](0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md) (2026-10-03); 0054–0055 were applied to the production database but the app never enabled Ox, and 0056–0057 retire it completely. The text below is the original historical decision.
+- **Date:** 2026-08-23
+- **Deciders:** Nalanda owner
+- **Scope:** Courses, Materials, My Notes, NestJS, FastAPI, Supabase, release gates
+- **Related:** [ADR-0009](0009-server-side-semantic-spelling-translation-assessment.md), [ADR-0014](0014-materials-ai-luna-native-lifecycle-and-graph-layout.md)
 
-## 背景
+## Context
 
-Courses 的非字面翻译判定原先固定使用 Gemma 4 免费模型，最近受保护候选多次在真实 smoke 中持续 HTTP 429 并在切流前回退。用户明确决定将它更换为 OpenRouter `stealth/ox-alpha`，并要求 Materials AI 在既有 DocumentIR 与 Luna 之外增加同模型的多模态路径。
+Courses non-literal translation judging originally used the free Gemma 4 model, and recent protected candidates repeatedly hit sustained HTTP 429s in real smoke tests and rolled back before cutover. The user explicitly decided to switch to OpenRouter `stealth/ox-alpha` and asked Materials AI to add a multimodal path on the same model alongside the existing DocumentIR and Luna.
 
-实时模型元数据声明 Ox Alpha 接受 text/image/video，但没有 file modality；endpoint 的 provider 为 Stealth。实时 ZDR catalog 当前没有该模型 endpoint。模型还要求 reasoning，不能沿用 Luna 的 reasoning-disabled envelope。因此必须把“文本翻译可调用”和“ZDR 原文件处理可开放”作为两个独立门禁。
+Live model metadata declares that Ox Alpha accepts text/image/video but has no file modality; the endpoint's provider is Stealth. The live ZDR catalog currently has no endpoint for this model. The model also requires reasoning, so Luna's reasoning-disabled envelope cannot be reused. "Text translation is callable" and "ZDR native-file processing can be opened" must therefore be two independent gates.
 
-## 决策
+## Decision
 
-1. Courses 非字面翻译固定使用 `stealth/ox-alpha`。请求强制 `provider.only=["stealth"]`、`allow_fallbacks=false`、`data_collection=deny`、strict `{correct:boolean}`、no tools，并使用 `{effort:"low",exclude:true}` reasoning。客户端不能选择模型、provider、prompt 或参考翻译。
-2. 规范化完全匹配仍由 NestJS 零 token 确定性判对；Ox 只判断非字面同义/改写。供应商结果不能直接授予 points、徽章或改 progress。
-3. Materials 增加显式 `ox_alpha_native_file_v1`，复用 Luna 的原字节下载校验、安全审查、生成、一次修复、checkpoint、取消和清理编排，但固定 Ox Alpha/Stealth。
-4. Ox Materials pipeline 只接受 PNG、JPG/JPEG、WebP 原始图片。API 与 worker 都把运维 allowlist 和代码内图片集合取交集；PDF、Office、Markdown/HTML/TXT/JSON/CSV 不转换、不提取后冒充原文件，也不静默降级。
-5. Materials Ox 继续要求 ZDR、deny collection、strict schema、no tools/Web 和 no fallback。实时 catalog 没有合规 endpoint 时 `FEATURE_MATERIAL_AI_OX_ALPHA=false`，capability 返回 `OPENROUTER_ZDR_UNAVAILABLE`；不能以 Courses 文本 smoke 代替。
-6. `ai_provider_usage_events` 记录实际 provider/endpoint/pipeline；完成试卷、图谱、节点问答和主观评分的 service-role 事务要求匹配用途的 Stealth usage。路由违规已发生的成本保留，但产物不得保存。
-7. 0054–0055 只追加 pipeline constraint、工作流映射、完成约束与权限验证；旧 RPC 签名及 DocumentIR/Luna 行为继续兼容上一不可变应用。数据库回滚只 forward-fix。
+1. Courses non-literal translation is fixed to `stealth/ox-alpha`. Requests force `provider.only=["stealth"]`, `allow_fallbacks=false`, `data_collection=deny`, strict `{correct:boolean}`, and no tools, and use `{effort:"low",exclude:true}` reasoning. Clients cannot choose the model, provider, prompt, or reference translations.
+2. Normalized exact matches are still judged correct deterministically by NestJS at zero tokens; Ox only judges non-literal synonyms/paraphrases. Provider results cannot directly grant points or badges or change progress.
+3. Materials adds an explicit `ox_alpha_native_file_v1`, reusing Luna's raw-byte download validation, safety review, generation, single repair, checkpoints, cancellation, and cleanup orchestration, but fixed to Ox Alpha/Stealth.
+4. The Ox Materials pipeline only accepts native PNG, JPG/JPEG, and WebP images. Both the API and worker intersect the ops allowlist with the in-code image set; PDF, Office, Markdown/HTML/TXT/JSON/CSV are never converted or extracted to pose as native files, and never silently downgraded.
+5. Materials Ox still requires ZDR, deny collection, strict schema, no tools/Web, and no fallback. When the live catalog has no compliant endpoint, `FEATURE_MATERIAL_AI_OX_ALPHA=false` and the capability returns `OPENROUTER_ZDR_UNAVAILABLE`; a Courses text smoke cannot substitute for this.
+6. `ai_provider_usage_events` records the actual provider/endpoint/pipeline; the service-role transactions that complete test papers, graphs, node Q&A, and subjective grading require Stealth usage for the matching purpose. Costs already incurred by routing violations are kept, but the artifact must not be saved.
+7. 0054–0055 only add pipeline constraints, workflow mappings, completion constraints, and permission verification; the old RPC signatures and DocumentIR/Luna behavior stay compatible with the previous immutable app. Database rollback is forward-fix only.
 
-## 后果
+## Consequences
 
-### 正面
+### Positive
 
-- 移除 Gemma 免费路由持续限流这一发布硬门，同时保留服务端权威和幂等配额边界。
-- Materials 得到第三条真正显式、可审计的多模态图片路径，不把模型营销标签扩张成未证明的文件格式支持。
-- provider、reasoning、ZDR 和完成事务形成两层失败关闭；fake 测试无法冒充真实 Stealth/ZDR 证据。
+- Removes the release hard gate of sustained rate limiting on the free Gemma route while keeping server authority and idempotent quota boundaries.
+- Materials gets a third truly explicit, auditable multimodal image path without stretching a model marketing label into unproven file-format support.
+- Provider, reasoning, ZDR, and completion transactions form two layers of fail-closed checks; fake tests cannot pose as real Stealth/ZDR evidence.
 
-### 风险与代价
+### Risks and costs
 
-- “Stealth” provider 与模型身份、价格或可用性可能变化；即使当前目录价格为零也不能承诺永久免费。
-- Ox 原图当前因无 ZDR endpoint 预计保持关闭；代码完成不等于产品可用。
-- 三流水线增加 UI、环境变量、迁移、RLS、真实供应商 gate 和监控复杂度。
-- mandatory reasoning 会增加延迟/token；本次使用 low 且排除输出，仍需真实延迟与质量基线。
+- The "Stealth" provider and the model's identity, price, or availability may change; even though the current catalog price is zero, it cannot be promised to stay free.
+- Ox native images are expected to stay off because there is no ZDR endpoint; code being complete does not mean the product is available.
+- Three pipelines add complexity to the UI, environment variables, migrations, RLS, real provider gates, and monitoring.
+- Mandatory reasoning adds latency/tokens; this release uses low effort and excludes the output, but real latency and quality baselines are still needed.
 
-## 验证与发布
+## Verification and release
 
-- 单元/API/jsdom 验证 capability/default、原始图片字节、非图片拒绝、Stealth-only、reasoning、schema、注入、checkpoint 和翻译判定。
-- 本地 Supabase 双用户 E2E 验证客户端不能创建/完成 Ox 任务或伪造 provider usage，service-role 完成只有匹配 Stealth usage 才成功。
-- 真实文本 gate 使用固定同义/无关双样本；Materials gate 先读取实时 ZDR catalog，合规后才用无个人数据图片验证实际 Stealth、原始 SHA-256、注入拒绝和零残留。
-- 生产遵循只读 0054–0055 plan、加密恢复点、apply、不可变 candidate、真实门禁、私有 smoke、切流和独立公网验证。任一硬门失败都保持 Ox Materials flag 关闭并恢复上一应用 release。
+- Unit/API/jsdom tests verify capability/default, native image bytes, non-image rejection, Stealth-only, reasoning, schema, injection, checkpoints, and translation judging.
+- Local Supabase two-user E2E verifies that clients cannot create/complete Ox jobs or forge provider usage, and that service-role completion succeeds only with matching Stealth usage.
+- The real text gate uses a fixed pair of synonym/unrelated samples; the Materials gate first reads the live ZDR catalog, and only when compliant uses an image with no personal data to verify the actual Stealth provider, raw SHA-256, injection rejection, and zero residue.
+- Production follows a read-only 0054–0055 plan, encrypted recovery point, apply, immutable candidate, real gates, private smoke, cutover, and independent public verification. Any hard-gate failure keeps the Ox Materials flag off and restores the previous app release.
 
-## 2026-08-25 输出契约修订
+## 2026-08-25 output-contract revision
 
-PR #77 已把 0054–0055 应用到生产数据库，但应用候选的 Courses 翻译门因 Ox Alpha endpoint 不声明 `structured_outputs`、而请求又使用 strict `json_schema` + `require_parameters=true`，收到 HTTP 404并自动回滚。PR #78 已把决策落实为 endpoint 明确声明支持的 `response_format:{type:"json_object"}`；system prompt 固定唯一对象形状，NestJS 与真实 release smoke 本地严格检查字段集合、boolean 类型、case ID/数量和预期语义。其 main 候选在运行 Ox smoke 前被独立的 DocumentIR DOCX 质量门拦截，因此该契约尚无生产真实调用和切流证据。Stealth-only、禁止 fallback、data collection deny、实际 provider 校验、服务端幂等事实与失败关闭不变。供应商 HTTP 错误只记录稳定状态/code/request ID，不记录正文或用户内容。
+PR #77 applied 0054–0055 to the production database, but the candidate app's Courses translation gate received HTTP 404 and rolled back automatically, because the Ox Alpha endpoint does not declare `structured_outputs` while the request used strict `json_schema` + `require_parameters=true`. PR #78 implemented the decision with `response_format:{type:"json_object"}`, which the endpoint explicitly declares; the system prompt fixes the single object shape, and NestJS and the real release smoke locally and strictly check the field set, boolean type, case IDs/count, and expected semantics. Its main candidate was stopped by the separate DocumentIR DOCX quality gate before the Ox smoke ran, so this contract has no real production calls or cutover evidence yet. Stealth-only, no fallback, data collection deny, actual provider checks, server-side idempotent facts, and fail-closed behavior are unchanged. Provider HTTP errors only log stable status/code/request ID, never bodies or user content.
