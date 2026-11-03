@@ -515,7 +515,7 @@ test("create, validate, resume, learn, schedule, publish, and clone a vocabulary
   await expect(page.getByRole("heading", { name: "学习社区", exact: true })).toBeVisible();
   for (const title of postTitles.slice(0, 3)) await createCommunityPost(page, title);
   await page.locator('#nav [data-go="profile"]').click();
-  const profilePoints = page.getByText("积分 Points", { exact: true }).locator("..").locator(".stat-n");
+  const profilePoints = page.locator(".stat-l").getByText("积分", { exact: true }).first().locator("..").locator(".stat-n");
   await expect(profilePoints).toHaveText("30");
   await page.locator('#nav [data-go="community"]').click();
   await createCommunityPost(page, postTitles[3]);
