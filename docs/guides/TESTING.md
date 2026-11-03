@@ -1,30 +1,30 @@
-# 可执行测试指南
+# Executable testing guide
 
-> **本文内容：** 说明当前测试分层、准确命令、fixture/环境要求、真实 Supabase RLS E2E 的安全护栏、CI 覆盖范围和失败排查方式。  
-> **作用：** 让开发者和发布人员能重复运行同一套验证，并准确理解“jsdom 集成测试”“真实 RLS E2E”和“浏览器端到端”的边界。  
-> **何时更新：** 测试 runner、脚本、测试文件、fixture、环境变量、CI 门禁、覆盖模块、外部依赖或测试数据清理方式变化时，与测试代码同一提交更新。
+> **Contents:** Describes the current test layers, exact commands, fixture/environment requirements, safety guardrails for the real Supabase RLS E2E, CI coverage, and how to troubleshoot failures.  
+> **Purpose:** Lets developers and release operators rerun the same verification and understand precisely the boundaries between "jsdom integration tests", "real RLS E2E", and "browser end-to-end".  
+> **When to update:** In the same commit as the test code, whenever the test runner, scripts, test files, fixtures, environment variables, CI gates, covered modules, external dependencies, or test data cleanup change.
 
-## 1. 当前测试能力
+## 1. Current test capabilities
 
-| 层 | 当前实现 | 是否访问外部服务 | 权威命令 |
+| Layer | Current implementation | Calls external services? | Authoritative command |
 |---|---|---:|---|
-| 文档契约 | `scripts/check-docs.mjs` 检查所有 Markdown 开头字段与相对链接 | 否 | `node scripts/check-docs.mjs` |
-| TypeScript 静态检查 | Web/API/types 的 `tsc` 任务 | 否 | `pnpm typecheck` |
-| 构建 | Turbo 构建 types/API/Web | 否（Web 变量可为空但功能不完整） | `pnpm build` |
-| Web jsdom 集成 | Vitest + jsdom + 内存 Supabase mock，覆盖 legacy 壳与主要模块交互 | 否 | `pnpm test` |
-| Supabase RLS E2E | Vitest node 环境，两名真实用户访问实际 Auth/PostgREST/Storage（本地栈或托管测试项目） | 取决于 URL；一定会写/删数据 | `pnpm test:rls` |
-| 数据迁移升级夹具 | Node 脚本先在 0007 造历史数据，再应用自动发现的全部 0008+ 迁移并验证回填、冲正、归零和最新发布断言；仅允许 localhost | 本地 Docker | 见 5.5 |
-| 发布工具单元 | Node 内置 test 验证 production migration history/恢复点分支、Storage policy、schema diff、音频全局缓存键、OpenRouter 结构化 smoke 请求和服务器 env 安装脚本 | 否 | `pnpm test:release` |
-| NestJS/API 单元 | Vitest 覆盖 readiness/JWT、Courses 校验/owner/传播事务、snapshot/attempt patch、Azure adapter/队列/配额，以及翻译判分与 Fish Audio STT endpoint/body、中文提示、WAV/revision 校验、quota、timeout/非法响应和无正文持久化 | 否（fetch/DB fake） | `pnpm --filter @nalanda/api test` |
-| Redis 集成 | 真实 Redis 7.4 验证 Lua 滑动窗口并发原子性、过期和 token lock；未显式开启时只跳过这两项，不得称为 Redis E2E | 本地/CI Redis | `RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 RATE_LIMIT_HMAC_SECRET=<32+ bytes> pnpm --filter @nalanda/api test` |
-| Azure Speech 供应商 smoke | 基础脚本用无个人数据 fixture 验证 MP3/PCM TTS、scripted assessment；生产 gate 另经真实 API 验证持久队列、private Storage、跨用户重复词和未经 VAD/静音裁剪的 WAV 原字节评分；两者都拒绝 fake | 是，产生少量 Azure/Supabase 写入 | 基础：`node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`；完整 gate 仅由受保护发布执行 |
-| OpenRouter 供应商 smoke | 文本脚本验证免费 Nemotron 的 JSON Object 语义判分、Nvidia-only 路由及本地严格 schema；STT 直连脚本用 Azure 合成“苹果”WAV 验证 Fish Audio wire contract；生产 gate 再经真实 Nalanda owner/session API 验证边界。都拒绝 fake，不打印正文/key/完整响应；非 2xx 只输出状态、结构化 code 与 request ID | 是，产生少量 Azure/OpenRouter 请求 | 文本：`node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`；STT wire：`node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`；完整 gate 仅由受保护发布执行 |
-| FastAPI 自动测试 | ruff + pytest 覆盖 DocumentIR、Luna/Ox 原始字节、provider 锁、reasoning、注入、schema、checkpoint/cancel/purge 和 internal auth | 否；provider fake | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
-| 真浏览器 E2E | Playwright Chromium 启动真实 Vite/Nest/FastAPI，对一次性 Supabase + 真 Redis + provider fake 运行 Courses，以及 Materials→三流水线能力矩阵→250 节点图→任务删除/清历史→整卷考试 | 本地 Docker；供应商 fake | `pnpm --filter @nalanda/web test:playwright`（需见第 6 节环境） |
+| Docs contract | `scripts/check-docs.mjs` checks the opening fields and relative links of every Markdown file | No | `node scripts/check-docs.mjs` |
+| TypeScript static checks | `tsc` tasks for Web/API/types | No | `pnpm typecheck` |
+| Build | Turbo builds types/API/Web | No (Web variables can be empty, but features are incomplete) | `pnpm build` |
+| Web jsdom integration | Vitest + jsdom + in-memory Supabase mock, covering the legacy shell and main module interactions | No | `pnpm test` |
+| Supabase RLS E2E | Vitest node environment, two real users calling actual Auth/PostgREST/Storage (local stack or hosted test project) | Depends on the URL; always writes/deletes data | `pnpm test:rls` |
+| Data migration upgrade fixture | A Node script first creates historical data at 0007, then applies all automatically discovered 0008+ migrations and verifies backfills, reversals, resets, and the latest release assertions; localhost only | Local Docker | See 5.5 |
+| Release tooling units | Node's built-in test verifies production migration history/recovery point branches, Storage policies, schema diff, the global audio cache key, the OpenRouter structured smoke request, and the server env install script | No | `pnpm test:release` |
+| NestJS/API units | Vitest covers readiness/JWT, Courses validation/owner/distribution transactions, snapshot/attempt patches, the Azure adapter/queue/quotas, translation grading and the Fish Audio STT endpoint/body, Chinese prompts, WAV/revision validation, quota, timeout/invalid responses, and persistence without content | No (fetch/DB fakes) | `pnpm --filter @nalanda/api test` |
+| Redis integration | Real Redis 7.4 verifies Lua sliding-window concurrent atomicity, expiry, and token locks; without explicit opt-in only these two are skipped, and it must not be called Redis E2E | Local/CI Redis | `RUN_REDIS_E2E=true REDIS_URL=redis://127.0.0.1:6379/15 RATE_LIMIT_HMAC_SECRET=<32+ bytes> pnpm --filter @nalanda/api test` |
+| Azure Speech provider smoke | The basic script uses a fixture with no personal data to verify MP3/PCM TTS and scripted assessment; the production gate additionally verifies, through the real API, the durable queue, private Storage, cross-user duplicate words, and scoring on raw WAV bytes with no VAD/silence trimming; both reject fakes | Yes, a few Azure/Supabase writes | Basic: `node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs`; the full gate only runs in the protected release |
+| OpenRouter provider smoke | The text script verifies the free Nemotron's JSON Object semantic grading, Nvidia-only routing, and the strict local schema; the STT direct script uses an Azure-synthesized Chinese WAV of the word "apple" to verify the Fish Audio wire contract; the production gate then verifies the boundary through the real Nalanda owner/session API. All reject fakes and never print content/keys/full responses; non-2xx only prints the status, structured code, and request ID | Yes, a few Azure/OpenRouter requests | Text: `node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs`; STT wire: `node --env-file=apps/api/.env scripts/smoke-openrouter-transcription.mjs`; the full gate only runs in the protected release |
+| FastAPI automated tests | ruff + pytest cover DocumentIR, Luna/Ox raw bytes, provider locks, reasoning, injection, schema, checkpoint/cancel/purge, and internal auth | No; provider fakes | `cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q` |
+| Real browser E2E | Playwright Chromium starts real Vite/Nest/FastAPI and runs, against a one-off Supabase + real Redis + provider fakes, Courses plus Materials→three-pipeline capability matrix→250-node graph→job delete/clear history→whole-paper exam | Local Docker; provider fakes | `pnpm --filter @nalanda/web test:playwright` (needs the environment in section 6) |
 
-重要术语：`apps/web/src/**/*.test.ts(x)` 是 **jsdom 模块集成测试**，不会真正执行 RLS；API unit 使用 fake DB/fetch；只有启用 `RUN_REDIS_E2E=true` 的两项测试会连接真实 Redis；`rls.e2e.test.ts` 是**真实 Supabase 数据层 E2E**但不经过 Nest；`courses.spec.ts` 才经过浏览器、Vite、Nest、本地 Supabase 和真实 Redis，但 Azure/OpenRouter 都是 fake。真实 provider smoke 证明当前 key/model/endpoint/structured response，不证明数据库/RLS/UI。任何一层都不能单独证明完整产品已经可用。
+Important terms: `apps/web/src/**/*.test.ts(x)` are **jsdom module integration tests** and never really enforce RLS; API units use fake DB/fetch; only the two tests enabled by `RUN_REDIS_E2E=true` connect to real Redis; `rls.e2e.test.ts` is **real Supabase data-layer E2E** but doesn't go through Nest; only `courses.spec.ts` goes through the browser, Vite, Nest, local Supabase, and real Redis, but Azure/OpenRouter are both fakes. Real provider smokes prove the current key/model/endpoint/structured response, not the database/RLS/UI. No single layer alone can prove the full product works.
 
-## 2. 首次准备
+## 2. First-time setup
 
 ```bash
 corepack enable
@@ -32,11 +32,11 @@ corepack prepare pnpm@9.12.3 --activate
 pnpm install --frozen-lockfile
 ```
 
-要求 Node.js `>=20`。常规 jsdom 测试不需要 `.env`、Supabase、API、AI、Redis 或 Docker。真实 Supabase 测试在 Node 20 下会显式使用 `ws` 作为测试运行时的 WebSocket adapter：Supabase client 即使只访问 Auth/PostgREST 也会初始化 Realtime；不要移除 `apps/web` 的直接 `ws` 开发依赖或改为依赖间接依赖。
+Requires Node.js `>=20`. Ordinary jsdom tests need no `.env`, Supabase, API, AI, Redis, or Docker. Real Supabase tests on Node 20 explicitly use `ws` as the WebSocket adapter for the test runtime: the Supabase client initializes Realtime even when it only calls Auth/PostgREST; don't remove `apps/web`'s direct `ws` dev dependency or switch to relying on a transitive one.
 
-## 3. 日常本地验证
+## 3. Everyday local verification
 
-最小提交前序列：
+Minimal pre-commit sequence:
 
 ```bash
 node scripts/check-docs.mjs
@@ -46,115 +46,115 @@ pnpm test
 pnpm build
 ```
 
-单独运行 Web 测试：
+Run only the Web tests:
 
 ```bash
 pnpm --filter @nalanda/web test
 ```
 
-watch 模式：
+Watch mode:
 
 ```bash
 pnpm --filter @nalanda/web test:watch
 ```
 
-运行单文件：
+Run a single file:
 
 ```bash
 pnpm --filter @nalanda/web exec vitest run src/legacy/community.test.ts
 ```
 
-根 `pnpm lint` 当前执行严格 TypeScript 静态检查（含未使用声明/参数与 switch fallthrough），不是 ESLint，也不能代替正常 typecheck/test。当前没有 coverage threshold/报告脚本。
+The root `pnpm lint` currently runs strict TypeScript static checks (including unused declarations/parameters and switch fallthrough); it isn't ESLint and doesn't replace the normal typecheck/test. There is currently no coverage threshold/report script.
 
-## 4. jsdom 集成测试
+## 4. jsdom integration tests
 
-配置：`apps/web/vite.config.ts`；全局 setup：`apps/web/src/test/setup.ts`；Supabase mock：`apps/web/src/test/supabase-mock.ts`。
+Config: `apps/web/vite.config.ts`; global setup: `apps/web/src/test/setup.ts`; Supabase mock: `apps/web/src/test/supabase-mock.ts`.
 
-### 4.1 当前文件与覆盖
+### 4.1 Current files and coverage
 
-| 测试文件 | 当前覆盖 |
+| Test file | Current coverage |
 |---|---|
-| `apps/web/src/App.auth.test.ts` | 登录会话切换、登出/登录 loading 复位与认证错误恢复 |
-| `apps/web/src/legacy/app.shell.test.ts` | 挂载应用壳、9 个导航模块、Create、退出、resize listener 重挂与跨账号清理 |
-| `apps/web/src/legacy/account-modules.test.ts` | 通知未读/已读、错误处理、反馈提交、Profile 加载/编辑/壳同步 |
-| `apps/web/src/legacy/materials.test.ts` | Storage/metadata 失败、预览/下载/删除错误不产生假成功；Materials AI 全英文菜单、capabilities/显式 pipeline、知识图谱创建、Resume、Delete/Clear 二次确认、cleaning 与队列恢复 |
-| `apps/web/src/features/material-ai/NotesView.test.tsx` | Demo/真实 Notes 分组、Materials course 同步、考试 deadline、500ms 纯草稿、交卷前不返回/显示答案、统一交卷评分与删除；知识图 inspector、节点问答与布局 API |
-| `apps/web/src/features/material-ai/KnowledgeGraphCanvas.test.ts` | ELK 左到右层级、sourceOrder、节点不重叠、循环/孤立/空图、250 节点、拖动碰撞、viewport 与 revision merge |
-| `apps/web/src/features/material-ai/examDraftStore.test.ts` | IndexedDB 草稿按 user/attempt 隔离与清理 |
-| `apps/web/src/features/material-ai/errorText.test.ts` | 稳定 AI/provider/security error code 的统一中英文显示 |
-| `apps/web/src/legacy/community.test.ts` | feed/筛选/我的 tab、composer 标签/媒体、发帖、详情评论和后端失败回滚 |
-| `apps/web/src/legacy/schedule.test.ts` | 今日/周/全部视图、课程资料关联、新任务/目标、完成任务和请求错误 |
-| `apps/web/src/features/courses/parser.test.ts` | 最后 ASCII 空格、短语/多翻译、精确行列/错误码、重复、Unicode/XSS/上限，以及整份多单元标题、全局行号、缺少标题与已有词重复 |
-| `apps/web/src/features/courses/CoursesApp.test.tsx` | 空状态/禁用类别、文本导入/编辑/排序/错误、逐词错误/复习/已学习属性、复习/考试任意选词，以及两类考试阈值和 API 契约 |
-| `apps/web/src/features/courses/ExamHistory.test.tsx` | 失败但补练完成的历史标签、列表→详情、选词、错误次数和脱敏发音评分 |
-| `apps/web/src/features/courses/LearningView.test.tsx` | 即时反馈/服务端纠正/outbox、拼写/读音轮末错词清单与手动确认、读音评分后标准音、分数清单、下一轮重排、考试实时第一轮正确率/完成结果，以及音频预取/缓存/朗读降级 |
-| `apps/web/src/features/courses/learningSessionState.test.ts` | 客户端/数据库一致的正误规则、retry pool、stage transition、完成预测和权威 patch 替换 |
-| `apps/web/src/features/courses/attemptOutbox.test.ts` | IndexedDB 缺失时内存降级、按 user/session/revision 排序、重试退避和账号级清理 |
-| `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage 命中跳过网络、202 pending 不缓存、ready 响应缓存、逐资源状态回调与最多两个并发 |
-| `apps/web/src/features/courses/recording.test.ts` | WAV 头/PCM 边界、16 kHz 必需格式转换，以及静音、低幅度、首尾帧和完整时长均不被 VAD/裁剪删除 |
+| `apps/web/src/App.auth.test.ts` | Sign-in session switching, sign-out/sign-in loading reset, authentication error recovery, and the language toggle |
+| `apps/web/src/legacy/app.shell.test.ts` | Mounting the app shell, the 9 navigation modules, Create, sign-out, resize listener remounting, cross-account cleanup, and re-rendering shell text on locale change |
+| `apps/web/src/legacy/account-modules.test.ts` | Notification unread/read, error handling, feedback submission, Profile load/edit/shell sync |
+| `apps/web/src/legacy/materials.test.ts` | Storage/metadata failures, preview/download/delete errors never producing fake success; the Materials AI English menu, capabilities/explicit pipeline, knowledge graph creation, Resume, Delete/Clear double confirmation, cleaning, queue recovery, and the Chinese locale |
+| `apps/web/src/features/material-ai/NotesView.test.tsx` | Demo/real Notes grouping, Materials course sync, exam deadline, 500 ms draft-only saving, answers not returned/shown before submission, unified submit-and-grade, and deletion; the knowledge graph inspector, node Q&A, and layout API |
+| `apps/web/src/features/material-ai/KnowledgeGraphCanvas.test.ts` | ELK left-to-right levels, sourceOrder, non-overlapping nodes, cycles/isolated/empty graphs, 250 nodes, drag collision, viewport, and revision merge |
+| `apps/web/src/features/material-ai/examDraftStore.test.ts` | IndexedDB drafts isolated and cleaned up per user/attempt |
+| `apps/web/src/features/material-ai/errorText.test.ts` | Unified English/Chinese display of stable AI/provider/security error codes |
+| `apps/web/src/legacy/community.test.ts` | Feed/filters/my tab, composer tags/media, posting, detail comments, and rollback on backend failure |
+| `apps/web/src/legacy/schedule.test.ts` | Today/week/all views, course material links, new tasks/goals, completing tasks, and request errors |
+| `apps/web/src/features/courses/parser.test.ts` | Last ASCII space, phrases/multiple translations, exact line/column/error codes, duplicates, Unicode/XSS/limits, plus whole multi-unit headings, global line numbers, missing headings, and duplicates of existing words |
+| `apps/web/src/features/courses/CoursesApp.test.tsx` | Empty state/disabled categories, text import/edit/sort/errors, per-word error/review/learned attributes, arbitrary word selection for reviews/exams, and both exam types' thresholds and API contract |
+| `apps/web/src/features/courses/ExamHistory.test.tsx` | The history label for failed-but-practice-completed, list→detail, word selection, error counts, and redacted pronunciation scores |
+| `apps/web/src/features/courses/LearningView.test.tsx` | Instant feedback/server correction/outbox, spelling/pronunciation end-of-round wrong-word lists and manual confirmation, standard audio after pronunciation scoring, the score list, next-round reordering, live first-round exam accuracy/completion results, and audio prefetch/cache/speech degradation |
+| `apps/web/src/features/courses/learningSessionState.test.ts` | Client/database-consistent correctness rules, retry pool, stage transitions, completion prediction, and authoritative patch replacement |
+| `apps/web/src/features/courses/attemptOutbox.test.ts` | In-memory fallback without IndexedDB, ordering by user/session/revision, retry backoff, and account-level cleanup |
+| `apps/web/src/features/courses/audioCache.test.ts` | Cache Storage hits skip the network, 202 pending isn't cached, ready responses are cached, per-resource status callbacks, and at most two concurrent requests |
+| `apps/web/src/features/courses/recording.test.ts` | WAV header/PCM boundaries, conversion to the required 16 kHz format, and that silence, low amplitude, leading/trailing frames, and the full duration are never removed by VAD/trimming |
 
-### 4.2 mock 的边界
+### 4.2 Mock boundaries
 
-`createSupabaseMock` 提供链式 `select/insert/update/delete`、常用 filter 和有限 Storage mock。它用于验证前端交互与请求形状，不会模拟：
+`createSupabaseMock` provides chained `select/insert/update/delete`, common filters, and a limited Storage mock. It is used to verify frontend interaction and request shape, and doesn't simulate:
 
-- PostgreSQL FK/check/unique；
-- RLS、grants、`SECURITY DEFINER`、触发器；
-- Supabase 网络错误、token 刷新、并发、事务；
-- signed URL 过期和真实文件权限；
-- PostgREST 对所有错误/返回形状的细节。
+- PostgreSQL FK/check/unique;
+- RLS, grants, `SECURITY DEFINER`, triggers;
+- Supabase network errors, token refresh, concurrency, transactions;
+- Signed URL expiry and real file permissions;
+- PostgREST details for every error/return shape.
 
-新增查询操作符或 Storage 方法时，必须先扩展 mock，并用真实 RLS E2E/人工联调验证，不应为让测试通过而把 mock 放宽到真实服务不允许的行为。
+When adding query operators or Storage methods, extend the mock first and verify with the real RLS E2E/manual integration; never loosen the mock into behavior the real service doesn't allow just to make tests pass.
 
-### 4.3 jsdom 稳定性约定
+### 4.3 jsdom stability conventions
 
-- 每个测试自行建立 DOM root，不依赖执行顺序；
-- `afterEach` 会清空 `document.body`、rail attribute、localStorage 并恢复 real timers；
-- 异步 legacy 渲染用受控 `flush()`，避免任意长 sleep；
-- click helper 发送可冒泡/可取消事件；
-- 不在 fixture 中放真实邮箱、课件、token 或用户数据；
-- 对全局 listener、modal、timer 和订阅断言 cleanup，防止跨账号/跨测试状态泄漏。
+- Each test creates its own DOM root and doesn't depend on execution order;
+- `afterEach` clears `document.body`, the rail attribute, and localStorage, and restores real timers;
+- Asynchronous legacy rendering uses a controlled `flush()` instead of arbitrary long sleeps;
+- The click helper sends bubbling/cancellable events;
+- Fixtures never contain real emails, course materials, tokens, or user data;
+- Assert cleanup of global listeners, modals, timers, and subscriptions to prevent cross-account/cross-test state leaks.
 
-## 5. 真实 Supabase RLS E2E
+## 5. Real Supabase RLS E2E
 
-测试文件：`apps/web/tests/rls.e2e.test.ts`。默认 `pnpm test` 会发现它，但在 `RUN_SUPABASE_RLS_E2E` 未设为 `1` 时整套 skip；只有 `pnpm test:rls` 会显式启用。
+Test file: `apps/web/tests/rls.e2e.test.ts`. The default `pnpm test` discovers it, but the whole suite is skipped unless `RUN_SUPABASE_RLS_E2E` is set to `1`; only `pnpm test:rls` enables it explicitly.
 
-### 5.1 严禁对生产运行
+### 5.1 Never run against production
 
-此测试会：
+This test will:
 
-- 用 service-role 创建两名已确认 Auth 用户；
-- 写 profiles、notifications、feedback、courses、materials、posts、comments、likes、favorites、follows、study goals/tasks；
-- 上传真实 `materials` Storage 对象；
-- 触发 points/level、帖子计数、通知、标签同步和 streak；
-- finally/afterAll 尝试删除 Storage 对象与 Auth 用户。
-- 创建学习课程/单元/20 个词、会话/attempt/progress、复习日程、分享、不可变 publication、举报、克隆、徽章和课程 points 分录。
-- 同一课程同时保留暂停的 Unit 1 首次学习与 Unit 2 复习，验证精确意图恢复、测试项顺序规范化和相同意图并发幂等。
-- 创建/清理全局合成音频任务 metadata；不调用真实 Azure，也不上传用户录音。
+- Use the service role to create two confirmed Auth users;
+- Write profiles, notifications, feedback, courses, materials, posts, comments, likes, favorites, follows, study goals/tasks;
+- Upload real `materials` Storage objects;
+- Trigger points/level, post counts, notifications, tag sync, and streak;
+- Try to delete the Storage objects and Auth users in finally/afterAll.
+- Create learning courses/units/20 words, sessions/attempts/progress, review schedules, shares, immutable publications, reports, clones, badges, and course points entries.
+- Keep a paused Unit 1 initial learning session and a Unit 2 review active in the same course at once, verifying exact intent resuming, normalized test item order, and same-intent concurrent idempotency.
+- Create/clean up global synthetic audio job metadata; it doesn't call real Azure or upload user recordings.
 
-只允许使用**可随时重置的一次性或专用测试 Supabase 项目**。即使设置了确认变量，也不得输入生产 Project Ref。测试会产生唯一 university/major/subject 全局 `tags`；当前 schema 没有客户端删除 policy，Auth 级联不会清理这些标签，因此项目可能残留少量测试 tag。最安全的清理方式是运行后重置/销毁该测试项目。
+Only use **a one-off or dedicated test Supabase project that can be reset at any time**. Even with the confirmation variable set, never enter the production Project Ref. The test creates unique university/major/subject global `tags`; the current schema has no client delete policy, and the Auth cascade doesn't clean these tags, so the project may keep a few test tags. The safest cleanup is to reset/destroy the test project after the run.
 
-### 5.2 前置条件
+### 5.2 Prerequisites
 
-1. 测试项目已按 `supabase/migrations/` 全量迁移；
-2. 获取该测试项目的 URL、anon key、service-role key 和 Project Ref；
-3. 操作人再次从控制台确认项目名称明确标为 disposable/test；
-4. 不与开发者手工数据、staging 验收数据或生产共享项目。
+1. The test project has all of `supabase/migrations/` applied;
+2. Get the test project's URL, anon key, service-role key, and Project Ref;
+3. The operator double-checks in the console that the project name is clearly marked disposable/test;
+4. It isn't shared with developers' manual data, staging acceptance data, or production.
 
-所需变量：
+Required variables:
 
-| 变量 | 作用 |
+| Variable | Purpose |
 |---|---|
-| `SUPABASE_URL` | 测试项目 URL |
-| `SUPABASE_ANON_KEY` | 两名普通用户的客户端 key |
-| `SUPABASE_SERVICE_ROLE_KEY` | 创建/删除测试用户与清理对象；最高机密 |
-| `SUPABASE_RLS_E2E_CONFIRM_REF` | 必须与 URL hostname 中的 Project Ref 完全相等，防止手滑 |
-| `RUN_SUPABASE_RLS_E2E` | `test:rls` 脚本自动设置为 `1` |
+| `SUPABASE_URL` | Test project URL |
+| `SUPABASE_ANON_KEY` | Client key for the two ordinary users |
+| `SUPABASE_SERVICE_ROLE_KEY` | Creating/deleting test users and cleaning up objects; top secret |
+| `SUPABASE_RLS_E2E_CONFIRM_REF` | Must exactly equal the Project Ref in the URL hostname, to prevent slips |
+| `RUN_SUPABASE_RLS_E2E` | Set to `1` automatically by the `test:rls` script |
 
-Project Ref 确认只是防误操作的第二道检查，不是生产保护白名单。
+The Project Ref confirmation is only a second check against mistakes, not a production protection allowlist.
 
-### 5.3 安全注入变量
+### 5.3 Injecting variables safely
 
-可以在仓库根创建本机专用 `.env.rls.local`；该命名匹配 `.gitignore` 的 `.env.*.local`，仍需提交前检查：
+You can create a machine-only `.env.rls.local` at the repository root; the name matches `.env.*.local` in `.gitignore`, but still check before committing:
 
 ```dotenv
 SUPABASE_URL=https://<test-project-ref>.supabase.co
@@ -172,57 +172,57 @@ pnpm test:rls
 unset SUPABASE_URL SUPABASE_ANON_KEY SUPABASE_SERVICE_ROLE_KEY SUPABASE_RLS_E2E_CONFIRM_REF
 ```
 
-不要把值直接粘进共享 shell history、CI log 或工单。运行前：
+Don't paste the values directly into a shared shell history, CI log, or ticket. Before running:
 
 ```bash
 git status --short
 git check-ignore .env.rls.local
 ```
 
-`git check-ignore` 必须显示该文件确实被忽略。
+`git check-ignore` must show that the file really is ignored.
 
-### 5.4 当前真实覆盖
+### 5.4 Current real coverage
 
-- Profile owner 读写与跨用户隐藏；只允许资料列更新，points/credits/level/VIP/streak 写入均被拒；profile university/major → tags 同步；
-- `_add_points`、`_notify`、`_set_point_event` 客户端 RPC 被拒；普通用户和 service-role 都不能直接写 points ledger/state，用户只能读自己的 entries；
-- 通知、课程、资料 owner 隔离；Feedback 只允许 owner SELECT/INSERT，客户端 UPDATE/DELETE/伪造 status 均失败，service-role 支持更新仍可执行；
-- 跨用户课程不能创建 material；
-- private `materials` Storage：owner 上传/下载/签 URL/删除，另一用户不能下载、签 URL 或写入 owner 路径；
-- 社区 authenticated 公共读；帖子 INSERT/UPDATE 只能使用内容白名单，伪造 owner、作者快照、四个计数、points key 与时间失败，合法内容编辑由数据库刷新 `updated_at`，计数 trigger 不改变内容编辑时间；
-- like/favorite/comment/repost 四类计数、关系行可见性、关注和互动通知；
-- like/comment/repost/original post 的稳定业务键、取消/删除冲正、重建恢复净额、并发删除最后评论、原帖级联冲正、ledger projection 与跨用户隐藏；
-- 发帖积分达到等级阈值后的 points/level/name；
-- study task/goal owner 隔离；客户端和 service-role 的跨 owner course/material/goal 引用都由 trigger 拒绝，`user_id` 不可修改，`done_at` 只由 `done` 派生；task key 不可修改，完成/取消/删除/重建净额和 streak 只首次推进；
-- 0039 points 决策：原创/转发/评论/点赞/任务的 3/10/10/20/10 每日数量上限在并发下收敛；超限操作成功但永久零奖励，改时区、删除重建不会补领，每类窗口只持久通知一次；0007→0038→latest 夹具验证旧 business key 保持 grandfather 语义，只有 transition 1 的正向分录可证明历史实际奖励；夹具还会在 0038 取消一个 0008 回填任务，确认 0039 以 append-only `grandfather-zero-reset-v1` 补偿无来源负债，之后删除、恢复和审核始终不产生负分；
-- 原帖根链 suppress/restore 只冲正实际获得金额，不重复冲正、不补发日上限 claim；重复 restore 返回 0 变化但保留审计，普通奖励与审核的共享/独占 gate 维持一致锁序；普通客户端及 service-role PostgREST 都不能改写 claim、审核 action 或 signal，审核/扫描只能走 service-only RPC；
-- 同一 actor 对同一 owner 的 8 次互动产生 pending 协同 signal，scanner 不自动改内容、冻结账号或冲正；
-- 删除 Auth 用户后 `point_entries`/`point_event_states` 无残留。
-- Courses owner/跨账号隔离；客户端不能写内容/progress/badge/points/speech usage/翻译配额，也不能执行取消、考试、轮次确认、配额预留等特权 RPC；Profile timezone 只接受 IANA 名称；
-- 考试以服务端乱序队列覆盖整单元或 0031 起的 owner-validated 自定义集合：轮末确认期间 attempt/读音评分被拒绝，确认后错词集合不变且重排；第一轮未达线但补练完成会自动结束并写 `practiceCompleted`、不写考试事实。0033 起，达线的单项考试只写对应时间戳，跨日三能力复习仍不 learned，只有拼写/发音考试事实都存在时才 learned；0029 断言读音错词分数，0031 断言选词 scope、历史脱敏和新增 RPC 客户端拒绝，0034 断言双考试约束和唯一投影；
-- 翻译完全匹配 claim 不计 provider 配额，真实 provider reservation 只计一次，分钟/滚动 24 小时限制通过数据库锁并发收敛；
-- 0015–0016 的 snapshot/七参数 attempt/单元与单词 prepare/claim/finish/quota RPC 均不能由 anon/authenticated 执行，普通用户不能读写 `learning_audio_assets`；
-- 同 attempt UUID 的并发请求只追加一个事实/一次 wrong_count 并重放首次响应；相同 revision 的不同 answer 只有一项提交，另一项返回 revision conflict；旧五参数 RPC 仍会推进 revision，支持应用回滚；
-- 两个用户相同规范化词集合得到相同 20 个 cache key 且不重复建任务；错误 owner 不能 prepare 他人 word；并发 claim 只有一个全局租约，配额暂停不会消耗生成重试次数；
-- Materials AI 候选 0046–0051：普通客户端不能执行 v2 create/usage/checkpoint/complete/delete/clear/layout RPC，不能读取内部 checkpoint/provider usage；双用户 job、Note、布局隔离；queued/processing/delete 竞争只结算一次额度；删除 job 后 usage ledger 保留；layout revision 冲突与 artifact 版本变化只复用仍存在 node 位置；
-- 测试答题候补池、低于/达到朗读 `PronScore` 阈值时 recognition 候补项的加入/移除、认词候补轮完成后才能推进，以及同日本地日期去重、两次不同本地日期三能力熟练、错误/复习次数、schedule 完成且不创建普通 task；
-- 九级徽章的达标持久发放、20 词课程 +20、规范化词集合指纹防删除/克隆重复奖励；
-- 分享 token hash、撤销后事务克隆失败、匿名 PostgREST 拒绝、市场快照不可变、独立零进度克隆/禁止再传播、举报事务。
+- Profile owner reads/writes and cross-user hiding; only profile columns may be updated, and writes to points/credits/level/VIP/streak are all rejected; profile university/major → tags sync;
+- Client RPCs `_add_points`, `_notify`, `_set_point_event` are rejected; neither ordinary users nor the service role can write the points ledger/state directly, and users can only read their own entries;
+- Owner isolation for notifications, courses, and materials; Feedback only allows owner SELECT/INSERT, client UPDATE/DELETE/forged status all fail, and service-role-supported updates still work;
+- Materials can't be created in another user's course;
+- Private `materials` Storage: the owner uploads/downloads/signs URLs/deletes, and another user can't download, sign URLs, or write into the owner's path;
+- Authenticated public reads for the community; post INSERT/UPDATE can only use the content allowlist, forging the owner, author snapshot, the four counts, points key, and times fails, valid content edits have `updated_at` refreshed by the database, and count triggers don't change the content edit time;
+- The four counts like/favorite/comment/repost, relationship row visibility, follows, and interaction notifications;
+- Stable business keys for like/comment/repost/original post, reversal on cancel/delete, restoring the net amount on recreate, concurrent deletion of the last comment, cascading reversal from the original post, the ledger projection, and cross-user hiding;
+- points/level/name after post points reach a level threshold;
+- Owner isolation for study tasks/goals; cross-owner course/material/goal references by both client and service role are rejected by triggers, `user_id` can't be modified, and `done_at` is only derived from `done`; the task key can't be modified, the net amount across complete/cancel/delete/recreate is correct, and streak only advances the first time;
+- 0039 points decisions: the 3/10/10/20/10 daily count caps for original posts/reposts/comments/likes/tasks converge under concurrency; operations over the cap succeed but earn zero forever, changing the time zone or deleting and recreating doesn't reclaim them, and each category window notifies durably only once; the 0007→0038→latest fixture verifies that old business keys keep their grandfather semantics and that only positive transition-1 entries prove the historical actual reward; the fixture also cancels a 0008-backfilled task at 0038 and confirms that 0039 compensates the unsourced debt append-only with `grandfather-zero-reset-v1`, after which deletion, restore, and moderation never produce negative points;
+- Root-chain suppress/restore of an original post only reverses the amounts actually awarded, without double reversal or re-awarding daily-cap claims; a repeated restore returns 0 change but keeps the audit, and the shared/exclusive gates of ordinary rewards and moderation keep a consistent lock order; neither ordinary clients nor service-role PostgREST can rewrite claims, moderation actions, or signals, and moderation/scanning can only go through service-only RPCs;
+- 8 interactions by the same actor with the same owner produce a pending coordination signal, and the scanner never automatically changes content, freezes accounts, or reverses rewards;
+- After deleting the Auth user, `point_entries`/`point_event_states` have no leftovers.
+- Courses owner/cross-account isolation; clients can't write content/progress/badges/points/speech usage/translation quota, and can't execute privileged RPCs such as cancellation, exams, round confirmation, or quota reservation; Profile timezone only accepts IANA names;
+- Exams cover the whole unit, or since 0031 an owner-validated custom set, with a server-shuffled queue: attempts/pronunciation scoring are rejected during end-of-round confirmation, and after confirmation the wrong-word set is unchanged and reordered; a first round below the threshold with completed practice ends automatically and writes `practiceCompleted` without writing exam facts. Since 0033, a passed single exam only writes its timestamp, cross-day three-skill reviews still don't make a word learned, and it's learned only when both the spelling and pronunciation exam facts exist; 0029 asserts pronunciation wrong-word scores, 0031 asserts the selection scope, redacted history, and client rejection of the new RPCs, and 0034 asserts the dual-exam constraint and single projection;
+- Exact translation match claims don't count against provider quota, real provider reservations count exactly once, and the minute/rolling 24-hour limits converge under concurrency through database locks;
+- The 0015–0016 snapshot/seven-parameter attempt/unit and word prepare/claim/finish/quota RPCs can't be executed by anon/authenticated, and ordinary users can't read or write `learning_audio_assets`;
+- Concurrent requests with the same attempt UUID append only one fact/one wrong_count and replay the first response; different answers at the same revision have only one committed, and the other returns a revision conflict; the old five-parameter RPC still advances the revision, supporting application rollback;
+- Two users' identical normalized word sets get the same 20 cache keys without duplicate jobs; the wrong owner can't prepare someone else's word; concurrent claims have only one global lease, and quota pauses don't consume generation retries;
+- Materials AI candidate 0046–0051: ordinary clients can't execute the v2 create/usage/checkpoint/complete/delete/clear/layout RPCs or read internal checkpoints/provider usage; two-user job, Note, and layout isolation; queued/processing/delete races settle quota exactly once; the usage ledger is kept after deleting a job; layout revision conflicts and artifact version changes only reuse positions of nodes that still exist;
+- The test answer retry pool, adding/removing recognition retry items below/at the read-aloud `PronScore` threshold, only advancing after the recognition retry round completes, plus same-day local date dedupe, three-skill mastery on two different local dates, error/review counts, and schedule completion without creating ordinary tasks;
+- Durable awarding of the nine-tier badges on reaching thresholds, the 20-word course +20, and the normalized word set fingerprint preventing repeated rewards via deletion/cloning;
+- Share token hashes, transactional clone failure after revocation, anonymous PostgREST rejection, immutable market snapshots, independent zero-progress clones/no re-distribution, and the report transaction.
 
-当前未覆盖或尚未实现的重要风险：
+Important risks not covered or not implemented yet:
 
-- 0008 会把旧 `profiles.points` 原样保存为 `legacy_opening`；0009 根据 2026-07-21 产品/安全决定追加等额 reversal 归零。自动测试证明迁移与冲正语义，但生产发布仍须保存聚合审计和处置记录；
-- `community-media` public bucket 的写/删/对象清理；
-- 账号删除后的全部 Storage 孤儿与隐私删除流程；
-- 0039–0040 已完成生产第一阶段发布且 2026-08-22 go/no-go 通过；0052–0053 已在 CI 和生产验证客户端不能写 `posts.updated_at`/`study_tasks.done_at`、合法内容/`done` 写入仍成功，以及 service-role/trigger 保持；
-- 协同检测只覆盖已锁定的四类阈值并且只标记，不包含内容语义垃圾识别、自动处罚、完整审核后台或跨站设备图谱；跨午夜行为由数据库冻结窗口设计和迁移断言约束，仍需托管 staging 的可控时钟演练；
-- Redis 集成在本机未安装 Redis 时会明确 skip；只有 CI 中的真实 Redis service 能提供该层证据。普通 answer 的并发/超时重放已覆盖，但 recognition、旧模块写入、进程崩溃窗口和长时间 session 仍需持续扩展；
-- 真实 Azure 账号、音频供应商网络、浏览器麦克风权限与实际发音质量；自动测试只使用 adapter fake/固定 WAV。
+- 0008 stores the old `profiles.points` as-is as `legacy_opening`; 0009 appends an equal reversal to reset it to zero per the 2026-07-21 product/security decision. Automated tests prove the migration and reversal semantics, but the production release must still save aggregate audit and handling records;
+- Writes/deletes/object cleanup for the `community-media` public bucket;
+- All Storage orphans and the privacy deletion process after account deletion;
+- 0039–0040 completed the production stage-one release and passed the 2026-08-22 go/no-go; 0052–0053 have verified in CI and production that clients can't write `posts.updated_at`/`study_tasks.done_at`, valid content/`done` writes still succeed, and the service role/triggers are kept;
+- Coordination detection only covers the four locked thresholds and only flags; it has no content-semantic spam detection, automatic penalties, full moderation back office, or cross-site device graph; cross-midnight behavior is constrained by the database's frozen window design and migration assertions, and still needs controllable-clock drills on hosted staging;
+- Redis integration is explicitly skipped when Redis isn't installed locally; only the real Redis service in CI provides evidence for this layer. Concurrency/timeout replays of ordinary answers are covered, but recognition, legacy module writes, process crash windows, and long-running sessions still need continued expansion;
+- Real Azure accounts, the audio provider network, browser microphone permissions, and actual pronunciation quality; automated tests only use adapter fakes/fixed WAVs.
 
-这些是后续安全迁移、产品治理与负向 E2E 的优先项，不属于当前套件已证明安全的范围。
+These are priorities for later security migrations, product governance, and negative E2E, and are not within what the current suite has proven safe.
 
-### 5.5 0007 → 最新迁移升级夹具
+### 5.5 0007 → latest migration upgrade fixture
 
-`apps/web/tests/points-upgrade.e2e.mjs` 是破坏性本地脚本，内部同时要求 `ALLOW_POINTS_UPGRADE_E2E=YES` 且 URL hostname 为 `127.0.0.1`/`localhost`。`supabase start` 会提前应用全部迁移，所以 CI 按排序自动发现文件名 `>=20260710000008` 的**所有迁移**并临时移出，先建立真实 0001–0007 schema；这样未来 0014+ 不会在旧 fixture 阶段泄漏。`trap` 保证失败也恢复。不要在有未提交修改的个人工作区照抄移动步骤。核心逻辑是：
+`apps/web/tests/points-upgrade.e2e.mjs` is a destructive local script that internally requires both `ALLOW_POINTS_UPGRADE_E2E=YES` and a URL hostname of `127.0.0.1`/`localhost`. `supabase start` applies all migrations up front, so CI automatically discovers, in sorted order, **all migrations** with filenames `>=20260710000008` and temporarily moves them out, first building the real 0001–0007 schema; this way future 0014+ never leak into the old fixture stage. A `trap` guarantees they are restored even on failure. Don't copy the move steps verbatim in a personal workspace with uncommitted changes. The core logic is:
 
 ```bash
 mapfile -t upgrade_migrations < <(
@@ -249,7 +249,7 @@ supabase status -o env > /tmp/supabase-status.env
 set -a; . /tmp/supabase-status.env; set +a
 
 fixture=/tmp/nalanda-points-upgrade.json
-# 目录中仅有 0001–0007，因此这是一个真实的旧 schema。
+# Only 0001–0007 are in the directory, so this is a real old schema.
 supabase db reset --local --no-seed
 ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   SUPABASE_URL="$API_URL" SUPABASE_ANON_KEY="$ANON_KEY" \
@@ -264,20 +264,20 @@ ALLOW_POINTS_UPGRADE_E2E=YES POINTS_UPGRADE_FIXTURE="$fixture" \
   node apps/web/tests/points-upgrade.e2e.mjs assert
 ```
 
-夹具验证：credits/VIP/streak 等受漏洞影响的 Profile 值被保留但未来不可由客户端写；points 先生成 `legacy_opening`，再生成引用 opening 的 `legacy_opening_reset` 等额 reversal 并归零投影；历史 duplicate post/like/comment/repost/task 获得稳定 key 和 active/transition 0 状态而不重复加分；删尽/恢复只产生一次负向/恢复分录，Profile 保持非负；历史 task 重做不推进 streak；最终 projection 等于 ledger 并可随 Auth 删除清理。随后 CI 会 `stop --no-backup` 销毁升级 fixture 的容器/卷，再用完整迁移从全新空卷 `start`，避免连续 `db reset` 留下 Auth 502；最长 60 秒的 Auth/PostgREST 有界 readiness 探针确认服务完成后才运行常规 RLS E2E。探针超时会失败，不会无限重试掩盖故障。
+The fixture verifies: Profile values affected by the vulnerability, such as credits/VIP/streak, are kept but can no longer be written by clients; points first generate `legacy_opening`, then an equal `legacy_opening_reset` reversal referencing the opening, resetting the projection to zero; historical duplicate post/like/comment/repost/task rows get stable keys and active/transition 0 states without awarding points again; deleting everything/restoring only produces one negative/restore entry, and Profile stays non-negative; redoing historical tasks doesn't advance streak; the final projection equals the ledger and can be cleaned up with Auth deletion. CI then runs `stop --no-backup` to destroy the upgrade fixture's containers/volumes, and `start`s again from a brand-new empty volume with all migrations, avoiding the Auth 502 left by consecutive `db reset`s; a bounded Auth/PostgREST readiness probe of at most 60 seconds confirms the services are up before running the regular RLS E2E. A probe timeout fails rather than retrying forever to hide the problem.
 
-### 5.6 失败与清理
+### 5.6 Failures and cleanup
 
-1. 保留脱敏 Vitest 错误和 Supabase request ID，不复制 key/JWT/用户正文。
-2. 先判断是迁移缺失、RLS 预期变化、平台故障还是测试 cleanup 失败。
-3. 在 Supabase Auth 检查 `nalanda-e2e-*` 用户；在 Storage 检查测试用户 UUID 路径。
-4. 测试项目无保留价值时直接重置/销毁，避免人工漏清触发器产生的多表数据。
-5. 如果必须清理，使用 service-role 的受控管理员工具，按 Storage 对象 → Auth 用户 → 残留 tags 顺序核对；保留操作记录。
-6. 任何时候发现命令指向生产，立即终止测试、轮换已暴露的 service-role（如有）、审计已产生数据并按事故流程处理。
+1. Keep the redacted Vitest error and Supabase request ID; don't copy keys/JWTs/user content.
+2. First decide whether it's a missing migration, an RLS expectation change, a platform outage, or a test cleanup failure.
+3. Check Supabase Auth for `nalanda-e2e-*` users; check Storage for the test users' UUID paths.
+4. If the test project has no value worth keeping, reset/destroy it directly to avoid missing trigger-generated data across tables during manual cleanup.
+5. If you must clean up, use a controlled service-role admin tool and check in the order Storage objects → Auth users → leftover tags; keep a record of the operations.
+6. Whenever a command is found to point at production, stop the test immediately, rotate any exposed service role, audit the data produced, and follow the incident process.
 
-## 6. Playwright Courses 浏览器流程
+## 6. Playwright Courses browser flow
 
-测试文件：`apps/web/e2e/courses.spec.ts`；配置会自行构建/启动 API 和 Vite，端口为 3000/5173。它会注册两个真实本地用户并写数据库，只允许对一次性本地 Supabase 运行。
+Test file: `apps/web/e2e/courses.spec.ts`; the config builds/starts the API and Vite itself on ports 3000/5173. It registers two real local users and writes to the database, so it may only run against a one-off local Supabase.
 
 ```bash
 pnpm --filter @nalanda/web exec playwright install chromium
@@ -313,23 +313,23 @@ PUBLIC_ORIGIN=http://127.0.0.1:5173 \
 pnpm --filter @nalanda/web test:playwright
 ```
 
-确保 3000/5173/6379 没有遗留进程，结束后执行 `supabase stop --no-backup` 与 `docker rm -f nalanda-test-redis`。流程覆盖：注册→空 Courses→多单元导入/纠错/滚动/排序→保存→四阶段→刷新续学→复习/考试→发布/克隆；并验证 Cache Storage、弱网 outbox、限时/翻译前测、翻译麦克风回填不自动提交，以及翻译/认词/读音考试录音时的波形。Redis 是真实容器；音频、语义和 STT 供应商均为 API fake，因此该层只证明浏览器/API/本地 Supabase/Redis 协作，不证明 Azure 或 OpenRouter。它是真 Chromium 布局与交互 E2E，不是供应商或截图视觉回归。
+Make sure no processes are left on 3000/5173/6379, and run `supabase stop --no-backup` and `docker rm -f nalanda-test-redis` afterwards. The flow covers: sign-up→empty Courses→multi-unit import/corrections/scrolling/sorting→save→four stages→refresh and resume→review/exam→publish/clone; and verifies Cache Storage, the weak-network outbox, timing/translation pre-test, that translation microphone fill doesn't auto-submit, and the waveform while recording in the translation/recognition/pronunciation exam. The Courses spec switches the app to the Chinese locale, so it also exercises the Chinese UI. Redis is a real container; the audio, semantic, and STT providers are all API fakes, so this layer only proves browser/API/local Supabase/Redis collaboration, not Azure or OpenRouter. It's real Chromium layout and interaction E2E, not provider or screenshot visual regression.
 
-同一修复的 jsdom 层分别断言：整份导入生成预期单元、多个翻译渲染为独立输入、编辑器批量追加成功，以及与已有词重复时出现 `DUPLICATE_EXISTING_TERM` 且不追加。jsdom 不计算真实尺寸，所以“底部操作是否可达”必须保留在 Playwright 层。
+The jsdom layer for the same fix asserts separately that whole import produces the expected units, multiple translations render as separate inputs, bulk append in the editor succeeds, and that duplicating an existing word shows `DUPLICATE_EXISTING_TERM` without appending. jsdom doesn't compute real sizes, so "are the bottom actions reachable" must stay at the Playwright layer.
 
-浏览器套件的麦克风由固定 AudioContext fixture 提供，不是物理麦克风质量测试。jsdom 另覆盖 waveform frame、录音中 UI、STT 完成只填入且允许编辑、无自动判分，以及认词/读音录音共用波形；API unit 覆盖真实 wire contract 的 fake fetch，RLS E2E 覆盖普通客户端不能执行 STT reservation、owner/revision/current-word 和持久 quota。只有受保护真实 gate 才能证明当时 Fish Audio endpoint/key 可用，仍不代表真实口音准确率。
+The browser suite's microphone is provided by a fixed AudioContext fixture, not a physical-microphone quality test. jsdom additionally covers waveform frames, the recording UI, STT completion only filling and allowing edits, no automatic grading, and the waveform shared by recognition/pronunciation recording; API units cover the real wire contract with fake fetch, and the RLS E2E covers that ordinary clients can't execute the STT reservation, owner/revision/current-word, and durable quota. Only the protected real gate can prove the Fish Audio endpoint/key worked at the time, and it still doesn't represent real accent accuracy.
 
-失败时保留 Playwright trace/screenshot/video artifact，先区分 UI selector、API envelope、migration/RLS 和 webServer 启动问题。CI 会自动安装带系统依赖的 Chromium；本地只需当前平台浏览器包。
+On failure, keep the Playwright trace/screenshot/video artifacts and first distinguish UI selector, API envelope, migration/RLS, and webServer startup problems. CI automatically installs Chromium with system dependencies; locally you only need the browser package for your platform.
 
-## 7. API 与 AI 当前可执行测试/smoke
+## 7. Currently executable API and AI tests/smokes
 
-API readiness 单元测试已包含在根 `pnpm test`，也可单独运行：
+API readiness unit tests are included in the root `pnpm test`, and can also run alone:
 
 ```bash
 pnpm --filter @nalanda/api test
 ```
 
-Redis 集成默认显式 skip；要取得真实 Lua 原子性/过期/lock 证据，先启动一次性 Redis，再运行：
+Redis integration is explicitly skipped by default; to get real Lua atomicity/expiry/lock evidence, start a one-off Redis first, then run:
 
 ```bash
 docker run --rm -d --name nalanda-test-redis -p 127.0.0.1:6379:6379 redis:7.4-alpine
@@ -340,18 +340,18 @@ pnpm --filter @nalanda/api test
 docker rm -f nalanda-test-redis
 ```
 
-`redis.service.integration.test.ts` 只使用随机、短 TTL 的测试 key；不得把它指向生产 Redis。API unit 另覆盖路由分类、HMAC actor、标准 429/503、fail-open/closed 与审计里程碑，但 fake Redis unit 不能替代上述真实服务测试。
+`redis.service.integration.test.ts` only uses random, short-TTL test keys; never point it at production Redis. API units additionally cover route classification, the HMAC actor, standard 429/503, fail-open/closed, and audit milestones, but fake-Redis units can't replace the real service test above.
 
-启动 API 后：
+After starting the API:
 
 ```bash
 curl -fsS http://localhost:3000/api/health
 curl -i http://localhost:3000/api/me
 ```
 
-第二条应返回 `401`，验证 endpoint 没有匿名放行。带真实开发用户 token 的 `/api/me` 验证见 [API 文档](./API.md)，token 不得写入日志/脚本。
+The second should return `401`, verifying the endpoint doesn't let anonymous requests through. Verifying `/api/me` with a real development user token is covered in the [API documentation](./API.md); tokens must never be written to logs/scripts.
 
-Materials AI Python 门禁：
+Materials AI Python gate:
 
 ```bash
 cd apps/ai
@@ -359,34 +359,34 @@ cd apps/ai
 .venv/bin/pytest -q
 ```
 
-当前 Python 测试覆盖 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG 的 DocumentIR 路径，包括纯视觉文件在解析器隔离范围内先恢复再严格复审、未知范围/正文/focus 注入失败关闭，以及 Luna PDF/图片的原始字节 inline payload、禁止 parser/OCR/cache、`file-parser.native`、Azure-only/no-fallback/ZDR、OpenAI 上游视为路由违规、路由违规、注入拒绝、严格 schema/repair、250 节点图、节点问答与 Luna 评分。试卷回归另覆盖请求元数据、重复 section/question ID、错误 marks 合计的确定性归一化，确认不改题目内容；source refs 回归覆盖移除 allowlist 外引用、采用服务端 block locator、同一稳定 question ID 的 repair 前引用恢复、单 block 全无效引用选择唯一来源并实际运行语义复核，以及多 block/换题 ID 继续失败关闭。DocumentIR repair 回归还必须模拟“总题数正确但题型数量错误”：断言结构 repair 收到完整 `sourceBlocks` 与 `repairGate=structural`；若随后首次语义审查失败，只允许一次 `semantic_after_structural` repair，并在第二次审查通过后返回。持续语义失败必须在恰好两次 repair 后终止，不能循环或绕过门禁。reviewer 的非空 issues 不会被矛盾的 `valid=true` 掩盖；最终失败诊断只能包含稳定结构 code、语义 category 与题数/总分计数，不能包含课件、题目、答案、prompt、reviewer 原文或 provider body。还覆盖 202 快速接收、20 分钟预算、可取消 task registry/Office 进程组、下载/模型/回调/checkpoint 各阶段 purge、finally/TTL 清理，以及 callback 断线后 validated checkpoint/usage spool 重放且不重复调用 provider。它使用 fake OpenRouter，不证明真实模型、端点或格式能力；真实门禁必须同时跑正常 chart 与图片内恶意指令样本。
+The current Python tests cover the DocumentIR path for PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/PNG, including purely visual files first being recovered within the parser's isolated range and then strictly re-reviewed, unknown ranges/content/focus injection failing closed, and Luna PDF/image raw-byte inline payloads, no parser/OCR/cache, `file-parser.native`, Azure-only/no-fallback/ZDR, an OpenAI upstream treated as a routing violation, routing violations, injection rejection, strict schema/repair, the 250-node graph, node Q&A, and Luna grading. Exam paper regressions additionally cover deterministic normalization of request metadata, duplicate section/question IDs, and wrong marks totals, confirming question content isn't changed; source-ref regressions cover removing citations outside the allowlist, using server block locators, restoring pre-repair citations for the same stable question ID, choosing the single source when a single block has all-invalid citations and actually running the semantic review, and multiple blocks/changed question IDs still failing closed. DocumentIR repair regressions must also simulate "correct total question count but wrong per-type counts": assert that the structural repair receives the full `sourceBlocks` and `repairGate=structural`; if the first semantic review then fails, only one `semantic_after_structural` repair is allowed, returning after the second review passes. Persistent semantic failure must stop after exactly two repairs, with no loops or gate bypass. A reviewer's non-empty issues are never masked by a contradictory `valid=true`; final failure diagnostics may only contain stable structural codes, semantic categories, and question/total-point counts, never course material, questions, answers, prompts, reviewer text, or provider bodies. They also cover fast 202 acceptance, the 20-minute budget, the cancellable task registry/Office process group, purge at the download/model/callback/checkpoint stages, finally/TTL cleanup, and replaying validated checkpoints/usage spool after a callback disconnect without calling the provider again. They use a fake OpenRouter and don't prove real model, endpoint, or format capabilities; real gates must run both a normal chart and a sample with malicious instructions inside an image.
 
-启动带开发配置的 `uvicorn` 后：
+After starting `uvicorn` with a development configuration:
 
 ```bash
 curl -fsS http://localhost:8000/health
 ```
 
-内部生成/评分路由需要 token、短期 Storage URL 和回调，不提供无认证 curl 示例，避免泄漏。真实固定 fixture gate 使用 `python3 scripts/smoke-material-ai-provider.py`，必须由受保护环境提供 OpenRouter 与临时 Supabase fixture；它不等于浏览器/RLS E2E。
+The internal generation/grading routes need a token, short-lived Storage URLs, and callbacks, so no unauthenticated curl example is provided, to avoid leaks. The real fixed-fixture gate uses `python3 scripts/smoke-material-ai-provider.py`, which must be given OpenRouter and a temporary Supabase fixture by a protected environment; it doesn't equal browser/RLS E2E.
 
-API 测试另覆盖 AI 鉴权/owner/格式、pipeline capabilities、idempotency、quota reserve/consume/release、Redis 重投、预算/ZDR/坏响应、纯草稿与统一交卷、deadline/revision/operation replay。0046–0051 候选覆盖显式 Undici timeout 分类与短 202、增量 usage、checkpoint stage、同 job 恢复、queued/processing/delete/callback 竞态、cleanup reconciler、Clear 只删终态、provider 审计保留，以及布局 owner/version/revision/坐标验证。`RUN_REDIS_E2E=true` 时 BullMQ 测试使用真实 Redis；默认 skip 不算真实 Redis 证据，fake DB/fetch 仍不证明真实 PostgREST 锁、RLS、迁移事务或 provider。
+API tests additionally cover AI auth/owner/format, pipeline capabilities, idempotency, quota reserve/consume/release, Redis requeueing, budget/ZDR/bad responses, draft-only saving and unified submission, and deadline/revision/operation replay. The 0046–0051 candidate covers explicit Undici timeout classification and short 202s, incremental usage, checkpoint stages, same-job recovery, queued/processing/delete/callback races, the cleanup reconciler, Clear only deleting terminal jobs, provider audit retention, and layout owner/version/revision/coordinate validation. With `RUN_REDIS_E2E=true` the BullMQ tests use real Redis; the default skip doesn't count as real Redis evidence, and fake DB/fetch still doesn't prove real PostgREST locks, RLS, migration transactions, or providers.
 
-## 8. 文档测试
+## 8. Docs tests
 
 ```bash
 node scripts/check-docs.mjs
 ```
 
-脚本递归检查仓库内所有 Markdown：
+The script recursively checks every Markdown file in the repository:
 
-- 前 24 行包含“内容”“作用”“何时更新”；
-- 本地相对链接不能逃出仓库且目标必须存在。
+- The first 24 lines contain "Contents", "Purpose", and "When to update";
+- Local relative links can't escape the repository, and their targets must exist.
 
-它不验证事实是否与代码一致、不验证 anchor、不执行代码块，也不检查外部 URL。修改 API/schema/脚本后仍需人工核对对应文档。
+It doesn't verify that the facts match the code, doesn't verify anchors, doesn't execute code blocks, and doesn't check external URLs. After changing APIs/schemas/scripts, the corresponding docs still need a manual check.
 
-## 9. CI 当前门禁
+## 9. Current CI gates
 
-`.github/workflows/deploy.yml` 当前在构建/部署前执行：
+`.github/workflows/deploy.yml` currently runs before build/deploy:
 
 ```bash
 pnpm docs:check
@@ -399,18 +399,18 @@ pnpm build
 cd apps/ai && .venv/bin/ruff check app tests && .venv/bin/pytest -q
 docker build -f apps/ai/Dockerfile apps/ai
 supabase start
-# 先运行上文 0007→latest seed / migration up / assert
-supabase db reset --local --no-seed  # 再验证完整空库重建
+# First run the 0007→latest seed / migration up / assert above
+supabase db reset --local --no-seed  # then verify the full empty-database rebuild
 supabase db lint --local --schema public --level error --fail-on error
-# 从 supabase status -o env 注入本地 URL/keys 后：
+# After injecting the local URL/keys from supabase status -o env:
 pnpm test:rls
 pnpm --filter @nalanda/web exec playwright install --with-deps chromium
-pnpm --filter @nalanda/web test:playwright  # 本地 Supabase + 真实 CI Redis + provider fake env
+pnpm --filter @nalanda/web test:playwright  # local Supabase + real CI Redis + provider fake env
 ```
 
-质量与数据库 job 都使用独立 Redis 7.4 service。质量 job 执行真实 Lua 集成；浏览器 job 把真实 Redis URL 注入测试 Nest API。compose/nginx 校验还会确认 Redis 无宿主机端口、密码/AOF/noeviction 配置可解析，并执行 `nginx -t`；实际 PING/AOF/私有网络检查属于受保护生产激活门禁。
+Both the quality and database jobs use a separate Redis 7.4 service. The quality job runs the real Lua integration; the browser job injects the real Redis URL into the test Nest API. The compose/nginx checks also confirm Redis has no host port and the password/AOF/noeviction configuration parses, and run `nginx -t`; the actual PING/AOF/private network checks belong to the protected production activation gate.
 
-真实供应商 smoke 必须显式加载只含后端配置、已被 Git 忽略且权限为 600 的文件；脚本拒绝 fake，不会打印 key、文件正文、prompt、答案或完整响应：
+Real provider smokes must explicitly load a Git-ignored, mode-600 file containing only backend configuration; the scripts reject fakes and never print keys, file content, prompts, answers, or full responses:
 
 ```bash
 node --env-file=apps/api/.env scripts/smoke-azure-speech.mjs
@@ -418,97 +418,97 @@ node --env-file=apps/api/.env scripts/smoke-openrouter-translation.mjs
 python3 scripts/smoke-material-ai-provider.py
 ```
 
-`pull_request` 只运行质量和一次性本地 Supabase/浏览器 job，不读取生产 secrets；Azure/OpenRouter 都是 fake。push `main` 新增 migration 时在验证后停止。owner 必须先手动 plan，再单独 apply 生成加密恢复点、CLI push 和验证，之后才部署应用。Luna 发布还必须在子开关关闭时先读取 OpenRouter 官方 ZDR endpoint catalog；catalog 没有 `openai/gpt-6-luna` + Azure 时，门禁只能产生 `OPENROUTER_ZDR_UNAVAILABLE` 并保持子开关 false。只有 catalog 合规后，才继续用固定无个人数据 PDF/图片逐格式证明实际 provider=Azure、PDF native parser、原始 SHA-256、不转换、严格 schema、注入拒绝和取消无残留；不支持格式继续留在 allowlist 外。fake CI、旧 DeepSeek/MiMo gate、真实 Luna gate、登录用户 smoke 与公网 health 是互不替代的证据。
+`pull_request` only runs the quality and one-off local Supabase/browser jobs and doesn't read production secrets; Azure/OpenRouter are both fakes. A push to `main` that adds migrations stops after verification. The owner must first plan manually, then separately apply to create the encrypted recovery point, CLI push, and verify, and only then deploy the application. A Luna release must also first read OpenRouter's official ZDR endpoint catalog with the sub-switch off; when the catalog has no `openai/gpt-6-luna` + Azure, the gate can only produce `OPENROUTER_ZDR_UNAVAILABLE` and keep the sub-switch false. Only after the catalog is compliant does it continue, using fixed PDFs/images with no personal data, to prove format by format that the actual provider is Azure, the PDF native parser, the raw SHA-256, no conversion, strict schema, injection rejection, and no leftovers after cancellation; unsupported formats stay outside the allowlist. Fake CI, the old DeepSeek/MiMo gate, the real Luna gate, the signed-in user smoke, and public health are evidence that doesn't substitute for one another.
 
-独立的 `.github/workflows/docs.yml` 会在 Markdown、文档检查脚本或该 workflow 变化的 PR/main push 上执行 `node scripts/check-docs.mjs`。
+The separate `.github/workflows/docs.yml` runs `node scripts/check-docs.mjs` on PRs/main pushes that change Markdown, the docs check script, or that workflow.
 
-### 9.1 2026-07-22 Courses 导入/滚动修复证据
+### 9.1 2026-07-22 Courses import/scrolling fix evidence
 
-- PR run `29932310309` 通过 quality、0007→latest upgrade、latest clean rebuild/database lint、一次性本地 Supabase 双用户 RLS/Storage/Courses E2E，以及 Chromium Playwright Courses workflow。
-- main run `29932840103` 重复同一套门禁后完成不可变应用发布 `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`。
-- 当次本地全量 `pnpm check` 通过；Web Vitest 为 32 passed、4 个外部 RLS suite 在默认模式正确 skip，API Vitest 为 28 passed。计数是该提交的执行快照，不是永久测试清单。
-- PR/Playwright 的 Azure 是 fake，真实数据库边界只来自一次性本地 Supabase job。main 发布在激活前另执行既有真实 Azure gate，但本次 UI 修复没有改变语音代码；不得把任一 fake/jsdom 结果描述为真实供应商或真实数据库 E2E。
-- 发布后独立 smoke 得到 Web 200、`/api/health` 的 `deps.supabase=ok` 和未认证 `/api/me` 401；真浏览器另验证用户示例拆为两个 Starter Unit、多个翻译独立显示、编辑器批量追加及底部操作可达。
+- PR run `29932310309` passed quality, the 0007→latest upgrade, latest clean rebuild/database lint, one-off local Supabase two-user RLS/Storage/Courses E2E, and the Chromium Playwright Courses workflow.
+- Main run `29932840103` repeated the same gates, then completed immutable application release `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`.
+- The full local `pnpm check` passed at the time; Web Vitest had 32 passed with the 4 external RLS suites correctly skipped in default mode, and API Vitest had 28 passed. The counts are an execution snapshot of that commit, not a permanent test inventory.
+- PR/Playwright's Azure is a fake, and the real database boundary only comes from the one-off local Supabase job. The main release additionally ran the existing real Azure gate before activation, but this UI fix didn't change speech code; no fake/jsdom result may be described as real provider or real database E2E.
+- The independent post-release smoke got Web 200, `deps.supabase=ok` from `/api/health`, and unauthenticated `/api/me` 401; a real browser additionally verified that the user's sample was split into two Starter Units, multiple translations show separately, bulk append works in the editor, and the bottom actions are reachable.
 
-目标 CI 分层：
+Target CI layering:
 
-- PR 已跑：docs check、TypeScript code lint/typecheck、Web jsdom、API/Courses unit、build、升级/空库 migrations/database lint、双用户 RLS/Storage/Courses E2E、Playwright Courses；FastAPI contract 待补；
-- 受保护 staging 目标：近生产数据规模与配置漂移 E2E；
-- 发布前：恢复点、迁移/回滚演练；应用激活前由生产主机强制运行真实 Azure 基础 smoke 与队列/Storage/重复词/评分 smoke；
-- 定时：RLS 安全回归、依赖/secret scan、备份恢复、AI 评测/成本（接入后）。
+- PRs already run: docs check, TypeScript code lint/typecheck, Web jsdom, API/Courses units, build, upgrade/empty-database migrations/database lint, two-user RLS/Storage/Courses E2E, and Playwright Courses; FastAPI contract tests are still to be added;
+- Protected staging target: near-production data scale and configuration drift E2E;
+- Before release: recovery points and migration/rollback drills; before application activation, the production host enforces the real Azure basic smoke and the queue/Storage/duplicate word/scoring smoke;
+- Scheduled: RLS security regression, dependency/secret scanning, backup restore, AI evaluation/cost (once wired up).
 
-高权限 E2E runner 必须使用独立 test project、受保护 environment approval 和短期/可轮换 secret，不能把 service-role 暴露给不受信任 fork PR。
+High-privilege E2E runners must use a separate test project, protected environment approval, and short-lived/rotatable secrets, and must never expose the service role to untrusted fork PRs.
 
-## 10. 发布验证矩阵
+## 10. Release verification matrix
 
-| 变更 | 最低必跑 |
+| Change | Minimum required |
 |---|---|
 | Markdown | docs check |
-| Web/legacy UI | typecheck + 相关 jsdom + 全部 `pnpm test` + build |
+| Web/legacy UI | typecheck + relevant jsdom + full `pnpm test` + build |
 | Supabase query shape | jsdom + disposable project RLS E2E |
-| Migration/RLS/trigger/function | 空项目全迁移 + 相关旧版本→新版本升级夹具 + lint + RLS E2E + 发布前备份 |
-| 帖子/Feedback/Schedule/points 安全 | 0007→0053 + 空库 + exact grants + 双用户 RLS/service-role 负向测试 + cap 并发/时区/重建 + root suppress/restore + pending scanner signal + ledger/Profile projection；0052/0053 另验证两个时间列拒绝与合法写入 |
-| NestJS auth/Courses API | typecheck/build + API unit + RLS E2E + Playwright；attempt 变更另测 UUID 重放/revision conflict/outbox；multipart/真实 Azure 与真实 OpenRouter 另做受控 smoke |
-| Courses parser/UI | parser/jsdom + API unit + RLS E2E + Playwright；不能只测 mock |
-| Courses 音频/离线 | cache key/不裁剪录音 unit + API 原字节转发/queue/Storage fake + RLS grants/lease + Playwright Cache Storage/outbox + 发布前真实 Azure 队列复用 gate |
-| Courses 限时拼写/翻译前测 | fake-clock jsdom + API structured response/timeout unit + 双用户 RLS/幂等/配额 + fake-provider Playwright + 发布前真实 OpenRouter structured/API gate；不得把模型输出直接当客户端事实 |
-| Courses 翻译语音输入/波形 | recording/WAV/waveform unit + jsdom 回填不提交/可编辑/迟到响应保护 + API multipart/中文 STT/错误映射 + 真实 Supabase RPC 权限/配额 + fake-provider Playwright 三处波形 + 发布前 Azure 中文 WAV→真实 Fish Audio 候选 API gate；合成样本不等于真实口音评测 |
-| Courses 拼写规范化 | Web 单元/jsdom 覆盖 NFKC/Unicode 空白/全角大小写、标点遗漏/替换/增加及真实字母/空格错误 + 一次性真实 Supabase E2E 验证 raw answer、revision、`wrong_count`、retry pool 和客户端 helper 拒绝 |
-| Courses 拼写轮末复盘/考试 | state 单元 + jsdom 验证持久错词清单/确认门/实时正确率；API unit 验证固定 exam 规则；真实 Supabase E2E 验证 trigger、重排、通过/未通过熟练投影与权限；fake-provider Playwright 验证浏览器完整流程 |
-| Courses 读音考试/任意选词/考试历史 | jsdom 验证逐题评分反馈、轮末分数、选择器和历史详情；API unit 验证 Azure target/owner/映射；真实 Supabase E2E 验证选词 scope、不可变快照、客户端 RPC 拒绝、失败补练不伪造通过；fake-provider Playwright 验证浏览器流程，发布前另跑真实 Japan East Azure gate |
-| Courses 双考试掌握 | 真实 Supabase E2E 验证跨日复习与单项考试均不 learned、两项考试任意顺序共同 learned、失败考试不写事实、term/translations/IPA 编辑精确撤销；0034 空库/升级断言字段、check constraint、review 无正向写入和 service-role-only 权限 |
-| OpenRouter 实际调用配额 | API unit 验证 exact/replay 不 reservation、provider 调用才 reservation；真实 Supabase E2E 验证 `quota_counted`、用户锁和客户端拒绝；受保护发布前另核对生产 env=500，不用真实用户答案探测 500 次上限 |
-| 其它 AI 产物（未来） | 新 schema、parser/prompt/eval + API/RLS/jsdom/Playwright + 真实 provider gate；不得复用试卷 gate 推断质量 |
-| Materials AI 生成/考试 | Python ruff/pytest + API durable queue/quota/revision unit + 真实 Redis BullMQ + 0041–0043 空库/升级/双用户 RLS + jsdom + fake-provider Playwright + AI Docker；每次关键发布另跑真实 DeepSeek/MiMo 固定 PDF/DOCX/PPTX/chart/injection/grading gate和2G资源 canary |
-| Materials AI 图谱/生命周期/Luna（0046–0051、0056–0057 候选） | ELK/React Flow unit + Materials/My Notes jsdom + Python 原始字节/provider lock/cancel/checkpoint + API delete/clear/202/layout/整卷批改 + 真实 Redis + 0007→latest/空库/lint/RLS + fake Chromium 250 节点/移动端/任务清理；发布前另跑真实 DeepSeek/MiMo 和 Luna Azure-only PDF/图片/逐格式/注入/取消/usage gate、2G canary与登录用户 smoke |
-| nginx/compose/Redis/CI | API image依赖检查 + 真实 Redis Lua 集成 + compose config + nginx `-t`/标准 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin 拒绝/限流 headers |
-| points/credits/VIP/支付（未来） | 账本幂等/并发/对账/退款/webhook 重放 + E2E，不允许只做 UI 测试 |
+| Migration/RLS/trigger/function | Full migrations on an empty project + relevant old→new upgrade fixture + lint + RLS E2E + pre-release backup |
+| Post/Feedback/Schedule/points security | 0007→0053 + empty database + exact grants + two-user RLS/service-role negative tests + cap concurrency/time zone/recreate + root suppress/restore + pending scanner signal + ledger/Profile projection; 0052/0053 additionally verify rejection of the two time columns and valid writes |
+| NestJS auth/Courses API | typecheck/build + API units + RLS E2E + Playwright; attempt changes also test UUID replay/revision conflict/outbox; multipart/real Azure and real OpenRouter get separate controlled smokes |
+| Courses parser/UI | parser/jsdom + API units + RLS E2E + Playwright; testing only mocks isn't enough |
+| Courses audio/offline | cache key/untrimmed recording units + API raw-byte forwarding/queue/Storage fakes + RLS grants/lease + Playwright Cache Storage/outbox + the pre-release real Azure queue reuse gate |
+| Courses timed spelling/translation pre-test | fake-clock jsdom + API structured response/timeout units + two-user RLS/idempotency/quota + fake-provider Playwright + the pre-release real OpenRouter structured/API gate; model output must never be taken directly as a client fact |
+| Courses translation voice input/waveform | recording/WAV/waveform units + jsdom fill-without-submit/editable/late-response guards + API multipart/Chinese STT/error mapping + real Supabase RPC permissions/quota + fake-provider Playwright waveform in three places + the pre-release Azure Chinese WAV→real Fish Audio candidate API gate; synthetic samples aren't a real accent evaluation |
+| Courses spelling normalization | Web units/jsdom cover NFKC/Unicode whitespace/full-width case, punctuation omission/substitution/addition, and real letter/space errors + one-off real Supabase E2E verifying the raw answer, revision, `wrong_count`, retry pool, and client helper rejection |
+| Courses spelling end-of-round review/exam | state units + jsdom verifying the durable wrong-word list/confirmation gate/live accuracy; API units verifying the fixed exam rules; real Supabase E2E verifying triggers, reordering, pass/fail mastery projection, and permissions; fake-provider Playwright verifying the full browser flow |
+| Courses pronunciation exam/arbitrary word selection/exam history | jsdom verifying per-question scoring feedback, end-of-round scores, the selector, and history details; API units verifying Azure target/owner/mapping; real Supabase E2E verifying the selection scope, immutable snapshots, client RPC rejection, and that failed practice doesn't fake a pass; fake-provider Playwright verifying the browser flow, plus the real Japan East Azure gate before release |
+| Courses dual-exam mastery | Real Supabase E2E verifying that cross-day reviews and single exams don't make words learned, both exams in either order jointly do, failed exams don't write facts, and term/translations/IPA edits revoke precisely; 0034 empty-database/upgrade assertions for fields, check constraint, no forward writes from reviews, and service-role-only permissions |
+| OpenRouter actual call quota | API units verifying that exact/replay don't reserve and only provider calls reserve; real Supabase E2E verifying `quota_counted`, the user lock, and client rejection; before the protected release, check that production env=500, without probing the 500 limit with real user answers |
+| Other AI artifacts (future) | New schema, parser/prompt/eval + API/RLS/jsdom/Playwright + real provider gate; never infer quality by reusing the exam paper gate |
+| Materials AI generation/exams | Python ruff/pytest + API durable queue/quota/revision units + real Redis BullMQ + 0041–0043 empty database/upgrade/two-user RLS + jsdom + fake-provider Playwright + AI Docker; every key release additionally runs the real DeepSeek/MiMo fixed PDF/DOCX/PPTX/chart/injection/grading gate and the 2G resource canary |
+| Materials AI graph/lifecycle/Luna (0046–0051, 0056–0057 candidates) | ELK/React Flow units + Materials/My Notes jsdom + Python raw bytes/provider lock/cancel/checkpoint + API delete/clear/202/layout/whole-paper grading + real Redis + 0007→latest/empty database/lint/RLS + fake Chromium 250 nodes/mobile/job cleanup; before release additionally run real DeepSeek/MiMo and the Luna Azure-only PDF/image/per-format/injection/cancel/usage gate, the 2G canary, and the signed-in user smoke |
+| nginx/compose/Redis/CI | API image dependency check + real Redis Lua integration + compose config + nginx `-t`/standard 429 + staging deploy + `deps.supabase=ok`/`deps.redis=ok` + auth/admin rejection/rate-limit headers |
+| points/credits/VIP/payments (future) | Ledger idempotency/concurrency/reconciliation/refunds/webhook replay + E2E; UI-only tests aren't allowed |
 
-2026-07-27 的可核验发布样本：PR #21 run `30243998633` 与 main run `30244402278` 完成自动化矩阵；只读 plan `30244967669` 只列 0015–0016；apply/deploy `30245430630` 创建恢复 artifact `8644999285`，并在切流前用 Japan East 真实 Azure 验证首次生成、private Storage 命中、跨用户重复词复用和 VAD 裁剪评分。Playwright 在这些 run 中仍使用 fake provider，真实供应商证据只来自独立生产 gate。
+A verifiable release sample from 2026-07-27: PR #21 run `30243998633` and main run `30244402278` completed the automation matrix; read-only plan `30244967669` listed only 0015–0016; apply/deploy `30245430630` created recovery artifact `8644999285`, and before cutover used real Japan East Azure to verify first generation, private Storage hits, cross-user duplicate word reuse, and VAD-trimmed scoring. Playwright still used fake providers in these runs, and real provider evidence only came from the separate production gate.
 
-同日后续样本：PR #24 run `30263277807` 与 main run `30263794368` 完成 0007→0018、空库重建/lint、真实本地 Supabase RLS/Storage、jsdom 与 Chromium Playwright；历史八词冷单元和暂停 Unit 1→复习 Unit 2→恢复 Unit 1 的浏览器测试使用 Azure fake。只读 plan `30264327821` 只列 0017–0018；apply/deploy `30264979509` 创建恢复 artifact `8652623403`，并在切流前用真实 Japan East 账号验证 `generatedAssets=4`、`duplicateAssetsReused=4` 和评分 97。公网/服务器健康检查是发布证据，不把 fake Playwright 描述为真实供应商 E2E。
+A later sample the same day: PR #24 run `30263277807` and main run `30263794368` completed 0007→0018, empty-database rebuild/lint, real local Supabase RLS/Storage, jsdom, and Chromium Playwright; the browser tests for the historical eight-word cold unit and pause Unit 1→review Unit 2→resume Unit 1 used the Azure fake. Read-only plan `30264327821` listed only 0017–0018; apply/deploy `30264979509` created recovery artifact `8652623403`, and before cutover used the real Japan East account to verify `generatedAssets=4`, `duplicateAssetsReused=4`, and a score of 97. Public/server health checks are release evidence, and fake Playwright is never described as real provider E2E.
 
-2026-07-28 的限时拼写/翻译前测样本：PR #26–#29 与最终 main run `30374301472` 通过 0007→0020、空库重建/lint、真实本地 Supabase RLS/Storage、jsdom、API 和 Chromium Playwright；Playwright 的 Azure/OpenRouter 都是 fake。只读 plan `30366334157` 仅列 0019–0020，受保护 run `30367263486` 创建 artifact `8691620673` 并应用到 0020。最终生产部署以真实 Azure 验证 MP3/评分，以真实 OpenRouter 验证 structured 同义/无关判定，再通过真实 Courses API/数据库验证完全匹配 0 token、同 UUID `replayed=true` 和权威 spelling attempt；release 为 `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`。发布链中的 provider 契约、模型误判、replay 映射和单次 12 秒 timeout 都被 gate 阻断，不能把失败候选计作上线。
+The timed spelling/translation pre-test sample from 2026-07-28: PRs #26–#29 and final main run `30374301472` passed 0007→0020, empty-database rebuild/lint, real local Supabase RLS/Storage, jsdom, API, and Chromium Playwright; Playwright's Azure/OpenRouter were both fakes. Read-only plan `30366334157` listed only 0019–0020, and protected run `30367263486` created artifact `8691620673` and applied up to 0020. The final production deployment verified MP3/scoring with real Azure, structured synonym/unrelated judgements with real OpenRouter, and then, through the real Courses API/database, that an exact match costs 0 tokens, same-UUID `replayed=true`, and the authoritative spelling attempt; the release is `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`. The provider contract, model misjudgement, replay mapping, and a single 12-second timeout in the release chain were all blocked by gates, and failed candidates can't be counted as going live.
 
-2026-07-31 的 Unicode 拼写规范化样本：PR #35、main 和受保护 run `30616540480` 通过 0007→0022、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。真实数据库断言 `ＷＯＲＤ－０１` 和 ASCII `WORD-02` 都判对、revision 递增、`wrong_count=0`、retry pool 为空，并拒绝普通客户端执行 helper；只读 plan `30616030488` 仅列 0021–0022，受保护 run 保留 artifact `8787805291` 后应用并激活 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1`。发布中的真实 Azure/OpenRouter gate 证明依赖未回归，但与拼写大小写行为无直接因果；没有真实用户生产答题 E2E。
+The Unicode spelling normalization sample from 2026-07-31: PR #35, main, and protected run `30616540480` passed 0007→0022, empty-database rebuild/lint, real local Supabase RLS/Storage, Web/API tests, and Chromium Playwright. The real database asserted that `ＷＯＲＤ－０１` and ASCII `WORD-02` are both correct, the revision increments, `wrong_count=0`, the retry pool is empty, and ordinary clients are refused when executing the helper; read-only plan `30616030488` listed only 0021–0022, and the protected run kept artifact `8787805291`, then applied and activated release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1`. The real Azure/OpenRouter gates in the release prove the dependencies didn't regress, but have no direct causal link to the spelling case behavior; there is no real-user production answering E2E.
 
-同日的标点容错样本：PR #37 run `30620350644`、main run `30620879282` 和受保护 run `30624104943` 通过 0007→0024、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。Web 与真实数据库分别断言 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin` 通过，真实字母错误与无标点参与的词间空格错误失败，正确样本的 revision 递增、`wrong_count=0`、retry pool 为空，客户端不能执行内部 matcher；只读 plan `30623522232` 仅列 0023–0024，受保护 run 保留 artifact `8790816378` 后应用并激活 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1`。Playwright 供应商仍为 fake；真实 Azure/OpenRouter 仅证明生产依赖 gate，且没有真实用户生产答题 E2E。
+The punctuation tolerance sample the same day: PR #37 run `30620350644`, main run `30620879282`, and protected run `30624104943` passed 0007→0024, empty-database rebuild/lint, real local Supabase RLS/Storage, Web/API tests, and Chromium Playwright. The Web app and the real database each asserted that `You're welcome.` / `Youre welcome!` and `check-in` / `check in` / `checkin` pass, real letter errors and inter-word space errors with no punctuation involved fail, correct samples increment the revision with `wrong_count=0` and an empty retry pool, and clients can't execute the internal matcher; read-only plan `30623522232` listed only 0023–0024, and the protected run kept artifact `8790816378`, then applied and activated release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1`. Playwright providers were still fakes; real Azure/OpenRouter only prove the production dependency gates, and there is no real-user production answering E2E.
 
-2026-08-01 的取消、轮末复盘、考试和滚动配额样本：PR #40 run `30705662543`、main run `30705946921` 与受保护 run `30706731292` 通过 0007→0028、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖 owner-only 取消、取消后恢复隔离、每轮错题确认与打乱重考、考试阈值/实时正确率/通过投影，以及只有真实 provider 请求才占用滚动 24 小时 500 次额度；只读 plan `30706279006` 仅列 0025–0028，受保护 run 保留 artifact `8820657507` 后应用并激活 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1`。Playwright 的 Azure/OpenRouter 仍为 fake；真实 Japan East Azure、真实 OpenRouter 与候选 Courses API/Storage gate 是独立发布证据。生产 UI 只读检查未提交真实用户答案，因此不能描述为生产考试 E2E。
+The cancellation, end-of-round review, exam, and rolling quota sample from 2026-08-01: PR #40 run `30705662543`, main run `30705946921`, and protected run `30706731292` passed 0007→0028, empty-database rebuild/lint, real local Supabase RLS/Storage, Web/API tests, and Chromium Playwright. Automation covers owner-only cancellation, resume isolation after cancellation, per-round wrong-answer confirmation and shuffled retakes, exam thresholds/live accuracy/pass projection, and that only real provider requests use the rolling 24-hour 500 quota; read-only plan `30706279006` listed only 0025–0028, and the protected run kept artifact `8820657507`, then applied and activated release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1`. Playwright's Azure/OpenRouter were still fakes; real Japan East Azure, real OpenRouter, and the candidate Courses API/Storage gates are separate release evidence. The read-only production UI check submitted no real user answers, so it can't be described as production exam E2E.
 
-2026-08-03 的读音考试、任意选词、历史和双考试掌握样本：PR #45 最终 run `30811283164`、main run `30811817461` 与受保护 run `30813047562` 通过 0007→0034、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖读音分数/retry、owner-validated 选词、失败补练自动结束、不可变历史快照、复习/单项考试不 learned、双考试共同 learned 和编辑撤销；只读 plan `30812467085` 仅列 0029–0034，受保护 run 保留 artifact `8855819351` 后应用并激活 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1`。Playwright 的 Azure/OpenRouter 仍为 fake；真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 是独立发布证据。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
+The pronunciation exam, arbitrary word selection, history, and dual-exam mastery sample from 2026-08-03: PR #45 final run `30811283164`, main run `30811817461`, and protected run `30813047562` passed 0007→0034, empty-database rebuild/lint, real local Supabase RLS/Storage, Web/API tests, and Chromium Playwright. Automation covers pronunciation scores/retries, owner-validated word selection, automatic ending after failed practice, immutable history snapshots, reviews/single exams not making words learned, both exams jointly making them learned, and edit revocation; read-only plan `30812467085` listed only 0029–0034, and the protected run kept artifact `8855819351`, then applied and activated release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1`. Playwright's Azure/OpenRouter were still fakes; real Japan East Azure, real OpenRouter, and the Courses API/Storage gates are separate release evidence. No real production user exams were submitted, so it can't be described as production user-flow E2E.
 
-2026-08-04 的未裁剪录音与精确掌握投影样本：PR #47 run `30831319634`、main run `30831964846` 与受保护 run `30833228406` 通过 0007→0036、空库重建/lint、真实本地 Supabase RLS/Storage、Web/API tests 与 Chromium Playwright。自动化覆盖静音/轻声/首尾完整 WAV 不被客户端删除、Nest 原样转发字节、手工 `learned_at` 和单项考试不能绕过 trigger 投影；只读 plan `30832581552` 仅列 0035–0036，受保护 run 保留 artifact `8864033351` 后应用并激活 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1`。Playwright 的 Azure/OpenRouter 仍为 fake；独立真实 Japan East Azure、真实 OpenRouter 与 Courses API/Storage gate 证明真实依赖，gate 报告未裁剪 `assessmentBytes=88444`。没有提交真实生产用户考试，不能描述为生产用户流程 E2E。
+The untrimmed recording and exact mastery projection sample from 2026-08-04: PR #47 run `30831319634`, main run `30831964846`, and protected run `30833228406` passed 0007→0036, empty-database rebuild/lint, real local Supabase RLS/Storage, Web/API tests, and Chromium Playwright. Automation covers that silent/quiet/full leading-and-trailing WAVs aren't trimmed by the client, Nest forwards the bytes unchanged, and manual `learned_at` and single exams can't bypass the trigger projection; read-only plan `30832581552` listed only 0035–0036, and the protected run kept artifact `8864033351`, then applied and activated release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1`. Playwright's Azure/OpenRouter were still fakes; separate real Japan East Azure, real OpenRouter, and Courses API/Storage gates prove the real dependencies, and the gate reported untrimmed `assessmentBytes=88444`. No real production user exams were submitted, so it can't be described as production user-flow E2E.
 
-同日的翻译语音输入与共享波形样本：PR #49 run `30904901828` 通过 0007→0038、空库重建/lint、真实本地 Supabase RLS/Storage、72 个 API 测试、85 个 Web/jsdom 测试与 Chromium Playwright；main run `30905971129` 按迁移保护规则只验证不部署。只读 plan `30906629924` 首次因一次性 Supabase 上游瞬时响应失败，同 SHA 重跑失败 job 后通过且唯一列出 0037–0038。受保护 run `30907716733` 保留 artifact `8892006761`、应用到 0038 并激活 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1`。Playwright STT 仍为 fake；独立真实直连和生产待激活 API gate 使用合成中文 WAV，后者返回 `transcriptionMatched=true`。这证明当时 endpoint/key/额度与固定样本，不证明物理麦克风或多口音质量。
+The translation voice input and shared waveform sample the same day: PR #49 run `30904901828` passed 0007→0038, empty-database rebuild/lint, real local Supabase RLS/Storage, 72 API tests, 85 Web/jsdom tests, and Chromium Playwright; main run `30905971129` only verified without deploying per the migration protection rule. Read-only plan `30906629924` first failed because of a transient upstream response from the one-off Supabase, then passed after rerunning the failed job on the same SHA and listed exactly 0037–0038. Protected run `30907716733` kept artifact `8892006761`, applied up to 0038, and activated release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1`. Playwright STT was still a fake; the separate real direct and production pending-activation API gates used a synthetic Chinese WAV, and the latter returned `transcriptionMatched=true`. This proves the endpoint/key/quota and the fixed sample at the time, not physical-microphone or multi-accent quality.
 
-2026-08-10 的安全/限流 Stage A 样本：PR #51 run `31367746106`、PR #52 run `31370961413` 与 main run `31371608883` 通过 docs/lint/typecheck、Web/API tests、build、真实 Redis Lua、0007→0040、空库/database lint、双用户 RLS/Storage 和 Chromium Playwright；Playwright 的供应商仍为 fake。plan `31368447660` 只列 0039–0040，protected run `31369657292` 保留 artifact `9055783205` 后应用到 0040。该 run 暴露的远端 stdin 假成功由 #52 回归修复；最终 plan `31372198037` 为空，protected run `31372888441` 以 artifact `9057062920` 再验证远端并激活 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5`。真实 Redis/nginx/Azure/OpenRouter/Fish/Courses gates 与公网 `deps.redis=ok`、auth/admin 401、注册 RateLimit headers 是独立生产证据；OpenRouter 的瞬时超时/429 均在切流前阻断，不能算成功测试。Stage B 观察于 2026-08-22 通过；PR #72 run `32579985463`、main run `32580594918`、plan `32581192318` 与 protected run `32581805613` 覆盖 0007→0053、空库、DB lint、双用户 RLS/Storage、Playwright 和精确远端 history。0052–0053 已应用；同一 run 的应用候选两次被真实 Materials AI PPTX gate 拦截并回退，不能把数据库成功写成最新应用上线。
+The security/rate-limit Stage A sample from 2026-08-10: PR #51 run `31367746106`, PR #52 run `31370961413`, and main run `31371608883` passed docs/lint/typecheck, Web/API tests, build, real Redis Lua, 0007→0040, empty database/database lint, two-user RLS/Storage, and Chromium Playwright; Playwright's providers were still fakes. Plan `31368447660` listed only 0039–0040, and protected run `31369657292` kept artifact `9055783205`, then applied up to 0040. The remote stdin false success exposed by that run was fixed with a regression in #52; final plan `31372198037` was empty, and protected run `31372888441` re-verified the remote with artifact `9057062920` and activated release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5`. The real Redis/nginx/Azure/OpenRouter/Fish/Courses gates and public `deps.redis=ok`, auth/admin 401, and sign-up RateLimit headers are separate production evidence; OpenRouter's transient timeouts/429s were all blocked before cutover and can't count as successful tests. The Stage B observation passed on 2026-08-22; PR #72 run `32579985463`, main run `32580594918`, plan `32581192318`, and protected run `32581805613` covered 0007→0053, empty database, DB lint, two-user RLS/Storage, Playwright, and the exact remote history. 0052–0053 are applied; the same run's application candidate was stopped twice by the real Materials AI PPTX gate and rolled back, so the database success can't be written up as the latest application going live.
 
-2026-08-11 的 Materials AI 样本：PR #56 run `31462982923`、PR #57 run `31465041901`、main run `31465776658` 均通过 docs/lint/typecheck、104 个 API、105 个 Web/jsdom、25 个 Python AI 测试、真实 Redis、0007→0043、空库/lint、双用户 RLS/Storage、AI Docker 和 fake-provider Chromium Playwright。只读 plan `31465816321` 确认 0043/空 dry-run；protected run `31467153739` 创建 artifact `9092230348`，再跑 220 页资源 canary、真实 DeepSeek/MiMo 固定格式/视觉/注入/评分 suite、真实 Azure/OpenRouter/Courses gate和登录用户 Materials→Notes→Exam→grading→delete，最终激活 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`。更早 `31463661987` 的 workflow 假绿被服务器 image/Web/flag 和公网 404 独立检查识别，修复裸 `compose exec` heredoc stdin 后才重发；因此 Actions success 不能代替独立生产 smoke。
+The Materials AI sample from 2026-08-11: PR #56 run `31462982923`, PR #57 run `31465041901`, and main run `31465776658` all passed docs/lint/typecheck, 104 API, 105 Web/jsdom, and 25 Python AI tests, real Redis, 0007→0043, empty database/lint, two-user RLS/Storage, AI Docker, and fake-provider Chromium Playwright. Read-only plan `31465816321` confirmed 0043/an empty dry-run; protected run `31467153739` created artifact `9092230348`, then ran the 220-page resource canary, the real DeepSeek/MiMo fixed format/vision/injection/grading suite, the real Azure/OpenRouter/Courses gates, and the signed-in user Materials→Notes→Exam→grading→delete, finally activating release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`. The earlier workflow false green of `31463661987` was caught by independent checks of the server image/Web/flag and the public 404, and it was only rereleased after fixing the bare `compose exec` heredoc stdin; so Actions success can't replace an independent production smoke.
 
-2026-08-14 的 0049–0051发布先由 PR #66 run `31821614332` 和 main run `31822630770` 完成完整 fake/local 门禁，只读 plan `31822702349` 仅列 0049–0051。apply run `31824832947` 成功创建恢复点、应用并验证这三条迁移，随后 220 页 canary 通过；真实 Luna PDF gate 返回 `OPENROUTER_ZDR_UNAVAILABLE`，旧 Web/API 自动恢复且 Luna/Materials AI 保持关闭。该 run 是“数据库发布成功、应用发布失败并回退”的证据，不能写成 Luna 上线。公开 ZDR catalog 同时证明当时只有 Azure/Azure EU endpoint；向前修复必须在合规不可用时发布 DocumentIR 功能但保持 Luna false。
+The 2026-08-14 release of 0049–0051 first completed the full fake/local gates with PR #66 run `31821614332` and main run `31822630770`, and read-only plan `31822702349` listed only 0049–0051. Apply run `31824832947` successfully created a recovery point and applied and verified these three migrations, and then the 220-page canary passed; the real Luna PDF gate returned `OPENROUTER_ZDR_UNAVAILABLE`, the old Web/API were restored automatically, and Luna/Materials AI stayed off. This run is evidence of "database release succeeded, application release failed and rolled back", and can't be written up as Luna going live. The public ZDR catalog also proved that at the time there were only Azure/Azure EU endpoints; the forward fix must ship the DocumentIR features while keeping Luna false when compliance is unavailable.
 
-2026-08-15 的向前修复 PR #68 run `31834010315` 与 main run `31834895278` 通过 63 个 Python、127 个 API、113 个 Web 测试，以及真实 Redis、0007→0051、空库/lint、双用户 RLS/Storage、fake Chromium 和 220 页 canary。真实 chart 在 `material-safety-audit.v2` 下通过视觉恢复，但固定安全教材的试卷一次因 marks 合计漂移返回 `AI_EXAM_VALIDATION_FAILED`，候选 release 自动回退；三次同 fixture 脱敏诊断确认该结果具有供应商随机性且 repair 可能重复错误。新增回归以服务端设置规范机械元数据/ID/marks，并让复核 issues 优先于矛盾 valid 标记；仍必须由新的真实 provider run 和独立生产检查证明修复生效。
+The 2026-08-15 forward fix PR #68 run `31834010315` and main run `31834895278` passed 63 Python, 127 API, and 113 Web tests, plus real Redis, 0007→0051, empty database/lint, two-user RLS/Storage, fake Chromium, and the 220-page canary. The real chart passed vision recovery under `material-safety-audit.v2`, but the fixed safe material's exam once returned `AI_EXAM_VALIDATION_FAILED` because of marks total drift, and the candidate release rolled back automatically; three redacted diagnostics on the same fixture confirmed the result has provider randomness and that repair may repeat the error. New regressions normalize mechanical metadata/IDs/marks from server-side settings and let review issues take precedence over a contradictory valid flag; a new real provider run and independent production checks must still prove the fix works.
 
-2026-08-22 的 PR #70 run `32499521666` 通过完整门禁并合并；main run `32540131549` 通过 131 个 API、113 个 Web、72 个 Python 测试、真实 Redis、0007→0051、空库/lint、双用户 RLS/Storage、fake Chromium、镜像和 220 页 canary，但真实固定 DOCX 在最终试卷校验返回 `AI_EXAM_VALIDATION_FAILED`。候选在 API/Web 切流前自动回退且没有新迁移，因此该 run 不是上线证据。向前修复的本地门禁为 74 个 Python、ruff 和 26 个 release tooling 测试；下一次真实门禁必须证明八事实 fixture 能稳定生成五道题，并在仍失败时只输出 content-free validation categories/counts。
+On 2026-08-22, PR #70 run `32499521666` passed the full gates and was merged; main run `32540131549` passed 131 API, 113 Web, and 72 Python tests, real Redis, 0007→0051, empty database/lint, two-user RLS/Storage, fake Chromium, images, and the 220-page canary, but the real fixed DOCX returned `AI_EXAM_VALIDATION_FAILED` at final exam validation. The candidate rolled back automatically before the API/Web cutover and had no new migration, so this run isn't evidence of going live. The forward fix's local gates were 74 Python, ruff, and 26 release tooling tests; the next real gate must prove the eight-fact fixture reliably generates five questions, and if it still fails, only output content-free validation categories/counts.
 
-2026-08-23 的 PR #71 合并后 main run `32543270581` 首次执行通过完整 fake/local 与真实 Materials provider 门禁，但 Japan East Azure TTS HTTP 401 阻断切流并自动回退。按用户要求重试的 attempt 2 通过 220 页 canary，固定 DOCX 初次语义门返回 `ANSWERABILITY/ANSWER_CORRECTNESS/DISTRACTOR_QUALITY/EXPLANATION_QUALITY/SOURCE_GROUNDING`，repair 后题数 5、总分 20 均正确但最终结构门只剩 `SOURCE_REFERENCE`，因此仍正确失败关闭。引用向前修复本地通过 ruff 与 77 个 Python 测试；新的真实门禁必须证明 repair 不再因虚构 block ID 失败，同时结构和第二次语义复核保持严格。Azure 401 若再次出现仍是独立硬门，不能用本次 AI 修复绕过。
+After PR #71 merged on 2026-08-23, the first execution of main run `32543270581` passed the full fake/local and real Materials provider gates, but Japan East Azure TTS HTTP 401 blocked the cutover and it rolled back automatically. Attempt 2, retried at the user's request, passed the 220-page canary; the fixed DOCX's initial semantic gate returned `ANSWERABILITY/ANSWER_CORRECTNESS/DISTRACTOR_QUALITY/EXPLANATION_QUALITY/SOURCE_GROUNDING`, and after repair the 5 questions and 20 total points were both correct but the final structural gate still had `SOURCE_REFERENCE`, so it correctly failed closed. The citation forward fix passed ruff and 77 Python tests locally; the new real gate must prove repair no longer fails because of fabricated block IDs, while the structural and second semantic reviews stay strict. If the Azure 401 appears again, it is still an independent hard gate and can't be bypassed with this AI fix.
 
-同日 PR #74 run `32585020750` 和 main run `32585659792` 通过 docs、quality、0007→0053、空库/lint、双用户 RLS/Storage 与 fake Chromium。生产 attempt 1 的真实 Materials suite、canary 和 Azure 均通过，Gemma 翻译在五次有界重试后仍 429并回退；attempt 2 又在只有一个 DocumentIR block 的 PDF 上以 initial/final `SOURCE_REFERENCE` 失败并回退。唯一 block 修复的本地门禁为 ruff 和 78 个 Python 测试；下一真实 run 必须同时证明单 block 引用通过结构+语义门、多个 block 仍不猜测，以及 Gemma、后续 Courses、登录 smoke 和切流全部完成。
+The same day, PR #74 run `32585020750` and main run `32585659792` passed docs, quality, 0007→0053, empty database/lint, two-user RLS/Storage, and fake Chromium. Production attempt 1's real Materials suite, canary, and Azure all passed, but Gemma translation still returned 429 after five bounded retries and rolled back; attempt 2 then failed with initial/final `SOURCE_REFERENCE` on a PDF with only one DocumentIR block and rolled back. The single-block fix's local gates were ruff and 78 Python tests; the next real run must simultaneously prove that single-block citations pass the structural + semantic gates, multiple blocks still aren't guessed, and Gemma, the later Courses checks, the signed-in smoke, and cutover all complete.
 
-PR #75 run `32587211309` 通过 docs、quality（3m52s）和 0007→0053/空库/lint/RLS/Storage/fake Chromium（8m12s），main run `32587844503` 再次通过 quality（4m6s）和本地数据库/浏览器（7m26s），且没有 migration 变更。production attempt 1 的固定 PDF 在 repair 后仍多出一道题，以 `QUESTION_TYPE_COUNT` 失败关闭；唯一一次失败 job 重跑的 attempt 2 通过 220 页 canary、全部真实 Materials 样本与语义门、Japan East Azure，但 Gemma 免费模型连续五次 429后回退。该证据证明唯一 block 引用回归已越过真实门，同时也证明真实供应商硬门没有被 fake 测试、结构规范化或重跑绕过；Courses/登录 smoke、切流和公网新版本验证仍未发生。
+PR #75 run `32587211309` passed docs, quality (3m52s), and 0007→0053/empty database/lint/RLS/Storage/fake Chromium (8m12s), and main run `32587844503` again passed quality (4m6s) and the local database/browser (7m26s), with no migration changes. Production attempt 1's fixed PDF still had one extra question after repair and failed closed with `QUESTION_TYPE_COUNT`; attempt 2, the only rerun of the failed job, passed the 220-page canary, all real Materials samples and semantic gates, and Japan East Azure, but the free Gemma model returned 429 five times in a row and it rolled back. This evidence proves the single-block citation regression got past the real gate, and also that the real provider hard gate wasn't bypassed by fake tests, structural normalization, or reruns; the Courses/signed-in smokes, cutover, and public new-version verification still haven't happened.
 
-2026-08-26 的 PR #78 通过完整 PR checks 后以 `1281510c94b4da5a765211df8467f9a26be393f0` 合并。main run [`32931681321`](https://github.com/1590703336/Nalanda/actions/runs/32931681321) 的 quality（4m19s）与 0007→0055/空库/lint/RLS/Storage/fake Chromium（7m43s）通过且无新 migration；220 页 canary通过。真实 DocumentIR DOCX 的初始结构 code 为 `QUESTION_TYPE_COUNT`，旧 repair 后题数 5、总分 20、最终结构 code 为空，但最终语义类别同时包含可作答性、答案、干扰项、解析和来源 grounding，候选因此自动回滚，Ox 翻译真实 smoke 尚未执行。检查确认旧 repair 请求只含 allowlisted block ID 而无正文，且结构 repair 后新出现的语义问题没有修复阶段。`exam-generate.v4` 回归覆盖完整来源、最小结构修改、一次有界后续语义 repair 和持续失败关闭；真实 DOCX/PPTX、后续供应商门禁与生产切流仍须由新 main run 独立证明。
+On 2026-08-26, PR #78 passed the full PR checks and was merged as `1281510c94b4da5a765211df8467f9a26be393f0`. Main run [`32931681321`](https://github.com/1590703336/Nalanda/actions/runs/32931681321)'s quality (4m19s) and 0007→0055/empty database/lint/RLS/Storage/fake Chromium (7m43s) passed with no new migration; the 220-page canary passed. The real DocumentIR DOCX's initial structural code was `QUESTION_TYPE_COUNT`; after the old repair it had 5 questions, 20 total points, and an empty final structural code, but the final semantic categories included answerability, answers, distractors, explanations, and source grounding all at once, so the candidate rolled back automatically, and the real Ox translation smoke hadn't run yet. The check confirmed the old repair request only contained allowlisted block IDs without text, and that semantic issues newly appearing after the structural repair had no repair stage. `exam-generate.v4` regressions cover the full source, minimal structural changes, one bounded follow-up semantic repair, and persistent failure closing; real DOCX/PPTX, the later provider gates, and the production cutover must still be proven independently by a new main run.
 
-随后 PR #69 完整 CI 与 main run `31838779292` 的本地数据库/RLS/fake Chromium、真实 provider fixture、220 页 canary和 Azure/Courses gate通过，但登录生产 smoke 的知识图产生 3 nodes/2 valid edges 且没有 level-0 root。数据库完成 RPC 以 `22023` 拒绝，job 停在 `saving`，15 分钟 smoke 超时后候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 自动回退且未切 Web。回归现在覆盖：DocumentIR/native graph level 机械归零、root/sourceMode 与 DB contract 对齐、checkpoint 恢复后仍归一化、永久 result/routing 拒绝进入终态，以及 lost lease 返回 409；新真实 run 前仍不得报告应用上线。
+Afterwards, PR #69's full CI and main run `31838779292`'s local database/RLS/fake Chromium, real provider fixtures, 220-page canary, and Azure/Courses gates passed, but the signed-in production smoke's knowledge graph produced 3 nodes/2 valid edges and no level-0 root. The database completion RPC rejected it with `22023`, the job stopped at `saving`, and after the 15-minute smoke timeout candidate `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` rolled back automatically without switching the Web. Regressions now cover mechanically resetting DocumentIR/native graph levels to zero, aligning root/sourceMode with the DB contract, normalization still applying after checkpoint recovery, permanent result/routing rejections entering a terminal state, and lost leases returning 409; until a new real run, the application must still not be reported as live.
 
-## 11. 新增测试约定
+## 11. Conventions for new tests
 
-1. 测试名描述用户行为/安全属性，不只写函数名。
-2. 每个 bug 修复先写能复现的失败测试；安全问题同时加负向用例。
-3. fixture 无真实个人数据，时间/UUID/网络可控。
-4. 测试相互隔离、可重复、可并行；若必须串行需说明共享状态。
-5. 外部 E2E 有显式 opt-in、项目 Ref 确认、唯一前缀和 finally cleanup。
-6. 任何高权限 key 只在 node/server 环境，严禁导入 Web 测试 bundle。
-7. 文档中的“已验证”必须给出当前可执行命令、测试路径和边界；人工测试写明日期/环境，不能永久替代自动化。
-8. 不通过增加 sleep、忽略 error 或放宽 mock 来隐藏竞态/真实权限错误。
+1. Test names describe user behavior/security properties, not just function names.
+2. Every bug fix first gets a failing test that reproduces it; security issues also get negative cases.
+3. Fixtures contain no real personal data, and time/UUIDs/network are controllable.
+4. Tests are isolated from each other, repeatable, and parallelizable; if they must be serial, explain the shared state.
+5. External E2E has explicit opt-in, project Ref confirmation, a unique prefix, and finally cleanup.
+6. Any high-privilege key only lives in node/server environments and must never be imported into the Web test bundle.
+7. "Verified" in docs must give the currently executable command, test path, and boundary; manual tests record the date/environment and can never permanently replace automation.
+8. Never hide races/real permission errors by adding sleeps, ignoring errors, or loosening mocks.

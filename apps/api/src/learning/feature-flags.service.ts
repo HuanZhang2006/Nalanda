@@ -10,21 +10,21 @@ function enabled(name: string, developmentDefault = true) {
 export class FeatureFlagsService {
   courses() {
     if (!enabled("FEATURE_LEARNING_COURSES_ENABLED")) {
-      throw new ServiceUnavailableException({ code: "COURSES_DISABLED", message: "课程功能暂未开放" });
+      throw new ServiceUnavailableException({ code: "COURSES_DISABLED", message: "Courses are not available yet." });
     }
   }
 
   shares() {
     this.courses();
     if (!enabled("FEATURE_COURSE_SHARING_ENABLED")) {
-      throw new NotFoundException({ code: "SHARING_DISABLED", message: "课程分享暂未开放" });
+      throw new NotFoundException({ code: "SHARING_DISABLED", message: "Course sharing is not available yet." });
     }
   }
 
   market() {
     this.courses();
     if (!enabled("FEATURE_COURSE_MARKET_ENABLED")) {
-      throw new NotFoundException({ code: "MARKET_DISABLED", message: "课程市场暂未开放" });
+      throw new NotFoundException({ code: "MARKET_DISABLED", message: "Course Market is not available yet." });
     }
   }
 
@@ -33,18 +33,18 @@ export class FeatureFlagsService {
     if (process.env.NODE_ENV === "production" && process.env.AZURE_SPEECH_FAKE === "true") {
       throw new ServiceUnavailableException({
         code: "PRONUNCIATION_UNAVAILABLE",
-        message: "生产环境禁止使用模拟发音供应商",
+        message: "The fake pronunciation provider is not allowed in production.",
       });
     }
     if (!enabled("FEATURE_PRONUNCIATION_ENABLED", false) || process.env.AZURE_SPEECH_CIRCUIT_OPEN === "true") {
-      throw new ServiceUnavailableException({ code: "PRONUNCIATION_UNAVAILABLE", message: "发音服务暂不可用" });
+      throw new ServiceUnavailableException({ code: "PRONUNCIATION_UNAVAILABLE", message: "Pronunciation services are temporarily unavailable." });
     }
   }
 
   audioPrewarm() {
     this.pronunciation();
     if (!enabled("FEATURE_LEARNING_AUDIO_PREWARM_ENABLED")) {
-      throw new ServiceUnavailableException({ code: "AUDIO_PREWARM_DISABLED", message: "离线音频准备暂未开放" });
+      throw new ServiceUnavailableException({ code: "AUDIO_PREWARM_DISABLED", message: "Offline audio preparation is not available yet." });
     }
   }
 
@@ -58,13 +58,13 @@ export class FeatureFlagsService {
     if (process.env.NODE_ENV === "production" && process.env.OPENROUTER_FAKE === "true") {
       throw new ServiceUnavailableException({
         code: "TRANSLATION_ASSESSMENT_UNAVAILABLE",
-        message: "生产环境禁止使用模拟翻译判分供应商",
+        message: "The fake translation assessment provider is not allowed in production.",
       });
     }
     if (!enabled("FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED")) {
       throw new ServiceUnavailableException({
         code: "TRANSLATION_ASSESSMENT_UNAVAILABLE",
-        message: "翻译语义判分暂不可用",
+        message: "Semantic translation checking is temporarily unavailable.",
       });
     }
   }

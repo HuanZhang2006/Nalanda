@@ -59,19 +59,19 @@ export class LearningService {
       const code = typeof error.body === "object" && error.body && "code" in error.body
         ? String((error.body as { code: unknown }).code) : "DATABASE_ERROR";
       if (/course publication daily quota exceeded/i.test(error.message)) {
-        throw new HttpException({ code: "PUBLISH_LIMIT", message: "今日上架次数已达上限" }, 429);
+        throw new HttpException({ code: "PUBLISH_LIMIT", message: "You have reached today's publishing limit." }, 429);
       }
       if (/course report daily quota exceeded/i.test(error.message)) {
-        throw new HttpException({ code: "REPORT_LIMIT", message: "今日举报次数已达上限" }, 429);
+        throw new HttpException({ code: "REPORT_LIMIT", message: "You have reached today's reporting limit." }, 429);
       }
       if (/speech tts minute quota exceeded/i.test(error.message)) {
-        throw new HttpException({ code: "SPEECH_TTS_RATE_LIMIT", message: "发音生成速率已达上限" }, 429);
+        throw new HttpException({ code: "SPEECH_TTS_RATE_LIMIT", message: "The pronunciation generation rate limit has been reached." }, 429);
       }
       if (/speech tts monthly character quota exceeded/i.test(error.message)) {
-        throw new HttpException({ code: "SPEECH_TTS_MONTHLY_LIMIT", message: "本月发音生成字符额度已用完" }, 429);
+        throw new HttpException({ code: "SPEECH_TTS_MONTHLY_LIMIT", message: "This month's pronunciation character allowance has been used." }, 429);
       }
       if (/speech .*quota exceeded|speech monthly budget exceeded/i.test(error.message)) {
-        throw new HttpException({ code: "SPEECH_QUOTA_EXCEEDED", message: "发音服务配额已用完，请稍后再试" }, 429);
+        throw new HttpException({ code: "SPEECH_QUOTA_EXCEEDED", message: "The speech quota has been used. Please try again later." }, 429);
       }
       const quotaHint = typeof error.body === "object" && error.body && "hint" in error.body
         ? String((error.body as { hint: unknown }).hint || "") : "";
@@ -80,41 +80,41 @@ export class LearningService {
       if (/translation assessment minute quota exceeded/i.test(error.message)) {
         throw new HttpException({
           code: "TRANSLATION_ASSESSMENT_MINUTE_LIMIT",
-          message: "一分钟内翻译判分次数过多，请稍后重试",
+          message: "Too many translation checks in one minute. Please retry shortly.",
           ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
         }, 429);
       }
       if (/translation assessment daily quota exceeded/i.test(error.message)) {
         throw new HttpException({
           code: "TRANSLATION_ASSESSMENT_DAILY_LIMIT",
-          message: "24 小时翻译判分额度已用完，请在额度恢复后重试",
+          message: "The 24-hour translation-check allowance has been used. Please retry after it refreshes.",
           ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
         }, 429);
       }
       if (/translation assessment .*quota exceeded/i.test(error.message)) {
         throw new HttpException({
           code: "TRANSLATION_ASSESSMENT_RATE_LIMIT",
-          message: "翻译判分请求过于频繁，请稍后再试",
+          message: "Translation checks are temporarily rate-limited. Please try again later.",
         }, 429);
       }
       if (/translation stt minute quota exceeded/i.test(error.message)) {
         throw new HttpException({
           code: "TRANSLATION_STT_MINUTE_LIMIT",
-          message: "一分钟内语音识别次数过多，请稍后重试",
+          message: "Too many voice transcriptions in one minute. Please retry shortly.",
           ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
         }, 429);
       }
       if (/translation stt daily quota exceeded/i.test(error.message)) {
         throw new HttpException({
           code: "TRANSLATION_STT_DAILY_LIMIT",
-          message: "今日语音识别额度已用完，请在额度恢复后重试",
+          message: "Today's voice-input allowance has been used. Please retry after it refreshes.",
           ...(retryAfterSeconds ? { retryAfterSeconds } : {}),
         }, 429);
       }
       if (/translation stt monthly budget exceeded/i.test(error.message)) {
         throw new HttpException({
           code: "TRANSLATION_STT_MONTHLY_LIMIT",
-          message: "本月语音识别额度已用完",
+          message: "This month's voice-input budget has been used.",
         }, 429);
       }
       // Let owner-scoped callers translate PostgreSQL no_data_found into their
@@ -141,7 +141,7 @@ export class LearningService {
   private spellingOptions(value: unknown): LearningSpellingOptions {
     if (value == null) return { ...DEFAULT_SPELLING_OPTIONS };
     if (typeof value !== "object" || Array.isArray(value)) {
-      throw new BadRequestException({ code: "INVALID_SPELLING_OPTIONS", message: "拼写测试设置无效" });
+      throw new BadRequestException({ code: "INVALID_SPELLING_OPTIONS", message: "The spelling test settings are invalid." });
     }
     const source = value as Record<string, unknown>;
     if (typeof source.timeLimitEnabled !== "boolean"
@@ -151,7 +151,7 @@ export class LearningService {
         || typeof source.translationFirst !== "boolean") {
       throw new BadRequestException({
         code: "INVALID_SPELLING_OPTIONS",
-        message: "拼写限时需为 3–300 秒，且所有开关必须明确设置",
+        message: "The spelling time limit must be 3–300 seconds, and every toggle must be set explicitly.",
       });
     }
     return {
@@ -170,7 +170,7 @@ export class LearningService {
   async renameCourse(userId: string, courseId: string, title: unknown) {
     assertUuid(courseId, "courseId");
     const value = String(title || "").trim();
-    if (!value || value.length > 80) throw new BadRequestException({ code: "INVALID_TITLE", message: "课程名称需为 1–80 个字符" });
+    if (!value || value.length > 80) throw new BadRequestException({ code: "INVALID_TITLE", message: "The course name must be 1–80 characters." });
     await this.call(() => this.db.rpc("learning_rename_course", {
       p_user_id: userId, p_course_id: courseId, p_title: value,
     }));
@@ -258,7 +258,7 @@ export class LearningService {
           ? (error.body as { code: unknown }).code : "") === "P0002"
         || /exam history not found/i.test(error.message)
       )) {
-        throw new NotFoundException({ code: "EXAM_HISTORY_NOT_FOUND", message: "考试记录不存在" });
+        throw new NotFoundException({ code: "EXAM_HISTORY_NOT_FOUND", message: "The exam record was not found." });
       }
       throw error;
     }
@@ -293,11 +293,11 @@ export class LearningService {
     const unitId = assertUuid(String(body?.unitId || ""), "unitId");
     const mode = body?.mode == null ? "initial" : String(body.mode);
     if (mode !== "initial" && mode !== "review" && mode !== "exam") {
-      throw new BadRequestException({ code: "INVALID_MODE", message: "学习模式无效" });
+      throw new BadRequestException({ code: "INVALID_MODE", message: "The learning mode is invalid." });
     }
     const scope = body?.scope == null ? "all" : String(body.scope);
     if (scope !== "all" && scope !== "unlearned") {
-      throw new BadRequestException({ code: "INVALID_SCOPE", message: "复习范围无效" });
+      throw new BadRequestException({ code: "INVALID_SCOPE", message: "The review scope is invalid." });
     }
     const scheduleId = body?.scheduleId ? assertUuid(String(body.scheduleId), "scheduleId") : null;
     const requestedSkills: string[] = Array.isArray(body?.skills) ? body.skills.map(String) : [];
@@ -307,26 +307,26 @@ export class LearningService {
       || new Set(requestedSkills).size !== requestedSkills.length
       || requestedSkills.some((skill) => !allowedSkills.has(skill as LearningSkill))
     )) {
-      throw new BadRequestException({ code: "INVALID_SKILLS", message: "请选择 1–3 个不重复的复习项目" });
+      throw new BadRequestException({ code: "INVALID_SKILLS", message: "Choose 1–3 distinct review skills." });
     }
     if (mode === "exam" && scheduleId) {
-      throw new BadRequestException({ code: "INVALID_EXAM", message: "考试模式不能关联复习日程" });
+      throw new BadRequestException({ code: "INVALID_EXAM", message: "Exam mode cannot be linked to a review schedule." });
     }
     let wordIds: string[] | null = null;
     if (body?.wordIds != null) {
       if (mode === "initial" || !Array.isArray(body.wordIds)
           || body.wordIds.length < 1 || body.wordIds.length > 2_000) {
-        throw new BadRequestException({ code: "INVALID_WORD_SELECTION", message: "自定义范围需选择 1–2,000 个单词" });
+        throw new BadRequestException({ code: "INVALID_WORD_SELECTION", message: "A custom range must select 1–2,000 words." });
       }
       const parsedWordIds = body.wordIds.map((wordId: unknown) => assertUuid(String(wordId), "wordId"));
       if (new Set(parsedWordIds).size !== parsedWordIds.length) {
-        throw new BadRequestException({ code: "INVALID_WORD_SELECTION", message: "自定义范围不能包含重复单词" });
+        throw new BadRequestException({ code: "INVALID_WORD_SELECTION", message: "A custom range cannot contain duplicate words." });
       }
       wordIds = parsedWordIds;
     }
     const examKind = body?.examKind == null ? "spelling" : String(body.examKind);
     if (mode === "exam" && examKind !== "spelling" && examKind !== "pronunciation") {
-      throw new BadRequestException({ code: "INVALID_EXAM_KIND", message: "考试类型无效" });
+      throw new BadRequestException({ code: "INVALID_EXAM_KIND", message: "The exam type is invalid." });
     }
     const skills: LearningSkill[] = mode === "initial"
       ? ["pronunciation", "translation", "spelling"]
@@ -341,7 +341,7 @@ export class LearningService {
       || examPassPercent < 1
       || examPassPercent > 100
     )) {
-      throw new BadRequestException({ code: "INVALID_EXAM_PASS_PERCENT", message: "考试正确率要求需为 1–100 的整数" });
+      throw new BadRequestException({ code: "INVALID_EXAM_PASS_PERCENT", message: "The required exam accuracy must be an integer from 1 to 100." });
     }
     const id = mode === "exam"
       ? await this.call(() => this.db.rpc<string>(wordIds
@@ -380,7 +380,7 @@ export class LearningService {
           ? (error.body as { code: unknown }).code : "") === "P0002"
         || /learning session not found/i.test(error.message)
       )) {
-        throw new NotFoundException({ code: "SESSION_NOT_FOUND", message: "学习会话不存在" });
+        throw new NotFoundException({ code: "SESSION_NOT_FOUND", message: "The learning session was not found." });
       }
       throw error;
     }
@@ -427,7 +427,7 @@ export class LearningService {
           ? (error.body as { code: unknown }).code : "") === "P0002"
         || /learning session not found/i.test(error.message)
       )) {
-        throw new NotFoundException({ code: "SESSION_NOT_FOUND", message: "学习会话不存在" });
+        throw new NotFoundException({ code: "SESSION_NOT_FOUND", message: "The learning session was not found." });
       }
       throw error;
     }
@@ -473,7 +473,7 @@ export class LearningService {
   ): Promise<LearningAttemptResult | Row> {
     assertUuid(sessionId, "sessionId");
     assertUuid(body?.wordId || "", "wordId");
-    if (!["pronunciation", "translation", "spelling"].includes(body?.skill)) throw new BadRequestException({ code: "INVALID_SKILL", message: "测试类型无效" });
+    if (!["pronunciation", "translation", "spelling"].includes(body?.skill)) throw new BadRequestException({ code: "INVALID_SKILL", message: "The test type is invalid." });
     const legacy = body?.attemptId == null && body?.expectedRevision == null;
     if (legacy) {
       // Keep already-open 0014 browser tabs functional while the immutable
@@ -486,7 +486,7 @@ export class LearningService {
     }
     assertUuid(body?.attemptId || "", "attemptId");
     if (!Number.isSafeInteger(body?.expectedRevision) || body.expectedRevision! < 0) {
-      throw new BadRequestException({ code: "INVALID_REVISION", message: "会话版本无效" });
+      throw new BadRequestException({ code: "INVALID_REVISION", message: "The learning-session version is invalid." });
     }
     const startedAt = Date.now();
     const rpcName = body.skill === "spelling"
@@ -513,7 +513,7 @@ export class LearningService {
       }));
       throw new ConflictException({
         code: "SESSION_REVISION_CONFLICT",
-        message: "学习进度已在其它位置更新",
+        message: "Learning progress was updated elsewhere.",
         currentRevision: Number(row.current_revision),
       });
     }
@@ -614,7 +614,7 @@ export class LearningService {
     if (row.conflict) {
       throw new ConflictException({
         code: "SESSION_REVISION_CONFLICT",
-        message: "学习进度已在其它位置更新",
+        message: "Learning progress was updated elsewhere.",
         currentRevision: Number(row.current_revision),
       });
     }
@@ -653,7 +653,7 @@ export class LearningService {
     const normalized = Array.isArray(offsets) ? offsets.map(Number) : [];
     if (!Array.isArray(offsets) || normalized.length > 4 || new Set(normalized).size !== normalized.length
         || normalized.some((value) => ![3, 7, 15, 30].includes(value))) {
-      throw new BadRequestException({ code: "INVALID_OFFSETS", message: "复习日期只能选择 3、7、15、30 天" });
+      throw new BadRequestException({ code: "INVALID_OFFSETS", message: "Review dates can only be 3, 7, 15, or 30 days away." });
     }
     await this.call(() => this.db.rpc("learning_schedule_reviews", {
       p_user_id: userId, p_unit_id: unitId, p_source_session_id: sessionId, p_offsets: normalized,
@@ -689,7 +689,7 @@ export class LearningService {
 
   async createShare(userId: string, courseId: string) {
     const course = await this.requireCourse(userId, assertUuid(courseId, "courseId"));
-    if (!course.can_republish) throw new ForbiddenException({ code: "REPUBLISH_FORBIDDEN", message: "克隆课程不能再次分享或上架" });
+    if (!course.can_republish) throw new ForbiddenException({ code: "REPUBLISH_FORBIDDEN", message: "Cloned courses cannot be shared or published again." });
     const profile = await this.profileName(userId);
     const token = randomBytes(32).toString("base64url");
     const tokenHash = createHash("sha256").update(token).digest("hex");
@@ -718,19 +718,19 @@ export class LearningService {
   }
 
   async publicShare(token: string): Promise<PublicCoursePreview> {
-    if (!/^[A-Za-z0-9_-]{40,60}$/.test(token)) throw new NotFoundException({ code: "SHARE_NOT_FOUND", message: "分享链接不存在" });
+    if (!/^[A-Za-z0-9_-]{40,60}$/.test(token)) throw new NotFoundException({ code: "SHARE_NOT_FOUND", message: "The share link does not exist." });
     const hash = createHash("sha256").update(token).digest("hex");
     const rows = await this.db.select<Row>("learning_course_shares", q({ select: "*", token_hash: `eq.${hash}`, active: "eq.true", limit: "1" }));
     const share = rows[0];
-    if (!share) throw new NotFoundException({ code: "SHARE_NOT_FOUND", message: "分享链接不存在或已撤销" });
+    if (!share) throw new NotFoundException({ code: "SHARE_NOT_FOUND", message: "The share link does not exist or has been revoked." });
     const snapshot = await this.db.rpc<any>("_learning_course_snapshot", { p_course_id: share.course_id });
-    if (!snapshot) throw new NotFoundException({ code: "COURSE_NOT_FOUND", message: "课程不存在" });
+    if (!snapshot) throw new NotFoundException({ code: "COURSE_NOT_FOUND", message: "The course was not found." });
     return this.preview(publicSnapshot(snapshot), { shareId: share.id, authorName: share.author_name });
   }
 
   async cloneShare(userId: string, token: string) {
     const preview = await this.publicShare(token);
-    const input = cloneSnapshot(preview, `${preview.title}（副本）`);
+    const input = cloneSnapshot(preview, preview.title);
     const tokenHash = createHash("sha256").update(token).digest("hex");
     const id = await this.call(() => this.db.rpc<string>("learning_clone_share", {
       p_user_id: userId, p_payload: this.enrich(input), p_token_hash: tokenHash,
@@ -740,10 +740,10 @@ export class LearningService {
 
   async publish(userId: string, courseId: string, body: any) {
     const course = await this.requireCourse(userId, assertUuid(courseId, "courseId"));
-    if (!course.can_republish) throw new ForbiddenException({ code: "REPUBLISH_FORBIDDEN", message: "克隆课程不能再次分享或上架" });
-    if (body?.rightsDeclared !== true) throw new BadRequestException({ code: "RIGHTS_REQUIRED", message: "上架前必须确认拥有内容权利" });
+    if (!course.can_republish) throw new ForbiddenException({ code: "REPUBLISH_FORBIDDEN", message: "Cloned courses cannot be shared or published again." });
+    if (body?.rightsDeclared !== true) throw new BadRequestException({ code: "RIGHTS_REQUIRED", message: "Confirm your content rights before publishing." });
     const description = String(body?.description || "").trim();
-    if (description.length > 500) throw new BadRequestException({ code: "DESCRIPTION_TOO_LONG", message: "课程简介不能超过 500 字" });
+    if (description.length > 500) throw new BadRequestException({ code: "DESCRIPTION_TOO_LONG", message: "The course description cannot exceed 500 characters." });
     const authorName = await this.profileName(userId);
     const publication = await this.call(() => this.db.rpc<Row>("learning_publish_course", {
       p_user_id: userId, p_course_id: courseId, p_description: description,
@@ -767,8 +767,8 @@ export class LearningService {
     assertUuid(id);
     const rows = await this.db.select<Row>("learning_course_publications", q({ select: "*", id: `eq.${id}`, status: "eq.published", limit: "1" }));
     const publication = rows[0];
-    if (!publication) throw new NotFoundException({ code: "PUBLICATION_NOT_FOUND", message: "市场课程不存在" });
-    const input = cloneSnapshot(publication.snapshot, `${publication.title}（副本）`);
+    if (!publication) throw new NotFoundException({ code: "PUBLICATION_NOT_FOUND", message: "The market course was not found." });
+    const input = cloneSnapshot(publication.snapshot, publication.title);
     const courseId = await this.call(() => this.db.rpc<string>("learning_clone_course", {
       p_user_id: userId, p_payload: this.enrich(input), p_origin_publication_id: id,
       p_origin_author_name: publication.author_name,
@@ -779,11 +779,11 @@ export class LearningService {
   async report(userId: string, body: any) {
     const publicationId = body?.publicationId ? assertUuid(String(body.publicationId), "publicationId") : null;
     const shareId = body?.shareId ? assertUuid(String(body.shareId), "shareId") : null;
-    if (Boolean(publicationId) === Boolean(shareId)) throw new BadRequestException({ code: "INVALID_REPORT_TARGET", message: "请选择一个举报对象" });
+    if (Boolean(publicationId) === Boolean(shareId)) throw new BadRequestException({ code: "INVALID_REPORT_TARGET", message: "Choose one item to report." });
     const category = String(body?.category || "other");
-    if (!["abuse", "copyright", "privacy", "spam", "academic_integrity", "other"].includes(category)) throw new BadRequestException({ code: "INVALID_REPORT_CATEGORY", message: "举报类别无效" });
+    if (!["abuse", "copyright", "privacy", "spam", "academic_integrity", "other"].includes(category)) throw new BadRequestException({ code: "INVALID_REPORT_CATEGORY", message: "The report category is invalid." });
     const details = String(body?.details || "").trim();
-    if (details.length > 1000) throw new BadRequestException({ code: "REPORT_DETAILS_TOO_LONG", message: "举报说明不能超过 1000 个字符" });
+    if (details.length > 1000) throw new BadRequestException({ code: "REPORT_DETAILS_TOO_LONG", message: "Report details cannot exceed 1,000 characters." });
     const row = await this.call(() => this.db.rpc<Row>("learning_create_report", {
       p_user_id: userId, p_publication_id: publicationId, p_share_id: shareId,
       p_category: category, p_details: details,
@@ -798,11 +798,11 @@ export class LearningService {
 
   async moderate(userId: string, id: string, body: any) {
     const admins = new Set((process.env.COURSE_MARKET_ADMIN_USER_IDS || "").split(",").map((value) => value.trim()).filter(Boolean));
-    if (!admins.has(userId)) throw new ForbiddenException({ code: "ADMIN_REQUIRED", message: "需要课程市场管理员权限" });
+    if (!admins.has(userId)) throw new ForbiddenException({ code: "ADMIN_REQUIRED", message: "Course Market administrator permission is required." });
     assertUuid(id);
     const action = String(body?.action || "");
     const reason = String(body?.reason || "").trim();
-    if (!['hide', 'restore', 'withdraw'].includes(action) || !reason || reason.length > 1000) throw new BadRequestException({ code: "INVALID_MODERATION", message: "审核动作或原因无效" });
+    if (!['hide', 'restore', 'withdraw'].includes(action) || !reason || reason.length > 1000) throw new BadRequestException({ code: "INVALID_MODERATION", message: "The moderation action or reason is invalid." });
     return this.call(() => this.db.rpc("learning_moderate_publication", {
       p_actor_id: userId, p_publication_id: id, p_action: action, p_reason: reason,
     }));
@@ -821,7 +821,7 @@ export class LearningService {
         String(error.body && typeof error.body === "object" && "code" in error.body
           ? (error.body as { code: unknown }).code : "") === "42501"
       )) {
-        throw new ForbiddenException({ code: "WORD_NOT_IN_SESSION", message: "该词不属于当前活动学习会话" });
+        throw new ForbiddenException({ code: "WORD_NOT_IN_SESSION", message: "This word is not part of the current active learning session." });
       }
       throw error;
     }
@@ -949,7 +949,7 @@ export class LearningService {
   }
 
   private word(word: Row | undefined, progress?: Row) {
-    if (!word) throw new NotFoundException({ code: "WORD_NOT_FOUND", message: "单词不存在" });
+    if (!word) throw new NotFoundException({ code: "WORD_NOT_FOUND", message: "The word was not found." });
     return { id: word.id, term: word.term, normalizedTerm: word.normalized_term,
       translations: word.translations || [], ipa: word.ipa || null, position: word.position,
       progress: { recognitionSeen: Boolean(progress?.initial_recognition_seen),
@@ -967,7 +967,7 @@ export class LearningService {
 
   private async requireCourse(userId: string, courseId: string): Promise<Row> {
     const rows = await this.db.select<Row>("learning_courses", q({ select: "*", id: `eq.${courseId}`, user_id: `eq.${userId}`, limit: "1" }));
-    if (!rows[0]) throw new NotFoundException({ code: "COURSE_NOT_FOUND", message: "课程不存在" });
+    if (!rows[0]) throw new NotFoundException({ code: "COURSE_NOT_FOUND", message: "The course was not found." });
     return rows[0];
   }
 

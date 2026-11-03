@@ -1,17 +1,17 @@
-# ERD 与数据库字典
+# ERD and database dictionary
 
-> **本文内容：** 描述当前 Supabase/PostgreSQL 中全部应用表、字段、关系、删除行为、RLS、Storage 桶、触发器与数据库函数，并单列尚未实现的目标实体。  
-> **作用：** 作为数据库结构评审、接口开发、迁移编写、安全审计和数据恢复时的共同事实来源。  
-> **何时更新：** 每次新增或修改迁移、表/列/约束/索引/RLS/函数/触发器/Storage 策略时与代码同一个变更提交更新；目标模型转为真实迁移时也要更新状态。
+> **Contents:** Describes every application table, column, relationship, deletion behavior, RLS policy, Storage bucket, trigger, and database function in the current Supabase/PostgreSQL, and lists target entities that aren't implemented yet separately.  
+> **Purpose:** The shared source of truth for database structure reviews, API development, writing migrations, security audits, and data recovery.  
+> **When to update:** In the same change commit as the code, every time a migration or a table/column/constraint/index/RLS policy/function/trigger/Storage policy is added or changed; also update the status when a target model becomes a real migration.
 
-## 1. 权威来源与范围
+## 1. Authoritative source and scope
 
-本页按 `supabase/migrations/20260620000001_profiles.sql` 至候选 `20261003000057_verify_material_ai_luna_gpt6_retire_ox_alpha.sql` 的最终叠加结果整理。迁移 SQL 是仓库结构权威；生产 migration history 仍以受保护发布证据为准，本文更新时已确认线上到 0055，0056–0057 尚不能写成已应用。
+This page is compiled from the final cumulative result of `supabase/migrations/20260620000001_profiles.sql` through the candidate `20261003000057_verify_material_ai_luna_gpt6_retire_ox_alpha.sql`. The migration SQL is the repository's structural authority; the production migration history is still defined by protected release evidence, and when this document was updated production was confirmed at 0055, so 0056–0057 must not yet be written up as applied.
 
-- **生产结构**：生产 0043 包含 0039–0040 安全/限流与 0041–0043 Materials AI/Notes/考试实体、事务和验证，另有 `auth.users`、3 个 Storage bucket 及相关 RLS/函数/触发器。
-- **未实现目标**：Courses AI 文件导入、Knowledge list、独立 Quiz、通用市场、credits 钱包账本、订单/支付、订阅/VIP 权益和完整社区审核实体。仓库 0046–0051 候选已增加 Materials 知识图谱/节点问答、长任务恢复、Luna 原文件流水线、任务清理生命周期和跨设备图谱布局，但在受保护发布完成前不得描述为生产事实。
+- **Production structure**: production 0043 includes the 0039–0040 security/rate limiting and the 0041–0043 Materials AI/Notes/exam entities, transactions, and verification, plus `auth.users`, 3 Storage buckets, and the related RLS/functions/triggers.
+- **Unimplemented targets**: Courses AI file import, Knowledge list, standalone Quiz, a general market, a credits wallet ledger, orders/payments, subscriptions/VIP entitlements, and full community moderation entities. The repository's 0046–0051 candidate adds Materials knowledge graph/node Q&A, long job recovery, the Luna original-file pipeline, the job cleanup lifecycle, and cross-device graph layout, but these must not be described as production facts until the protected release completes.
 
-## 2. 当前 ERD
+## 2. Current ERD
 
 ```mermaid
 erDiagram
@@ -252,9 +252,9 @@ erDiagram
     POINT_EVENT_STATES ||--o| POINT_DAILY_AWARD_CLAIMS : "shares business key"
 ```
 
-`auth.users` 由 Supabase Auth 管理；图中只展示应用实际引用的 `id` 和概念性 `email`，不是对 Auth 内部表的完整定义。
+`auth.users` is managed by Supabase Auth; the diagram only shows the `id` the application actually references and a conceptual `email`, and isn't a complete definition of Auth's internal table.
 
-### 2.1 Courses 子域 ERD
+### 2.1 Courses subdomain ERD
 
 ```mermaid
 erDiagram
@@ -306,356 +306,356 @@ erDiagram
     }
 ```
 
-`learning_attempts` 是追加事实，`learning_word_progress` 是受保护投影；市场 publication 是不可变快照，source 课程删除时只把 `source_course_id` 置空。分享读取当前课程，不保存内容副本。`learning_audio_assets` 不外键关联用户或 word：相同规范化词、locale、voice、格式和合成版本通过内容哈希共享一项可重建任务/对象。`learning_spelling_translation_assessments` 只保存用户答案 SHA-256、供应商判定/计量、租约和首次响应；用户键入的翻译正文不落库。
+`learning_attempts` are appended facts and `learning_word_progress` is a protected projection; market publications are immutable snapshots, and deleting the source course only sets `source_course_id` to null. Shares read the current course and store no content copy. `learning_audio_assets` has no foreign key to users or words: identical normalized words, locale, voice, format, and synthesis version share one rebuildable job/object through a content hash. `learning_spelling_translation_assessments` only stores the SHA-256 of the user's answer, the provider verdict/metering, the lease, and the first response; the translation text the user typed is never stored.
 
-## 3. 表字典
+## 3. Table dictionary
 
 ### 3.1 `profiles`
 
-与 `auth.users` 共享主键，注册后的 `handle_new_user` 触发器负责创建。`points`/等级用于活动成长：`points` 是 `point_entries` 的缓存投影，等级由该投影计算；`credits` 仍只是尚无钱包账本的预留数值。普通 authenticated 用户只能更新资料白名单列，不能更新 points、credits、等级、VIP 或 streak。
+Shares its primary key with `auth.users` and is created by the `handle_new_user` trigger after sign-up. `points`/level are for activity growth: `points` is a cached projection of `point_entries`, and the level is computed from that projection; `credits` is still only a reserved number with no wallet ledger yet. Ordinary authenticated users can only update the allowlisted profile columns and can't update points, credits, level, VIP, or streak.
 
-| 列 | 类型 | 空值/默认 | 关系或说明 |
+| Column | Type | Null/default | Relationship or notes |
 |---|---|---|---|
-| `id` | `uuid` | PK，非空 | → `auth.users.id ON DELETE CASCADE` |
-| `username` | `text` | 可空 | 默认建档时取邮箱 `@` 前部分 |
-| `email` | `text` | 可空 | Auth 邮箱快照，不是认证权威字段 |
-| `university`, `major`, `year` | `text` | 可空 | 用户资料 |
-| `language` | `text` | 非空，`'zh'` | 当前无 check constraint |
-| `timezone` | `text` | 非空，`'UTC'` | 0011 增加；插入/更新 trigger 必须在 `pg_timezone_names` 中存在，历史 attempt `local_date` 不随修改重写 |
-| `credits` | `integer` | 非空，`0` | 尚无钱包账本/支付闭环 |
-| `points` | `integer` | 非空，`0` | 迁移 0006 增加；0008 起由 ledger 总和投影并 clamp 到 `0..2147483647` |
-| `level` | `integer` | 非空，`1` | `_set_point_event` 根据 points 投影计算 |
-| `level_name` | `text` | 非空，`'Novice'` | `_set_point_event` 根据 points 投影计算 |
-| `vip_until` | `timestamptz` | 可空 | 尚无订阅/支付写入规则 |
-| `streak` | `integer` | 非空，`0` | 迁移 0007 增加 |
-| `streak_date` | `date` | 可空 | 最近一次计入连续学习的日期 |
-| `created_at`, `updated_at` | `timestamptz` | 非空，`now()` | `profiles_touch` 更新 `updated_at` |
+| `id` | `uuid` | PK, not null | → `auth.users.id ON DELETE CASCADE` |
+| `username` | `text` | nullable | Defaults at profile creation to the part of the email before `@` |
+| `email` | `text` | nullable | Snapshot of the Auth email, not the authoritative authentication field |
+| `university`, `major`, `year` | `text` | nullable | User profile |
+| `language` | `text` | not null, `'zh'` | No check constraint currently |
+| `timezone` | `text` | not null, `'UTC'` | Added in 0011; the insert/update trigger requires it to exist in `pg_timezone_names`, and historical attempt `local_date` values aren't rewritten when it changes |
+| `credits` | `integer` | not null, `0` | No wallet ledger/payment loop yet |
+| `points` | `integer` | not null, `0` | Added in migration 0006; since 0008 projected from the ledger sum and clamped to `0..2147483647` |
+| `level` | `integer` | not null, `1` | Computed by `_set_point_event` from the points projection |
+| `level_name` | `text` | not null, `'Novice'` | Computed by `_set_point_event` from the points projection |
+| `vip_until` | `timestamptz` | nullable | No subscription/payment write rules yet |
+| `streak` | `integer` | not null, `0` | Added in migration 0007 |
+| `streak_date` | `date` | nullable | The most recent date counted towards the study streak |
+| `created_at`, `updated_at` | `timestamptz` | not null, `now()` | `profiles_touch` updates `updated_at` |
 
-### 3.2 `courses` 与 `materials`
+### 3.2 `courses` and `materials`
 
-| 表 | 列 | 类型 | 空值/默认 | 关系或说明 |
+| Table | Column | Type | Null/default | Relationship or notes |
 |---|---|---|---|---|
-| `courses` | `id` | `uuid` | PK，`gen_random_uuid()` | — |
-|  | `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
-|  | `code` | `text` | 可空 | 课程代码 |
-|  | `name` | `text` | 非空 | — |
-|  | `color` | `text` | 非空，`'#9c6a39'` | — |
-|  | `term`, `instructor` | `text` | 可空 | — |
-|  | `created_at` | `timestamptz` | 非空，`now()` | — |
-| `materials` | `id` | `uuid` | PK，`gen_random_uuid()` | — |
-|  | `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
-|  | `course_id` | `uuid` | 非空 | → `courses.id CASCADE`；RLS 还检查课程归属 |
-|  | `name` | `text` | 非空 | — |
-|  | `type` | `text` | 可空 | 当前无格式枚举约束 |
-|  | `size_bytes` | `bigint` | 非空，`0` | — |
-|  | `storage_path` | `text` | 非空 | 指向 `materials` bucket 的逻辑路径，无数据库 FK |
-|  | `created_at` | `timestamptz` | 非空，`now()` | — |
+| `courses` | `id` | `uuid` | PK, `gen_random_uuid()` | — |
+|  | `user_id` | `uuid` | not null, `auth.uid()` | → `auth.users.id CASCADE` |
+|  | `code` | `text` | nullable | Course code |
+|  | `name` | `text` | not null | — |
+|  | `color` | `text` | not null, `'#9c6a39'` | — |
+|  | `term`, `instructor` | `text` | nullable | — |
+|  | `created_at` | `timestamptz` | not null, `now()` | — |
+| `materials` | `id` | `uuid` | PK, `gen_random_uuid()` | — |
+|  | `user_id` | `uuid` | not null, `auth.uid()` | → `auth.users.id CASCADE` |
+|  | `course_id` | `uuid` | not null | → `courses.id CASCADE`; RLS also checks course ownership |
+|  | `name` | `text` | not null | — |
+|  | `type` | `text` | nullable | No format enum constraint currently |
+|  | `size_bytes` | `bigint` | not null, `0` | — |
+|  | `storage_path` | `text` | not null | Logical path into the `materials` bucket, no database FK |
+|  | `created_at` | `timestamptz` | not null, `now()` | — |
 
-索引：`materials(course_id)`。
+Index: `materials(course_id)`.
 
-### 3.3 `notifications` 与 `feedback`
+### 3.3 `notifications` and `feedback`
 
-| 表 | 列 | 类型 | 空值/默认 | 说明 |
+| Table | Column | Type | Null/default | Notes |
 |---|---|---|---|---|
-| `notifications` | `id` | `uuid` | PK，`gen_random_uuid()` | — |
-|  | `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
-|  | `type` | `text` | 可空 | 如 `like/comment/favorite/repost/follow/streak`，无 check |
-|  | `title` | `text` | 非空 | — |
-|  | `body` | `text` | 可空 | — |
-|  | `read` | `boolean` | 非空，`false` | — |
-|  | `created_at` | `timestamptz` | 非空，`now()` | 索引 `(user_id, created_at DESC)` |
-| `feedback` | `id` | `uuid` | PK，`gen_random_uuid()` | — |
-|  | `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
-|  | `category` | `text` | 可空 | — |
-|  | `summary` | `text` | 非空 | — |
-|  | `body` | `text` | 可空 | — |
-|  | `status` | `text` | 非空，`'open'` | 生产 0039 起仅 service-role 支持流程可改；用户只可新增/读取自己的反馈 |
-|  | `created_at` | `timestamptz` | 非空，`now()` | 索引 `(user_id, created_at DESC)` |
+| `notifications` | `id` | `uuid` | PK, `gen_random_uuid()` | — |
+|  | `user_id` | `uuid` | not null, `auth.uid()` | → `auth.users.id CASCADE` |
+|  | `type` | `text` | nullable | Such as `like/comment/favorite/repost/follow/streak`, no check |
+|  | `title` | `text` | not null | — |
+|  | `body` | `text` | nullable | — |
+|  | `read` | `boolean` | not null, `false` | — |
+|  | `created_at` | `timestamptz` | not null, `now()` | Index `(user_id, created_at DESC)` |
+| `feedback` | `id` | `uuid` | PK, `gen_random_uuid()` | — |
+|  | `user_id` | `uuid` | not null, `auth.uid()` | → `auth.users.id CASCADE` |
+|  | `category` | `text` | nullable | — |
+|  | `summary` | `text` | not null | — |
+|  | `body` | `text` | nullable | — |
+|  | `status` | `text` | not null, `'open'` | Since production 0039 only service-role support workflows can change it; users can only add/read their own feedback |
+|  | `created_at` | `timestamptz` | not null, `now()` | Index `(user_id, created_at DESC)` |
 
-### 3.4 社区表
+### 3.4 Community tables
 
 #### `posts`
 
-| 列 | 类型 | 空值/默认 | 说明 |
+| Column | Type | Null/default | Notes |
 |---|---|---|---|
-| `id` | `uuid` | PK，`gen_random_uuid()` | — |
-| `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
-| `author_name`, `author_university`, `author_major` | `text` | 可空 | 插入时由 `_post_author` 从 profile 覆盖为快照 |
-| `title`, `body` | `text` | 可空 | 数据库未要求至少一个非空 |
-| `kind` | `text` | 非空，`'experience'` | 注释约定 experience/question/tip/note_share，无 check |
-| `subject` | `text` | 可空 | 非 FK 的课程/学科文本 |
-| `tags` | `text[]` | 非空，`'{}'` | 不与 `tags` 表做 FK |
-| `repost_of` | `uuid` | 可空 | → `posts.id CASCADE`；原帖删除会级联删除转发帖 |
-| `image_url`, `audio_url` | `text` | 可空 | 通常是公开 bucket URL，无 FK/所有权校验 |
-| `points_business_key` | `text` | 非空 | 0008 增加；原创按 owner + 规范化内容生成，转发按 actor + 根原创内容键生成，且与 `repost_of` 一并不可变 |
-| `like_count`, `comment_count`, `favorite_count`, `repost_count` | `int` | 非空，`0` | 触发器维护的冗余计数 |
-| `created_at`, `updated_at` | `timestamptz` | 非空，`now()` | 生产 0039 trigger 维护：内容变化才更新 `updated_at`，计数变化不刷新；兼容期客户端值会被覆盖 |
+| `id` | `uuid` | PK, `gen_random_uuid()` | — |
+| `user_id` | `uuid` | not null, `auth.uid()` | → `auth.users.id CASCADE` |
+| `author_name`, `author_university`, `author_major` | `text` | nullable | Overwritten at insert by `_post_author` with a snapshot from the profile |
+| `title`, `body` | `text` | nullable | The database doesn't require at least one to be non-empty |
+| `kind` | `text` | not null, `'experience'` | Comments define experience/question/tip/note_share by convention, no check |
+| `subject` | `text` | nullable | Non-FK course/subject text |
+| `tags` | `text[]` | not null, `'{}'` | No FK to the `tags` table |
+| `repost_of` | `uuid` | nullable | → `posts.id CASCADE`; deleting the original post cascades to its reposts |
+| `image_url`, `audio_url` | `text` | nullable | Usually a public bucket URL, no FK/ownership check |
+| `points_business_key` | `text` | not null | Added in 0008; original posts are keyed by owner + normalized content, reposts by actor + root original content key, and it is immutable together with `repost_of` |
+| `like_count`, `comment_count`, `favorite_count`, `repost_count` | `int` | not null, `0` | Redundant counts maintained by triggers |
+| `created_at`, `updated_at` | `timestamptz` | not null, `now()` | Maintained by the production 0039 trigger: `updated_at` only changes when content changes, not when counts change; client values are overwritten during the compatibility period |
 
-索引：`created_at DESC`、`user_id`、`subject`、`points_business_key`。
+Indexes: `created_at DESC`, `user_id`, `subject`, `points_business_key`.
 
-#### 互动与关系
+#### Interactions and relationships
 
-| 表 | 主键 | 其它列/关系 | 删除行为 |
+| Table | Primary key | Other columns/relationships | Deletion behavior |
 |---|---|---|---|
-| `comments` | `id uuid` | `post_id → posts`、`user_id → auth.users`、`author_name` 快照、`body NOT NULL`、`points_business_key NOT NULL`、`created_at` | post/user 均 CASCADE；points key 锚定目标帖不可变内容键 + actor；索引 `(post_id, created_at)` 与 points key |
-| `post_likes` | `(post_id,user_id)` | `points_business_key NOT NULL`、`created_at` | post/user 均 CASCADE；points key 锚定目标帖不可变内容键 + actor；同逻辑内容重复帖共用奖励 claim |
-| `post_favorites` | `(post_id,user_id)` | `created_at` | post/user 均 CASCADE；唯一主键防止同时保留重复收藏 |
-| `follows` | `(follower_id,following_id)` | 二者均 → `auth.users`，`created_at` | user CASCADE；当前没有 `follower_id <> following_id` check |
-| `tags` | `(kind,value)` | `created_at` | 独立全局字典，无 FK；kind 注释约定 university/major/subject/tag，无 check |
+| `comments` | `id uuid` | `post_id → posts`, `user_id → auth.users`, `author_name` snapshot, `body NOT NULL`, `points_business_key NOT NULL`, `created_at` | Both post/user CASCADE; the points key is anchored on the target post's immutable content key + actor; indexes `(post_id, created_at)` and the points key |
+| `post_likes` | `(post_id,user_id)` | `points_business_key NOT NULL`, `created_at` | Both post/user CASCADE; the points key is anchored on the target post's immutable content key + actor; duplicate posts with the same logical content share one reward claim |
+| `post_favorites` | `(post_id,user_id)` | `created_at` | Both post/user CASCADE; the unique primary key prevents keeping duplicate favorites at once |
+| `follows` | `(follower_id,following_id)` | Both → `auth.users`, `created_at` | user CASCADE; there is currently no `follower_id <> following_id` check |
+| `tags` | `(kind,value)` | `created_at` | Independent global dictionary, no FK; comments define kind as university/major/subject/tag by convention, no check |
 
-### 3.5 学习计划
+### 3.5 Study plans
 
-| 表 | 列 | 类型 | 空值/默认 | 关系或说明 |
+| Table | Column | Type | Null/default | Relationship or notes |
 |---|---|---|---|---|
-| `study_goals` | `id` | `uuid` | PK，`gen_random_uuid()` | — |
-|  | `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
-|  | `title` | `text` | 非空 | — |
-|  | `exam_date` | `date` | 可空 | — |
-|  | `course_id` | `uuid` | 可空 | → `courses.id ON DELETE SET NULL` |
-|  | `created_at` | `timestamptz` | 非空，`now()` | — |
-| `study_tasks` | `id` | `uuid` | PK，`gen_random_uuid()` | — |
-|  | `user_id` | `uuid` | 非空，`auth.uid()` | → `auth.users.id CASCADE` |
-|  | `title` | `text` | 非空 | — |
-|  | `due_date` | `date` | 非空，`current_date` | 索引 `(user_id,due_date)` |
-|  | `done` | `boolean` | 非空，`false` | 任何 done 更新进入幂等状态机；首次完成激活 points/streak，取消会冲正 points |
-|  | `done_at` | `timestamptz` | 可空 | 生产 0039 起由 trigger 随 `done` 设置/清空；兼容期客户端值会被覆盖 |
-|  | `points_business_key` | `text` | 非空 | 0008 增加；插入时按 owner、规范化标题、日期和关联实体生成，之后不可变 |
-|  | `course_id` | `uuid` | 可空 | → `courses.id SET NULL`；RLS 校验 owner |
-|  | `material_id` | `uuid` | 可空 | → `materials.id SET NULL`；RLS 校验 owner |
-|  | `goal_id` | `uuid` | 可空 | → `study_goals.id SET NULL`；RLS 校验 owner |
-|  | `created_at` | `timestamptz` | 非空，`now()` | — |
+| `study_goals` | `id` | `uuid` | PK, `gen_random_uuid()` | — |
+|  | `user_id` | `uuid` | not null, `auth.uid()` | → `auth.users.id CASCADE` |
+|  | `title` | `text` | not null | — |
+|  | `exam_date` | `date` | nullable | — |
+|  | `course_id` | `uuid` | nullable | → `courses.id ON DELETE SET NULL` |
+|  | `created_at` | `timestamptz` | not null, `now()` | — |
+| `study_tasks` | `id` | `uuid` | PK, `gen_random_uuid()` | — |
+|  | `user_id` | `uuid` | not null, `auth.uid()` | → `auth.users.id CASCADE` |
+|  | `title` | `text` | not null | — |
+|  | `due_date` | `date` | not null, `current_date` | Index `(user_id,due_date)` |
+|  | `done` | `boolean` | not null, `false` | Every done update enters an idempotent state machine; the first completion activates points/streak, and un-completing reverses points |
+|  | `done_at` | `timestamptz` | nullable | Since production 0039 set/cleared by a trigger along with `done`; client values are overwritten during the compatibility period |
+|  | `points_business_key` | `text` | not null | Added in 0008; generated at insert from the owner, normalized title, date, and linked entities, immutable afterwards |
+|  | `course_id` | `uuid` | nullable | → `courses.id SET NULL`; RLS checks the owner |
+|  | `material_id` | `uuid` | nullable | → `materials.id SET NULL`; RLS checks the owner |
+|  | `goal_id` | `uuid` | nullable | → `study_goals.id SET NULL`; RLS checks the owner |
+|  | `created_at` | `timestamptz` | not null, `now()` | — |
 
-生产 0039 为 goal/task 增加防御 trigger：`course_id/material_id/goal_id` 必须属于行 owner，`user_id` 不可修改，service-role 路径也受同一 owner 约束。现有 FK 的 `ON DELETE SET NULL` 语义不变。
+Production 0039 adds defensive triggers to goals/tasks: `course_id/material_id/goal_id` must belong to the row owner, `user_id` can't be modified, and service-role paths are bound by the same owner constraint. The existing FKs' `ON DELETE SET NULL` semantics are unchanged.
 
-### 3.6 Points 账本与事件状态
+### 3.6 Points ledger and event state
 
-`point_entries` 是当前 points 的追加式分录，`point_event_states` 是只供数据库内部使用的业务事件状态机。迁移 0008 先把旧 `profiles.points` 写为一条 `legacy_opening`，再把已有帖子、评论关系、点赞和已完成任务登记为 `transition_no=0` 的 active 状态，不重复加分；0009 为每条 opening 追加 `legacy_opening_reset` reversal，并重建 Profile 投影。
+`point_entries` are append-only entries for current points, and `point_event_states` is a business event state machine for internal database use only. Migration 0008 first writes the old `profiles.points` as one `legacy_opening`, then registers existing posts, comment relationships, likes, and completed tasks as active states with `transition_no=0` without awarding points again; 0009 appends a `legacy_opening_reset` reversal for every opening and rebuilds the Profile projection.
 
-| 表 | 列 | 类型/约束 | 说明 |
+| Table | Column | Type/constraint | Notes |
 |---|---|---|---|
-| `point_entries` | `id` | `bigint identity` PK | 分录 ID |
-|  | `user_id` | `uuid NOT NULL` | → `auth.users.id CASCADE`；authenticated 仅能读取自己的分录 |
-|  | `event_type` | `text NOT NULL` | `legacy_opening/legacy_opening_reset/post_created/repost_created/like_created/comment_created/task_completed` 等 |
-|  | `business_key` | `text NOT NULL` | 永久业务键；与 `transition_no` 组成唯一约束 |
-|  | `amount` | `integer NOT NULL, <> 0` | 激活为正、取消/删除冲正为负 |
-|  | `rule_version` | `text NOT NULL` | 生产 0038 新事件为 `points-v1`；0039 首次决策为 `points-v2-daily-caps`，审核 transition 为 `points-v2-moderation`；opening 为 `legacy-import-v1` |
-|  | `source_id` | `uuid` 可空 | 触发该 transition 的当前源记录，不做 FK，源删除后分录仍保留 |
-|  | `transition_no` | `integer >= 0` | opening 为 0；同一业务键后续严格递增 |
-|  | `reversal_of` | `bigint` 可空 | → 前一条 `point_entries.id ON DELETE NO ACTION`，形成 transition 链 |
-|  | `metadata` | `jsonb NOT NULL` | 源对象与迁移/active 信息 |
-|  | `created_at` | `timestamptz NOT NULL` | 默认 `now()` |
-| `point_event_states` | `business_key` | `text` PK | 每个永久业务事件一行 |
+| `point_entries` | `id` | `bigint identity` PK | Entry ID |
+|  | `user_id` | `uuid NOT NULL` | → `auth.users.id CASCADE`; authenticated can only read its own entries |
+|  | `event_type` | `text NOT NULL` | `legacy_opening/legacy_opening_reset/post_created/repost_created/like_created/comment_created/task_completed`, etc. |
+|  | `business_key` | `text NOT NULL` | Permanent business key; forms a unique constraint with `transition_no` |
+|  | `amount` | `integer NOT NULL, <> 0` | Positive on activation, negative for cancel/delete reversals |
+|  | `rule_version` | `text NOT NULL` | New events in production 0038 are `points-v1`; first decisions in 0039 are `points-v2-daily-caps` and moderation transitions are `points-v2-moderation`; openings are `legacy-import-v1` |
+|  | `source_id` | `uuid` nullable | The current source record that triggered this transition, no FK; entries are kept after the source is deleted |
+|  | `transition_no` | `integer >= 0` | 0 for openings; strictly increasing afterwards for the same business key |
+|  | `reversal_of` | `bigint` nullable | → the previous `point_entries.id ON DELETE NO ACTION`, forming the transition chain |
+|  | `metadata` | `jsonb NOT NULL` | Source object and migration/active info |
+|  | `created_at` | `timestamptz NOT NULL` | Defaults to `now()` |
+| `point_event_states` | `business_key` | `text` PK | One row per permanent business event |
 |  | `user_id` | `uuid NOT NULL` | → `auth.users.id CASCADE` |
-|  | `event_type`, `reward_amount` | 非空 | 键碰撞时类型/用户/奖励必须一致，否则事务失败 |
-|  | `is_active`, `transition_no` | 非空 | 当前净状态及最新 transition |
-|  | `source_id`, `last_entry_id` | 可空 | 当前源记录；最新分录引用为 `ON DELETE NO ACTION` |
-|  | `source_active`, `moderation_suppressed`, `awarded_amount`, `decision_rule_version`, `suppressed_reason` | 生产 0039，非空/受 check | 分离内容存在、审核、首次实际奖励和当前有效账本状态 |
-|  | `metadata`, `created_at`, `updated_at` | 非空 | 内部状态与审计时间 |
+|  | `event_type`, `reward_amount` | not null | On key collisions the type/user/reward must match, otherwise the transaction fails |
+|  | `is_active`, `transition_no` | not null | Current net state and latest transition |
+|  | `source_id`, `last_entry_id` | nullable | The current source record; the latest entry reference is `ON DELETE NO ACTION` |
+|  | `source_active`, `moderation_suppressed`, `awarded_amount`, `decision_rule_version`, `suppressed_reason` | production 0039, not null/checked | Separates content existence, moderation, the first actual reward, and the current effective ledger state |
+|  | `metadata`, `created_at`, `updated_at` | not null | Internal state and audit times |
 
-状态转换通过 `_set_point_event` 的共享 moderation gate、business-key advisory lock、profile 行锁、状态行锁和唯一键串行化；审核取得同一 gate 的独占锁并按 UUID 顺序先锁 Profile、再锁状态，避免锁顺序反转。生产 0039 把第一次奖励决策永久写入 claim：原创/转发/评论/点赞/任务的每日可奖励数量分别为 3/10/10/20/10，课程完成不设日上限。超额 claim 为 0 且删除、重建、换时区都不能补领；审核 suppress 只撤回实际已获金额，restore 不恢复已删除来源或 cap=0 的奖励。`grandfather-v1` 的实际金额由该 business key 的 transition 1 正向分录证明；0008/0009 只有状态占位、没有逐业务正向分录的历史键其 `awarded_amount=0,is_active=false`，因此无法产生无来源的负向冲正。旧占位若已留下负 transition，0039 追加 `grandfather-zero-reset-v1` 等额补偿并推进 transition 链，绝不删除或改写原分录。
+State transitions are serialized through `_set_point_event`'s shared moderation gate, a business-key advisory lock, the profile row lock, the state row lock, and the unique key; moderation takes the exclusive lock on the same gate and locks Profiles first and then states in UUID order, avoiding lock-order inversion. Production 0039 permanently writes the first reward decision into a claim: the daily rewardable counts for original posts/reposts/comments/likes/tasks are 3/10/10/20/10 respectively, and course completion has no daily cap. Over-cap claims are 0, and deletion, recreation, or changing time zone can't reclaim them; moderation suppress only withdraws the amount actually awarded, and restore doesn't revive deleted sources or cap=0 rewards. The actual amount of `grandfather-v1` is proven by the positive transition-1 entry of that business key; historical 0008/0009 keys that only have a state placeholder with no per-business positive entry have `awarded_amount=0,is_active=false`, so they can't produce unsourced negative reversals. If an old placeholder already left a negative transition, 0039 appends an equal `grandfather-zero-reset-v1` compensation and advances the transition chain, never deleting or rewriting the original entries.
 
-#### 生产 0039：points 与 API 反滥用表
+#### Production 0039: points and API anti-abuse tables
 
-| 表 | 关键列 | 生命周期与权限 |
+| Table | Key columns | Lifecycle and permissions |
 |---|---|---|
-| `point_daily_windows` | `user_id,local_date,timezone,starts_at,ends_at` | 冻结当前奖励自然日和 IANA 时区；Auth 删除 CASCADE；service-role 只读，写入仅经 definer workflow |
-| `point_daily_award_claims` | `business_key,user_id,event_type,rule_version,daily_window_id,daily_limit,nominal_amount,awarded_amount,suppressed_reason,source_id,target_owner_id,target_root_key,metadata,decided_at` | 每个稳定业务键一次不可变决策；grandfather 零金额不创建日窗口且不伪装成 `daily_cap`；Auth 删除 CASCADE；service-role 只读，不能直写 |
-| `point_daily_cap_notifications` | `(user_id,event_type,window_id),notification_id` | 同用户/事件/窗口只生成一次持久通知；仅 service-role |
-| `point_moderation_actions` | `id,admin_user_id,action,target_type,target_key,reason,case_reference,affected_event_count,affected_amount,metadata,created_at` | append-only 审核事实；管理员 UUID/理由保留，不因账号删除丢失；service-role 只读，新增仅经 moderation RPC |
-| `point_abuse_signals` | `id,signal_type,fingerprint,account_ids,target_owner_id,target_root_key,window,metrics,status,reviewer*,timestamps` | 按信号/排序账户集合/小时、日或十分钟窗口去重，只待审不处罚；service-role 只读，review 经窄 RPC |
-| `api_abuse_events` | `actor_hmac,user_id,route_group,rule,bucket_start,event_count,timestamps,metadata` | 不存原始 IP/email/正文；按桶聚合并保留 30 天；仅 service-role |
+| `point_daily_windows` | `user_id,local_date,timezone,starts_at,ends_at` | Freezes the current reward calendar day and IANA time zone; Auth deletion CASCADE; service-role read-only, writes only through the definer workflow |
+| `point_daily_award_claims` | `business_key,user_id,event_type,rule_version,daily_window_id,daily_limit,nominal_amount,awarded_amount,suppressed_reason,source_id,target_owner_id,target_root_key,metadata,decided_at` | One immutable decision per stable business key; grandfathered zero amounts create no daily window and don't masquerade as `daily_cap`; Auth deletion CASCADE; service-role read-only, can't write directly |
+| `point_daily_cap_notifications` | `(user_id,event_type,window_id),notification_id` | Only one durable notification per user/event/window; service-role only |
+| `point_moderation_actions` | `id,admin_user_id,action,target_type,target_key,reason,case_reference,affected_event_count,affected_amount,metadata,created_at` | Append-only moderation facts; the admin UUID/reason are kept and not lost on account deletion; service-role read-only, inserts only through the moderation RPC |
+| `point_abuse_signals` | `id,signal_type,fingerprint,account_ids,target_owner_id,target_root_key,window,metrics,status,reviewer*,timestamps` | Deduplicated by signal/sorted account set/hour, day, or ten-minute window; pending review only, no penalties; service-role read-only, review through a narrow RPC |
+| `api_abuse_events` | `actor_hmac,user_id,route_group,rule,bucket_start,event_count,timestamps,metadata` | Stores no raw IP/email/content; aggregated by bucket and kept for 30 days; service-role only |
 
-历史边界：0008 无法判断旧宽松权限期间的 `profiles.points/credits/vip/streak` 是否曾被人为篡改。opening 只保存迁移事实，不代表余额可信；0009 根据已记录的产品/安全决定追加 reversal 归零，不删除原记录。credits/VIP 仍没有可重建账本。
+Historical boundary: 0008 can't tell whether `profiles.points/credits/vip/streak` were tampered with during the old loose-permission period. The opening only stores the migration fact and doesn't mean the balance is trustworthy; 0009 appends a reversal to reset it to zero per the recorded product/security decision, without deleting the original record. Credits/VIP still have no rebuildable ledger.
 
-### 3.7 Courses 内容、学习、传播与成长
+### 3.7 Courses content, learning, distribution, and growth
 
-以下列清单覆盖 0011 的全部新增表。`uuid` 默认均为 `gen_random_uuid()`（复合键/identity 除外），时间列未特别注明时默认 `now()`。
+The column lists below cover every table added in 0011. `uuid` defaults are all `gen_random_uuid()` (except composite keys/identity), and time columns default to `now()` unless noted.
 
-| 表 | 全部列 | 关键约束与关系 |
+| Table | All columns | Key constraints and relationships |
 |---|---|---|
-| `learning_courses` | `id`, `user_id`, `title`, `category`, `has_units`, `locale`, `origin_publication_id`, `origin_share_id`, `origin_author_name`, `can_republish`, `points_claimed_at`, `created_at`, `updated_at` | owner → Auth CASCADE；标题 1–80；四类 category 但 v1 API 只接受英语词表；locale=`en-US`；`(id,user_id)` 唯一；克隆来源 → publication/share SET NULL，来源记录消失后仍保留作者署名 |
-| `learning_course_units` | `id`, `course_id`, `user_id`, `name`, `position`, `is_system`, `created_at`, `updated_at` | course/Auth CASCADE；复合 FK `(course_id,user_id)` 防跨 owner；名 1–80；position≥0；`(course_id,position)` 延迟唯一 |
-| `learning_course_words` | `id`, `course_id`, `unit_id`, `user_id`, `term`, `normalized_term`, `translations`, `ipa`, `position`, `content_version`, `created_at`, `updated_at` | `normalized_term` 为 `_points_normalize_text(term)` stored generated；term 1–120；1–10 translations；IPA≤120；复合 unit/course/owner FK；单元内 normalized term 与 position 延迟唯一 |
-| `learning_sessions` | `id`, `user_id`, `course_id`, `unit_id`, `mode`, `scope`, `selected_skills`, `stage`, `active`, `state`, `revision`, `resume_key`, `spelling_options`, `started_at`, `last_activity_at`, `completed_at` | course CASCADE、unit 删除 SET NULL；mode=`initial/review/exam`；scope=`all/unlearned`；skill 为 pronunciation/translation/spelling 的 1–3 项；stage 为 recognition/pronunciation/translation/spelling/completed；0015 的 `revision bigint≥0` 在每个 immutable attempt 后单调递增；0017 的 `resume_key` 按学习意图生成；0019 的 `spelling_options` 固化计时/翻译前测；0027 的 exam 保存第一轮阈值/正确率/通过事实及拼写轮末字段；0029 增加 `examKind=pronunciation`、`roundAssessmentScores/retrySummaryScores`；0031 的自定义范围仍落在 session items，并在 state 保存 `selectionMode/selectedWordIds/practiceCompleted`，不增加客户端可写列 |
-| `learning_session_items` | `session_id`, `word_id`, `position`, `recognition_seen`, `pronunciation_passed`, `translation_passed`, `spelling_passed`, `wrong_count` | `(session_id,word_id)` PK；会话/词删除 CASCADE；position 每会话延迟唯一；pass 字段是当前会话投影 |
-| `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `attempt_id`, `response_payload`, `word_id_snapshot`, `term_snapshot`, `created_at` | bigint identity；course/session/user CASCADE，word 删除 SET NULL；0031 trigger 为 exam attempt 保存当时 word/term，删词后详情仍可关联；skill 另含 recognition 和 speech_assessment；允许 `is_correct=null` 表达非判分事实；普通测试 attempt 以 `(user_id,session_id,attempt_id)` 唯一并保存首次完整响应供超时重放；旧 RPC/recognition/评分允许 `attempt_id=NULL`；不保存录音；service_role 也无直接 UPDATE/DELETE |
-| `learning_exam_word_snapshots` | `session_id`, `word_id`, `position`, `term`, `ipa`, `translations`, `wrong_count`, `passed` | 0031 已生产启用；session CASCADE，但不引用可编辑/可删除的 word；创建 exam item 时固化词面，完成时固化最终结果；RLS 开启且客户端无表权限，只能经 owner-scoped 历史 API 获取脱敏结果 |
-| `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `spelling_exam_passed_at`, `pronunciation_exam_passed_at`, `learned_at`, `updated_at` | `(user_id,word_id)` PK；三组 date[] 去重由工作流保证但只表达练习。0033 起，通过并完成拼写/发音考试分别写对应时间戳，只有两个时间戳都非空才逐词投影 `learned_at`。生产 0035 的 before trigger 与双向 check 强制 `learned_at` 精确等于两个考试时间戳的较晚值，否则为空，直接赋值也不能绕过。0031 起 session items 可为 owner-validated 单元子集；内容编辑按 term/translations/IPA 语义清空相应考试事实与 `learned_at` |
-| `learning_review_schedules` | `id`, `user_id`, `course_id`, `unit_id`, `source_session_id`, `due_date`, `skills`, `scope`, `status`, `completed_session_id`, `completed_at`, `created_at` | user/course/unit/source initial session CASCADE，completed review session SET NULL；只有本人该单元已完成 initial session 才能创建 3/7/15/30 偏移；status=`pending/completed/cancelled`；`(user_id,unit_id,due_date)` 唯一 |
-| `learning_speech_usage` | `id`, `user_id`, `kind`, `cost_microusd`, `character_count`, `local_date`, `created_at` | bigint identity；user 删除 SET NULL 以保留预算事实；0037 起 kind=`tts/assessment/translation_stt`，已生产启用；成本必须 >0；TTS reservation 记录字符数并可使用 NULL user 表达全局共享生成；STT 只记估算成本和配额日期，没有音频、transcript 或参考文本 |
-| `learning_audio_assets` | `cache_key`, `normalized_term`, `synthesis_text`, `locale`, `voice`, `output_format`, `synthesis_version`, `storage_path`, `status`, `priority`, `attempt_count`, `next_attempt_at`, `lease_token`, `lease_until`, `last_error_code`, `last_error_message`, `ready_at`, `created_at`, `updated_at` | 64 位 hex SHA-256 PK；storage path 唯一；status=`pending/processing/ready/failed`；租约、指数退避和优先级驱动持久 worker；RLS 开启且表权限从 public/anon/authenticated 全撤销，只有 service_role；不含用户录音、翻译或 owner ID |
-| `learning_spelling_translation_assessments` | `assessment_id`, `user_id`, `session_id`, `word_id`, `expected_revision`, `answer_hash`, `status`, `correct`, `response_payload`, `provider`, `model`, token usage, `provider_attempts`, `quota_counted`, `quota_counted_at`, lease/error/timestamps | assessment UUID 为 PK/幂等键；answer 只存 SHA-256；`quota_counted=false/quota_counted_at=null` 表示未消耗 provider-backed 评判额度，service-only reservation 在真实请求前原子写入 true/当前时间；分钟和滚动 24 小时窗口按该时间计算；租约避免并发重复判题，RLS 开启且客户端无表权限 |
-| `learning_course_shares` | `id`, `user_id`, `course_id`, `token_hash`, `active`, `author_name`, `created_at`, `revoked_at` | owner/course CASCADE；只存 token SHA-256；token hash 唯一，每课程最多一个 active 分享 |
-| `learning_course_publications` | `id`, `author_id`, `source_course_id`, `title`, `description`, `author_name`, `category`, `locale`, `version`, `snapshot`, `content_fingerprint`, `status`, `rights_declared_at`, `clone_count`, `created_at`, `updated_at` | author CASCADE、source SET NULL；英语/en-US；status=`published/hidden/withdrawn`；同 author/source/version 唯一；trigger 禁止内容快照/署名/指纹/权利声明变更，只允许生命周期、clone_count、source 置空和 updated_at |
-| `learning_course_reports` | `id`, `reporter_id`, `publication_id`, `share_id`, `category`, `details`, `status`, `created_at` | reporter CASCADE，目标 CASCADE；publication/share 必须且只能有一个；六类举报；details≤1000；status=`open/reviewing/resolved/dismissed` |
-| `learning_course_moderation_actions` | `id`, `publication_id`, `actor_id`, `action`, `reason`, `created_at` | bigint identity；publication/actor 删除 SET NULL，审计行保留；action=`hide/restore/withdraw`；reason 1–1000 |
-| `badge_definitions` | `code`, `family`, `tier`, `name`, `description`, `threshold`, `icon` | code PK；family+tier 唯一；tier 1–3；0011 固定种入 vocab_words/vocab_courses/vocab_review_days 共九级 |
-| `user_badge_awards` | `user_id`, `badge_code`, `awarded_at`, `metadata` | 复合 PK；user CASCADE；badge definition DELETE RESTRICT；`ON CONFLICT DO NOTHING` 保证历史只发一次 |
+| `learning_courses` | `id`, `user_id`, `title`, `category`, `has_units`, `locale`, `origin_publication_id`, `origin_share_id`, `origin_author_name`, `can_republish`, `points_claimed_at`, `created_at`, `updated_at` | owner → Auth CASCADE; title 1–80; four categories but the v1 API only accepts English word lists; locale=`en-US`; `(id,user_id)` unique; clone origin → publication/share SET NULL, and the author attribution is kept after the origin record disappears |
+| `learning_course_units` | `id`, `course_id`, `user_id`, `name`, `position`, `is_system`, `created_at`, `updated_at` | course/Auth CASCADE; composite FK `(course_id,user_id)` prevents cross-owner rows; name 1–80; position≥0; `(course_id,position)` deferred unique |
+| `learning_course_words` | `id`, `course_id`, `unit_id`, `user_id`, `term`, `normalized_term`, `translations`, `ipa`, `position`, `content_version`, `created_at`, `updated_at` | `normalized_term` is a stored generated `_points_normalize_text(term)`; term 1–120; 1–10 translations; IPA≤120; composite unit/course/owner FK; normalized term and position deferred unique within the unit |
+| `learning_sessions` | `id`, `user_id`, `course_id`, `unit_id`, `mode`, `scope`, `selected_skills`, `stage`, `active`, `state`, `revision`, `resume_key`, `spelling_options`, `started_at`, `last_activity_at`, `completed_at` | course CASCADE, unit deletion SET NULL; mode=`initial/review/exam`; scope=`all/unlearned`; skills are 1–3 of pronunciation/translation/spelling; stage is recognition/pronunciation/translation/spelling/completed; 0015's `revision bigint≥0` increases monotonically after each immutable attempt; 0017's `resume_key` is generated from the learning intent; 0019's `spelling_options` pins the timer/translation pre-test; 0027's exam stores the first-round threshold/accuracy/pass facts and the spelling end-of-round fields; 0029 adds `examKind=pronunciation` and `roundAssessmentScores/retrySummaryScores`; 0031's custom scope still lands in session items, with `selectionMode/selectedWordIds/practiceCompleted` stored in state, adding no client-writable columns |
+| `learning_session_items` | `session_id`, `word_id`, `position`, `recognition_seen`, `pronunciation_passed`, `translation_passed`, `spelling_passed`, `wrong_count` | `(session_id,word_id)` PK; session/word deletion CASCADE; position deferred unique per session; the pass fields are projections for the current session |
+| `learning_attempts` | `id`, `user_id`, `course_id`, `session_id`, `word_id`, `mode`, `skill`, `is_correct`, `answer`, `error_kind`, `provider_details`, `local_date`, `attempt_id`, `response_payload`, `word_id_snapshot`, `term_snapshot`, `created_at` | bigint identity; course/session/user CASCADE, word deletion SET NULL; 0031's trigger stores the word/term at the time for exam attempts, so details can still be linked after a word is deleted; skill also includes recognition and speech_assessment; `is_correct=null` is allowed for non-graded facts; ordinary test attempts are unique by `(user_id,session_id,attempt_id)` and store the full first response for timeout replays; old RPCs/recognition/scoring allow `attempt_id=NULL`; no recordings are stored; even service_role has no direct UPDATE/DELETE |
+| `learning_exam_word_snapshots` | `session_id`, `word_id`, `position`, `term`, `ipa`, `translations`, `wrong_count`, `passed` | Enabled in production with 0031; session CASCADE, but doesn't reference the editable/deletable word; pins the word when the exam item is created and the final result on completion; RLS on and no client table permissions, redacted results only through the owner-scoped history API |
+| `learning_word_progress` | `user_id`, `word_id`, `initial_recognition_seen`, `initial_pronunciation_passed`, `initial_translation_passed`, `initial_spelling_passed`, `pronunciation_review_dates`, `translation_review_dates`, `spelling_review_dates`, `wrong_count`, `review_count`, `spelling_exam_passed_at`, `pronunciation_exam_passed_at`, `learned_at`, `updated_at` | `(user_id,word_id)` PK; dedupe of the three date[] groups is guaranteed by the workflow, but they only express practice. Since 0033, passing and completing the spelling/pronunciation exams writes the corresponding timestamps, and `learned_at` is projected per word only when both timestamps are non-null. Production 0035's before trigger and two-way check force `learned_at` to exactly equal the later of the two exam timestamps, or null otherwise, and direct assignment can't bypass it. Since 0031 session items can be an owner-validated subset of the unit; content edits clear the corresponding exam facts and `learned_at` by term/translations/IPA semantics |
+| `learning_review_schedules` | `id`, `user_id`, `course_id`, `unit_id`, `source_session_id`, `due_date`, `skills`, `scope`, `status`, `completed_session_id`, `completed_at`, `created_at` | user/course/unit/source initial session CASCADE, completed review session SET NULL; 3/7/15/30 offsets can only be created from the user's own completed initial session for that unit; status=`pending/completed/cancelled`; `(user_id,unit_id,due_date)` unique |
+| `learning_speech_usage` | `id`, `user_id`, `kind`, `cost_microusd`, `character_count`, `local_date`, `created_at` | bigint identity; user deletion SET NULL to keep budget facts; since 0037 kind=`tts/assessment/translation_stt`, enabled in production; cost must be >0; TTS reservations record the character count and can use a NULL user for globally shared generation; STT only records the estimated cost and quota date, with no audio, transcript, or reference text |
+| `learning_audio_assets` | `cache_key`, `normalized_term`, `synthesis_text`, `locale`, `voice`, `output_format`, `synthesis_version`, `storage_path`, `status`, `priority`, `attempt_count`, `next_attempt_at`, `lease_token`, `lease_until`, `last_error_code`, `last_error_message`, `ready_at`, `created_at`, `updated_at` | 64-character hex SHA-256 PK; storage path unique; status=`pending/processing/ready/failed`; leases, exponential backoff, and priority drive the durable worker; RLS on and table permissions fully revoked from public/anon/authenticated, service_role only; contains no user recordings, translations, or owner IDs |
+| `learning_spelling_translation_assessments` | `assessment_id`, `user_id`, `session_id`, `word_id`, `expected_revision`, `answer_hash`, `status`, `correct`, `response_payload`, `provider`, `model`, token usage, `provider_attempts`, `quota_counted`, `quota_counted_at`, lease/error/timestamps | The assessment UUID is the PK/idempotency key; the answer is only stored as SHA-256; `quota_counted=false/quota_counted_at=null` means no provider-backed judgement quota was consumed, and the service-only reservation atomically writes true/the current time before the real request; the minute and rolling 24-hour windows are computed from that time; the lease prevents concurrent duplicate judging; RLS on and no client table permissions |
+| `learning_course_shares` | `id`, `user_id`, `course_id`, `token_hash`, `active`, `author_name`, `created_at`, `revoked_at` | owner/course CASCADE; only the token SHA-256 is stored; token hash unique, at most one active share per course |
+| `learning_course_publications` | `id`, `author_id`, `source_course_id`, `title`, `description`, `author_name`, `category`, `locale`, `version`, `snapshot`, `content_fingerprint`, `status`, `rights_declared_at`, `clone_count`, `created_at`, `updated_at` | author CASCADE, source SET NULL; English/en-US; status=`published/hidden/withdrawn`; unique per author/source/version; a trigger forbids changing the content snapshot/attribution/fingerprint/rights declaration, only allowing lifecycle, clone_count, nulling the source, and updated_at |
+| `learning_course_reports` | `id`, `reporter_id`, `publication_id`, `share_id`, `category`, `details`, `status`, `created_at` | reporter CASCADE, target CASCADE; exactly one of publication/share; six report categories; details≤1000; status=`open/reviewing/resolved/dismissed` |
+| `learning_course_moderation_actions` | `id`, `publication_id`, `actor_id`, `action`, `reason`, `created_at` | bigint identity; publication/actor deletion SET NULL, audit rows kept; action=`hide/restore/withdraw`; reason 1–1000 |
+| `badge_definitions` | `code`, `family`, `tier`, `name`, `description`, `threshold`, `icon` | code PK; family+tier unique; tier 1–3; 0011 seeds a fixed nine tiers across vocab_words/vocab_courses/vocab_review_days |
+| `user_badge_awards` | `user_id`, `badge_code`, `awarded_at`, `metadata` | composite PK; user CASCADE; badge definition DELETE RESTRICT; `ON CONFLICT DO NOTHING` guarantees each is awarded only once in history |
 
-内容保存约束由单个 `learning_upsert_course` 事务补充：课程 4–2,000 个不同规范化词/短语、最多 100 单元、每词翻译非空且去重。数据库可存四类 category 是为兼容未来，但当前 API/UI 明确拒绝非 `english_vocabulary`。
+Content save constraints are supplemented by the single `learning_upsert_course` transaction: 4–2,000 distinct normalized words/phrases per course, at most 100 units, and non-empty, deduplicated translations per word. The database can store four categories for future compatibility, but the current API/UI explicitly rejects anything other than `english_vocabulary`.
 
-`learned_at` 的唯一双考试投影条件、不会写入的事件、编辑撤销矩阵和代码/测试位置统一由 [Courses 英语单词学习文档](../notes/11-learning-courses.md) 第 4 节维护；ERD 只记录最终结构语义，不能把 `initial_*_passed`、复习日期、单项考试或前端正确状态解释为已学习。
+The single dual-exam projection condition for `learned_at`, the events that never write it, the edit revocation matrix, and the code/test locations are maintained in one place in section 4 of the [Courses English vocabulary learning document](../notes/11-learning-courses.md); the ERD only records the final structural semantics, and `initial_*_passed`, review dates, single exams, or frontend correctness states must never be interpreted as learned.
 
-### 3.8 Materials AI、Notes 与在线考试（生产 0041–0043；0046–0051 候选）
+### 3.8 Materials AI, Notes, and online exams (production 0041–0043; 0046–0051 candidate)
 
-| 表 | 关键列 | 约束、关系与事实边界 |
+| Table | Key columns | Constraints, relationships, and fact boundaries |
 |---|---|---|
-| `ai_plans` | `code,generation_daily_limit,grading_daily_limit,active,timestamps` | 当前只种子 `free=10/10`；产品计划定义，不是 credits |
-| `ai_user_plans` | `user_id PK→auth.users CASCADE,plan_code,consent_version,consented_at,timestamps` | 现有/新用户都回填 Free；同意按用户和版本持久化 |
-| `ai_daily_usage` | `user_id,local_date,kind,plan_code,limit_count,reserved_count,consumed_count,timezone` | PK `(user_id,local_date,kind)`；`reserved+consumed<=limit`；本地日/时区在 reservation 时冻结 |
-| `generation_jobs` | owner/material/course/name/kind/status/stage/progress/settings/idempotency/fingerprint/consent/quota/lease/models/note/error/timestamps；候选增加 retryable/resume_until/checkpoint_stage/resume_count/accepted_at、`pipeline`、deletion/cleanup 字段 | `(user_id,idempotency_key)` 唯一；每用户至多一个 queued/processing/deleting；来源删除 SET NULL 但名称保留；候选 kind=`exam/knowledge_graph/knowledge_question`，短 HTTP 只确认 202；queued 删除释放额度，worker 已接收后删除消费一次，清理确认前保持 `deleting` |
-| `generation_job_events` | `id,job_id,stage,progress,event_code,created_at` | job CASCADE；只保存阶段事实，不保存文件正文或 prompt |
-| `generation_job_checkpoints`（候选） | `job_id PK,user_id,stage,checkpoint_version,payload,expires_at,timestamps` | job/Auth CASCADE；DocumentIR 保存 parsed/audited/document_ready/artifact_ready/answer_ready，Luna 保存 native_audited/native_artifact_ready/answer_ready；完全 service-only，终态、删除或 TTL 清理 |
-| `exam_grading_checkpoints`（候选） | `attempt_id PK,user_id,checkpoint_version,payload,expires_at,timestamps` | attempt/Auth CASCADE；只保存已验证评分结果用于 callback/容器故障恢复；完全 service-only，离开 grading 或 TTL 后清理 |
-| `ai_material_parse_cache` | owner/material/source hash/parser/audit/vision versions/`canonical_document`/counts | material CASCADE；同文件+所有策略版本唯一；这是私有持久缓存，不是临时目录 |
-| `notes` | owner/course/job/title/kind/material_name/`pipeline`/`generation_model`/timestamps | course/job 删除 SET NULL；用户删除 CASCADE；生产 kind=`ai_exam`，候选增加 `ai_knowledge_graph`；旧行回填 `document_ir_v1` |
-| `note_materials` | note/material/name/source hash | note CASCADE、material SET NULL；来源删除后仍保留快照名/hash |
-| `note_artifacts` | `note_id PK,schema_version,content,question_count,total_marks,node_count,edge_count,timestamps` | note CASCADE；生产 schema=`generated-exam.v1`，候选增加 `generated-knowledge-graph.v1`；artifact 内容带 `sourceMode` 及兼容 page/slide/section/image locator，DocumentIR `blockId` 仍可渲染；kind-shape check 禁止把考试与图谱计数混写 |
-| `exam_attempts` | owner/note/number/status/revision/deadline/scores/grading reservation+lease/timestamps | `(user,note,attempt_number)` 唯一；note/user CASCADE；绝对期限、无限重考、主观评分可延期；`in_progress` 只保存草稿且响应 `results=[]`，统一交卷后才判分/展示答案 |
-| `exam_attempt_answers` | `attempt_id,question_id,answer,awarded_marks,correct,feedback,updated_at` | PK `(attempt,question)`；attempt CASCADE；只由事务 RPC 写 |
-| `exam_attempt_operations` | `attempt_id,operation_id,operation_kind,response_payload,created_at` | PK 保证保存/提交/评分相同 UUID 重放返回第一次响应 |
-| `ai_provider_usage_events` | owner、不可变 job XOR attempt 审计 ID、purpose/provider/model/request ID/tokens/cost/duration/ZDR/status/error；候选增加 `event_id`、`pipeline`、`upstream_provider`、`upstream_endpoint` | 只存计量元数据；event UUID 唯一，断线重放不重复记账；job/attempt ID 故意不设内容生命周期 FK，任务删除后仍保留成本与真实路由审计；Auth owner 删除仍 CASCADE；不得保存 prompt、正文、答案或原始响应 |
-| `knowledge_node_questions`（候选） | `id PK→generation_jobs,user_id,note_id,node_id,question,answer,timestamps` | job/note/Auth CASCADE；问题 1–2000 字；owner 只读，创建/回答只经服务端工作流；答案必须引用该节点允许的 source blocks |
-| `knowledge_graph_layouts`（候选） | `note_id PK,user_id,artifact_version,revision,positions,viewport,timestamps` | note/Auth CASCADE；owner 只读、写入只经 revision RPC；图内容变化时仅复用仍存在节点位置，其余重新布局；坐标、缩放和 JSON 形状均由服务端验证 |
+| `ai_plans` | `code,generation_daily_limit,grading_daily_limit,active,timestamps` | Currently only seeds `free=10/10`; a product plan definition, not credits |
+| `ai_user_plans` | `user_id PK→auth.users CASCADE,plan_code,consent_version,consented_at,timestamps` | Existing/new users are all back-filled with Free; consent is persisted per user and version |
+| `ai_daily_usage` | `user_id,local_date,kind,plan_code,limit_count,reserved_count,consumed_count,timezone` | PK `(user_id,local_date,kind)`; `reserved+consumed<=limit`; the local day/time zone are frozen at reservation |
+| `generation_jobs` | owner/material/course/name/kind/status/stage/progress/settings/idempotency/fingerprint/consent/quota/lease/models/note/error/timestamps; the candidate adds retryable/resume_until/checkpoint_stage/resume_count/accepted_at, `pipeline`, and deletion/cleanup fields | `(user_id,idempotency_key)` unique; at most one queued/processing/deleting per user; source deletion SET NULL but the name is kept; candidate kind=`exam/knowledge_graph/knowledge_question`, and short HTTP only acknowledges 202; deleting while queued releases quota, deleting after the worker has accepted consumes once, and it stays `deleting` until cleanup is confirmed |
+| `generation_job_events` | `id,job_id,stage,progress,event_code,created_at` | job CASCADE; only stores stage facts, never file content or prompts |
+| `generation_job_checkpoints` (candidate) | `job_id PK,user_id,stage,checkpoint_version,payload,expires_at,timestamps` | job/Auth CASCADE; DocumentIR stores parsed/audited/document_ready/artifact_ready/answer_ready, and Luna stores native_audited/native_artifact_ready/answer_ready; fully service-only, cleaned up on terminal state, deletion, or TTL |
+| `exam_grading_checkpoints` (candidate) | `attempt_id PK,user_id,checkpoint_version,payload,expires_at,timestamps` | attempt/Auth CASCADE; only stores validated grading results for callback/container failure recovery; fully service-only, cleaned up after leaving grading or on TTL |
+| `ai_material_parse_cache` | owner/material/source hash/parser/audit/vision versions/`canonical_document`/counts | material CASCADE; unique per file + all policy versions; this is a private durable cache, not a temporary directory |
+| `notes` | owner/course/job/title/kind/material_name/`pipeline`/`generation_model`/timestamps | course/job deletion SET NULL; user deletion CASCADE; production kind=`ai_exam`, and the candidate adds `ai_knowledge_graph`; old rows are back-filled with `document_ir_v1` |
+| `note_materials` | note/material/name/source hash | note CASCADE, material SET NULL; the snapshot name/hash are kept after the source is deleted |
+| `note_artifacts` | `note_id PK,schema_version,content,question_count,total_marks,node_count,edge_count,timestamps` | note CASCADE; production schema=`generated-exam.v1`, and the candidate adds `generated-knowledge-graph.v1`; artifact content carries `sourceMode` and compatible page/slide/section/image locators, and DocumentIR `blockId` still renders; a kind-shape check forbids mixing exam and graph counts |
+| `exam_attempts` | owner/note/number/status/revision/deadline/scores/grading reservation+lease/timestamps | `(user,note,attempt_number)` unique; note/user CASCADE; absolute deadline, unlimited retakes, subjective grading can be deferred; `in_progress` only stores drafts and responds with `results=[]`, and grading/showing answers only happens after unified submission |
+| `exam_attempt_answers` | `attempt_id,question_id,answer,awarded_marks,correct,feedback,updated_at` | PK `(attempt,question)`; attempt CASCADE; written only by transactional RPCs |
+| `exam_attempt_operations` | `attempt_id,operation_id,operation_kind,response_payload,created_at` | The PK guarantees save/submit/grade replays with the same UUID return the first response |
+| `ai_provider_usage_events` | owner, immutable job XOR attempt audit ID, purpose/provider/model/request ID/tokens/cost/duration/ZDR/status/error; the candidate adds `event_id`, `pipeline`, `upstream_provider`, `upstream_endpoint` | Only stores metering metadata; the event UUID is unique, so disconnect replays never double-bill; the job/attempt IDs deliberately have no content lifecycle FK, so cost and real routing audits are kept after a job is deleted; deleting the Auth owner still CASCADEs; prompts, content, answers, or raw responses must never be stored |
+| `knowledge_node_questions` (candidate) | `id PK→generation_jobs,user_id,note_id,node_id,question,answer,timestamps` | job/note/Auth CASCADE; questions 1–2000 characters; owner read-only, creation/answering only through the server workflow; answers must cite the source blocks allowed for that node |
+| `knowledge_graph_layouts` (candidate) | `note_id PK,user_id,artifact_version,revision,positions,viewport,timestamps` | note/Auth CASCADE; owner read-only, writes only through the revision RPC; when the graph content changes, only positions of nodes that still exist are reused and the rest are laid out again; coordinates, zoom, and JSON shape are all validated by the server |
 
-Postgres 是额度、任务、Notes、答卷和成绩的唯一事实源；BullMQ 只持有 UUID，不形成第二套状态。客户端不能直接写任何上述表，也不能执行工作流 RPC。
+Postgres is the single source of truth for quota, jobs, Notes, answer sheets, and scores; BullMQ only holds UUIDs and never forms a second set of state. Clients can't write any of the tables above directly or execute workflow RPCs.
 
-## 4. 删除与生命周期规则
+## 4. Deletion and lifecycle rules
 
-| 父实体删除 | 当前结果 |
+| Parent entity deleted | Current result |
 |---|---|
-| `auth.users` | 级联删除 profile、资料课程、私有学习课程/会话/尝试/progress/日程/分享、拼写翻译评判事实、本人出版物/举报、badge awards、points 分录/状态/日窗口/claim。speech usage/Courses moderation actor 改为 NULL；points moderation action 保留管理员 UUID，signal owner/reviewer FK 置 NULL 但账户 UUID 数组保留用于安全审计。Storage 文件是否删除不由 FK 保证。 |
-| `courses` | 资料 CASCADE；目标/任务和 AI Notes 的 `course_id` SET NULL。0041 应用删除入口先取消 job/清 cache，并按选择将 Notes 移入 Unfiled 或级联删结果。 |
-| `materials` | 任务与 generation job 的 `material_id` SET NULL，解析缓存 CASCADE，note source SET NULL；0041 应用先按 keep/delete 选择编排。Storage 对象不会由 FK 自动删除。 |
-| `notes` | 来源快照、artifact、答卷、答案和 operation CASCADE；generation job 的 note FK SET NULL。 |
-| `study_goals` | 任务的 `goal_id` SET NULL。 |
-| `posts` | 评论/点赞/收藏 CASCADE；引用它的转发帖也 CASCADE；相关 active points 事件会按 trigger 冲正。媒体对象不会自动删除。 |
-| `learning_courses` | 单元、词、会话、尝试、progress、复习日程和源课分享级联；publication 的 source SET NULL，克隆课的 `origin_share_id` 随被删分享 SET NULL。已发 points 分录没有 source FK，不删除；用户徽章也不因删课程回退。 |
-| `learning_course_shares` | 来源克隆课的 `origin_share_id` SET NULL；针对该分享的举报 CASCADE。 |
-| `learning_course_units/words/sessions` | 下游词、session items、attempts/progress 按 FK 级联；删除只能通过课程事务 API，客户端不能直接执行。 |
-| `learning_course_publications` | 来源克隆课的 `origin_publication_id` SET NULL；举报 CASCADE；审核动作 publication_id SET NULL 保留。 |
-| `learning_course_shares` | 关联举报 CASCADE；撤销通常只写 `active=false/revoked_at` 而不删除。 |
+| `auth.users` | Cascades to delete the profile, Materials courses, private learning courses/sessions/attempts/progress/schedules/shares, spelling translation judgement facts, the user's own publications/reports, badge awards, and points entries/states/daily windows/claims. Speech usage/Courses moderation actor become NULL; points moderation actions keep the admin UUID, and signal owner/reviewer FKs are set to NULL while the account UUID arrays are kept for security audits. Whether Storage files are deleted is not guaranteed by FKs. |
+| `courses` | Materials CASCADE; `course_id` on goals/tasks and AI Notes SET NULL. The 0041 application deletion entry first cancels jobs/clears caches, and per the user's choice moves Notes to Unfiled or cascades to delete results. |
+| `materials` | `material_id` on tasks and generation jobs SET NULL, parse caches CASCADE, note sources SET NULL; the 0041 application orchestrates by the keep/delete choice first. Storage objects are not deleted automatically by FKs. |
+| `notes` | Source snapshots, artifacts, answer sheets, answers, and operations CASCADE; the generation job's note FK SET NULL. |
+| `study_goals` | Tasks' `goal_id` SET NULL. |
+| `posts` | Comments/likes/favorites CASCADE; reposts referencing it also CASCADE; the related active points events are reversed by triggers. Media objects aren't deleted automatically. |
+| `learning_courses` | Units, words, sessions, attempts, progress, review schedules, and shares of the source course cascade; the publication's source SET NULL, and clones' `origin_share_id` SET NULL along with the deleted share. Already awarded points entries have no source FK and aren't deleted; user badges aren't rolled back by course deletion either. |
+| `learning_course_shares` | Clones' `origin_share_id` SET NULL; reports against that share CASCADE. |
+| `learning_course_units/words/sessions` | Downstream words, session items, attempts/progress cascade via FKs; deletion can only go through the course transaction API, and clients can't execute it directly. |
+| `learning_course_publications` | Clones' `origin_publication_id` SET NULL; reports CASCADE; moderation actions' publication_id SET NULL and kept. |
+| `learning_course_shares` | Linked reports CASCADE; revocation usually only writes `active=false/revoked_at` without deleting. |
 
-双用户 RLS E2E 在清理阶段验证 Auth 删除后的关系表级联；仓库仍没有生产级账号删除编排来先清理 Storage 对象、导出/冷却或生成删除凭证，因此完整隐私删除流程仍须单独实现。
+The two-user RLS E2E verifies the relationship table cascades after Auth deletion in its cleanup phase; the repository still has no production-grade account deletion orchestration that first cleans up Storage objects, exports/cools down, or issues a deletion receipt, so the full privacy deletion process still needs to be implemented separately.
 
-## 5. RLS 矩阵
+## 5. RLS matrix
 
-所有当前业务表都启用了 RLS。
+Every current business table has RLS enabled.
 
-| 表 | SELECT | INSERT | UPDATE | DELETE |
+| Table | SELECT | INSERT | UPDATE | DELETE |
 |---|---|---|---|---|
-| `profiles` | 本人 | 无客户端 policy（由 Auth trigger 建档） | 本人仅 `username/university/major/year/language/timezone`；受保护列由 grant + trigger 双重禁止 | 无客户端 policy |
+| `profiles` | self | no client policy (created by the Auth trigger) | self, only `username/university/major/year/language/timezone`; protected columns are forbidden by both grants + triggers | no client policy |
 | `courses` | owner | owner | owner | owner |
-| `materials` | owner | owner + 关联课程 owner | owner + 关联课程 owner | owner |
+| `materials` | owner | owner + linked course owner | owner + linked course owner | owner |
 | `notifications` | owner | owner | owner | owner |
-| `feedback` | owner | owner，仅 `category/summary/body` | 无 | 无 |
-| `posts` | 所有 authenticated | 作者 | 作者 | 作者 |
-| `comments` | 所有 authenticated | 作者 | 无 policy | 作者 |
-| `post_likes`, `post_favorites` | 仅自己的关系行 | 自己 | 自己 | 自己 |
-| `follows` | follower 或 following 是自己 | follower 是自己 | 无 policy | follower 是自己 |
-| `tags` | 所有 authenticated | 任意 authenticated | 无 policy | 无 policy |
+| `feedback` | owner | owner, only `category/summary/body` | none | none |
+| `posts` | all authenticated | author | author | author |
+| `comments` | all authenticated | author | no policy | author |
+| `post_likes`, `post_favorites` | own relationship rows only | self | self | self |
+| `follows` | follower or following is self | follower is self | no policy | follower is self |
+| `tags` | all authenticated | any authenticated | no policy | no policy |
 | `study_goals` | owner | owner | owner | owner |
-| `study_tasks` | owner | owner + 所有关联实体 owner | 同左 | owner |
-| `point_entries` | 本人 | 无客户端权限/policy | 无客户端权限/policy | 无客户端权限/policy |
-| `point_event_states` | 无客户端权限/policy | 无 | 无 | 无 |
-| `point_daily_*`, `point_moderation_actions`, `point_abuse_signals`, `api_abuse_events` | 无客户端权限/policy | 无 | 无 | 无 |
-| `learning_courses/units/words` | owner | 无 | 无 | 无 |
-| `learning_sessions/items/attempts/progress/review_schedules` | owner（items 经 session） | 无 | 无 | 无 |
-| `learning_exam_word_snapshots` | 无客户端读取 | 无 | 无 | 无 |
-| `learning_spelling_translation_assessments` | 无客户端读取 | 无 | 无 | 无 |
-| `learning_course_shares` | owner | 无 | 无 | 无 |
-| `learning_course_publications` | 仅 author 自己 | 无 | 无 | 无 |
-| `learning_course_reports` | 仅 reporter 自己 | 无 | 无 | 无 |
-| `learning_speech_usage`, `learning_course_moderation_actions` | 无客户端读取 | 无 | 无 | 无 |
-| `badge_definitions` | 所有 authenticated | 无 | 无 | 无 |
-| `user_badge_awards` | 本人 | 无 | 无 | 无 |
-| `ai_plans`, `ai_user_plans`, `ai_daily_usage` | active plan / 本人 | 无 | 无 | 无 |
-| `generation_jobs`, `generation_job_events` | 本人（event 经 job） | 无 | 无 | 无 |
-| `ai_material_parse_cache`, `ai_provider_usage_events`, `exam_attempt_operations` | 无客户端读取 | 无 | 无 | 无 |
-| `notes`, `note_materials`, `note_artifacts`, `exam_attempts`, `exam_attempt_answers` | 本人（子表经 owner parent） | 无 | 无 | 无 |
-| `generation_job_checkpoints`（候选） | 无客户端读取 | 无 | 无 | 无 |
-| `exam_grading_checkpoints`（候选） | 无客户端读取 | 无 | 无 | 无 |
-| `knowledge_node_questions`（候选） | 本人 | 无 | 无 | 无 |
-| `knowledge_graph_layouts`（候选） | 本人 | 无 | 无 | 无 |
+| `study_tasks` | owner | owner + owner of all linked entities | same as left | owner |
+| `point_entries` | self | no client permission/policy | no client permission/policy | no client permission/policy |
+| `point_event_states` | no client permission/policy | none | none | none |
+| `point_daily_*`, `point_moderation_actions`, `point_abuse_signals`, `api_abuse_events` | no client permission/policy | none | none | none |
+| `learning_courses/units/words` | owner | none | none | none |
+| `learning_sessions/items/attempts/progress/review_schedules` | owner (items via session) | none | none | none |
+| `learning_exam_word_snapshots` | no client reads | none | none | none |
+| `learning_spelling_translation_assessments` | no client reads | none | none | none |
+| `learning_course_shares` | owner | none | none | none |
+| `learning_course_publications` | author only | none | none | none |
+| `learning_course_reports` | reporter only | none | none | none |
+| `learning_speech_usage`, `learning_course_moderation_actions` | no client reads | none | none | none |
+| `badge_definitions` | all authenticated | none | none | none |
+| `user_badge_awards` | self | none | none | none |
+| `ai_plans`, `ai_user_plans`, `ai_daily_usage` | active plan / self | none | none | none |
+| `generation_jobs`, `generation_job_events` | self (events via job) | none | none | none |
+| `ai_material_parse_cache`, `ai_provider_usage_events`, `exam_attempt_operations` | no client reads | none | none | none |
+| `notes`, `note_materials`, `note_artifacts`, `exam_attempts`, `exam_attempt_answers` | self (child tables via the owner parent) | none | none | none |
+| `generation_job_checkpoints` (candidate) | no client reads | none | none | none |
+| `exam_grading_checkpoints` (candidate) | no client reads | none | none | none |
+| `knowledge_node_questions` (candidate) | self | none | none | none |
+| `knowledge_graph_layouts` (candidate) | self | none | none | none |
 
-迁移 0008 已修复 Profile 整行更新缺口。生产 0039 进一步拆分 Feedback policy、限制帖子列 grant 并增加 Schedule owner trigger；0040 对精确列权限、trigger 与内部表/RPC grant 失败关闭。生产 0052–0053 已在观察通过后撤销 authenticated 对 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE grant，并验证合法内容/Schedule 列、service-role 与时间 trigger 不受影响。
+Migration 0008 fixed the whole-row Profile update gap. Production 0039 further split the Feedback policy, restricted post column grants, and added the Schedule owner trigger; 0040 fails closed on exact column permissions, triggers, and internal table/RPC grants. Production 0052–0053 revoked authenticated's compatibility UPDATE grant on `posts.updated_at` and `study_tasks.done_at` after the observation passed, and verified that valid content/Schedule columns, the service role, and the time triggers are unaffected.
 
-## 6. Storage 模型
+## 6. Storage model
 
-| Bucket | 可见性 | 当前对象策略 | 路径约定 | 关系边界 |
+| Bucket | Visibility | Current object policies | Path convention | Relationship boundary |
 |---|---|---|---|---|
-| `materials` | private | authenticated 仅可 SELECT/INSERT/DELETE 自己 UUID 首段路径 | `{auth.uid()}/...` | `materials.storage_path` 是文本引用；表和对象间无 FK/事务 |
-| `community-media` | public | authenticated 仅可 INSERT/DELETE 自己 UUID 首段路径；公共读取由 public bucket 提供 | `{auth.uid()}/...` | `posts.image_url/audio_url` 是 URL 文本；删除帖子不会自动删对象 |
-| `vocabulary-audio` | private | 没有客户端 Storage policy；仅 API service-role 读写 | `SHA-256(normalizedTerm␟locale␟voice␟format␟synthesisVersion).mp3` | 只允许可跨用户复用的 Azure 合成语音；不存用户录音，也不与 word 行做 FK |
+| `materials` | private | authenticated can only SELECT/INSERT/DELETE paths whose first segment is its own UUID | `{auth.uid()}/...` | `materials.storage_path` is a text reference; there is no FK/transaction between the table and objects |
+| `community-media` | public | authenticated can only INSERT/DELETE paths whose first segment is its own UUID; public reads are provided by the public bucket | `{auth.uid()}/...` | `posts.image_url/audio_url` are URL text; deleting a post doesn't delete the object automatically |
+| `vocabulary-audio` | private | No client Storage policy; only the API service role reads/writes | `SHA-256(normalizedTerm␟locale␟voice␟format␟synthesisVersion).mp3` | Only Azure-synthesized speech reusable across users is allowed; no user recordings are stored, and there is no FK to word rows |
 
-Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路径或显式设计安全策略。
+The Storage policies have no object UPDATE policy. When replacing a file, use a new path or explicitly design a safe policy.
 
-## 7. 函数与触发器
+## 7. Functions and triggers
 
-| 函数/触发器 | 事件 | 当前作用 |
+| Function/trigger | Event | Current role |
 |---|---|---|
-| `handle_new_user` / `on_auth_user_created` | `auth.users AFTER INSERT` | 创建 profile |
-| `touch_updated_at` / `profiles_touch` | `profiles BEFORE UPDATE` | 更新时间戳 |
-| `_post_author` / `posts_author` | post BEFORE INSERT | 从 profile 覆盖作者快照 |
-| `_comment_author` / `comments_author` | comment BEFORE INSERT | 从 profile 覆盖作者名 |
-| `_bump_counts` / `likes_cnt`,`favs_cnt`,`comments_cnt` | 互动 INSERT/DELETE | 维护帖子冗余计数 |
-| `_bump_repost` / `repost_cnt` | post INSERT/DELETE | 维护原帖转发计数 |
-| `_sync_profile_tags` / `profiles_tags` | profile INSERT/相关 UPDATE | 收集大学/专业全局标签 |
-| `_sync_course_tags` / `courses_tags` | course INSERT | 收集 subject 标签 |
-| `_add_points` | 已停用的旧 helper | 不再被业务触发器使用，PUBLIC/anon/authenticated/service_role EXECUTE 均已撤销 |
-| `_notify` | 被其它函数调用 | 插入通知 |
-| `_set_point_event` | 内部状态转换 | 以业务键写分录/状态、重算 points/等级；客户端无 EXECUTE，service_role 可通过受信 RPC 调用 |
-| `_point_daily_bounds`, `_point_daily_window`, `_point_daily_limit` | 生产 0039 内部 helper | 计算并冻结奖励自然日/时区边界、避免换时区产生重叠窗口，并返回事件数量上限；客户端无 EXECUTE |
-| `get_point_reward_receipt` | 生产 0039 owner RPC | 从 `auth.uid()` 查本人的 source/event 决策并返回金额/用量/上限/抑制原因；超限通知已与奖励 decision 在原业务事务中幂等创建 |
-| `moderate_point_rewards` | 生产 0039 service-only RPC | 按 business key 或帖子根链 suppress/restore 实际奖励并追加审核事实 |
-| `scan_point_abuse_signals`, `record_api_abuse_event`, `prune_api_abuse_events` | 生产 0039 service-only RPC | 生成待审协同信号、聚合 HMAC API 拒绝事件并清理 30 天旧桶 |
-| `_guard_post_integrity`, `_guard_feedback_insert`, `_guard_study_goal_integrity`, `_guard_study_task_integrity` | 生产 0039 BEFORE triggers | 覆盖或拒绝可信字段、时间和跨 owner 引用；普通角色无 EXECUTE |
-| `_post_points_key`、`_root_post_points_key`、`_task_points_key` 与 assign/preserve triggers | post/like/comment/task INSERT 与受保护 UPDATE | 生成并冻结内容锚定业务键；post 的 `repost_of` 与互动 identity 同时冻结 |
-| `_guard_profile_managed_fields` | profile BEFORE UPDATE | 防止普通 JWT 角色修改经济、等级、VIP、streak 字段 |
-| `_on_like` / `likes_award` | like AFTER INSERT/DELETE | 非自赞首次激活 +1；删除冲正；通知帖主 |
-| `_on_comment` / `comments_award` | comment AFTER INSERT/DELETE | 非自评 actor/post 关系 +2；最后一条删除冲正；通知帖主 |
-| `_on_fav` / `favs_notify` | favorite AFTER INSERT | 通知帖主 |
-| `_on_post` / `posts_award` | post AFTER INSERT/DELETE | 原创 +10 / 转发 +3；最后一个同业务键删除时冲正，并按需通知 |
-| `_on_follow` / `follows_notify` | follow AFTER INSERT | 通知被关注者 |
-| `_on_task_done` / `task_points_update`,`task_points_delete` | task `done` AFTER UPDATE 或 DELETE | 首次完成 +5；取消/最后一个同键任务删除冲正；仅首次激活更新 streak |
-| `_guard_profile_timezone` / `profiles_guard_timezone`、`profiles_guard_timezone_insert` | profile BEFORE INSERT / timezone BEFORE UPDATE | 只接受 PostgreSQL `pg_timezone_names` 中的 IANA 名称 |
-| `_guard_learning_publication_snapshot` / `learning_publications_preserve_snapshot` | publication BEFORE UPDATE | 阻止已发布版本内容、署名、指纹和权利声明被改写 |
-| `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helper | 固化尝试本地日期、词集合 SHA-256 与服务端内部课程快照；公开 API 另经 `publicSnapshot` 删除私有 ID/进度 |
-| `_refresh_learning_growth` | 完成学习/复习 | 发放课程 +20 points 和九级徽章；持久业务键/award PK 防重复 |
-| `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPC | owner 校验下原子保存、精确能力重置、改名和级联删除 |
-| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPC | 创建/恢复队列、逐步持久化、测试候补池循环；0015 保留旧五参数答题签名并新增七参数 UUID/revision 重载；0017 按请求意图恢复；0021 统一 Unicode 规范化，0023 的七参数权威拼写路径改为调用 `_learning_spelling_text_matches` |
-| `learning_get_session_snapshot`, `_learning_session_patch`, `_learning_increment_session_revision` | API/内部 RPC 与 trigger helper | 一次返回 session/items/words/progress；写事务返回小增量；`learning_attempts AFTER INSERT` 推进 revision，保证旧应用回滚写入也不会绕过版本时钟 |
-| `learning_cancel_session` | API RPC | owner 校验并锁定 session，幂等设为 inactive、推进 revision；保留 attempts/progress 与复习日程，只允许 service role 执行 |
-| `learning_start_exam_session`, `learning_continue_spelling_retry_round` | 兼容 API RPC | 0028 启动/恢复拼写单元考试并持久打乱首轮；旧拼写轮末签名保留供兼容，0034 生产应用使用通用考试 RPC |
-| 六参数 `learning_start_exam_session(...,p_exam_kind)`、`learning_continue_exam_retry_round` | API RPC | 0029 向后兼容增加 `spelling/pronunciation` 考试类型；通用确认 RPC 保存错词集合、清除复盘状态并按轮次重排，均只授予 service role |
-| `learning_start_selected_review_session`、`learning_start_selected_exam_session` | API RPC | 0031 校验 1–2,000 个唯一 word ID 的 owner/course/unit/scope，固化 session items，并以排序后集合哈希隔离恢复意图；只授予 service role |
-| `learning_list_exam_history`、`learning_get_exam_history_detail` | API RPC | 0031 从私有不可变词/attempt 快照返回最近 100 场 owner 考试汇总和单场脱敏详情；不返回录音、密钥或完整 provider payload，只授予 service role |
-| `learning_claim_spelling_translation_assessment_v2`, `learning_reserve_spelling_translation_quota` | API RPC | 先创建不计配额的幂等评判租约；仅真实 OpenRouter 调用前按用户 advisory lock 检查分钟/滚动 24 小时限制并预留配额 |
-| `_learning_apply_passed_exam_progress` | exam session 完成 | 0031 对所有完成考试写 `practiceCompleted=true`；只有第一轮达到阈值时才把该 session 选中的词标为 learned，再由既有成长投影处理课程完成/奖励 |
-| `_learning_normalize_spelling_options`, `_learning_normalize_spelling_text`, `_learning_spelling_without_punctuation`, `_learning_spelling_text_matches`, `learning_claim/complete/release_spelling_translation_assessment`, `learning_record_spelling_attempt` | API/内部 RPC | 固化限时/翻译前测选项；拼写先做 NFKC/空白/ASCII case fold，再以保留标点、移除标点、标点视为空格三路比较，仅放宽标点差异；按 UUID/revision/answer hash 领取供应商租约与配额、保存判定并原子形成权威 attempt |
-| `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPC | 以已完成 initial session 创建复习日程、取消及 Schedule/Profile 聚合事实 |
-| `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPC | 保存非音频评分事实；生产认词阶段按受控分数线更新候补项；0029 起还原子推进读音考试首轮计数、分数清单/候补轮和熟练投影；持久化用户频率和全局预算预留 |
-| `learning_reserve_translation_stt` | API RPC；0037 已生产启用 | 在供应商调用前锁定并验证 owner active spelling session、`translationFirst`、revision 和当前 word，原子执行分钟/本地日/月预算 reservation；只返回 reservation/revision，不读写 transcript、answer、attempt、cursor 或 progress |
-| `_learning_audio_cache_key`, `learning_prepare_unit_audio`, `learning_prepare_word_audio`, `learning_get_unit_audio_manifest` | 服务端音频 RPC | 计算全局内容哈希、owner 校验后按单元/单词幂等入队、返回不暴露 Storage 的用户级 manifest |
-| `learning_claim_audio_asset`, `learning_finish_audio_asset`, `learning_requeue_audio_asset`, `learning_reserve_tts_quota` | 服务端 worker RPC | 数据库 advisory lock + 单活动租约保证全局单并发，最小 3.1 秒启动间隔、失败退避、Storage 丢失重建和每分钟/月字符/预算 reservation |
-| `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPC | token hash 生命周期和撤销竞态内的事务克隆 |
-| `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPC | 不可变发布版本、免费独立克隆、限频举报与受审计隐藏/恢复 |
-| `_ai_create_user_plan` | Auth user AFTER INSERT | 为新用户幂等建立 Free plan；普通角色无 EXECUTE |
-| `ai_get_quota_summary`, `ai_create/claim/update/complete/fail/cancel_generation_job` | Materials AI service-only RPC | 原子 reservation、lease、stage/event、结果/缓存/usage、consume/release；崩溃租约三次后失败并退款 |
-| `ai_mark_generation_job_accepted`, `ai_record_generation_usage_v2`, `ai_checkpoint_generation_job_v2`, `ai_checkpoint_exam_grading`, `ai_retry_generation_job`, `ai_expire_generation_checkpoints`（候选） | Materials AI service-only RPC | 202 接收后续租、按 UUID 增量记费用与真实 upstream/pipeline、保存 DocumentIR/Luna 各自的已验证 checkpoint、同一 job 期限内恢复，以及过期 checkpoint/残留清理；过期/重试耗尽必须持久终态并释放 reservation |
-| `ai_create_generation_job(...,pipeline)`, `ai_complete_material_generation_job_v2`, `ai_complete_knowledge_question_job_v2`, `ai_complete_exam_grading_v2`（候选） | Materials AI service-only RPC | 固定 DocumentIR/Luna 双流水线契约（0056 退役 Ox）；Luna 创建时固定 `openai/gpt-6-luna`，成功提交前必须存在匹配用途的 Azure upstream usage，避免路由违规结果进入 Notes/成绩 |
-| `ai_delete_generation_job`, `ai_clear_generation_history`, `ai_record_generation_cleanup_failure`, `ai_finalize_generation_job_cleanup`（候选） | Materials AI service-only RPC | 原子结算额度、进入 deleting、持久重试清理并在 worker 确认 purge 后硬删除；历史清除不触碰 active job 或已生成 Note，usage ledger 保留 |
-| `ai_get_knowledge_graph_layout`, `ai_save_knowledge_graph_layout`（候选） | Knowledge graph service-only RPC | owner、artifact SHA-256 与 revision 校验；冲突返回当前布局，内容版本变化时保留可合并节点坐标并重置 revision |
-| `ai_create_knowledge_question_job`（候选） | Knowledge Q&A service-only RPC | 校验 graph/note/node owner、原子预留 Free generation quota、建立幂等 job 与只读问答事实 |
-| `ai_create_exam_attempt`, `ai_save_exam_answers`, `ai_submit_exam_attempt` | Exam service-only RPC | owner/deadline/revision/operation UUID 校验，服务端确定性客观判分与强制到期交卷 |
-| `ai_request/claim/complete/fail_exam_grading` | Grading service-only RPC | 主观题每日 reservation、lease、幂等评分、成功消费/失败释放；三次崩溃恢复为 `submitted_ungraded` |
-| `ai_delete_note`, `ai_delete_material`, `ai_delete_material_course` | 删除编排 service-only RPC | owner 校验、取消任务、清 cache，并按 keep/delete 保留到 Unfiled 或删 AI 结果 |
+| `handle_new_user` / `on_auth_user_created` | `auth.users AFTER INSERT` | Creates the profile |
+| `touch_updated_at` / `profiles_touch` | `profiles BEFORE UPDATE` | Updates the timestamp |
+| `_post_author` / `posts_author` | post BEFORE INSERT | Overwrites the author snapshot from the profile |
+| `_comment_author` / `comments_author` | comment BEFORE INSERT | Overwrites the author name from the profile |
+| `_bump_counts` / `likes_cnt`,`favs_cnt`,`comments_cnt` | interaction INSERT/DELETE | Maintains redundant post counts |
+| `_bump_repost` / `repost_cnt` | post INSERT/DELETE | Maintains the original post's repost count |
+| `_sync_profile_tags` / `profiles_tags` | profile INSERT/related UPDATE | Collects global university/major tags |
+| `_sync_course_tags` / `courses_tags` | course INSERT | Collects subject tags |
+| `_add_points` | Retired legacy helper | No longer used by business triggers; PUBLIC/anon/authenticated/service_role EXECUTE all revoked |
+| `_notify` | Called by other functions | Inserts notifications |
+| `_set_point_event` | Internal state transition | Writes entries/state by business key and recomputes points/level; no client EXECUTE, service_role can call it through trusted RPCs |
+| `_point_daily_bounds`, `_point_daily_window`, `_point_daily_limit` | Production 0039 internal helpers | Compute and freeze the reward calendar day/time zone bounds, avoid overlapping windows from time zone changes, and return the event count cap; no client EXECUTE |
+| `get_point_reward_receipt` | Production 0039 owner RPC | Looks up the user's own source/event decision from `auth.uid()` and returns the amount/usage/cap/suppression reason; the over-cap notification is created idempotently together with the reward decision in the original business transaction |
+| `moderate_point_rewards` | Production 0039 service-only RPC | Suppresses/restores actual rewards by business key or post root chain and appends moderation facts |
+| `scan_point_abuse_signals`, `record_api_abuse_event`, `prune_api_abuse_events` | Production 0039 service-only RPCs | Generate pending coordination signals, aggregate HMAC API rejection events, and prune 30-day-old buckets |
+| `_guard_post_integrity`, `_guard_feedback_insert`, `_guard_study_goal_integrity`, `_guard_study_task_integrity` | Production 0039 BEFORE triggers | Overwrite or reject trusted fields, times, and cross-owner references; ordinary roles have no EXECUTE |
+| `_post_points_key`, `_root_post_points_key`, `_task_points_key` and the assign/preserve triggers | post/like/comment/task INSERT and protected UPDATE | Generate and freeze content-anchored business keys; a post's `repost_of` and the interaction identity are frozen together |
+| `_guard_profile_managed_fields` | profile BEFORE UPDATE | Prevents ordinary JWT roles from modifying the economy, level, VIP, and streak fields |
+| `_on_like` / `likes_award` | like AFTER INSERT/DELETE | +1 on the first activation of a non-self like; reversed on delete; notifies the post owner |
+| `_on_comment` / `comments_award` | comment AFTER INSERT/DELETE | +2 per non-self actor/post relationship; reversed when the last one is deleted; notifies the post owner |
+| `_on_fav` / `favs_notify` | favorite AFTER INSERT | Notifies the post owner |
+| `_on_post` / `posts_award` | post AFTER INSERT/DELETE | +10 for original posts / +3 for reposts; reversed when the last post with the same business key is deleted, and notifies as needed |
+| `_on_follow` / `follows_notify` | follow AFTER INSERT | Notifies the followed user |
+| `_on_task_done` / `task_points_update`,`task_points_delete` | task `done` AFTER UPDATE or DELETE | +5 on first completion; reversed on un-completing/deleting the last task with the same key; streak only updates on first activation |
+| `_guard_profile_timezone` / `profiles_guard_timezone`, `profiles_guard_timezone_insert` | profile BEFORE INSERT / timezone BEFORE UPDATE | Only accepts IANA names in PostgreSQL's `pg_timezone_names` |
+| `_guard_learning_publication_snapshot` / `learning_publications_preserve_snapshot` | publication BEFORE UPDATE | Prevents rewriting the content, attribution, fingerprint, and rights declaration of a published version |
+| `_learning_local_date`, `_learning_course_fingerprint`, `_learning_course_snapshot` | Courses helpers | Pin the attempt's local date, the word set SHA-256, and the server-internal course snapshot; the public API additionally removes private IDs/progress through `publicSnapshot` |
+| `_refresh_learning_growth` | Learning/review completion | Awards the course +20 points and the nine-tier badges; durable business keys/award PK prevent duplicates |
+| `learning_upsert_course`, `learning_rename_course`, `learning_delete_course` | API RPCs | Atomic save, precise ability resets, renaming, and cascading deletion under owner validation |
+| `learning_start_session`, `learning_mark_recognition`, `learning_record_attempt` | API RPCs | Create/resume queues, persist step by step, and loop the test retry pool; 0015 keeps the old five-parameter answer signature and adds a seven-parameter UUID/revision overload; 0017 resumes by request intent; 0021 unifies Unicode normalization, and 0023's seven-parameter authoritative spelling path now calls `_learning_spelling_text_matches` |
+| `learning_get_session_snapshot`, `_learning_session_patch`, `_learning_increment_session_revision` | API/internal RPC and trigger helper | Return session/items/words/progress in one call; write transactions return small deltas; `learning_attempts AFTER INSERT` advances the revision, so writes from a rolled-back old application can't bypass the version clock |
+| `learning_cancel_session` | API RPC | Validates the owner and locks the session, idempotently sets it inactive and advances the revision; keeps attempts/progress and review schedules; only the service role may execute it |
+| `learning_start_exam_session`, `learning_continue_spelling_retry_round` | Compatibility API RPCs | 0028 starts/resumes spelling unit exams and durably shuffles the first round; the old spelling end-of-round signature is kept for compatibility, and the 0034 production application uses the general exam RPC |
+| Six-parameter `learning_start_exam_session(...,p_exam_kind)`, `learning_continue_exam_retry_round` | API RPCs | 0029 backward-compatibly adds the `spelling/pronunciation` exam kinds; the general confirmation RPC saves the wrong-word set, clears the review state, and reorders by round; both are granted only to the service role |
+| `learning_start_selected_review_session`, `learning_start_selected_exam_session` | API RPCs | 0031 validates the owner/course/unit/scope of 1–2,000 unique word IDs, pins the session items, and isolates resume intent with a hash of the sorted set; granted only to the service role |
+| `learning_list_exam_history`, `learning_get_exam_history_detail` | API RPCs | 0031 returns, from private immutable word/attempt snapshots, summaries of the owner's latest 100 exams and redacted single-exam details; returns no recordings, keys, or full provider payloads; granted only to the service role |
+| `learning_claim_spelling_translation_assessment_v2`, `learning_reserve_spelling_translation_quota` | API RPCs | First create an idempotent judgement lease that doesn't count against quota; only right before a real OpenRouter call check the minute/rolling 24-hour limits under a per-user advisory lock and reserve quota |
+| `_learning_apply_passed_exam_progress` | exam session completion | 0031 writes `practiceCompleted=true` for every completed exam; only when the first round meets the threshold are the session's selected words marked learned, after which the existing growth projection handles course completion/rewards |
+| `_learning_normalize_spelling_options`, `_learning_normalize_spelling_text`, `_learning_spelling_without_punctuation`, `_learning_spelling_text_matches`, `learning_claim/complete/release_spelling_translation_assessment`, `learning_record_spelling_attempt` | API/internal RPCs | Pin the timer/translation pre-test options; spelling first applies NFKC/whitespace/ASCII case folding, then compares three ways — punctuation kept, punctuation removed, punctuation treated as spaces — relaxing only punctuation differences; claim the provider lease and quota by UUID/revision/answer hash, save the verdict, and atomically form the authoritative attempt |
+| `learning_schedule_reviews`, `learning_cancel_review_schedule`, `learning_profile_summary` | API RPCs | Create review schedules from completed initial sessions, cancel them, and aggregate Schedule/Profile facts |
+| `learning_record_speech_assessment`, `learning_reserve_speech_quota` | API RPCs | Store non-audio scoring facts; in production the recognition stage updates retry items by the controlled pass mark; since 0029 also atomically advances the pronunciation exam's first-round counts, score list/retry round, and mastery projection; persist per-user rate and global budget reservations |
+| `learning_reserve_translation_stt` | API RPC; enabled in production with 0037 | Before the provider call, locks and validates the owner's active spelling session, `translationFirst`, revision, and current word, and atomically performs the minute/local-day/month budget reservation; only returns reservation/revision, and never reads or writes transcripts, answers, attempts, cursors, or progress |
+| `_learning_audio_cache_key`, `learning_prepare_unit_audio`, `learning_prepare_word_audio`, `learning_get_unit_audio_manifest` | Server audio RPCs | Compute the global content hash, enqueue idempotently by unit/word after owner validation, and return a per-user manifest that doesn't expose Storage |
+| `learning_claim_audio_asset`, `learning_finish_audio_asset`, `learning_requeue_audio_asset`, `learning_reserve_tts_quota` | Server worker RPCs | A database advisory lock + a single active lease guarantee global single concurrency, a minimum 3.1-second start interval, failure backoff, rebuilding lost Storage objects, and per-minute/monthly character/budget reservations |
+| `learning_create_share`, `learning_revoke_share`, `learning_clone_share` | API RPCs | The token hash lifecycle and transactional cloning within the revocation race |
+| `learning_publish_course`, `learning_clone_course`, `learning_create_report`, `learning_moderate_publication` | API RPCs | Immutable published versions, free independent clones, rate-limited reports, and audited hide/restore |
+| `_ai_create_user_plan` | Auth user AFTER INSERT | Idempotently creates a Free plan for new users; ordinary roles have no EXECUTE |
+| `ai_get_quota_summary`, `ai_create/claim/update/complete/fail/cancel_generation_job` | Materials AI service-only RPCs | Atomic reservation, lease, stage/event, result/cache/usage, consume/release; a crashed lease fails and refunds after three attempts |
+| `ai_mark_generation_job_accepted`, `ai_record_generation_usage_v2`, `ai_checkpoint_generation_job_v2`, `ai_checkpoint_exam_grading`, `ai_retry_generation_job`, `ai_expire_generation_checkpoints` (candidate) | Materials AI service-only RPCs | Renew the lease after 202 acceptance, record cost and the real upstream/pipeline incrementally by UUID, save DocumentIR/Luna's own validated checkpoints, resume the same job within its deadline, and clean up expired checkpoints/leftovers; expiry/exhausted retries must reach a durable terminal state and release the reservation |
+| `ai_create_generation_job(...,pipeline)`, `ai_complete_material_generation_job_v2`, `ai_complete_knowledge_question_job_v2`, `ai_complete_exam_grading_v2` (candidate) | Materials AI service-only RPCs | Pin the DocumentIR/Luna dual-pipeline contract (Ox retired in 0056); Luna pins `openai/gpt-6-luna` at creation, and Azure upstream usage matching the purpose must exist before a successful commit, so routing-violating results never enter Notes/scores |
+| `ai_delete_generation_job`, `ai_clear_generation_history`, `ai_record_generation_cleanup_failure`, `ai_finalize_generation_job_cleanup` (candidate) | Materials AI service-only RPCs | Atomically settle quota, enter deleting, durably retry cleanup, and hard-delete after the worker confirms the purge; clearing history never touches active jobs or generated Notes, and the usage ledger is kept |
+| `ai_get_knowledge_graph_layout`, `ai_save_knowledge_graph_layout` (candidate) | Knowledge graph service-only RPCs | Validate the owner, artifact SHA-256, and revision; conflicts return the current layout, and on content version changes the mergeable node coordinates are kept and the revision is reset |
+| `ai_create_knowledge_question_job` (candidate) | Knowledge Q&A service-only RPC | Validates the graph/note/node owner, atomically reserves Free generation quota, and creates an idempotent job and read-only Q&A fact |
+| `ai_create_exam_attempt`, `ai_save_exam_answers`, `ai_submit_exam_attempt` | Exam service-only RPCs | Owner/deadline/revision/operation UUID validation, deterministic server-side objective grading, and forced submission at the deadline |
+| `ai_request/claim/complete/fail_exam_grading` | Grading service-only RPCs | Daily reservation for subjective questions, lease, idempotent grading, consume on success/release on failure; recovers to `submitted_ungraded` after three crashes |
+| `ai_delete_note`, `ai_delete_material`, `ai_delete_material_course` | Deletion orchestration service-only RPCs | Validate the owner, cancel jobs, clear caches, and per keep/delete either keep results in Unfiled or delete the AI results |
 
-迁移 0008 已显式撤销内部 helper 的客户端执行权。生产 0039–0040 延续 default-deny，只把 owner receipt 授予 authenticated；`review_point_abuse_signal`、`moderate_point_rewards`、扫描和 API 审计 RPC 只授予 service-role，而 service-role 对相应内部事实表只有 SELECT，不能通过 PostgREST 绕过 workflow。它仍不包含内容质量自动判定、自动处罚、申诉 UI 或通用 RBAC。
+Migration 0008 explicitly revoked client execute permission on internal helpers. Production 0039–0040 keep default-deny and only grant the owner receipt to authenticated; `review_point_abuse_signal`, `moderate_point_rewards`, scanning, and the API audit RPCs are granted only to the service role, and the service role only has SELECT on the corresponding internal fact tables, so it can't bypass the workflows through PostgREST. It still doesn't include automated content quality judgement, automatic penalties, an appeals UI, or general RBAC.
 
-0012 的全部 `learning_*` 工作流与敏感 helper 同样撤销 `public/anon/authenticated` EXECUTE，只授予 service_role；`learning_attempts` 对 service_role 也撤销直接 UPDATE/DELETE。0013–0036 持续检查 append-only、RLS、精确函数签名与 service-role grant；0023–0024 验证标点 matcher，0025–0026 验证取消，0027–0028 验证考试/轮次确认/配额预留 RPC，0029–0034 验证读音考试、自选词、历史、双考试约束、trigger 与客户端拒绝；0035–0036 验证精确 mastery 投影、review 无写入与客户端无 progress 变更权限。API 传入的用户 ID、revision、评判输入和配额来自已验证/受控上下文，不能接受浏览器直接执行 RPC。
+All of 0012's `learning_*` workflows and sensitive helpers likewise revoke EXECUTE from `public/anon/authenticated` and grant only to service_role; `learning_attempts` also revokes direct UPDATE/DELETE from service_role. 0013–0036 keep checking append-only, RLS, exact function signatures, and service-role grants; 0023–0024 verify the punctuation matcher, 0025–0026 verify cancellation, 0027–0028 verify the exam/round confirmation/quota reservation RPCs, 0029–0034 verify the pronunciation exam, word selection, history, the dual-exam constraint, triggers, and client rejection; 0035–0036 verify the exact mastery projection, no writes from reviews, and no client permission to change progress. The user ID, revision, judgement input, and quota passed by the API come from a validated/controlled context, and browsers must never execute RPCs directly.
 
-## 8. 索引清单
+## 8. Index list
 
 - `materials_course_idx(course_id)`
 - `notifications_user_idx(user_id, created_at DESC)`
@@ -672,37 +672,37 @@ Storage 策略没有对象 UPDATE policy。涉及替换文件时应使用新路�
 - `point_entries_user_created_idx(user_id, created_at DESC)`
 - `point_event_states_user_idx(user_id, updated_at DESC)`
 - `point_entries UNIQUE(business_key, transition_no)`
-- 生产 0039：`point_daily_windows(user_id,ends_at DESC)`、claim 的 window/event、target owner 与 root 索引；`point_moderation_actions(target_type,target_key,created_at DESC)`；`point_abuse_signals(status,detected_at DESC)`；`api_abuse_events(last_seen_at)`，以及各自主键/唯一 fingerprint 或时间桶约束。
+- Production 0039: `point_daily_windows(user_id,ends_at DESC)`, the claims' window/event, target owner, and root indexes; `point_moderation_actions(target_type,target_key,created_at DESC)`; `point_abuse_signals(status,detected_at DESC)`; `api_abuse_events(last_seen_at)`, plus their own primary keys/unique fingerprint or time bucket constraints.
 - `learning_courses_user_updated_idx(user_id, updated_at DESC)`
 - `learning_course_units_owner_idx(user_id, course_id, position)`
-- `learning_course_words_course_idx(course_id, unit_id, position)`、`learning_course_words_owner_term_idx(user_id, normalized_term)`
-- `learning_sessions_one_active_intent_idx UNIQUE(user_id,resume_key) WHERE active`、`learning_sessions_active_course_activity_idx(user_id,course_id,last_activity_at DESC) WHERE active`、`learning_sessions_owner_activity_idx(user_id,last_activity_at DESC)`
-- `learning_attempts_owner_created_idx(user_id, created_at DESC)`、`learning_attempts_course_idx(course_id, created_at DESC)`、`learning_attempts_word_idx(word_id, created_at DESC)`
-- `learning_attempts_idempotency_idx UNIQUE(user_id,session_id,attempt_id)`（NULL 仅用于兼容旧/非普通答题事实）
-- `learning_speech_usage_user_rate_idx(user_id, kind, created_at DESC)`、`learning_speech_usage_budget_idx(created_at DESC)`、`learning_speech_usage_kind_rate_idx(kind,created_at DESC)`
+- `learning_course_words_course_idx(course_id, unit_id, position)`, `learning_course_words_owner_term_idx(user_id, normalized_term)`
+- `learning_sessions_one_active_intent_idx UNIQUE(user_id,resume_key) WHERE active`, `learning_sessions_active_course_activity_idx(user_id,course_id,last_activity_at DESC) WHERE active`, `learning_sessions_owner_activity_idx(user_id,last_activity_at DESC)`
+- `learning_attempts_owner_created_idx(user_id, created_at DESC)`, `learning_attempts_course_idx(course_id, created_at DESC)`, `learning_attempts_word_idx(word_id, created_at DESC)`
+- `learning_attempts_idempotency_idx UNIQUE(user_id,session_id,attempt_id)` (NULL only for compatibility with old/non-ordinary answer facts)
+- `learning_speech_usage_user_rate_idx(user_id, kind, created_at DESC)`, `learning_speech_usage_budget_idx(created_at DESC)`, `learning_speech_usage_kind_rate_idx(kind,created_at DESC)`
 - `learning_audio_assets_queue_idx(priority DESC,next_attempt_at,created_at) WHERE status IN ('pending','processing')`
-- 候选 0046–0051：`generation_jobs_resume_expiry_idx(resume_until) WHERE retryable`、`generation_job_checkpoints(expires_at)`、`exam_grading_checkpoints(expires_at)`、`ai_provider_usage_events UNIQUE(event_id)`、`knowledge_node_questions(note_id,created_at DESC)`、`knowledge_graph_layouts_user_idx(user_id,updated_at DESC)`。
-- `learning_spelling_translation_owner_created_idx(user_id,created_at DESC)`、`learning_spelling_translation_session_idx(session_id,word_id,expected_revision,completed_at DESC)`、`learning_spelling_translation_counted_quota_idx(user_id,quota_counted_at DESC) WHERE quota_counted`
+- Candidate 0046–0051: `generation_jobs_resume_expiry_idx(resume_until) WHERE retryable`, `generation_job_checkpoints(expires_at)`, `exam_grading_checkpoints(expires_at)`, `ai_provider_usage_events UNIQUE(event_id)`, `knowledge_node_questions(note_id,created_at DESC)`, `knowledge_graph_layouts_user_idx(user_id,updated_at DESC)`.
+- `learning_spelling_translation_owner_created_idx(user_id,created_at DESC)`, `learning_spelling_translation_session_idx(session_id,word_id,expected_revision,completed_at DESC)`, `learning_spelling_translation_counted_quota_idx(user_id,quota_counted_at DESC) WHERE quota_counted`
 - `learning_word_progress_learned_idx(user_id, learned_at) WHERE learned_at IS NOT NULL`
 - `learning_review_schedules_owner_due_idx(user_id, due_date, status)`
 - `learning_course_shares_one_active_idx(course_id) WHERE active`
-- `learning_course_publications_market_idx(status, created_at DESC)`、`learning_course_publications_author_idx(author_id, created_at DESC)`、author/source/version 条件唯一索引
+- `learning_course_publications_market_idx(status, created_at DESC)`, `learning_course_publications_author_idx(author_id, created_at DESC)`, the conditional unique index on author/source/version
 - `learning_course_reports_target_idx(publication_id, share_id, status, created_at DESC)`
-- `generation_jobs_user_created_idx(user_id,created_at DESC)`、单用户 active 条件唯一、`generation_jobs_dispatch_idx(status,created_at)`；`generation_job_events_job_idx(job_id,id)`
-- `notes_user_updated_idx(user_id,updated_at DESC)`、`notes_course_idx(course_id,updated_at DESC)`
-- `exam_attempts_user_idx(user_id,created_at DESC)`、未完成 deadline 条件索引；`ai_provider_usage_month_idx(created_at,status)`
-- 主键/唯一约束自动提供的索引：所有单列主键及 likes、favorites、follows、tags 的复合主键。
+- `generation_jobs_user_created_idx(user_id,created_at DESC)`, the per-user active conditional unique index, `generation_jobs_dispatch_idx(status,created_at)`; `generation_job_events_job_idx(job_id,id)`
+- `notes_user_updated_idx(user_id,updated_at DESC)`, `notes_course_idx(course_id,updated_at DESC)`
+- `exam_attempts_user_idx(user_id,created_at DESC)`, the conditional index on unfinished deadlines; `ai_provider_usage_month_idx(created_at,status)`
+- Indexes provided automatically by primary keys/unique constraints: all single-column primary keys and the composite primary keys of likes, favorites, follows, and tags.
 
-## 9. 目标模型（尚不存在）
+## 9. Target model (doesn't exist yet)
 
-最终产品至少还需要通过新迁移明确设计以下领域，不能根据蓝图假设已经存在：
+The final product still needs at least the following domains designed explicitly through new migrations; they must not be assumed to exist based on the blueprint:
 
-- 结构化知识清单、独立 Quiz 及知识图谱通用版本；首版 `notes/generation_jobs/模拟试卷` 已在生产 0041–0043，知识图谱候选在 0046–0051；
-- 通用笔记市场商品、credits 授权/购买关系、创作者分成；Courses 免费分享/市场快照已存在；
-- credits 钱包账本、余额投影和经过审批的管理员调整；points 账本已存在，但仍需反滥用上限、对账与运营工具；
-- VIP entitlement/订阅、订单、支付 intent、webhook 幂等记录、退款；
-- 社区/笔记内容举报、审核队列、处置与申诉；Courses 已有举报与管理员动作，但没有通用队列/申诉；
-- 用户同意、数据导出/删除任务、保留期限；
-- 管理员角色、审计日志、系统配置。
+- Structured knowledge lists, standalone Quiz, and a general version of the knowledge graph; the first versions of `notes/generation_jobs/mock exams` are in production 0041–0043, and the knowledge graph candidate is in 0046–0051;
+- General note market products, credits licensing/purchase relationships, and creator revenue share; Courses free sharing/market snapshots already exist;
+- A credits wallet ledger, balance projection, and approved admin adjustments; the points ledger exists but still needs anti-abuse caps, reconciliation, and operations tools;
+- VIP entitlements/subscriptions, orders, payment intents, idempotent webhook records, refunds;
+- Community/note content reports, moderation queue, handling, and appeals; Courses has reports and admin actions, but no general queue/appeals;
+- User consent, data export/deletion jobs, retention periods;
+- Admin roles, audit logs, system configuration.
 
-目标实体落地时应同时补：FK 删除语义、唯一/检查约束、索引、RLS、服务角色权限、审计、迁移/回滚与自动化测试。
+When target entities land, also add: FK deletion semantics, unique/check constraints, indexes, RLS, service-role permissions, auditing, migration/rollback, and automated tests.

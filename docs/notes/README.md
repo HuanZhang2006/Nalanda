@@ -1,25 +1,25 @@
-# Nalanda 实现笔记（复盘 / 学习）
+# Nalanda Implementation Notes (Retrospectives / Learning)
 
-> **文档定位**
-> - **内容**：按模块索引实现方案、历史取舍、踩坑和可执行验证入口。
-> - **作用**：帮助复盘现有实现；它不是最终产品蓝图，也不替代当前架构、ERD 或 API 文档。
-> - **何时更新**：新增/重构模块、历史结论被代码改变、验证命令或模块状态变化时。
+> **About this document**
+> - **Contents**: Indexes implementation approaches, historical trade-offs, pitfalls, and runnable verification entry points by module.
+> - **Purpose**: Helps review existing implementations; it is not the final product blueprint and does not replace the current architecture, ERD, or API docs.
+> - **When to update**: When a module is added or refactored, a historical conclusion is changed by code, or verification commands or module status change.
 
-按板块记录已落地功能的**技术方案、实现细节、逻辑流程、踩坑与验证**，便于复盘与学习。
-当前架构见 [../ARCHITECTURE.md](../ARCHITECTURE.md)，最终蓝图与路线图见 [../PROJECT_BLUEPRINT.md](../PROJECT_BLUEPRINT.md)。
+Each area records the **technical approach, implementation details, logic flow, pitfalls, and verification** of shipped features, for review and learning.
+For the current architecture see [../ARCHITECTURE.md](../ARCHITECTURE.md); for the final blueprint and roadmap see [../PROJECT_BLUEPRINT.md](../PROJECT_BLUEPRINT.md).
 
-| 笔记 | 内容 |
+| Note | Contents |
 |---|---|
-| [01-工程基建与 monorepo](01-monorepo-foundation.md) | pnpm + Turborepo 单仓、目录结构、共享包（types/ui）、构建链路 |
-| [02-用户系统与认证](02-auth-and-user-system.md) | Supabase Auth、JWKS 验签、自建注册接口、profiles + RLS、登录前端 |
-| [03-部署架构与 CI/CD](03-deployment-and-cicd.md) | 托管 + 自托管混合、nginx 隔离、GitHub Actions 流水线、踩坑实录 |
-| [04-前端与原型复现](04-frontend-and-prototype-port.md) | React + Vite、设计令牌、把 Claude Design 原型搬进生产应用 |
-| [05-数据库 / 迁移 / RLS](05-database-and-rls.md) | Supabase Postgres、owner-only RLS、CLI history、本地重建与旧 `db-push` 边界 |
-| [06-Materials 资料库](06-materials.md) | courses/materials + Storage/RLS；生产 0041–0043 试卷，0046–0051 候选恢复/图谱/Luna/任务清理 |
-| [07-原型模块（剩余 mock）](07-prototype-modules.md) | Home/Create/Note Market 与 Notes Demo；区分真实 Materials 试卷候选 |
-| [08-通知 / 反馈 / 个人资料](08-notifications-feedback-profile.md) | 通知面板、反馈、Profile 真数据、受保护 points projection + 分级徽章 |
-| [09-社区](09-community.md) | 发帖/评论/点赞/收藏/转发/关注、媒体、points 稳定业务键/冲正和通知联动 |
-| [10-学习计划](10-schedule.md) | 任务/目标、幂等完成奖励 + 连续学习、关联课程资料、智能填充 |
-| [11-Courses 英语单词学习](11-learning-courses.md) | 独立学习课程、文本解析/编辑、四阶段学习、复习熟练度、分享市场、Azure Speech |
+| [01 – Engineering foundation and monorepo](01-monorepo-foundation.md) | pnpm + Turborepo single repo, directory layout, shared packages (types/ui), build chain |
+| [02 – User system and authentication](02-auth-and-user-system.md) | Supabase Auth, JWKS verification, custom sign-up endpoint, profiles + RLS, sign-in frontend |
+| [03 – Deployment architecture and CI/CD](03-deployment-and-cicd.md) | Managed + self-hosted hybrid, nginx isolation, GitHub Actions pipeline, field notes on pitfalls |
+| [04 – Frontend and prototype port](04-frontend-and-prototype-port.md) | React + Vite, design tokens, moving the Claude Design prototype into the production app |
+| [05 – Database / migrations / RLS](05-database-and-rls.md) | Supabase Postgres, owner-only RLS, CLI history, local rebuilds, and the legacy `db-push` boundary |
+| [06 – Materials library](06-materials.md) | courses/materials + Storage/RLS; production 0041–0043 test papers, 0046–0051 candidate recovery/graph/Luna/job cleanup |
+| [07 – Prototype modules (remaining mocks)](07-prototype-modules.md) | Home/Create/Note Market and the Notes demo; distinguishing real Materials test-paper candidates |
+| [08 – Notifications / feedback / profile](08-notifications-feedback-profile.md) | Notification panel, feedback, real Profile data, protected points projection + tiered badges |
+| [09 – Community](09-community.md) | Post/comment/like/favorite/repost/follow, media, stable points business keys/reversals, and notification hooks |
+| [10 – Study plan](10-schedule.md) | Tasks/goals, idempotent completion rewards + streaks, linked course materials, auto-fill |
+| [11 – Courses English vocabulary learning](11-learning-courses.md) | Independent learning courses, text parsing/editing, four-stage learning, review mastery, sharing market, Azure Speech |
 
-> 状态：已接生产真数据 —— 注册/登录、**Materials、社区、学习计划、Courses、通知、反馈、个人资料（points 账本/等级/徽章）**，以及 Web/API/AI；生产 migration history 已到 0053，0052–0053 安全 contract 已生效。当前稳定应用继续提供 0041–0043 Materials 试卷/考试/Free quota；0046–0051 的恢复、图谱、任务清理、布局与 Luna 只是未发布候选。fake Playwright、jsdom 或 pytest 不构成真实 provider/生产证明；候选仍须真实 DeepSeek/MiMo/Luna、资源 canary、数据库/RLS、登录用户 smoke 和独立公网核验。
+> Status: wired to real production data — sign-up/sign-in, **Materials, Community, Study plan, Courses, notifications, feedback, profile (points ledger/levels/badges)**, plus Web/API/AI; production migration history is at 0053 and the 0052–0053 security contract is in effect. The current stable app keeps serving the 0041–0043 Materials test papers/exams/Free quota; the 0046–0051 recovery, graph, job cleanup, layout, and Luna work are unreleased candidates only. Fake Playwright, jsdom, or pytest runs are not proof of real providers or production; candidates still need real DeepSeek/MiMo/Luna, a resource canary, database/RLS checks, a signed-in user smoke test, and independent public verification.

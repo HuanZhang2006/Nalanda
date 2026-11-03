@@ -1,37 +1,38 @@
-# ADR-0004：NestJS 核心 API 与 FastAPI AI 服务分离
+# ADR-0004: Separate the NestJS core API from the FastAPI AI service
 
-> **本文内容：**记录核心业务与文档解析/模型生成分为 Node 和 Python 两个服务的决策。  
-> **作用：**明确服务职责、信任边界和 AI 异步编排的目标形态，防止浏览器直接调用模型服务。  
-> **何时更新：**AI 运行时、队列、服务间契约、模型供应商或部署边界变化时；若合并服务应新建替代 ADR。  
-> **实现提示：**生产 0041–0043 已按本 ADR 实现 Materials AI；2026-08-11 已通过真实供应商、资源 canary、受保护发布和登录用户 smoke。
+> **About this document**
+> - **Contents**: Records the decision to split core business logic and document parsing/model generation into a Node service and a Python service.
+> - **Purpose**: Defines service responsibilities, trust boundaries, and the target shape of asynchronous AI orchestration, and prevents browsers from calling the model service directly.
+> - **When to update**: When the AI runtime, queue, inter-service contract, model providers, or deployment boundary change; if the services are merged, create a superseding ADR.
+> - **Implementation note**: Production 0041–0043 implemented Materials AI per this ADR; on 2026-08-11 it passed real providers, a resource canary, a protected release, and a signed-in user smoke test.
 
-- **状态：**Accepted
-- **日期：**2026-06-20
-- **决策者：**项目维护者
-- **范围：**NestJS、FastAPI、未来 Redis/BullMQ、模型供应商
+- **Status:** Accepted
+- **Date:** 2026-06-20
+- **Deciders:** Project maintainer
+- **Scope:** NestJS, FastAPI, future Redis/BullMQ, model providers
 
-## 背景
+## Context
 
-核心业务需要 TypeScript 与前端共享契约；课件解析、OCR、RAG、模型评测生态更适合 Python。AI 任务耗时、易失败且成本显著，不应占用同步 Web 请求，也不能暴露供应商密钥。
+Core business logic needs TypeScript to share contracts with the frontend; courseware parsing, OCR, RAG, and model evaluation fit the Python ecosystem better. AI jobs are slow, failure-prone, and expensive, so they should not occupy synchronous web requests or expose provider keys.
 
-## 决策
+## Decision
 
-- NestJS 是外部业务 API 和授权/计费/幂等编排者。
-- FastAPI 是内部 AI 执行服务，只接受经过授权的最小输入；不得直接对公网或由浏览器调用。
-- 通用目标流程为：API 验证资料与请求 → 预留配额或未来 credits hold → 创建持久化 job/队列 → AI 解析/生成 → schema/质量校验 → 原子落库 → consume/commit 或 release → 通知用户。Materials 首版仅使用每日 Free 配额，不读取 credits。
-- 跨服务契约必须有版本、运行时 schema、请求/结果 ID、超时、取消和可重试语义；重复执行不能重复扣费或生成不可追踪副本。
-- 模型供应商可替换；业务表不以某个供应商模型或 prompt 的私有字段为核心标识。
+- NestJS is the external business API and the orchestrator of authorization, billing, and idempotency.
+- FastAPI is an internal AI execution service that accepts only authorized, minimal inputs; it must never be called from the public internet or the browser.
+- The general target flow is: the API validates the material and request → reserves quota or a future credits hold → creates a durable job/queue entry → AI parses/generates → schema/quality validation → atomic persistence → consume/commit or release → notify the user. The first Materials version uses only the daily Free quota and never reads credits.
+- Cross-service contracts must have versions, runtime schemas, request/result IDs, timeouts, cancellation, and retry semantics; repeated execution must not double-charge or create untraceable duplicates.
+- Model providers are replaceable; business tables never use a provider's model or prompt-specific fields as core identifiers.
 
-## 后果
+## Consequences
 
-获得 Python AI 生态和独立扩缩容，但引入网络失败、契约漂移、队列运维、分布式追踪与成本对账。同步 HTTP 端点可用于受控内部单元操作，不得被误当成完整、可靠、已计费的用户流程。
+We gain the Python AI ecosystem and independent scaling, but take on network failures, contract drift, queue operations, distributed tracing, and cost reconciliation. Synchronous HTTP endpoints may be used for controlled internal unit operations, but must not be mistaken for a complete, reliable, billed user flow.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **生产实现：**0041–0043 已加入 NestJS 鉴权/配额/幂等编排、durable Postgres jobs、BullMQ UUID 队列、内部 token、FastAPI DocumentIR/安全审查/局部视觉恢复/生成、usage ledger、取消与 Notes 原子落库；旧固定桩已删除。
-- **发布事实：**真实 DeepSeek/MiMo ZDR、接近上限的 2G 资源 canary、完整 CI、受保护迁移与登录用户生成/评分/删除 smoke 已于 2026-08-11 通过；单次门禁不替代持续质量与成本监控。
-- **后续目标：**Courses 导入、RAG、销售 credits/支付、更多 AI 产物和通用管理后台仍按 [AI 评测与成本治理](../ai/EVALUATION_AND_COST.md) 与[统一规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md)推进。
+- **Production implementation:** 0041–0043 added NestJS authentication/quota/idempotency orchestration, durable Postgres jobs, a BullMQ UUID queue, an internal token, FastAPI DocumentIR/safety review/targeted visual recovery/generation, a usage ledger, cancellation, and atomic Notes persistence; the old fixed stubs were removed.
+- **Release facts:** Real DeepSeek/MiMo ZDR, a near-limit 2 GB resource canary, full CI, a protected migration, and a signed-in user generate/grade/delete smoke test all passed on 2026-08-11; a one-off gate does not replace continuous quality and cost monitoring.
+- **Next targets:** Courses import, RAG, credit sales/payments, more AI artifacts, and a general admin back office continue under [AI evaluation and cost governance](../ai/EVALUATION_AND_COST.md) and the [unified rules](../product/POINTS_CREDITS_VIP_PAYMENTS.md).
 
-## 验证与复审
+## Verification and review
 
-契约测试覆盖 TS/Python 形状；故障注入覆盖超时、重复、乱序、服务重启和模型返回坏 JSON；逐 job 对账 usage、credits 和结果。模型/解析运行时不再需要独立扩缩容时可复审。
+Contract tests cover TS/Python shapes; fault injection covers timeouts, duplicates, reordering, service restarts, and models returning bad JSON; usage, credits, and results are reconciled per job. Review this decision if the model/parsing runtime no longer needs independent scaling.

@@ -1,351 +1,352 @@
-# Nalanda 最终项目说明、产品蓝图与开发路线图
+# Nalanda Final Project Description, Product Blueprint, and Development Roadmap
 
-> **文档定位**
-> - **内容**：定义 Nalanda 最终要成为怎样的产品、目标系统边界、完整功能范围、技术原则、分阶段开发路径与待实现清单。
-> - **作用**：这是项目“最终目标与接下来做什么”的唯一权威文档；所有带未来时态的产品或架构规划都应汇总到这里。
-> - **何时更新**：产品范围、关键技术决策、阶段优先级、依赖关系或里程碑验收标准发生变化时；每完成一个阶段也必须同步状态。
-> - **状态口径**：本文同时写“当前基线”和“目标状态”。标记为“目标/规划”的内容不得在 README 或当前架构文档中写成已实现。
+> **About this document**
+> - **Contents**: Defines what product Nalanda will ultimately become, the target system boundaries, the full feature scope, technical principles, the phased development path, and the list of work still to implement.
+> - **Purpose**: The single authoritative document for the project's "final goal and what to do next"; every future-tense product or architecture plan should be collected here.
+> - **When to update**: When product scope, key technical decisions, phase priorities, dependencies, or milestone acceptance criteria change; status must also be synced at the end of every phase.
+> - **Status convention**: This document records both the "current baseline" and the "target state". Content marked "target/planned" must never be written as implemented in the README or the current architecture document.
 
-最后核对：2026-10-03。生产数据库已受保护应用到 0055；0052–0055 已上线，原预留 0044–0045 保持未使用。main run `32931681321` 在真实 DocumentIR DOCX 门禁发现“结构 repair 无来源正文、结构后新语义缺陷无修复阶段”后自动恢复旧 Web/API。当前 Unreleased `exam-generate.v4` 使用完整来源与严格有界的后续语义 repair，并由 0056–0057 退役 Ox Alpha、把 Luna 升级为 GPT-6 Luna + Azure ZDR（[ADR-0016](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)）；不能把数据库迁移、本地测试、部分真实门通过或修复合并写成应用/Luna 已上线。
+Last checked: 2026-10-03. The production database has a protected application up to 0055; 0052–0055 are live, and the originally reserved 0044–0045 stay unused. main run `32931681321` automatically restored the old Web/API after the real DocumentIR DOCX gate found that "the structural repair had no source text, and semantic defects newly found after the structural pass had no repair stage". The current Unreleased `exam-generate.v4` uses the full source and a strictly bounded follow-up semantic repair, and 0056–0057 retire Ox Alpha and upgrade Luna to GPT-6 Luna + Azure ZDR ([ADR-0016](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)); database migrations, local tests, partial real gates passing, or a merged fix must not be written up as the app/Luna being live.
 
-2026-08-14 代码与数据库已占用 0046–0051：0046–0048 实现 Materials AI 长任务异步回调、24 小时可恢复断点、知识点图谱和节点问答；0049–0051 实现 Luna 原文件、可取消清理、provider provenance 和跨设备图布局。数据库已应用，应用仍需成功的不可变 release；Luna 另受实时 ZDR/OpenAI 门禁约束。Stage B 采用 0052–0053，避免为填补 0044–0045 空号引入 `--include-all` 或改写既有 migration history。
+As of 2026-08-14, code and the database occupy 0046–0051: 0046–0048 implement Materials AI long-job async callbacks, 24-hour resumable checkpoints, the knowledge-point graph, and node Q&A; 0049–0051 implement Luna native files, cancellable cleanup, provider provenance, and cross-device graph layouts. The database changes are applied, but the app still needs a successful immutable release, and Luna is also constrained by the live ZDR/OpenAI gate. Stage B uses 0052–0053 to avoid using `--include-all` or rewriting the existing migration history to fill the empty 0044–0045 numbers.
 
 ---
 
-## 1. 一句话定义
+## 1. One-sentence definition
 
-Nalanda 是面向大学生的多平台 AI 学习与知识平台：把课程资料转化为可学习、可检验、可关联、可分享的结构化知识资产，并围绕这些资产提供计划、社区、成长和合规的交易能力。
+Nalanda is a multi-platform AI learning and knowledge platform for university students: it turns course materials into structured knowledge assets that can be studied, tested, connected, and shared, and builds planning, community, growth, and compliant trading around those assets.
 
-最终产品必须形成以下闭环：
-
-```text
-课程资料 → 解析/检索 → AI 生成 → 学习与测验 → 计划与复习
-    ↑                                      ↓
-    └──────── 个人笔记、社区、市场、成长反馈 ────────┘
-```
-
-## 2. 当前基线（不是最终完成状态）
-
-截至 2026-08-11，项目是“高保真 Web 应用 + 真实 Supabase 业务模块 + 已上线的首版英语 Courses + Materials AI 最小闭环 + 私有 Redis 请求保护/任务投递”：
-
-- 已上线：邮箱密码注册/登录、Materials、社区、普通学习计划、Profile、活动积分/等级、通知、反馈和 Web/API/AI 生产部署；生产 migration history 已到 0053，但最新应用候选失败后仍由此前稳定 release 提供服务。
-- 已上线：Courses 英语词表文本导入/编辑、四阶段学习、复习熟练度、Schedule/Profile、徽章/+20 points、公开分享、免费课程市场和 Azure Speech；生产 flags 已开启，fake 未进入生产。
-- 已上线增量：0015–0016 把普通答题改成客户端一帧内预测反馈、`attemptId + expectedRevision` 幂等串行 outbox、单 RPC session snapshot，并用 Supabase Storage 持久队列与浏览器 Cache Storage 预取/下载单元音频；服务端仍唯一决定进度与成长事实。
-- 已上线增量：0017–0018 让当前词和未来四词不论 ready/pending 都立即缓存或提升生成优先级，持续轮询 manifest 并在 ready 后替换浏览器朗读；active session 改为按首次学习、临时复习或日程复习的精确意图恢复，暂停学习不会再劫持另一单元复习。
-- 已上线增量：0019–0020 为拼写测试增加可选 3–300 秒限时与可选 OpenRouter 语义翻译前测；服务端用同一 UUID/revision 管理租约、评判和权威 spelling attempt，数据库不保存用户输入正文。规范化完全匹配走零 token 确定性路径，非字面同义/改写才调用固定 OpenRouter 模型。
-- 已上线增量：0021–0022 统一 Web 即时判定与数据库权威判定的拼写文本归一化；全角/半角大写、Unicode 空白、弯/直撇号及常见连字符变体一致，标点仍不可省略，避免客户端先判对后被服务端反转并加入候补池。
-- 已上线增量：0023–0024 在不改变服务端权威边界的前提下，把仅有标点遗漏、替换或增加的拼写答案判为正确；真实字母、数字、词序及不涉及标点的词间空格错误仍判错。
-- 已上线增量：0025–0026 为 active 学习/复习增加显式取消事务；0027–0028 增加拼写轮末错题清单与手动确认、默认 90% 可调阈值的单元考试，以及仅对真实 OpenRouter 请求计数的每用户 20 次/分钟、滚动 500 次/24 小时配额。
-- 已上线增量：0037–0038 为拼写前翻译输入增加默认中文的 Fish Audio STT 和所有用户录音入口的实时波形。识别只回填可编辑文本、不自动提交；同一服务端 OpenRouter key 由 NestJS 复用，数据库在调用前验证 owner/session/revision/current word 并预留独立配额。2026-08-04 已通过受保护数据库发布、真实 Fish Audio gate 和不可变生产激活。
-- 部分落地：主应用仍有大量 `legacy` DOM 模块，Courses 是 React 功能。Supabase 是旧业务主要后端，NestJS 已承担 Courses 特权写入与公开脱敏读取。
-- 仍为 mock/未实现：Home 聚合、独立 AI Create、知识清单、独立 Quiz、Note Market；My Notes 历史硬数据保留在 Demo 分组。
-- 已上线：Materials AI 第一阶段的 Generate test paper、私有 Notes、在线考试和主观题评分。未发布候选另完成知识点梳理、交互图谱/节点问答以及长任务断点续跑；在受保护发布完成前不得标为上线。
-- 未实现：Courses 的 PDF/Word/JSON/Markdown/HTML/图片 AI 导入和其他三类课程；pgvector/RAG、Stripe、credits 账本、VIP 结算、Realtime、Electron、React Native、完整 i18n 和通用管理后台。生产 Redis 同时用于 API 限流、审计聚合、协同扫描锁和 BullMQ UUID 投递。
-- 安全基线进展：生产已应用 0008–0053，Profile/帖子/Feedback/Schedule 可信字段与内部 `SECURITY DEFINER` RPC 已收口；points 使用冻结日上限、可冲正幂等账本、人工审核和只待审协同信号；旧 `legacy_opening=11` 已由 `legacy_opening_reset=-11` 归零。Courses 与 Materials AI 私有写入/RPC/传播、幂等 operation、配额、布局和任务清理事实均通过双用户 RLS 与发布断言；新应用仍以独立 release 证据判定。
-- 已上线：0039–0040 与兼容应用从 `2026-08-10T09:35:34Z` 起观察超过 24 小时并于 2026-08-22 通过 go/no-go；0052–0053 随后撤销两个 authenticated 兼容 UPDATE grant，远端 0053 自验证通过。
-
-当前事实的权威说明见 [当前架构](ARCHITECTURE.md)；商业数值与状态机见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
-
-## 3. 最终产品范围
-
-### 3.1 身份、资料与权限
-
-目标能力：
-
-- 邮箱验证、登录、退出、找回密码、OAuth。
-- 用户 Profile、语言、学校、专业、年级和学习偏好。
-- `user / creator / moderator / admin` 角色与最小权限。
-- 用户数据导出、账户删除、法定保留与审计。
-
-当前差距：邮箱所有权未验证；缺找回密码、OAuth、通用管理角色、数据导出/删除工作流和 CAPTCHA。注册 IP+规范化邮箱双层 Redis/HMAC 限流已上线。
-
-### 3.2 课程与资料库
-
-目标能力：
-
-- 课程、学期、教师、资料分类、搜索、分页与批量管理。
-- PDF、PPTX、DOCX、Markdown、HTML、TXT 以及受控图片输入。
-- 上传大小/MIME 白名单、恶意文件检测、解析状态、版本与去重。
-- 私有 Storage、短期签名 URL、孤儿文件回收、配额和生命周期规则。
-
-当前差距：基础 CRUD/预览已完成；缺服务端上传约束、配额、解析状态、版本、扫描和自动清理。
-
-### 3.3 Courses 学习课程
-
-首版英语单词学习已经上线：文本逐单元/整份多单元粘贴、精确错误定位、结构化编辑、CMUdict IPA、四阶段可恢复学习、跨日期复习事实、复习 Schedule、Profile 聚合、持久徽章、指纹幂等 +20 points、只读分享与免费课程市场。它采用独立 `learning_*` 模型，不改变 Materials 的 `courses` 表；Courses 功能迁移已发布到 0038，生产总 migration history 已到 0043，并开启对应 flags。0025–0028 进一步上线显式取消、拼写轮末错词复盘/确认、默认 90% 可调阈值的单元考试，以及只对真实 OpenRouter 请求计数的滚动 500 次/24 小时配额。
-
-0029–0034 已于 2026-08-03 受保护发布，在不改变积分/支付边界的前提下增加读音考试、单元内任意选词复习/考试、失败考试补练完成后自动结束、考试历史详情、编辑器逐词学习属性，以及“同一词必须同时通过拼写考试和发音考试才标为已学习”的唯一掌握规则；跨日期复习只保留练习日期/次数，不再形成掌握。
-
-0035–0036 已于 2026-08-04 受保护发布，不新增掌握方式，而是把上述规则变成 progress 表的强制精确投影：`learned_at` 只可能等于拼写/发音考试通过时间的较晚值，缺少任一事实即为空；首次学习、复习、单项考试或直接赋值都不能绕过。同期 Web 已移除会误拒轻声的本地 VAD/静音裁剪，完整录音只做 Azure 契约必需的 PCM 格式转换后交由 Azure 评判。
-
-0037–0038 已于 2026-08-04 受保护发布：translation-first spelling 的翻译输入框可录制默认中文语音，经服务端固定的 OpenRouter `fish-audio/transcribe-1` 识别后只回填可编辑文本，不自动提交或判分；认词朗读、读音考试和翻译语音输入共用实时波形。WAV/transcript 不落库或 Storage，客户端不能选择 model/language/key，也不能绕过 owner/session/revision/current-word 与配额校验。
-
-已上线的性能/弱网增量：答题 UI 在本地确定正误，服务端仍唯一决定 retry pool、cursor/stage、错误次数、完成、points 与徽章；IndexedDB outbox 按 revision 串行、用相同 attempt UUID 重放，冲突时拉单一 snapshot 并重放仍兼容的答案。音频按规范化词、locale、voice、格式和合成版本做全局 SHA-256，private Storage 是服务端唯一事实源，浏览器只保存可重建 Cache Storage 副本并允许用户删除；这不等于完整离线 PWA。
-
-当前生产允许用户在包含 spelling 的学习/复习启动时选择不限时或 3–300 秒限时，并可先键入翻译。限时仅控制何时自动提交，不改变服务端权威；翻译由 NestJS 先做规范化完全匹配，再对非字面答案使用 OpenRouter 固定结构化 schema 评判，错误直接形成一次 spelling 错误，正确后才开始拼写计时。供应商故障不记错，答案正文不落库，结果无论正误都显示正确英文和拆分翻译。这是单词练习内的窄评判能力，不代表文件 AI 导入或通用生成链路完成。
-
-当前明确未实现：PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR/解析；按英语单词/知识点/阅读理解/题库训练选择 prompt；模型结构化输出与人工确认；导入评测集、token/成本和隐私留存。入口必须保持“AI 解析即将推出”，不能接受文件或暗示已调用模型。
-
-后续顺序：持续观察 Courses/分享/市场/Azure 的错误率与成本 → 建文件隔离/扫描/解析管线与人工确认 → 以评测、成本和隐私门开放其他课程类别。
-
-### 3.4 AI 创作与个人笔记（最高优先级）
-
-生产 0041–0043 已实现 Materials 文件生成试卷：所有用户默认 Free，以 Profile IANA 时区的本地日期分别享有 10 次成功生成和 10 次成功主观题评分；reservation 只在成功时消费，拒绝、失败、取消会释放，不读取 credits。真实试卷出现在对应 Materials `courses.id` 下，历史 My Notes 硬编码数据保留在独立 Demo 分组，删除来源可选择移入 Unfiled 或同时删除结果。在线考试支持绝对 deadline、500ms/失焦保存、IndexedDB 弱网草稿、无限重考、客观题确定性判分和整卷一次主观题 AI 评分。
-
-该阶段已于 2026-08-11 完成真实 OpenRouter/ZDR、2G canary、完整 CI、加密恢复点、登录用户生产 smoke 和不可变发布。第一阶段明确不开放知识清单、独立 Quiz、知识图谱、Notes 编辑/PDF 导出、销售 credits 或支付。
-
-一份生成任务可选择一种或多种产物：
-
-1. 知识清单：概念、定义、来源引用、依赖顺序。
-2. 交互式测验：题型、答案、解析、难度和来源证据。
-3. 知识图谱：节点、关系、布局信息和来源。
-4. 模拟试卷：章节、题目、分值、答案与评分标准。
-
-目标流水线：
+The final product must form this loop:
 
 ```text
-用户选择资料和生成配置
-  → NestJS 鉴权、配额/credits 预留、创建 job
-  → BullMQ 排队与限流
-  → FastAPI 下载私有资料、解析、分块；必要时调用视觉恢复
-  → provider adapter 结构化生成 + 引用/schema Reviewer 质量门
-  → 契约校验、结果落库、credits 结算
-  → Notification 持久化 + Realtime 推送
-  → Notes 页面阅读、编辑、练习、重新生成与导出
+Course materials → parsing/retrieval → AI generation → learning and quizzes → planning and review
+    ↑                                                                          ↓
+    └──────────────── personal notes, community, market, growth feedback ──────┘
 ```
 
-必须先完成：
+## 2. Current baseline (not the final completed state)
 
-- 统一 TypeScript/Python/前端渲染契约，废除当前 mock 的短字段形状或提供显式适配层。
-- 定义 `materialId/material_id` 的序列化规范和 OpenAPI。
-- 生产已建立 `generation_jobs / notes / note_materials / exams`；0046–0048 候选增加 graph artifact、checkpoint 与 node questions。Knowledge list、独立 quizzes、embeddings/RAG 仍需未来数据模型。
-- 为每个生成片段保存材料来源与页码，避免无引用答案。
-- 建立幂等键、重试、取消、超时、预算上限、失败退款和质量评测。
+As of 2026-08-11, the project is "a high-fidelity Web app + real Supabase business modules + the first live version of English Courses + a minimal Materials AI loop + private Redis request protection/job delivery":
 
-### 3.5 Home 与学习闭环
+- Live: email/password sign-up/sign-in, Materials, Community, the ordinary study plan, Profile, activity points/levels, notifications, feedback, and the Web/API/AI production deployment; production migration history is at 0053, but after the latest app candidate failed, the earlier stable release still serves traffic.
+- Live: Courses English word-list text import/editing, four-stage learning, review mastery, Schedule/Profile, badges/+20 points, public sharing, the free course market, and Azure Speech; production flags are on, and fakes have not entered production.
+- Live increment: 0015–0016 changed ordinary answering to client-side predicted feedback within one frame, an idempotent serial `attemptId + expectedRevision` outbox, and a single-RPC session snapshot, and use a durable Supabase Storage queue plus browser Cache Storage to prefetch/download unit audio; the server alone still decides progress and growth facts.
+- Live increment: 0017–0018 immediately cache or raise the generation priority of the current word and the next four words whether ready or pending, keep polling the manifest, and replace browser speech once ready; active sessions now resume by the exact intent of initial learning, ad-hoc review, or scheduled review, so pausing learning no longer hijacks another unit's review.
+- Live increment: 0019–0020 add an optional 3–300 second time limit and an optional OpenRouter semantic translation pre-test to the spelling test; the server manages leases, judgements, and the authoritative spelling attempt with the same UUID/revision, and the database does not store the user's input text. Normalized exact matches take the zero-token deterministic path, and only non-literal synonyms/paraphrases call the fixed OpenRouter model.
+- Live increment: 0021–0022 unify spelling text normalization between the Web app's instant judgement and the database's authoritative judgement; full-width/half-width uppercase, Unicode whitespace, curly/straight apostrophes, and common hyphen variants are consistent, punctuation still cannot be omitted, and the client no longer judges correct only for the server to reverse it and add the word to the retry pool.
+- Live increment: 0023–0024 judge spelling answers correct when they only omit, replace, or add punctuation, without changing the server authority boundary; real letter, digit, word-order, and non-punctuation inter-word spacing errors are still wrong.
+- Live increment: 0025–0026 add an explicit cancel transaction for active learning/review; 0027–0028 add the end-of-round spelling mistake list with manual confirmation, unit exams with an adjustable threshold defaulting to 90%, and per-user quotas of 20/minute and a rolling 500/24 hours counted only for real OpenRouter requests.
+- Live increment: 0037–0038 add Fish Audio STT, defaulting to Chinese, for pre-spelling translation input, and a live waveform for every user recording entry point. Recognition only fills editable text and never auto-submits; NestJS reuses the same server-side OpenRouter key, and the database validates owner/session/revision/current word and reserves a separate quota before the call. On 2026-08-04 this passed a protected database release, the real Fish Audio gate, and immutable production activation.
+- Partially landed: the main app still has many `legacy` DOM modules, while Courses is a React feature. Supabase is the main backend for the older business logic, and NestJS owns Courses privileged writes and redacted public reads.
+- Still mock/not implemented: Home aggregation, the standalone AI Create, the knowledge list, the standalone Quiz, and Note Market; the historical hard-coded data in My Notes stays in a Demo group.
+- Live: phase one of Materials AI — Generate test paper, private Notes, online exams, and subjective grading. The unreleased candidate also completes knowledge-point organization, the interactive graph/node Q&A, and resumable long jobs; these must not be marked live until the protected release completes.
+- Interface language: the Web UI defaults to English with an EN/中文 toggle that switches the shell and every page, including Materials and My Notes; AI output language is still chosen per job.
+- Not implemented: AI import of PDF/Word/JSON/Markdown/HTML/images into Courses and the other three course categories; pgvector/RAG, Stripe, a credits ledger, VIP settlement, Realtime, Electron, React Native, and a general admin back office. Production Redis is used for API rate limiting, audit aggregation, the coordination scan lock, and BullMQ UUID delivery.
+- Security baseline progress: production has applied 0008–0053, and trusted fields on Profile/posts/Feedback/Schedule and internal `SECURITY DEFINER` RPCs are locked down; points use frozen daily caps, a reversible idempotent ledger, manual moderation, and pending-review-only coordination signals; the old `legacy_opening=11` was zeroed by `legacy_opening_reset=-11`. Courses and Materials AI private writes/RPCs/distribution, idempotent operations, quotas, layouts, and job cleanup facts all pass two-user RLS and release assertions; new apps are still judged by separate release evidence.
+- Live: 0039–0040 and the compatible app were observed for more than 24 hours from `2026-08-10T09:35:34Z` and passed the go/no-go on 2026-08-22; 0052–0053 then revoked the two authenticated compatibility UPDATE grants, and the remote 0053 self-verification passed.
 
-最终 Home 聚合真实的今日任务、连续学习、近期课程、待处理资料、最近笔记、生成任务和活动；不能继续混用 mock credits 与真实 points。
+The authoritative description of current facts is in the [current architecture](ARCHITECTURE.md); commercial values and state machines are in the [points, wallet, VIP, and payment rules](product/POINTS_CREDITS_VIP_PAYMENTS.md).
 
-学习闭环应记录：测验作答、薄弱知识点、复习间隔、任务完成和生成质量反馈，并用于后续计划推荐。推荐初期采用可解释规则，数据足够后再引入模型。
+## 3. Final product scope
 
-### 3.6 社区与内容治理
+### 3.1 Identity, profiles, and permissions
 
-目标能力：帖子、评论、赞、收藏、转发、关注、标签、媒体、举报、屏蔽、审核队列、申诉、频率限制和反垃圾。
+Target capabilities:
 
-当前社交功能基本可用；生产 0039 已用列级白名单和防御 trigger 收紧作者可信字段，并加入冻结日上限、审核 suppress/restore 和协同待审信号。它不自动处罚、不替代举报/申诉/审核后台，孤儿媒体治理仍未完成。详细规则见[内容审核](governance/CONTENT_MODERATION.md)。
+- Email verification, sign-in, sign-out, password recovery, OAuth.
+- User Profile, language, school, major, year, and learning preferences.
+- `user / creator / moderator / admin` roles with least privilege.
+- User data export, account deletion, statutory retention, and auditing.
 
-### 3.7 学习计划
+Current gap: email ownership is not verified; password recovery, OAuth, general admin roles, data export/deletion workflows, and CAPTCHA are missing. Dual Redis/HMAC rate limiting on sign-up by IP + normalized email is live.
 
-目标能力：任务/目标、资料关联、考试倒计时、提醒、重复任务、时区、日历同步、基于薄弱点的可解释排程。
+### 3.2 Courses and material library
 
-当前有基础任务、目标、连续学习、启发式填充和幂等任务奖励；生产 0039 已增加 goal/task 引用对象 owner trigger、数据库维护 `done_at` 与任务每日奖励上限。后续仍需到期提醒、历史分页和真正的 AI/规则推荐。
+Target capabilities:
 
-### 3.8 市场、钱包、VIP 与支付
+- Courses, terms, instructors, material categories, search, pagination, and bulk management.
+- PDF, PPTX, DOCX, Markdown, HTML, TXT, and controlled image input.
+- Upload size/MIME allowlists, malicious-file detection, parse status, versions, and deduplication.
+- Private Storage, short-lived signed URLs, orphan-file reclamation, quotas, and lifecycle rules.
 
-目标能力：
+Current gap: basic CRUD/preview is complete; server-side upload constraints, quotas, parse status, versions, scanning, and automatic cleanup are missing.
 
-- 笔记以 credits 定价和购买；余额由不可变账本派生。
-- 法币充值、VIP、官方课程通过 Stripe Checkout/Webhook。
-- 创作者收益、平台分成、退款、争议和 Stripe Connect 提现。
-- 订单、支付、账本三层分离，全部状态变更幂等、可审计。
+### 3.3 Courses (learning courses)
 
-`points` 是不可提现的活动成长值，`credits` 是内部消费余额，两者不得互转或共用字段。完整规则见 [积分、钱包、VIP 与支付规则](product/POINTS_CREDITS_VIP_PAYMENTS.md)。
+The first version of English vocabulary learning is live: per-unit/whole multi-unit text paste, exact error positions, structured editing, CMUdict IPA, resumable four-stage learning, cross-day review facts, review Schedule, Profile aggregation, persistent badges, fingerprint-idempotent +20 points, read-only sharing, and the free course market. It uses an independent `learning_*` model and does not change Materials' `courses` table; the Courses feature migrations are released up to 0038, overall production migration history is at 0043, and the corresponding flags are on. 0025–0028 further shipped explicit cancel, end-of-round spelling mistake review/confirmation, unit exams with an adjustable threshold defaulting to 90%, and a rolling 500/24-hour quota counted only for real OpenRouter requests.
 
-### 3.9 通知、反馈与管理端
+0029–0034 had a protected release on 2026-08-03, adding, without changing the points/payment boundaries, the pronunciation exam, arbitrary word selection within a unit for review/exams, automatic end after completing practice for a failed exam, exam history details, per-word learning properties in the editor, and the single mastery rule "a word is marked learned only after passing both the spelling exam and the pronunciation exam"; cross-day review keeps only practice dates/counts and no longer creates mastery.
 
-目标能力：
+0035–0036 had a protected release on 2026-08-04; they add no new path to mastery but turn the rule above into an enforced exact projection on the progress table: `learned_at` can only equal the later of the spelling/pronunciation exam pass times, and is null when either fact is missing; initial learning, review, a single exam, or direct assignment cannot bypass it. In the same release, the Web app removed local VAD/silence trimming that wrongly rejected quiet speech, and the full recording only gets the PCM format conversion the Azure contract requires before Azure judges it.
 
-- 通知持久化 + Realtime；支持来源跳转、偏好、邮件和计划提醒。
-- 反馈只允许用户创建/查看，状态由支持人员处理。
-- 管理端覆盖用户、内容、举报、反馈、订单、AI 任务、成本与审计日志。
+0037–0038 had a protected release on 2026-08-04: the translation input in translation-first spelling can record speech, Chinese by default, recognized by the server-fixed OpenRouter `fish-audio/transcribe-1`, which only fills editable text without auto-submitting or grading; word read-aloud, the pronunciation exam, and translation voice input share a live waveform. WAVs/transcripts are not persisted to the database or Storage, and clients cannot choose the model/language/key or bypass owner/session/revision/current-word and quota checks.
 
-### 3.10 多平台与国际化
+Live performance/weak-network increments: the answering UI decides correctness locally, while the server alone still decides the retry pool, cursor/stage, error counts, completion, points, and badges; the IndexedDB outbox is serialized by revision and replayed with the same attempt UUIDs, and on conflict it pulls a single snapshot and replays the still-compatible answers. Audio uses a global SHA-256 of the normalized word, locale, voice, format, and synthesis version; private Storage is the only server-side source of truth, and the browser only keeps rebuildable Cache Storage copies that users can delete; this is not a full offline PWA.
 
-- Web 是首要交付面。
-- Electron 在 Web 核心闭环稳定后接入，提供文件选择、系统通知和安全更新。
-- React Native/Expo 在 API 与共享业务契约稳定后接入，不直接复用 DOM UI。
-- 界面和 AI 输出均支持中文/英文；数据库保存稳定代码值，不保存翻译后的枚举。
+In current production, users starting learning/review that includes spelling can choose no time limit or a 3–300 second limit, and can type the translation first. The time limit only controls when the answer auto-submits and does not change server authority; the translation is first checked by NestJS for a normalized exact match, and non-literal answers are judged by OpenRouter with a fixed structured schema; a wrong answer directly creates one spelling error, and spelling timing starts only after a correct one. Provider failures don't count as errors, the answer text is not persisted, and results show the correct English and split translations whether correct or not. This is a narrow judging capability within word practice and does not mean AI file import or a general generation chain is complete.
 
-## 4. 目标技术架构
+Explicitly not implemented: PDF, DOC/DOCX, JSON, Markdown, HTML, image OCR/parsing; choosing prompts by English vocabulary/knowledge points/reading comprehension/question bank training; structured model output and human confirmation; an import evaluation set, tokens/cost, and privacy retention. The entry point must keep saying "AI parsing coming soon" and must not accept files or imply a model was called.
+
+Next steps, in order: keep observing error rates and cost for Courses/sharing/market/Azure → build a file isolation/scanning/parsing pipeline with human confirmation → open other course categories behind evaluation, cost, and privacy gates.
+
+### 3.4 AI creation and personal notes (highest priority)
+
+Production 0041–0043 implement test-paper generation from Materials files: every user is Free by default, with 10 successful generations and 10 successful subjective gradings per local day in the Profile IANA time zone; the reservation is consumed only on success and released on rejection, failure, or cancellation, and credits are never read. Real test papers appear under the corresponding Materials `courses.id`, the historical hard-coded My Notes data stays in a separate Demo group, and deleting the source can either move the results to Unfiled or delete them too. Online exams support an absolute deadline, 500 ms/blur saving, IndexedDB weak-network drafts, unlimited retakes, deterministic grading of objective questions, and one AI grading run for all subjective questions of a paper.
+
+This phase completed real OpenRouter/ZDR, the 2 GB canary, full CI, an encrypted recovery point, a signed-in user production smoke test, and an immutable release on 2026-08-11. Phase one explicitly does not open the knowledge list, standalone Quiz, knowledge graph, Notes editing/PDF export, selling credits, or payments.
+
+A generation job can choose one or more artifacts:
+
+1. Knowledge list: concepts, definitions, source citations, dependency order.
+2. Interactive quiz: question types, answers, explanations, difficulty, and source evidence.
+3. Knowledge graph: nodes, relationships, layout information, and sources.
+4. Mock exam: sections, questions, marks, answers, and grading rubrics.
+
+Target pipeline:
+
+```text
+User chooses materials and generation settings
+  → NestJS authentication, quota/credits reservation, job creation
+  → BullMQ queueing and rate limiting
+  → FastAPI downloads the private material, parses, chunks; calls visual recovery when needed
+  → Provider adapter structured generation + citation/schema reviewer quality gates
+  → Contract validation, result persistence, credits settlement
+  → Notification persistence + Realtime push
+  → Notes page reading, editing, practice, regeneration, and export
+```
+
+Must be done first:
+
+- Unify the TypeScript/Python/frontend rendering contracts, replacing the current mock short-field shapes or providing an explicit adapter layer.
+- Define the serialization convention for `materialId/material_id` and the OpenAPI.
+- Production has `generation_jobs / notes / note_materials / exams`; the 0046–0048 candidate adds the graph artifact, checkpoints, and node questions. The knowledge list, standalone quizzes, and embeddings/RAG still need a future data model.
+- Save the material source and page number for every generated fragment to avoid uncited answers.
+- Build idempotency keys, retries, cancellation, timeouts, budget caps, failure refunds, and quality evaluation.
+
+### 3.5 Home and the learning loop
+
+The final Home aggregates real today's tasks, streaks, recent courses, materials to process, recent notes, generation jobs, and activity; it must stop mixing mock credits with real points.
+
+The learning loop should record quiz answers, weak knowledge points, review intervals, task completion, and generation quality feedback, and use them for later planning recommendations. Recommendations start with explainable rules and only introduce models once there is enough data.
+
+### 3.6 Community and content governance
+
+Target capabilities: posts, comments, likes, saves, reposts, follows, tags, media, reporting, blocking, moderation queues, appeals, rate limiting, and anti-spam.
+
+Social features currently work for the most part; production 0039 tightened trusted author fields with a column allowlist and defensive triggers, and added frozen daily caps, moderation suppress/restore, and pending-review coordination signals. It does not penalize automatically and does not replace reporting/appeals/a moderation back office, and orphan media governance is still incomplete. See [content moderation](governance/CONTENT_MODERATION.md) for detailed rules.
+
+### 3.7 Study plan
+
+Target capabilities: tasks/goals, material links, exam countdowns, reminders, recurring tasks, time zones, calendar sync, and explainable scheduling based on weak points.
+
+There are currently basic tasks, goals, streaks, heuristic auto-fill, and idempotent task rewards; production 0039 added owner triggers for goal/task referenced objects, database-maintained `done_at`, and a daily task reward cap. Due-date reminders, history pagination, and real AI/rule-based recommendations are still needed.
+
+### 3.8 Market, wallet, VIP, and payments
+
+Target capabilities:
+
+- Notes priced and purchased in credits; balances derived from an immutable ledger.
+- Fiat top-ups, VIP, and official courses through Stripe Checkout/webhooks.
+- Creator earnings, platform revenue share, refunds, disputes, and Stripe Connect payouts.
+- Orders, payments, and the ledger in three separate layers, with every state change idempotent and auditable.
+
+`points` are non-withdrawable activity growth values, and `credits` are an internal spending balance; the two must never convert into each other or share fields. See the [points, wallet, VIP, and payment rules](product/POINTS_CREDITS_VIP_PAYMENTS.md) for the full rules.
+
+### 3.9 Notifications, feedback, and admin
+
+Target capabilities:
+
+- Persistent notifications + Realtime; source navigation, preferences, email, and plan reminders.
+- Feedback can only be created/viewed by users, with status handled by support staff.
+- The admin console covers users, content, reports, feedback, orders, AI jobs, cost, and audit logs.
+
+### 3.10 Multi-platform and internationalization
+
+- The Web app is the primary delivery surface.
+- Electron joins after the Web core loop is stable, providing file selection, system notifications, and secure updates.
+- React Native/Expo joins after the API and shared business contracts are stable, without directly reusing the DOM UI.
+- The interface and AI output both support English/Chinese; the database stores stable code values, never translated enum values. The Web interface already ships English (default) and Chinese; AI output language selection per job is the remaining part.
+
+## 4. Target technical architecture
 
 ```text
 Web / Electron / React Native
         │ HTTPS + Supabase JWT
         ▼
-NestJS API（业务边界、配额、订单、任务、管理）
+NestJS API (business boundary, quotas, orders, jobs, admin)
         ├── Supabase Auth / Postgres / Storage / Realtime
         ├── Redis + BullMQ
         ├── FastAPI AI Worker ── OpenRouter / future provider adapters
         └── Stripe API / Webhook / Connect
 ```
 
-原则：
+Principles:
 
-- 简单 owner-only CRUD 可以继续直连 Supabase，但涉及钱、积分、服务端可信字段、跨用户写入、AI 成本和管理权限的操作必须经过受控 API/RPC。
-- RLS 是最后一道数据隔离，不替代列级权限、业务校验、幂等账本和速率限制。
-- 所有跨语言接口以 OpenAPI/JSON Schema 为源，生成客户端或做契约测试。
-- 异步任务必须可观察、可重试、可取消、可去重，且失败不会吞掉 credits。
-- 当前生产继续使用 Supabase 云 + 自托管应用；是否迁移 PaaS 或完整自托管由容量和运维成本决定，不再把某一托管商写成已锁定事实。
+- Simple owner-only CRUD may keep talking to Supabase directly, but operations involving money, points, server-trusted fields, cross-user writes, AI cost, and admin permissions must go through controlled APIs/RPCs.
+- RLS is the last line of data isolation and does not replace column permissions, business validation, idempotent ledgers, and rate limiting.
+- Every cross-language interface takes OpenAPI/JSON Schema as its source, generating clients or running contract tests.
+- Async jobs must be observable, retryable, cancellable, and deduplicated, and failures must never swallow credits.
+- Current production keeps using hosted Supabase + self-hosted apps; whether to move to a PaaS or fully self-host is decided by capacity and operating cost, and no hosting provider is written as a locked-in fact anymore.
 
-## 5. 数据域与所有权
+## 5. Data domains and ownership
 
-最终数据域：
+Final data domains:
 
-- Identity：`profiles`、roles、preferences、consents。
-- Learning source：courses、materials、material_versions、parse_results。
-- Knowledge：notes、generated artifacts、citations、embeddings、attempts。
-- Learning courses：learning courses/units/words、sessions/items/attempts/progress、review schedules、shares/publications/reports、badge awards、speech usage。
-- Planning：goals、tasks、reminders、streak events。
-- Community：posts、comments、reactions、follows、reports、moderation actions。
-- Commerce：products、orders、payments、credit ledger、creator earnings、payouts、subscriptions。
-- Operations：generation jobs、notifications、feedback、audit logs、usage/cost events。
+- Identity: `profiles`, roles, preferences, consents.
+- Learning source: courses, materials, material_versions, parse_results.
+- Knowledge: notes, generated artifacts, citations, embeddings, attempts.
+- Learning courses: learning courses/units/words, sessions/items/attempts/progress, review schedules, shares/publications/reports, badge awards, speech usage.
+- Planning: goals, tasks, reminders, streak events.
+- Community: posts, comments, reactions, follows, reports, moderation actions.
+- Commerce: products, orders, payments, credit ledger, creator earnings, payouts, subscriptions.
+- Operations: generation jobs, notifications, feedback, audit logs, usage/cost events.
 
-当前 ERD、字段和 RLS 见 [ERD](guides/ERD.md)。任何新表必须明确：数据所有者、读写角色、保留期限、删除行为、审计要求和 RLS 测试。
+See the [ERD](guides/ERD.md) for the current tables, fields, and RLS. Every new table must specify: data owner, read/write roles, retention period, delete behavior, audit requirements, and RLS tests.
 
-## 6. 不可妥协的质量门
+## 6. Non-negotiable quality gates
 
-每个功能只有同时满足以下条件才可标记为“已完成”：
+A feature can only be marked "done" when all of these hold:
 
-- 有数据库迁移与回滚/前滚说明；RLS 至少用两个用户验证。
-- 有 API/契约说明，错误与状态机稳定。
-- 有单元或 jsdom 测试；关键用户路径有 E2E。
-- CI 运行 code/database lint、typecheck、测试和构建。
-- 有日志、指标和告警；涉及外部服务时有超时、重试和降级。
-- 涉及个人数据时更新隐私/删除规则；涉及内容时更新审核规则。
-- 涉及 AI 时有固定评测集、成本预算、引用和失败策略。
-- 涉及 points/credits/支付时使用幂等事件与不可变账本。
-- 当前状态文档、API/ERD、CHANGELOG 同步更新。
+- Database migrations with rollback/roll-forward notes; RLS verified with at least two users.
+- API/contract documentation, with stable errors and state machines.
+- Unit or jsdom tests; E2E for key user paths.
+- CI runs code/database lint, typecheck, tests, and the build.
+- Logs, metrics, and alerts; timeouts, retries, and degradation when external services are involved.
+- Privacy/deletion rules updated when personal data is involved; moderation rules updated when content is involved.
+- A fixed evaluation set, cost budget, citations, and failure strategy when AI is involved.
+- Idempotent events and immutable ledgers when points/credits/payments are involved.
+- The current-status docs, API/ERD, and CHANGELOG updated together.
 
-## 7. 分阶段开发路径
+## 7. Phased development path
 
-### 阶段 A：安全与可验证基线（立即进行）
+### Phase A: security and verifiable baseline (now)
 
-目标：在继续加功能前，先让现有真实数据可信、测试可复现、发布可回滚。
+Goal: before adding more features, make existing real data trustworthy, tests reproducible, and releases reversible.
 
-- **已实现：**限制 Profile 敏感列、撤销内部 definer 客户端执行权、points append-only 账本/冲正/幂等，以及对应双用户 RLS 回归。
-- **已实现：**修复跨账号 legacy 状态、迟到异步响应、resize 重挂、登录/退出 loading 和 Supabase/Storage error 处理；现有 Web jsdom、API 单元测试、双用户 Supabase E2E 与 Courses Playwright 流程共同覆盖新旧边界。
-- **已上线：**0039–0040 修复帖子 UPDATE 可信字段、Feedback 状态、goal/task owner 关联与数据库时间字段；兼容期仍接受两个旧时间列但总由 trigger 覆盖。
-- **已上线：**0008–0010 已完成受保护生产发布；旧 opening 以追加式等额冲正归零，生产 history、发布断言和最终 dry-run 均通过。
-- **已上线：**points 首次决策冻结、每日数量上限、owner 回执、审核 suppress/restore、协同行为待审信号、Redis 滑动窗口、HMAC 滥用审计和管理 API；自动处罚、完整审核 UI 与 webhook 告警不在本阶段。
-- **当前发布中止点：**0052–0053 数据库 contract 已通过完整 CI、独立 plan、恢复点、apply 和远端验证上线；最新 main 应用仍因真实 Materials AI PPTX gate 失败而未切流。修复该独立 AI 问题时不得改回时间列 grant，也不得放宽 provider gate。
-- 持续维护已落地的 migration 空库重建/RLS E2E、typecheck、jsdom、Courses 浏览器主流程、构建、加密恢复点与应用回退门禁；继续补全旧模块 API HTTP/浏览器 E2E 与 FastAPI 测试。
-- 建立数据库发布、备份恢复、密钥轮换、监控告警和安全响应基线。
+- **Implemented:** restricting Profile sensitive columns, revoking client execute on internal definers, an append-only points ledger with reversals/idempotency, and the corresponding two-user RLS regressions.
+- **Implemented:** fixed cross-account legacy state, late async responses, resize remounting, sign-in/sign-out loading, and Supabase/Storage error handling; the existing Web jsdom, API unit tests, two-user Supabase E2E, and the Courses Playwright flow together cover the old and new boundaries.
+- **Live:** 0039–0040 fixed trusted fields on post UPDATE, Feedback status, goal/task owner links, and database time fields; the compatibility period still accepts the two old time columns but triggers always overwrite them.
+- **Live:** 0008–0010 completed a protected production release; the old opening was zeroed with an appended equal reversal, and production history, release assertions, and the final dry-run all passed.
+- **Live:** frozen first decisions for points, daily count caps, owner receipts, moderation suppress/restore, pending-review coordination signals, Redis sliding windows, HMAC abuse auditing, and the admin API; automatic penalties, a full moderation UI, and webhook alerts are out of scope for this phase.
+- **Current release stop point:** the 0052–0053 database contract went live through full CI, a separate plan, a recovery point, apply, and remote verification; the latest main app still has not been cut over because the real Materials AI PPTX gate failed. When fixing that separate AI issue, do not revert the timestamp-column grants and do not loosen the provider gate.
+- Keep maintaining the landed gates: empty-database migration rebuild/RLS E2E, typecheck, jsdom, the Courses browser main flow, build, encrypted recovery points, and app rollback; keep adding API HTTP/browser E2E and FastAPI tests for the legacy modules.
+- Establish baselines for database releases, backup/recovery, secret rotation, monitoring/alerting, and security response.
 
-验收：仓库 P0 回归关闭且 production migration history 可证明已应用；默认 CI 全绿；两用户 RLS E2E 在一次性本地 Supabase 可重复执行；剩余权限项关闭；发布和恢复完成演练。
+Acceptance: the repository P0 regressions are closed and the production migration history provably applied; the default CI is all green; two-user RLS E2E is repeatable on a throwaway local Supabase; the remaining permission items are closed; releases and recovery have been drilled.
 
-### 阶段 A+：Courses 受保护发布（2026-08-04 已完成）
+### Phase A+: Courses protected release (completed 2026-08-04)
 
-- 解析器、jsdom/API、0007 升级、空库迁移、双用户 RLS 和 Playwright 主流程已在 CI 全绿。
-- 已完成只读 migration plan、加密恢复点、0011–0038 apply、remote history/lint/dry-run 和不可变应用发布。
-- 已开启私有 Courses，并验证跨账号、会话恢复、复习跨日与 points 指纹；真实 Japan East Azure 合成/评分 smoke 成功。
-- 分享和免费 Course Market 已开放。后续继续观察错误率、举报阈值、语音配额/成本与数据库增长；回退只关 flags/恢复应用 release，数据库向前修复。
+- The parser, jsdom/API, the 0007 upgrade, empty-database migrations, two-user RLS, and the Playwright main flow are all green in CI.
+- Completed the read-only migration plan, encrypted recovery point, 0011–0038 apply, remote history/lint/dry-run, and the immutable app release.
+- Private Courses are enabled, with cross-account, session resume, cross-day review, and points fingerprints verified; the real Japan East Azure synthesis/scoring smoke succeeded.
+- Sharing and the free Course Market are open. Keep observing error rates, report thresholds, speech quotas/cost, and database growth; rollback only turns off flags/restores the app release, and the database is fixed forward.
 
-验收结果：Courses 功能迁移发布到 0038，当前生产总 history 已到 0043；Courses 私有路径、幂等弱网答题、音频队列/Storage 去重、历史冷音频 ready 后缓存替换、按意图独立续学与显式取消、限时拼写、翻译前测、中文翻译语音输入/共享波形、轮末错题复盘、拼写/读音考试、任意选词、考试历史、双考试精确掌握投影、Unicode 拼写归一化、仅标点差异容错、未裁剪 WAV 的真实 Azure/OpenRouter/Fish Audio smoke、分享/市场、评分候补池和公网 readiness 均有发布记录；Courses 文件导入仍保持禁用。
+Acceptance results: the Courses feature migrations are released up to 0038, and the current overall production history is at 0043; the Courses private path, idempotent weak-network answering, the audio queue/Storage dedup, replacing cached cold audio after it becomes ready, intent-specific resume and explicit cancel, the timed spelling test, the translation pre-test, Chinese translation voice input/shared waveform, end-of-round mistake review, spelling/pronunciation exams, arbitrary word selection, exam history, the dual-exam exact mastery projection, Unicode spelling normalization, punctuation-only tolerance, real Azure/OpenRouter/Fish Audio smoke with untrimmed WAVs, sharing/market, the scored retry pool, and public readiness all have release records; Courses file import stays disabled.
 
-### 阶段 B：Materials AI 最小闭环（2026-08-11 已上线）
+### Phase B: Materials AI minimal loop (live 2026-08-11)
 
-目标：一份真实 Materials 资料可以生成可引用、可持久化的试卷并在线考试。生产 0041–0043 已实现统一契约、任务/Notes/引用/答卷表、多格式解析、持久队列、DeepSeek/MiMo ZDR、结果校验、队列 UI、真实 My Notes 和 Free quota；不接 credits。
+Goal: a real Materials file can generate a citable, persistent test paper for an online exam. Production 0041–0043 implement the unified contract, job/Notes/citation/answer-sheet tables, multi-format parsing, the durable queue, DeepSeek/MiMo ZDR, result validation, the queue UI, real My Notes, and the Free quota; credits are not connected.
 
-验收结果：PR/main 完整 CI、真实固定 provider suite、220 页近上限资源 canary、只读 plan/加密恢复点/远端验证、flag 关闭 readiness、登录生产用户完整链路和独立公网复核均通过；同一幂等键/operation 不重复额度/结果，失败释放 reservation，任务前后临时目录清理。持续质量、成本、真实复杂文件和 prompt injection 误报率仍需监控。
+Acceptance results: full PR/main CI, the real fixed provider suite, a 220-page near-limit resource canary, the read-only plan/encrypted recovery point/remote verification, readiness with the flag off, the full signed-in production user path, and independent public review all passed; the same idempotency key/operation never duplicates allowances/results, failures release the reservation, and temporary directories are cleaned before and after jobs. Ongoing quality, cost, real complex files, and the prompt-injection false-positive rate still need monitoring.
 
-### 阶段 B+：可恢复长任务、知识点图谱与 Luna 原文件（数据库已发布，应用向前修复中）
+### Phase B+: resumable long jobs, the knowledge-point graph, and Luna native files (database released, app being fixed forward)
 
-- API/worker 采用 202 接收与持久回调，显式 Undici timeout 只保护 transport，不再持有最长 20 分钟 HTTP 响应。
-- provider usage 按 UUID 增量持久；数据库 checkpoint 与 worker 0700 本地结果共同支持默认 24 小时 Resume，同一 job、重新预留、成功才 consume。
-- Materials 开放 Organize knowledge points；My Notes 渲染 source-ordered graph、hover/detail、节点来源约束问答。Knowledge list 和独立 Quiz 继续禁用。
-- Materials/My Notes 保持英文和原有视觉；不把本阶段扩大成全站 React/i18n 重写。
-- 图谱使用 React Flow + ELK，提供无重叠分层、pan/zoom、拖动/键盘、外部详情和 revision 跨设备保存；考试只有整卷提交/超时后才统一批改。
-- job 支持应用内二次确认的 Delete/Clear history；活动清理必须等 worker 取消网络/Office、落账 usage 并删除临时目录后才消失，已接收任务按规则 consume 一次。
-- 能力矩阵允许用户显式选择 DocumentIR 或 `luna_native_file_v1`。Luna 只对真实门禁的 PDF/图片 allowlist 开放，inline 原字节、固定 GPT-6 Luna、锁定 Azure ZDR 上游且禁止 fallback，不静默转换或降级。
+- API/worker use 202 acceptance and durable callbacks, and explicit Undici timeouts only protect the transport instead of holding an HTTP response for up to 20 minutes.
+- Provider usage is persisted incrementally by UUID; database checkpoints and the worker's 0700 local results together support Resume within a default 24 hours, on the same job, with a fresh reservation, consumed only on success.
+- Materials opens Organize knowledge points; My Notes renders a source-ordered graph, hover/detail, and node Q&A constrained to the node's sources. The knowledge list and standalone Quiz stay disabled.
+- Materials/My Notes keep their original visuals; this phase is not expanded into a site-wide React rewrite. (They were originally pinned to English for this phase; they now follow the global English/Chinese toggle.)
+- The graph uses React Flow + ELK, providing overlap-free layering, pan/zoom, drag/keyboard, external details, and revision-based cross-device saving; exams are graded together only after the whole paper is submitted or time runs out.
+- Jobs support Delete/Clear history with in-app confirmation; active cleanup must wait until the worker cancels the network/Office work, records usage, and deletes the temporary directory before the job disappears, and accepted jobs consume one run per the rules.
+- The capability matrix lets users explicitly choose DocumentIR or `luna_native_file_v1`. Luna is only open for the PDF/image allowlist that passed real gates, with inline raw bytes, fixed GPT-6 Luna, a locked Azure ZDR upstream, and no fallback, never converting or downgrading silently.
 
-验收进度：0046–0051 空库/升级/RLS、fake Chromium、只读 plan、恢复点、生产 apply 和 2G canary已完成。0054–0055 的 Ox Alpha 扩展由 0056–0057 退役（Unreleased）。GPT-5.6 Luna 的真实门禁确认无 first-party OpenAI ZDR endpoint；GPT-6 Luna 改锁 Azure ZDR endpoint。仍需新的完整 CI、真实 DeepSeek/MiMo、免费 Nemotron 翻译、Luna Azure 原文件门禁、DocumentIR 应用 release、生产登录 smoke 和独立公网核验。Azure catalog 不合规或逐格式门禁未通过前，Luna 只能是“已实现但不可用”。
+Acceptance progress: 0046–0051 empty-database/upgrade/RLS, fake Chromium, the read-only plan, the recovery point, production apply, and the 2 GB canary are complete. The Ox Alpha extension in 0054–0055 is retired by 0056–0057 (Unreleased). The real GPT-5.6 Luna gate confirmed there is no first-party OpenAI ZDR endpoint; GPT-6 Luna is locked to the Azure ZDR endpoint instead. Still needed: new full CI, real DeepSeek/MiMo, the free Nemotron translation, the Luna Azure native-file gate, the DocumentIR app release, a production signed-in smoke, and independent public verification. Until the Azure catalog is compliant and the per-format gates pass, Luna can only be "implemented but unavailable".
 
-### 阶段 C：四类产物与学习闭环
+### Phase C: four artifacts and the learning loop
 
-- 将候选知识点图谱完成生产观察；继续扩展知识清单和独立 Quiz，试卷保持现有闭环。
-- 测验作答/解析、图谱布局、试卷答案与评分标准。
-- Home 全部换真数据；基于薄弱点生成计划。
-- 分阶段把 legacy 视图替换为类型安全 React 组件。
+- Finish production observation of the candidate knowledge-point graph; keep extending the knowledge list and standalone Quiz, with test papers keeping the existing loop.
+- Quiz answering/explanations, graph layout, test-paper answers, and grading rubrics.
+- Switch Home entirely to real data; generate plans based on weak points.
+- Replace legacy views with type-safe React components in stages.
 
-### 阶段 D：市场、credits、VIP 与 Stripe
+### Phase D: market, credits, VIP, and Stripe
 
-- 上架、购买、评分、授权副本。
-- 充值订单、Stripe Webhook、不可变 credits 账本。
-- VIP entitlement、创作者 70% 默认分成、退款/争议和提现。
-- 完成税务、条款、隐私、风控和审计要求后才能启用真实支付。
+- Listing, purchase, ratings, licensed copies.
+- Top-up orders, Stripe webhooks, an immutable credits ledger.
+- VIP entitlements, the default 70% creator share, refunds/disputes, and payouts.
+- Real payments are only enabled after tax, terms, privacy, risk control, and audit requirements are met.
 
-### 阶段 E：实时、治理与运营
+### Phase E: real-time, governance, and operations
 
-- Realtime 通知、提醒任务、邮件偏好。
-- 举报/审核/申诉/屏蔽、反垃圾和管理员工作台。
-- SLO、成本看板、AI 质量回归、容量和灾备演练。
+- Realtime notifications, reminder jobs, email preferences.
+- Reporting/moderation/appeals/blocking, anti-spam, and an admin workbench.
+- SLOs, cost dashboards, AI quality regression, capacity, and disaster recovery drills.
 
-### 阶段 F：多平台与内容扩展
+### Phase F: multi-platform and content expansion
 
-- 完整中英双语。
-- Electron、React Native/Expo。
-- 官方图文/视频/直播课程和推荐系统。
-- 是否引入第三方视频/直播服务以独立 ADR 决策。
+- Bilingual AI output end to end (the Web UI is already bilingual).
+- Electron, React Native/Expo.
+- Official text/video/live courses and a recommendation system.
+- Whether to bring in a third-party video/live service is decided by a separate ADR.
 
-## 8. 待实现功能总表
+## 8. Full list of features to implement
 
-| ID | 能力 | 当前 | 目标阶段 | 关键依赖 |
+| ID | Capability | Current | Target phase | Key dependencies |
 |---|---|---|---|---|
-| SEC-01 | Profile 敏感列与内部 RPC 收口 | 已上线 | A | 0008–0010、RLS E2E、2026-07-21 生产发布记录 |
-| SEC-02 | 注册限流、邮箱验证、找回密码 | 部分 | A/B | 0039–0040 已上线 Redis IP+email 限流；邮箱验证/找回/CAPTCHA 仍未完成 |
-| SEC-03 | 帖子/Feedback/Schedule 完整性与 points 反滥用 | 已上线 | A | 0039–0040、真实 Redis/双用户 RLS/go-no-go，以及 plan `32581192318`、apply `32581805613`、0052–0053 远端验证 |
-| QA-01 | jsdom、API、Python、双用户 RLS/Storage 与关键浏览器流程 | 部分 | A/A+ | Web/API/Python unit + CI 本地 Supabase + Courses/Materials AI Playwright；staging 与旧模块 API HTTP/浏览器待补 |
-| OPS-01 | DB 发布/回滚、备份、监控、密钥轮换 | 部分 | A | CLI/恢复点/app 回退已实现；Storage bytes、持续监控与演练待补 |
-| FE-01 | legacy 跨会话与错误处理修复 | 已实现 | A | 账号切换/resize/error/loading jsdom 回归 |
-| LEARN-01 | 英语词表文本创建/编辑、四阶段学习、显式取消、轮末复盘、拼写/读音考试、任意选词与历史 | 已上线 | A+ | React、NestJS、0011–0036；CI/生产已验证 |
-| LEARN-02 | 复习熟练度、Schedule/Profile、徽章/+20 points | 已上线 | A+ | 跨日本地日期、指纹幂等；生产已发布 |
-| LEARN-03 | 分享、免费课程市场、举报与审核 | 已上线 | A+ | 不可变快照、flags；免费市场已开放 |
-| LEARN-04 | Azure TTS/朗读评分适配层 | 已上线 | A+ | fake 自动化 + Japan East 真实供应商 gate |
-| LEARN-05 | 限时拼写与语义翻译前测 | 已上线 | A+ | 0019–0020、OpenRouter structured output、真实 provider/生产 gate |
-| LEARN-AI-01 | 文件导入、类别 prompt、结构化输出和人工确认 | 未开始 | B | 扫描/OCR/解析、评测、成本、隐私 |
-| AI-01 | 试卷统一生成契约、任务/额度/Notes/答卷 | 已上线 | B | 0041–0043；真实 provider/canary/生产门禁已完成 |
-| AI-02 | Materials 确定性解析、视觉恢复和引用 | 已上线 | B | FastAPI DocumentIR/DeepSeek/MiMo；embedding/pgvector 不在首版 |
-| AI-03 | Materials 知识图谱与节点问答 | 候选已实现，未上线 | B | 0046–0051 + AI-01/02；待 CI、真实 provider、受保护发布 |
-| AI-04 | Knowledge list / 独立 Quiz | mock | C | AI-01/02；仍 Coming soon |
-| AI-05 | 长任务增量 usage 与断点续跑 | 候选已实现，未上线 | B+ | 本地单元已通过；真实 Supabase/provider/生产门禁待完成 |
-| AI-06 | Luna 原文件、任务删除/清空、跨设备图布局 | 候选已实现，未上线 | B+ | 0049–0051；需逐格式真实 OpenAI gate、RLS、250 节点 Playwright 与受保护发布 |
-| NOTE-01 | Notes CRUD、编辑、版本和导出 | 部分 | B/C | 私有试卷查看/删除/考试已实现；编辑/版本/PDF导出待完成 |
-| HOME-01 | 首页真实聚合 | mock | C | Notes/Tasks/Usage |
-| PLAN-01 | 到期提醒与薄弱点排程 | 部分 | C/E | Realtime/cron |
-| COM-01 | 举报、审核、屏蔽、反垃圾 | 部分 | E | points 协同信号/审核 API 已上线；内容举报、申诉、屏蔽和完整管理端仍未完成 |
-| PAY-01 | credits 账本与订单 | 仅字段 | D | 产品规则、API |
-| PAY-02 | Stripe/VIP/退款/Connect | 未完成 | D | PAY-01、合规 |
-| RT-01 | Realtime 通知 | 未完成 | E | 通知来源字段 |
-| ADMIN-01 | 管理后台与审计 | 未完成 | E | roles、audit logs |
-| I18N-01 | UI 与 AI 双语 | 未完成 | F | i18n 包、契约 |
-| DESKTOP-01 | Electron | 未开始 | F | 稳定 Web/API |
-| MOBILE-01 | React Native/Expo | 未开始 | F | 稳定共享契约 |
-| COURSE-01 | 官方课程 | 未开始 | F | 支付、媒体供应商 |
+| SEC-01 | Profile sensitive columns and internal RPC lockdown | Live | A | 0008–0010, RLS E2E, 2026-07-21 production release record |
+| SEC-02 | Sign-up rate limiting, email verification, password recovery | Partial | A/B | 0039–0040 shipped Redis IP + email rate limiting; email verification/recovery/CAPTCHA still not done |
+| SEC-03 | Posts/Feedback/Schedule integrity and points anti-abuse | Live | A | 0039–0040, real Redis/two-user RLS/go-no-go, plus plan `32581192318`, apply `32581805613`, and 0052–0053 remote verification |
+| QA-01 | jsdom, API, Python, two-user RLS/Storage, and key browser flows | Partial | A/A+ | Web/API/Python unit + CI local Supabase + Courses/Materials AI Playwright; staging and legacy-module API HTTP/browser coverage still to add |
+| OPS-01 | DB release/rollback, backups, monitoring, secret rotation | Partial | A | CLI/recovery points/app rollback implemented; Storage bytes, continuous monitoring, and drills still to add |
+| FE-01 | Legacy cross-session and error-handling fixes | Implemented | A | Account switching/resize/error/loading jsdom regressions |
+| LEARN-01 | English word-list text create/edit, four-stage learning, explicit cancel, end-of-round review, spelling/pronunciation exams, arbitrary word selection, and history | Live | A+ | React, NestJS, 0011–0036; verified in CI/production |
+| LEARN-02 | Review mastery, Schedule/Profile, badges/+20 points | Live | A+ | Cross-day local dates, fingerprint idempotency; released to production |
+| LEARN-03 | Sharing, free course market, reporting, and moderation | Live | A+ | Immutable snapshots, flags; free market open |
+| LEARN-04 | Azure TTS/read-aloud scoring adapter | Live | A+ | Fake automation + real Japan East provider gate |
+| LEARN-05 | Timed spelling and the semantic translation pre-test | Live | A+ | 0019–0020, OpenRouter structured output, real provider/production gate |
+| LEARN-AI-01 | File import, category prompts, structured output, and human confirmation | Not started | B | Scanning/OCR/parsing, evaluation, cost, privacy |
+| AI-01 | Unified test-paper generation contract, jobs/allowances/Notes/answer sheets | Live | B | 0041–0043; real provider/canary/production gates complete |
+| AI-02 | Materials deterministic parsing, visual recovery, and citations | Live | B | FastAPI DocumentIR/DeepSeek/MiMo; embedding/pgvector not in the first version |
+| AI-03 | Materials knowledge graph and node Q&A | Candidate implemented, not live | B | 0046–0051 + AI-01/02; awaiting CI, real providers, protected release |
+| AI-04 | Knowledge list / standalone Quiz | Mock | C | AI-01/02; still Coming soon |
+| AI-05 | Long-job incremental usage and checkpoint resume | Candidate implemented, not live | B+ | Local unit tests pass; real Supabase/provider/production gates pending |
+| AI-06 | Luna native files, job delete/clear, cross-device graph layout | Candidate implemented, not live | B+ | 0049–0051; needs per-format real OpenAI gates, RLS, 250-node Playwright, and a protected release |
+| NOTE-01 | Notes CRUD, editing, versions, and export | Partial | B/C | Private test-paper viewing/deletion/exams implemented; editing/versions/PDF export pending |
+| HOME-01 | Real Home aggregation | Mock | C | Notes/Tasks/Usage |
+| PLAN-01 | Due-date reminders and weak-point scheduling | Partial | C/E | Realtime/cron |
+| COM-01 | Reporting, moderation, blocking, anti-spam | Partial | E | Points coordination signals/moderation API live; content reporting, appeals, blocking, and a full admin console not done |
+| PAY-01 | Credits ledger and orders | Fields only | D | Product rules, API |
+| PAY-02 | Stripe/VIP/refunds/Connect | Not done | D | PAY-01, compliance |
+| RT-01 | Realtime notifications | Not done | E | Notification source fields |
+| ADMIN-01 | Admin back office and auditing | Not done | E | Roles, audit logs |
+| I18N-01 | Bilingual UI and AI | Partial | F | Web UI English/Chinese toggle implemented (English default); per-job AI output language and a shared i18n package for other platforms pending |
+| DESKTOP-01 | Electron | Not started | F | Stable Web/API |
+| MOBILE-01 | React Native/Expo | Not started | F | Stable shared contracts |
+| COURSE-01 | Official courses | Not started | F | Payments, media provider |
 
-状态只允许使用：`未开始 / 桩 / mock / 部分 / 已实现 / 已验证 / 已上线`。其中“已验证”必须链接到可执行测试，“已上线”必须有部署和监控证据。
+Only these statuses are allowed: `Not started / Stub / Mock / Partial / Implemented / Verified / Live`. "Verified" must link to runnable tests, and "Live" must have deployment and monitoring evidence.
 
-## 9. 开放决策
+## 9. Open decisions
 
-以下事项不得在实现前默认为已锁定：
+The following must not be assumed locked in before implementation:
 
-- ExamPass-Assistant 的商业授权；未取得授权只能方法论参考并干净重写。
-- embedding 模型与供应商、图谱布局方案、富文本编辑器。
-- 视频/直播供应商。
-- VIP 权益细目和官方课程是否允许 credits 支付。
-- Electron/RN 的离线范围。
-- PaaS、自托管或混合部署的长期选择。
+- Commercial authorization for ExamPass-Assistant; without it, only method references with a clean rewrite are allowed.
+- Embedding model and provider, graph layout approach, rich-text editor.
+- Video/live provider.
+- VIP entitlement details and whether official courses may be paid with credits.
+- Offline scope for Electron/RN.
+- The long-term choice between a PaaS, self-hosting, or a hybrid deployment.
 
-每项落定后新增 ADR，并在本文件删除“开放”标记。
+Once each is decided, add an ADR and remove the "open" marker from this file.
 
-## 10. 配套文档与更新责任
+## 10. Companion documents and update responsibilities
 
-- 当前实现：[ARCHITECTURE.md](ARCHITECTURE.md)
-- 数据：[ERD](guides/ERD.md)、[数据库发布与回滚](operations/DATABASE_RELEASE_ROLLBACK.md)
-- 接口：[API](guides/API.md)
-- 开发与测试：[本地开发](guides/LOCAL_DEVELOPMENT.md)、[测试指南](guides/TESTING.md)
-- 安全与隐私：[SECURITY](../SECURITY.md)、[隐私与数据删除](governance/PRIVACY_AND_DATA_DELETION.md)
-- AI：[评测与成本](ai/EVALUATION_AND_COST.md)
-- 商业规则：[points/credits/VIP/支付](product/POINTS_CREDITS_VIP_PAYMENTS.md)
-- 变更记录：[CHANGELOG](../CHANGELOG.md)、[ADR](adr/README.md)
+- Current implementation: [ARCHITECTURE.md](ARCHITECTURE.md)
+- Data: [ERD](guides/ERD.md), [database release and rollback](operations/DATABASE_RELEASE_ROLLBACK.md)
+- Interfaces: [API](guides/API.md)
+- Development and testing: [local development](guides/LOCAL_DEVELOPMENT.md), [testing guide](guides/TESTING.md)
+- Security and privacy: [SECURITY](../SECURITY.md), [privacy and data deletion](governance/PRIVACY_AND_DATA_DELETION.md)
+- AI: [evaluation and cost](ai/EVALUATION_AND_COST.md)
+- Commercial rules: [points/credits/VIP/payments](product/POINTS_CREDITS_VIP_PAYMENTS.md)
+- Change records: [CHANGELOG](../CHANGELOG.md), [ADR](adr/README.md)
 
-产品负责人维护范围和优先级；技术负责人维护架构与质量门；模块作者在合并功能时同步 ERD/API/测试/CHANGELOG；运维负责人在基础设施、密钥、告警或恢复流程变化时更新操作手册。
+The product owner maintains scope and priorities; the tech lead maintains the architecture and quality gates; module authors sync the ERD/API/tests/CHANGELOG when merging features; and the operations owner updates the runbooks when infrastructure, secrets, alerts, or recovery processes change.

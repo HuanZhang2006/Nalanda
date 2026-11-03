@@ -26,7 +26,7 @@ for (const file of files) {
   const rel = path.relative(root, file);
   const opening = text.split(/\r?\n/).slice(0, 24).join("\n");
 
-  for (const field of ["内容", "作用", "何时更新"]) {
+  for (const field of ["Contents", "Purpose", "When to update"]) {
     if (!opening.includes(field)) failures.push(`${rel}: opening is missing “${field}”`);
   }
 

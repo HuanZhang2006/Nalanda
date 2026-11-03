@@ -19,7 +19,7 @@ const compliantDisabledCapabilities = {
   ],
 };
 
-describe("资料错误处理", () => {
+describe("materials error handling", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
     localStorage.clear();
@@ -33,7 +33,7 @@ describe("资料错误处理", () => {
     vi.useRealTimers();
     vi.unstubAllGlobals();
   });
-  it("Storage 删除/签名失败时不伪造数据库成功", async () => {
+  it("does not fake database success when Storage delete/signing fails", async () => {
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("/api/materials/m1/ai-capabilities")) return new Response(JSON.stringify(capabilities), { status: 200, headers: { "Content-Type": "application/json" } });
@@ -179,7 +179,7 @@ describe("资料错误处理", () => {
     expect(localStorage.getItem("nalanda-material-ai-consent-v1:u2")).toBeNull();
   });
 
-  it("keeps Materials English in Chinese global locale and queues knowledge-point organization", async () => {
+  it("follows the Chinese global locale and queues knowledge-point organization", async () => {
     setLocale("zh", { persist: false });
     localStorage.setItem("nalanda-material-ai-consent-v1:u1", "1");
     const created: Array<Record<string, any>> = [];
@@ -206,16 +206,17 @@ describe("资料错误处理", () => {
     const root = document.createElement("div"); document.body.appendChild(root);
     initMaterials(createSupabaseMock(), { id: "u1", email: "alice@example.edu" }, vi.fn());
     mountMaterials(root); await flush(16);
-    expect(root.textContent).toContain("Upload material");
-    expect(root.textContent).not.toMatch(/上传|资料库|新建科目/);
+    expect(root.textContent).toContain("上传资料");
+    expect(root.textContent).toContain("新建科目");
+    expect(root.textContent).not.toContain("Upload material");
 
     click(root.querySelector('[data-mat="useAi"][data-id="m1"]'));
     await vi.waitFor(() => {
       expect(document.querySelector('[data-ai-choice="knowledge_graph"]')).not.toBeNull();
     });
     click(document.querySelector('[data-ai-choice="knowledge_graph"]'));
-    expect(document.body.textContent).toContain("Build a comprehensive knowledge map in source order");
-    expect(document.body.textContent).not.toMatch(/知识点|取消|语言/);
+    expect(document.body.textContent).toContain("按源文件顺序构建完整的知识图");
+    expect(document.body.textContent).not.toContain("Build a comprehensive knowledge map in source order");
     click(document.querySelector("[data-ai-submit]"));
     await vi.waitFor(() => expect(created).toHaveLength(1));
     expect(created[0]).toEqual({

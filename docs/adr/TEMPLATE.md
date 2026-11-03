@@ -1,54 +1,54 @@
-# ADR-NNNN：决策标题
+# ADR-NNNN: Decision title
 
-> **本文内容：**记录一个重要、长期或难以逆转的技术/产品架构决策。  
-> **作用：**保存决策背景、备选方案、取舍、后果和落地证据，供实现与复盘使用。  
-> **何时更新：**评审状态变化、实现状态变化、出现关键新证据或被新 ADR 替代时；Accepted 后不得改写原结论。  
-> **模板说明：**创建 ADR 时删除本行，并替换所有占位内容。
+> **About this document**
+> - **Contents**: Records one important, long-lived, or hard-to-reverse technical/product architecture decision.
+> - **Purpose**: Preserves the decision context, alternatives, trade-offs, consequences, and implementation evidence for implementation and retrospectives.
+> - **When to update**: When the review status or implementation status changes, key new evidence appears, or a new ADR supersedes it; never rewrite the original conclusion after it is Accepted.
+> - **Template note**: Delete this line when creating an ADR and replace every placeholder.
 
-- **状态：**Proposed
-- **日期：**YYYY-MM-DD
-- **决策者：**角色或团队
-- **范围：**受影响系统
-- **关联：**Issue/PR/文档/后续 ADR
+- **Status:** Proposed
+- **Date:** YYYY-MM-DD
+- **Deciders:** Role or team
+- **Scope:** Affected systems
+- **Related:** Issue/PR/document/follow-up ADR
 
-## 背景
+## Context
 
-问题、约束、现状和不做决定的后果。
+The problem, constraints, current state, and the consequences of not deciding.
 
-## 决策驱动因素
+## Decision drivers
 
-- 可验证的目标或约束。
+- Verifiable goals or constraints.
 
-## 考虑过的方案
+## Options considered
 
-### 方案 A
+### Option A
 
-优点、缺点、风险。
+Pros, cons, risks.
 
-### 方案 B
+### Option B
 
-优点、缺点、风险。
+Pros, cons, risks.
 
-## 决策
+## Decision
 
-使用 MUST/SHOULD/MAY 写清结论、边界和非目标。
+State the conclusion, boundaries, and non-goals using MUST/SHOULD/MAY.
 
-## 后果
+## Consequences
 
-### 正面
+### Positive
 
-- 获得什么。
+- What we gain.
 
-### 负面与风险
+### Negative and risks
 
-- 承担什么，如何缓解。
+- What we take on, and how it is mitigated.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **当前：**代码、迁移和测试可证明的状态。
-- **目标：**尚未实现的步骤与发布门禁。
+- **Current:** The state that code, migrations, and tests can prove.
+- **Target:** Steps not yet implemented and their release gates.
 
-## 验证与复审
+## Verification and review
 
-说明测试、指标、回滚条件、复审日期或触发器。
-
+Describe tests, metrics, rollback conditions, and the review date or trigger.

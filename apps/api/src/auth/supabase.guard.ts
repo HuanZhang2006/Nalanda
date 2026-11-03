@@ -12,8 +12,8 @@ export interface AuthUser {
   role?: string;
 }
 
-// 新版 Supabase 用非对称密钥（ES256/RS256）签发用户令牌 —— 走项目 JWKS 验证；
-// 旧版 HS256 + 项目 JWT secret 作为回退。
+// Newer Supabase projects sign user tokens with asymmetric keys (ES256/RS256) — verify them through the project JWKS;
+// legacy HS256 with the project JWT secret is the fallback.
 let jwks: ReturnType<typeof createRemoteJWKSet> | null = null;
 const USER_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function getJwks() {
@@ -46,7 +46,7 @@ export class SupabaseAuthGuard implements CanActivate {
       : undefined;
     let payload: JWTPayload | undefined;
 
-    // 1) 非对称签名 → JWKS
+    // 1) Asymmetric signature → JWKS
     const set = getJwks();
     if (set) {
       try {
@@ -54,10 +54,10 @@ export class SupabaseAuthGuard implements CanActivate {
           issuer, audience: "authenticated", algorithms: ["ES256", "RS256"],
         }));
       } catch {
-        /* 落到 HS256 回退 */
+        /* fall through to the HS256 fallback */
       }
     }
-    // 2) 回退：旧版 HS256 + JWT secret
+    // 2) Fallback: legacy HS256 + JWT secret
     if (!payload && process.env.SUPABASE_JWT_SECRET) {
       try {
         ({ payload } = await verifySupabaseHs256(token, process.env.SUPABASE_JWT_SECRET, issuer));

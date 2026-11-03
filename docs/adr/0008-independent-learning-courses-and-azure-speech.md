@@ -1,42 +1,42 @@
-# ADR 0008：独立学习课程模型与 Azure Speech 适配层
+# ADR 0008: Independent learning-course model and an Azure Speech adapter
 
-> **文档定位**
-> - **内容**：记录 Courses 不复用 Materials 表、特权学习写入经 API/RPC，以及语音能力通过 Azure 适配层实现的决策。
-> - **作用**：固定长期数据、安全、供应商和隐私边界，避免后续把资料目录、学习事实或录音处理重新混在一起。
-> - **何时更新**：课程领域边界、公开传播模型、语音供应商、录音留存、安全写入方式、弱网/缓存事实源或替代 ADR 变化时。
-> - **状态**：Accepted；2026-07-27。0011–0018 已生产启用；revision/outbox、持久 TTS 队列、浏览器缓存与按意图独立续学已完成受保护发布。
+> **About this document**
+> - **Contents**: Records the decisions that Courses does not reuse Materials tables, that privileged learning writes go through the API/RPCs, and that speech capabilities are implemented through an Azure adapter.
+> - **Purpose**: Fixes long-term data, security, provider, and privacy boundaries so material catalogs, learning facts, and recording processing are never mixed together again.
+> - **When to update**: When the course domain boundary, public distribution model, speech provider, recording retention, secure write approach, weak-network/cache source of truth, or a superseding ADR changes.
+> - **Status**: Accepted; 2026-07-27. 0011–0018 are enabled in production; revision/outbox, the durable TTS queue, browser cache, and intent-specific resume completed a protected release.
 
-## 背景
+## Context
 
-现有 `courses/materials` 表表达用户资料目录，不具备单元、词条、学习会话、append-only 尝试、跨日期熟练度、复习日程和不可变市场版本。直接扩表会把资料所有权与学习状态耦合，并增加旧 Materials 回归风险。发音合成和朗读评分还涉及密钥、配额、录音隐私、供应商故障与成本边界，不能由浏览器直接调用。
+The existing `courses/materials` tables represent a user's material catalog and have no units, entries, learning sessions, append-only attempts, cross-day mastery, review schedules, or immutable market versions. Extending them directly would couple material ownership with learning state and add regression risk to the old Materials module. Speech synthesis and read-aloud scoring also involve secrets, quotas, recording privacy, provider failures, and cost boundaries, so the browser must not call them directly.
 
-## 决策
+## Decision
 
-1. 新建 `learning_*` 课程域，Materials 保持不变；Schedule 与 Profile 只在展示/API 聚合两域。
-2. 私有内容只允许 owner 读取。整课保存、答题推进、progress、复习日程、分享、发布、克隆、举报和审核经 NestJS 身份校验与 service-role 专用事务 RPC；RPC 默认撤销客户端执行权。
-3. 会话事实与尝试追加保存，progress 是受保护投影。编辑按字段语义精确重置能力，已发积分与徽章作为历史事实不回写。
-4. 分享读取当前内容；市场采用不可变版本快照。克隆是进度为零的独立私有副本，克隆课不能再传播。
-5. Azure Speech 封装在服务端 adapter。TTS 按规范化 term、locale、voice、format 和 synthesis version 的内容 hash 在 private Supabase Storage 跨课程复用；无 owner 持久队列是生成协调事实源，不增加第二套服务器文件缓存。用户录音只在请求内存中处理，不落库、不缓存。客户端只能提交当前课程的 word/session 标识，不能自定参考文本。
-6. Azure 故障时课程继续可用：浏览器朗读替代 TTS，朗读评分关闭。配额、月预算、熔断和 feature flags 是上线门。
-7. 文件 AI 导入不属于本决策的已实现范围；入口只能明确标记即将推出。
-8. 每个会话使用服务端单调 revision；每个答案使用客户端生成的 UUID 并由 `(user,session,attempt)` 唯一。服务端事务是 retry pool、阶段、进度、成长事实的唯一权威；浏览器即时预测和 IndexedDB outbox 只提供反馈/重试，不能直接完成课程或发奖励。
-9. 浏览器 Cache Storage 是可删除、可回收、可重建的音频副本，用于未来五词预取和用户主动下载单元；完整离线 Web/PWA app shell 不在本决策范围。
-10. 未完成会话按服务端生成的学习意图键唯一，而不是每门课程全局唯一。首次学习、临时复习和日程复习可并存；意图键包含经过 owner/枚举校验的 course、unit、mode、scope、排序 skills 或 schedule ID，相同意图并发仍由数据库锁和唯一索引收敛。
+1. Create a new `learning_*` course domain and leave Materials unchanged; Schedule and Profile only aggregate the two domains for display/API.
+2. Private content is readable only by its owner. Whole-course saves, answer progression, progress, review schedules, sharing, publishing, cloning, reporting, and moderation go through NestJS identity checks and dedicated service-role transaction RPCs; client execute permission on the RPCs is revoked by default.
+3. Session facts and attempts are append-only, and progress is a protected projection. Edits reset exactly the abilities affected by each field's semantics; points and badges already awarded are historical facts and are not written back.
+4. Shares read the current content; the market uses immutable version snapshots. A clone is an independent private copy with zero progress, and cloned courses cannot be redistributed.
+5. Azure Speech is wrapped in a server-side adapter. TTS is reused across courses in private Supabase Storage by a content hash of the normalized term, locale, voice, format, and synthesis version; an owner-less durable queue is the source of truth for generation coordination, without a second server-side file cache. User recordings are processed only in request memory and are never persisted or cached. Clients may only submit word/session identifiers of the current course and cannot choose the reference text.
+6. Courses keep working when Azure fails: browser speech replaces TTS and read-aloud scoring is turned off. Quotas, monthly budgets, circuit breakers, and feature flags are launch gates.
+7. AI file import is not part of the implemented scope of this decision; the entry point may only be marked clearly as coming soon.
+8. Each session uses a monotonically increasing server revision; each answer uses a client-generated UUID that is unique per `(user,session,attempt)`. The server transaction is the only authority over the retry pool, stage, progress, and growth facts; the browser's instant prediction and IndexedDB outbox only provide feedback/retries and can never complete a course or grant rewards directly.
+9. Browser Cache Storage is a deletable, evictable, rebuildable copy of audio, used to prefetch the next five words and for user-initiated unit downloads; a full offline Web/PWA app shell is out of scope for this decision.
+10. Unfinished sessions are unique per server-generated learning-intent key rather than globally per course. Initial learning, ad-hoc review, and scheduled review can coexist; the intent key contains the owner/enum-validated course, unit, mode, scope, sorted skills, or schedule ID, and concurrent requests for the same intent still converge through database locks and a unique index.
 
-## 被否决的方案
+## Rejected options
 
-- **扩展 Materials `courses`**：迁移少，但混淆资料目录与学习状态、删除语义和市场版本。
-- **前端直写所有学习表/RPC 或以预测状态发奖励**：响应路径短，但客户端能伪造进度、熟练度、徽章和 points。
-- **浏览器直连 Azure**：会泄露密钥，无法可靠执行参考文本约束、全局预算和录音留存政策。
-- **保存用户录音供复查**：调试更方便，但显著扩大敏感数据、删除和泄露风险；首版不接受。
-- **请求路径同步等待 Azure / 服务器本地第二缓存**：前者放大首播延迟和供应商抖动，后者制造两个服务端事实源；改用持久队列、private Storage 和客户端可重建缓存。
+- **Extend Materials `courses`**: fewer migrations, but confuses the material catalog with learning state, deletion semantics, and market versions.
+- **Frontend writes all learning tables/RPCs directly, or rewards based on predicted state**: shorter response path, but clients could forge progress, mastery, badges, and points.
+- **Browser calls Azure directly**: leaks the key and cannot reliably enforce reference-text constraints, global budgets, or the recording retention policy.
+- **Store user recordings for review**: easier debugging, but substantially widens sensitive data, deletion, and leak risk; not acceptable for the first version.
+- **Wait for Azure synchronously in the request path / a second local server cache**: the former amplifies first-play latency and provider jitter, and the latter creates two server-side sources of truth; we use a durable queue, private Storage, and a rebuildable client cache instead.
 
-## 后果
+## Consequences
 
-正向结果是领域隔离、安全写入、可恢复状态机、可审计成长事实和可替换语音供应商。代价是表/RPC 数量增加，API 需要显式 snake_case↔camelCase 转换，Schedule/Profile 要聚合两域，市场快照需要版本与审核维护，CI 必须运行真实 Supabase 与 Azure fake adapter。
+The positive results are domain isolation, secure writes, a recoverable state machine, auditable growth facts, and a replaceable speech provider. The costs are more tables/RPCs, explicit snake_case↔camelCase conversion in the API, Schedule/Profile aggregating two domains, version and moderation maintenance for market snapshots, and CI that must run real Supabase and the Azure fake adapter.
 
-## 发布与验证
+## Release and verification
 
-0011–0013 只追加对象并包含客户端 EXECUTE 拒绝断言；0014 已补齐评分候补池。0015 追加 revision、attempt 幂等响应和音频队列，保留旧 RPC 签名供应用回滚；0016 验证列、触发器、RLS 和 service-role-only 权限；0017 追加 `resume_key` 并把 active session 唯一性收窄到经过服务端验证的学习/复习意图，0018 验证索引、函数与权限。2026-07-27 已按独立 migration plan、加密恢复点、apply、lint/dry-run、不可变应用 release 和 Japan East 真实 Azure gate 的顺序发布至 0018；gate 证明首次生成、Storage 命中、跨用户重复词不增加生成和裁剪评分。回滚关闭 flags 或恢复应用 release；数据库只做向前修复。
+0011–0013 only add objects and include assertions that client EXECUTE is denied; 0014 completed the scored retry pool. 0015 adds revisions, idempotent attempt responses, and the audio queue, keeping the old RPC signatures for app rollback; 0016 verifies columns, triggers, RLS, and service-role-only permissions; 0017 adds `resume_key` and narrows active-session uniqueness to server-validated learning/review intents, and 0018 verifies the index, functions, and permissions. On 2026-07-27, the release reached 0018 in this order: separate migration plan, encrypted recovery point, apply, lint/dry-run, immutable app release, and the real Azure gate in Japan East; the gate proved first-time generation, Storage hits, no extra generation for the same word across users, and trimmed scoring. Rollback turns off flags or restores the app release; the database is only fixed forward.
 
-验证入口：解析器/jsdom/API Vitest、双用户 RLS E2E、Playwright 端到端、迁移空库和 0007 升级夹具。普通 mock 测试不能替代数据库或供应商 smoke。
+Verification entry points: parser/jsdom/API Vitest, two-user RLS E2E, Playwright end-to-end, empty-database migrations, and the 0007 upgrade fixture. Ordinary mock tests cannot replace database or provider smoke tests.

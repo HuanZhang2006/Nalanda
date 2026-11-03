@@ -1,7 +1,7 @@
 /* ============================================================
-   Nalanda 设计令牌 —— 从原型 app/nalanda.css 抽取的基础层
-   Warm editorial · 衬线标题 + 无衬线正文 · 明暗双主题
-   组件层后续在此包内逐步补充。
+   Nalanda design tokens — the base layer extracted from the prototype app/nalanda.css
+   Warm editorial · serif headings + sans-serif body · light and dark themes
+   The component layer will be added to this package over time.
    ============================================================ */
 
 :root {
@@ -9,17 +9,17 @@
   --font-sans: "Public Sans", system-ui, -apple-system, sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
 
-  /* 密度（compact 时缩小） */
-  --u: 1;   /* 间距倍率 */
-  --fs: 1;  /* 字号倍率 */
+  /* Density (shrinks in compact mode) */
+  --u: 1;   /* spacing multiplier */
+  --fs: 1;  /* font-size multiplier */
 
-  /* 强调色（可被 Tweaks 覆盖） */
+  /* Accent colors (can be overridden by Tweaks) */
   --accent: #9c6a39;
   --accent-2: #b6814d;
   --on-accent: #fffdf8;
 }
 
-/* ---------- 浅色（默认） ---------- */
+/* ---------- Light (default) ---------- */
 :root,
 [data-theme="light"] {
   --bg: #f1ece2;
@@ -46,7 +46,7 @@
   --shade-2: rgba(43, 39, 34, .07);
 }
 
-/* ---------- 深色 ---------- */
+/* ---------- Dark ---------- */
 [data-theme="dark"] {
   --bg: #1a1813;
   --surface: #211e18;

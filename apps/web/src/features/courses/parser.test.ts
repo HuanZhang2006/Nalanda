@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { parseMultiUnitVocabularyText, parseVocabularyText } from "./parser";
 
-describe("英语词表解析器", () => {
-  it("按最后一个 ASCII 空格解析单词、短语和多个翻译", () => {
+describe("English vocabulary parser", () => {
+  it("splits words, phrases, and multiple translations on the last ASCII space", () => {
     const result = parseVocabularyText("apple 苹果\ntake part in 参加/参与\n\nwell-being 健康");
     expect(result.errors).toEqual([]);
     expect(result.words.map(({ term, translations }) => ({ term, translations }))).toEqual([
@@ -12,7 +12,7 @@ describe("英语词表解析器", () => {
     ]);
   });
 
-  it("报告精确行列和稳定错误码", () => {
+  it("reports exact line/column positions and stable error codes", () => {
     const result = parseVocabularyText("apple\npear 梨//香梨\norange ");
     expect(result.errors.map(({ code, line, column }) => ({ code, line, column }))).toEqual([
       { code: "MISSING_SEPARATOR", line: 1, column: 6 },
@@ -22,7 +22,7 @@ describe("英语词表解析器", () => {
     ]);
   });
 
-  it("拒绝同单元重复、非法 Unicode 英文和 XSS 英文，但把翻译当纯文本保留", () => {
+  it("rejects same-unit duplicates, invalid Unicode English, and XSS English, but keeps translations as plain text", () => {
     const result = parseVocabularyText("café 咖啡\nword <img src=x>\nApple 苹果\n apple 水果");
     expect(result.errors.some((entry) => entry.code === "INVALID_ENGLISH" && entry.line === 1)).toBe(true);
     expect(result.errors.some((entry) => entry.code === "INVALID_ENGLISH" && entry.line === 2)).toBe(true);
@@ -30,7 +30,7 @@ describe("英语词表解析器", () => {
     expect(result.words[0]?.translations).toEqual(["苹果"]);
   });
 
-  it("覆盖翻译数量与长度限制", () => {
+  it("covers translation count and length limits", () => {
     const many = Array.from({ length: 11 }, (_, i) => `义${i}`).join("/");
     const result = parseVocabularyText(`term ${many}\nlong ${"译".repeat(121)}\nrepeat 释义/释义`);
     expect(result.errors.map((entry) => entry.code)).toContain("TOO_MANY_TRANSLATIONS");
@@ -40,7 +40,7 @@ describe("英语词表解析器", () => {
     }));
   });
 
-  it("覆盖英文长度、空行忽略和 CRLF 规范化", () => {
+  it("covers English length, ignored blank lines, and CRLF normalization", () => {
     const result = parseVocabularyText(`\r\n${"a".repeat(121)} 翻译\r\nvalid 有效\r\n`);
     expect(result.nonEmptyLines).toBe(2);
     expect(result.errors).toEqual(expect.arrayContaining([
@@ -49,7 +49,7 @@ describe("英语词表解析器", () => {
     expect(result.words.map((word) => word.term)).toEqual(["valid"]);
   });
 
-  it("从一整份文本识别编号单元标题并保留短语和独立翻译", () => {
+  it("recognizes numbered unit headings in one document and keeps phrases and separate translations", () => {
     const result = parseMultiUnitVocabularyText(`Starter Unit 1
 unit 单元
 section 部分
@@ -70,13 +70,13 @@ key 钥匙/关键`);
     ]));
   });
 
-  it("支持显式自定义单元标题并按整份文本行号报告错误", () => {
+  it("supports explicit custom unit headings and reports errors by document line number", () => {
     const result = parseMultiUnitVocabularyText("[Travel words]\napple 苹果\nbroken\n# Useful phrases\ntake part in 参加/参与");
     expect(result.units.map((unit) => unit.name)).toEqual(["Travel words", "Useful phrases"]);
     expect(result.errors).toContainEqual(expect.objectContaining({ code: "MISSING_SEPARATOR", line: 3, column: 7, source: "broken" }));
   });
 
-  it("拒绝缺少单元标题的整表，并识别与已有单元词条的重复", () => {
+  it("rejects a document without unit headings and detects duplicates of existing unit terms", () => {
     expect(parseMultiUnitVocabularyText("apple 苹果\npear 梨").errors).toContainEqual(expect.objectContaining({
       code: "MISSING_UNIT_HEADER", line: 1,
     }));

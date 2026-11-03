@@ -1,143 +1,144 @@
-# 内容审核与社区安全规范
+# Content Moderation and Community Safety Standard
 
-> **本文内容：**定义社区、笔记市场、公开资料和 AI 生成内容的允许/禁止边界，以及举报、分级、处置、申诉、版权和透明度流程。  
-> **作用：**统一产品、审核、客服、安全和工程对用户内容风险的处理方式，并为审核后台/数据模型提供需求。  
-> **何时更新：**新增内容类型/地区/市场功能、政策分类、审核工具、SLA、申诉或监管义务变化时；重大误判/滥用事件后。  
-> **状态基线：**2026-08-23。生产数据库已到 0053：帖子可信列、points 日上限/人工冲正、只标记的协同检测、统一 Redis 限流和私有 Materials AI 数据已启用；社区/Note Market 仍没有通用举报后台，Course Market 的最小举报、持久限额、阈值告警和受审计隐藏/恢复已启用。0052–0053 已完成最终时间列撤权。
+> **About this document**
+> - **Contents**: Defines the allowed/prohibited boundaries for the community, note market, public materials, and AI-generated content, and the reporting, triage, enforcement, appeal, copyright, and transparency processes.
+> - **Purpose**: Unifies how product, moderation, support, security, and engineering handle user-content risk, and provides requirements for the moderation back office/data model.
+> - **When to update**: When content types/regions/market features, policy categories, moderation tools, SLAs, appeals, or regulatory obligations change; after a major misjudgement/abuse incident.
+> - **Status baseline**: 2026-08-23. The production database is at 0053: trusted post columns, points daily caps/manual reversals, flag-only coordination detection, unified Redis rate limiting, and private Materials AI data are enabled; the community/Note Market still has no general reporting back office, while Course Market's minimal reporting, durable limits, threshold alerts, and audited hide/restore are enabled. 0052–0053 completed the final timestamp-column revocation.
 
-## 1. 适用范围与原则
+## 1. Scope and principles
 
-适用于帖子、评论、标签、用户名/profile 展示、图片/音频、共享笔记、Course Market 词表/描述、官方课程、AI 生成内容和审核附件。私有课件/词表通常不主动审核；公开分享是持链接传播，收到有效举报或法律通知时按受限流程处理。
+Applies to posts, comments, tags, username/profile display, images/audio, shared notes, Course Market word lists/descriptions, official courses, AI-generated content, and moderation attachments. Private courseware/word lists are usually not proactively moderated; public sharing spreads by link possession and is handled through a restricted process when a valid report or legal notice is received.
 
-原则：安全优先、情境与比例、最少必要访问、一致执行、可解释、可申诉、保护举报人、及时处理紧急风险。AI 可以辅助排序和检测，不能在高影响永久封禁/资金冻结中充当唯一裁决者。
+Principles: safety first, context and proportionality, minimum necessary access, consistent enforcement, explainability, appealability, protecting reporters, and handling urgent risks promptly. AI may assist with ranking and detection but must never be the sole decision-maker for high-impact permanent bans/fund freezes.
 
-## 2. 当前能力与风险
+## 2. Current capabilities and risks
 
-- 帖子和评论对所有已认证用户可读；作者可发布/编辑/删除，互动通过 RLS/触发器完成。
-- 社区图片/音频位于 public bucket，持有 URL 的外部人员可能继续访问缓存副本。
-- 自由标签可由任意认证用户插入；暂无保留词、合并、滥用限制或管理员维护流程。
-- 通用社区/Note Market 无 `reports/cases/actions/appeals` 或可信 RBAC；Courses 已有专用 reports 和 moderation actions。
-- 无上传恶意文件/CSAM hash/垃圾/仇恨/骚扰内容检测。Course Market 已有持久发布/举报配额；生产统一限流覆盖注册、认证 API、Courses 写入、公开分享与市场，但不代表全站社区治理完成。
-- 删除帖子会级联数据库互动，但不保证媒体对象清理。社区计数由触发器维护，points 已是可冲正账本；生产 0039 已以列级 grant 与防御触发器收口作者快照、计数和时间。
-- Course Market v1 仅文本英语词表免费克隆：上架确认权利、HTML 转义、发布/举报日限额、阈值告警、不按数量自动下架，配置管理员可审计 hide/restore/withdraw；克隆内容不能再次传播。
-- `learning_audio_assets` 与 private `vocabulary-audio` 只保存从规范化英文合成的无 owner 音频和运行元数据，不是市场出版物、用户上传附件或公开读取面；IndexedDB 弱网 outbox 也不能绕过服务端审核、成长或 publication 事务。
-- Courses 最小治理仍缺举报工作台、正式值班/SLA、作者通知/申诉、证据快照、社区联动和强 RBAC；不能声称全站市场审核已完成。
+- Posts and comments are readable by every authenticated user; authors can publish/edit/delete, and interactions go through RLS/triggers.
+- Community images/audio live in a public bucket, so outsiders holding a URL may keep accessing cached copies.
+- Free-form tags can be inserted by any authenticated user; there are no reserved words, merging, abuse limits, or an admin maintenance process yet.
+- The general community/Note Market has no `reports/cases/actions/appeals` or trustworthy RBAC; Courses already has dedicated reports and moderation actions.
+- No detection for malicious uploads/CSAM hashes/spam/hate/harassment. Course Market has durable publish/report quotas; production unified rate limiting covers sign-up, authenticated APIs, Courses writes, public shares, and the market, but that does not mean site-wide community governance is complete.
+- Deleting a post cascades database interactions but does not guarantee media object cleanup. Community counters are maintained by triggers and points are already a reversible ledger; production 0039 locked down author snapshots, counters, and timestamps with column grants and defensive triggers.
+- Course Market v1 only offers free clones of text English word lists: rights confirmation at listing, HTML escaping, daily publish/report limits, threshold alerts, no automatic delisting by count, and auditable hide/restore/withdraw by configured administrators; cloned content cannot be redistributed.
+- `learning_audio_assets` and the private `vocabulary-audio` only store owner-less audio synthesized from normalized English and runtime metadata; they are not market publications, user-uploaded attachments, or a public read surface; the IndexedDB weak-network outbox also cannot bypass server-side moderation, growth, or publication transactions.
+- Courses' minimal governance still lacks a report workbench, formal on-call/SLA, author notification/appeals, evidence snapshots, community linkage, and strong RBAC; site-wide market moderation must not be claimed as complete.
 
-在通用能力上线前，若无法提供最低人工响应和紧急下架渠道，应限制社区规模。Course Market 只可在管理员 UUID、告警接收者和 kill switch 验证后分阶段开放；Courses 文件 AI 导入未实现，首版不得接受附件或把自动生成内容直接上架。生产 Materials AI 只把试卷保存到用户私有 Notes，不发布到市场。
+Until general capabilities launch, community size should be limited if minimum human response and an emergency takedown channel cannot be provided. Course Market may only open in stages after the administrator UUIDs, alert recipients, and kill switch are verified; Courses AI file import is not implemented, and the first version must not accept attachments or list automatically generated content directly. Production Materials AI only saves test papers to the user's private Notes and does not publish to the market.
 
-## 3. 内容规则
+## 3. Content rules
 
-### 3.1 严重禁止（P0/P1）
+### 3.1 Strictly prohibited (P0/P1)
 
-- 儿童性虐待材料、性剥削或诱骗；
-- 可信、紧迫的自杀/自残或针对他人的暴力威胁；
-- 恐怖主义宣传、暴力极端主义招募；
-- 非自愿私密影像、性暴力内容、人口贩运；
-- 公开密码、访问令牌、身份证件、金融账号、家庭住址等高风险隐私信息；
-- 恶意软件、钓鱼、绕过账户/考试系统、盗取或破坏数据的操作性内容；
-- 明确非法商品/服务或法律要求立即移除的内容。
+- Child sexual abuse material, sexual exploitation, or grooming;
+- Credible, imminent suicide/self-harm or threats of violence against others;
+- Terrorist propaganda, violent extremist recruitment;
+- Non-consensual intimate imagery, sexual violence content, human trafficking;
+- High-risk private information such as published passwords, access tokens, ID documents, financial accounts, or home addresses;
+- Operational content for malware, phishing, bypassing account/exam systems, or stealing or destroying data;
+- Clearly illegal goods/services or content the law requires to be removed immediately.
 
-### 3.2 禁止（P1/P2）
+### 3.2 Prohibited (P1/P2)
 
-- 基于受保护属性的仇恨、贬损或排斥；
-- 定向骚扰、跟踪、威胁、冒充、未经同意的人肉搜索；
-- 色情露骨内容，尤其涉及年龄不明者；
-- 垃圾广告、诈骗、虚假交易、操纵评分/points/credits/推荐；
-- 侵犯版权、商标、考试保密、隐私或合同义务的课件/笔记；
-- 伪装成权威答案的高风险医疗、法律、金融建议；
-- 出售抄袭内容、答案泄露、代写或规避学校诚信政策的服务；
-- 反复发布明显错误且可能造成学习/安全伤害的 AI 内容，并拒绝修正标注。
+- Hate, disparagement, or exclusion based on protected attributes;
+- Targeted harassment, stalking, threats, impersonation, non-consensual doxxing;
+- Sexually explicit content, especially involving people of unclear age;
+- Spam advertising, scams, fake transactions, manipulation of ratings/points/credits/recommendations;
+- Courseware/notes that infringe copyright, trademarks, exam confidentiality, privacy, or contractual obligations;
+- High-risk medical, legal, or financial advice presented as authoritative answers;
+- Selling plagiarized content, answer leaks, ghostwriting, or services that circumvent school integrity policies;
+- Repeatedly posting clearly wrong AI content that may cause learning/safety harm while refusing correction labels.
 
-### 3.3 允许但可能限制/标注
+### 3.3 Allowed but may be restricted/labeled
 
-学术讨论中的敏感材料、对有害内容的批评/新闻/教育语境、合理引用与变体、非定向粗俗语言、低风险模型错误。可采用年龄/敏感提示、降低推荐、关闭交易、限制附件、增加来源说明，而非一律删除。
+Sensitive material in academic discussion, criticism/news/educational context about harmful content, reasonable quotation and derivatives, non-targeted crude language, and low-risk model errors. Options include age/sensitivity notices, reduced recommendation, disabling trading, restricting attachments, and adding source notes, rather than always deleting.
 
-## 4. 学术诚信与 AI 标识
+## 4. Academic integrity and AI labeling
 
-Nalanda 可帮助学习和练习，但不得以“AI 学习”名义促进正在进行的受保护考试作弊、代写或绕过学校系统。市场发布者必须声明拥有传播权；Course Market 首版不销售，只免费克隆，但版权/诚信义务不变。AI 生成内容必须可见标注并保留来源/模型/prompt/parser/质量状态；Courses 文件 AI 导入尚未实现，不能把当前文本课标成 AI 审核过。
+Nalanda may help with learning and practice, but must not, in the name of "AI learning", facilitate cheating in ongoing protected exams, ghostwriting, or bypassing school systems. Market publishers must declare that they have distribution rights; Course Market's first version sells nothing and only offers free clones, but copyright/integrity obligations are unchanged. AI-generated content must be visibly labeled and keep its source/model/prompt/parser/quality status; Courses AI file import is not implemented yet, so current text courses must not be labeled as AI-reviewed.
 
-AI 输出若未通过 schema/质量/安全门，保持私有草稿或生成失败，不自动进入市场/社区。公开或出售 AI 内容需额外检查引用、版权、个人信息、提示词泄露和事实可靠性。
+If AI output does not pass the schema/quality/safety gates, it stays a private draft or the generation fails, and it never automatically enters the market/community. Publishing or selling AI content requires additional checks of citations, copyright, personal information, prompt leakage, and factual reliability.
 
-## 5. 举报入口与数据最小化
+## 5. Report entry points and data minimization
 
-目标上每个可见内容和 profile 都提供举报；未登录紧急/版权/隐私报告提供受控表单。Course v1 API 当前类别是 `abuse/copyright/privacy/spam/academic_integrity/other`，需要登录且一次只能举报 publication 或 share；社区及更细 P0 类别入口仍未实现。
+The target is a report option on every visible piece of content and profile; signed-out urgent/copyright/privacy reports get a controlled form. The Course v1 API's current categories are `abuse/copyright/privacy/spam/academic_integrity/other`; it requires sign-in and can report only a publication or a share at a time; community entry points and finer P0 categories are not implemented yet.
 
-举报只收内容 ID、类别、简要说明和可选证据；系统保存被举报内容的受控快照/hash，避免举报人重复上传非法材料。被举报者默认不知道举报人身份。滥用举报本身可被限制，但不得仅因举报未获支持而处罚善意举报人。
+Reports only collect the content ID, category, a brief description, and optional evidence; the system keeps a controlled snapshot/hash of the reported content so reporters do not need to re-upload illegal material. By default the reported user does not learn the reporter's identity. Abusive reporting can itself be limited, but good-faith reporters must not be penalized just because a report was not upheld.
 
-Course v1 保存目标 ID、类别、≤1000 字说明、举报人和状态，没有附件/证据上传。达到 `COURSE_REPORT_ALERT_THRESHOLD` 只告警；禁止按报告数量自动隐藏，以免恶意举报。紧急隐藏只能由 `COURSE_MARKET_ADMIN_USER_IDS` 中的已验证用户经 API 执行并记录 action/reason。
+Course v1 stores the target ID, category, a description of ≤1000 characters, the reporter, and the status, with no attachment/evidence upload. Reaching `COURSE_REPORT_ALERT_THRESHOLD` only alerts; automatic hiding by report count is forbidden, to prevent malicious reporting. Emergency hiding can only be done through the API by verified users in `COURSE_MARKET_ADMIN_USER_IDS`, recording the action/reason.
 
-### 5.1 Materials AI 文件与 prompt injection（生产 0041–0043）
+### 5.1 Materials AI files and prompt injection (production 0041–0043)
 
-私有课件不因 AI 安全拒绝而变成公开“违规内容”，也不自动处罚账号。处理链把文件、图片、focus 和用户答案都视为不可信证据：确定性信号与 DeepSeek 两次分类中任一为 `malicious` 或 `uncertain` 即拒绝任务、释放额度，并只向用户返回稳定安全错误及来源位置；明确讲解提示词安全的 `benign_educational` 可继续。
+Private courseware does not become public "violating content" because of an AI safety rejection, and accounts are not penalized automatically. The processing chain treats files, images, focus, and user answers all as untrusted evidence: if the deterministic signals or either of DeepSeek's two classifications is `malicious` or `uncertain`, the job is rejected, the allowance released, and only a stable safety error and source location are returned to the user; `benign_educational` content that clearly teaches prompt security may continue.
 
-MiMo 视觉 prompt 只要求逐字文本、标题、表格、图表、流程、公式、图标含义、视觉关系、不可读区和疑似嵌入指令，禁止遵从图片命令或补造信息。prompt injection 检测不能保证绝对安全；误报进入安全/AI 质量复核，不能临时关闭分类、允许工具/Web、改用非 ZDR endpoint 或把原文件贴进工单。
+The MiMo visual prompt only asks for verbatim text, headings, tables, charts, flows, formulas, icon meanings, visual relationships, unreadable regions, and suspected embedded instructions, and forbids following commands in images or making up information. Prompt-injection detection cannot guarantee absolute safety; false positives go to security/AI quality review, and classification must never be temporarily turned off, tools/Web allowed, a non-ZDR endpoint used, or the original file pasted into a ticket.
 
-0046–0051 候选的知识图谱仍是用户私有 Note，不进入社区或市场；0054–0055 曾增加的 Ox Alpha 原图路径已由 0056–0057 退役。DocumentIR 图谱继续使用两次安全审查；Luna 图谱直接对原文件执行独立注入审查并固定 GPT-6 Luna + Azure-only、no tools/Web。两者都校验节点顺序、解释、关系与来源；点击节点提问时，问题再次作为不可信数据隔离，只允许 owner Note 的选中节点、相邻关系及允许来源。源文件存在的原文件 Note 会重新附允许格式的原文件，已删除时只能使用保存图谱并明确来源不可用。`malicious/uncertain` 拒绝并释放未派发 reservation；worker 已接收后按任务删除/取消规则结算，不因拒绝自动处罚用户。答案是教学反馈，不是审核结论、权威事实或可自动发布内容。
+The knowledge graph in the 0046–0051 candidate is still a user's private Note and does not enter the community or market; the Ox Alpha native-image path added in 0054–0055 is retired by 0056–0057. DocumentIR graphs keep using two safety reviews; Luna graphs run a separate injection review directly on the native file, fixed to GPT-6 Luna + Azure-only with no tools/Web. Both validate node order, explanations, relationships, and sources; when a user asks a question on a node, the question is again isolated as untrusted data, and only the owner Note's selected node, adjacent relationships, and allowed sources are permitted. For a native-file Note whose source file still exists, the allowed-format original file is re-attached; once deleted, only the saved graph can be used, with sources clearly marked unavailable. `malicious/uncertain` is rejected and the undispatched reservation released; after the worker has accepted the job, it is settled under the job delete/cancel rules, and users are not penalized automatically for a rejection. Answers are educational feedback, not moderation conclusions, authoritative facts, or automatically publishable content.
 
-生产 0039–0040 另建立 points 滥用审核边界。协同扫描每五分钟在 Redis 分布式锁下运行，仅生成 `point_abuse_signals(status=pending)`：同一 actor 对同一 owner 的高集中互动、双向互刷、3–8 人小团体和新账号集中突发均只是调查线索，不是违规结论。系统不自动冻结、扣分、隐藏或封禁；管理员在 `MODERATION_ADMIN_USER_IDS`（兼容期仅在为空时回退 Course Market allowlist）内，经受控 API 标记信号并提交带理由、可选 case reference 的 `suppress/restore`。原创帖 suppress 覆盖锚定同一 root 的原创、转发、评论与点赞奖励，所有变化以不可变冲正和审核 action 留痕；restore 不补发最初因每日上限为零的奖励。
+Production 0039–0040 also establishes a points abuse moderation boundary. The coordination scan runs every five minutes under a Redis distributed lock and only creates `point_abuse_signals(status=pending)`: highly concentrated interactions from one actor toward one owner, mutual farming, small groups of 3–8 people, and concentrated bursts from new accounts are all just investigative leads, not violation findings. The system never automatically freezes, deducts points, hides, or bans; administrators in `MODERATION_ADMIN_USER_IDS` (during the compatibility period falling back to the Course Market allowlist only when empty) use a controlled API to mark signals and submit `suppress/restore` with a reason and an optional case reference. Suppressing an original post covers the original, reposts, comments, and like rewards anchored to the same root, and every change is recorded with immutable reversals and moderation actions; restore does not re-issue rewards that were originally zero because of the daily cap.
 
-若有效法律/政策请求要求移除某个合成发音，应按规范化 term、locale、voice、format 与 synthesis version 定位并删除对应 private Storage 对象、停止/重排队列并保留不含用户录音的最小审计。不得把共享合成对象错误归属给最先请求它的用户，也不得把普通课程删除当成全局音频下架。
+If a valid legal/policy request requires removing a synthesized pronunciation, locate it by normalized term, locale, voice, format, and synthesis version, delete the corresponding private Storage object, stop/re-queue it, and keep a minimal audit that contains no user recordings. Never wrongly attribute a shared synthesized object to the user who requested it first, and never treat an ordinary course deletion as a global audio takedown.
 
-## 6. 分级与响应目标
+## 6. Severity and response targets
 
-| 级别 | 示例 | 首次处置目标 | 默认动作 |
+| Level | Examples | First-action target | Default action |
 |---|---|---|---|
-| P0 紧急 | 儿童安全、可信迫近人身风险、活跃密钥泄露 | 15 分钟内升级值班；24×7 能力上线前限制相关功能 | 立即限制传播/访问，通知安全/指定负责人，按法律与安全流程保全最小证据 |
-| P1 高 | 具体威胁、人肉、诈骗、恶意文件、严重仇恨/性剥削 | 4 小时内 | 临时隐藏/冻结交易，人工复核，必要时暂停账户 |
-| P2 中 | 骚扰、垃圾、版权、作弊、重复误导 | 24 小时内 | 降低传播或临时隐藏，证据复核与通知 |
-| P3 低 | 标签错误、轻微不当、质量争议 | 3 个工作日内 | 排队处理、提示编辑/标注或不采取动作 |
+| P0 urgent | Child safety, credible imminent physical risk, actively leaked secrets | Escalate to on-call within 15 minutes; restrict the related features until 24×7 capability exists | Immediately restrict distribution/access, notify security/the designated owner, preserve minimal evidence per legal and safety processes |
+| P1 high | Specific threats, doxxing, scams, malicious files, severe hate/sexual exploitation | Within 4 hours | Temporarily hide/freeze trading, human review, suspend the account if needed |
+| P2 medium | Harassment, spam, copyright, cheating, repeated misleading content | Within 24 hours | Reduce distribution or temporarily hide, evidence review and notification |
+| P3 low | Wrong tags, mildly inappropriate content, quality disputes | Within 3 business days | Queue for handling, prompt editing/labeling, or take no action |
 
-这些是目标服务水平，不应在尚无值班人员时对外承诺。无法达到 P0/P1 覆盖时，必须缩小内容能力或部署紧急 kill switch。
+These are target service levels and should not be promised publicly while there is no on-call staff. When P0/P1 coverage cannot be met, content capabilities must be narrowed or an emergency kill switch deployed.
 
-## 7. 审核生命周期
+## 7. Moderation lifecycle
 
-1. **接收与去重：**为 report 生成 ID，按内容/规则/举报人合并但保留每条提交。
-2. **自动分流：**速率、hash、文本/媒体检测只提供置信度与规则命中；不把原内容发给未审批第三方。
-3. **临时措施：**在严重且可信时限制可见性、下载、推荐、销售或提现；避免扩大证据访问。
-4. **人工裁决：**审核员查看最小必要上下文、政策版本、历史和地区；记录规则、理由、证据引用和期限。
-5. **执行：**no action、标注、编辑请求、降推荐、年龄/范围限制、下架、删除、警告、功能/账户/交易限制、紧急升级。
-6. **通知：**向内容作者说明受影响内容、规则、动作、期限和申诉入口；依法不能披露时记录原因。
-7. **申诉：**由非原审核员复核；恢复内容时同步恢复计数/权益，经济冲正遵循账本规则。
-8. **关闭与学习：**记录结论和误判；更新检测/培训/政策，不在普通日志复制敏感内容。
+1. **Intake and dedupe:** generate an ID for each report and merge by content/rule/reporter while keeping every submission.
+2. **Automatic triage:** rate, hash, and text/media detection only provide confidence and rule hits; never send original content to unapproved third parties.
+3. **Interim measures:** when severe and credible, restrict visibility, downloads, recommendation, sales, or payouts; avoid widening evidence access.
+4. **Human decision:** moderators see the minimum necessary context, policy version, history, and region; record the rule, reasoning, evidence references, and duration.
+5. **Enforcement:** no action, label, edit request, reduced recommendation, age/scope restriction, takedown, deletion, warning, feature/account/trading restriction, urgent escalation.
+6. **Notification:** tell the content author the affected content, rule, action, duration, and appeal entry; record the reason when the law forbids disclosure.
+7. **Appeal:** reviewed by someone other than the original moderator; restoring content also restores counters/entitlements, and economic reversals follow the ledger rules.
+8. **Closure and learning:** record the conclusion and misjudgements; update detection/training/policy, without copying sensitive content into ordinary logs.
 
-协同信号的 `confirm/dismiss` 只记录人工调查结论；确认信号本身也不等于已经执行 points 冲正。审核员必须另行选择具体内容根或业务键、说明适用规则并提交 moderation action，避免把统计相关性直接当作处罚依据。
+`confirm/dismiss` on coordination signals only records the human investigation conclusion; a confirmed signal is not itself an executed points reversal. Moderators must separately choose a specific content root or business key, state the applicable rule, and submit a moderation action, so statistical correlation is never used directly as grounds for a penalty.
 
-## 8. 处置比例与账户措施
+## 8. Proportionate enforcement and account measures
 
-单次低风险违规优先教育/编辑；重复、规避、协同滥用或严重伤害可升级。账户处罚不能通过直接修改 profile 模糊字段实现，目标应有带原因、作用域、开始/结束时间、执行者、case、撤销记录的 entitlement/restriction。
+A single low-risk violation is handled first with education/editing; repeated, evasive, coordinated abuse or severe harm may escalate. Account penalties must not be implemented by editing vague profile fields; the target is an entitlement/restriction with a reason, scope, start/end time, executor, case, and revocation record.
 
-VIP、付费、创作者或高 points 不获得政策豁免。资金冻结只限制风险必要范围，不能吞没合法余额；退款、收益 hold 和解冻按经济规则执行。删除违规内容不应物理删除财务/审核审计，二者用受限引用或 hash 关联。
+VIP, paid, creator, or high-points status grants no policy exemption. Fund freezes restrict only what the risk requires and must never swallow legitimate balances; refunds, earnings holds, and unfreezing follow the economic rules. Deleting violating content must not physically delete financial/moderation audit records; the two are linked by restricted references or hashes.
 
-## 9. 版权、隐私与法律请求
+## 9. Copyright, privacy, and legal requests
 
-版权/商标通知需记录权利人、作品、具体 URL/ID、善意声明、签名和地区要求；反通知/申诉按适用流程。不要自动把收到的身份证明转发给内容作者。涉嫌课件/考试保密时，验证请求方授权并避免成为学校纪律裁决者。
+Copyright/trademark notices record the rights holder, the work, the specific URL/ID, a good-faith statement, a signature, and regional requirements; counter-notices/appeals follow the applicable process. Do not automatically forward received identity documents to the content author. For suspected courseware/exam confidentiality issues, verify the requester's authorization and avoid becoming the school's disciplinary arbiter.
 
-隐私/人肉内容可先限制再验证；同时触发 [隐私与数据删除](PRIVACY_AND_DATA_DELETION.md)。政府/执法请求交由指定负责人验证合法性、范围与紧急性，遵守最小披露并保留受限审计。
+Privacy/doxxing content can be restricted first and verified afterwards; this also triggers [privacy and data deletion](PRIVACY_AND_DATA_DELETION.md). Government/law enforcement requests go to a designated owner who verifies legality, scope, and urgency, follows minimum disclosure, and keeps a restricted audit.
 
-## 10. 目标数据模型与权限
+## 10. Target data model and permissions
 
-Course v1 已存在 `learning_course_reports`（publication/share 二选一、类别/说明/状态）与 `learning_course_moderation_actions`（publication、actor、hide/restore/withdraw、reason/time），publication status 承担可见性。生产 0039 还增加 service-only `point_moderation_actions` 与 `point_abuse_signals`；service-role 对这些 append-only 表只有读取权，审核转换只能经 SECURITY DEFINER 工作流执行，普通客户端不能读取或写入。当前仅有管理 API，没有审核 UI。其余全站目标模型仍包括：
+Course v1 already has `learning_course_reports` (either publication or share, category/description/status) and `learning_course_moderation_actions` (publication, actor, hide/restore/withdraw, reason/time), with publication status handling visibility. Production 0039 also adds the service-only `point_moderation_actions` and `point_abuse_signals`; service-role only has read access to these append-only tables, moderation transitions can only run through SECURITY DEFINER workflows, and ordinary clients can neither read nor write them. There is currently only an admin API, no moderation UI. The rest of the site-wide target model still includes:
 
-- `content_reports`：举报对象、类别、说明、举报人（可空）、状态、优先级；
-- `moderation_cases`：聚合报告、政策版本、负责人、严重度、状态/SLA；
-- `moderation_evidence`：受限快照/hash、来源、到期时间；
-- `moderation_actions`：动作、作用域、理由、执行/到期、执行者、冲正关联；
-- `moderation_appeals`：申诉正文、独立复核者、决定；
-- `user_restrictions`：发帖/上传/交易/提现/账户等细粒度限制；
-- `trusted_flags`/检测事件：模型/规则版本、分数，不把它当最终裁决；
-- `legal_requests`：与普通审核隔离并严格授权。
+- `content_reports`: reported object, category, description, reporter (nullable), status, priority;
+- `moderation_cases`: aggregated reports, policy version, owner, severity, status/SLA;
+- `moderation_evidence`: restricted snapshots/hashes, source, expiry time;
+- `moderation_actions`: action, scope, reasoning, execution/expiry, executor, reversal links;
+- `moderation_appeals`: appeal text, independent reviewer, decision;
+- `user_restrictions`: fine-grained restrictions on posting/uploading/trading/payouts/accounts;
+- `trusted_flags`/detection events: model/rule version, score, never treated as the final decision;
+- `legal_requests`: isolated from ordinary moderation and strictly authorized.
 
-普通用户只能创建并查看自己报告的有限状态，不能查看审核证据、举报人或内部规则。审核角色最小权限、强 MFA、审计所有查看/导出/动作；service-role 不能直接暴露给后台浏览器。
+Ordinary users can only create reports and see limited status of their own reports; they cannot see moderation evidence, reporters, or internal rules. Moderation roles have least privilege and strong MFA, and every view/export/action is audited; service-role must never be exposed directly to a back-office browser.
 
-## 11. 发布门禁与指标
+## 11. Launch gates and metrics
 
-社区/Note Market 扩大前至少具备完整清单。Course Market 私有 beta 的最低门是：举报入口、发布/举报限频、独立 feature flag、已验证管理员和告警接收者、审计 action、紧急隐藏、无文件/HTML 执行、免费克隆/禁止再传播；扩大公开范围前仍须补队列、强角色、作者通知/申诉、政策版本和处理 SLA。points 审核生产边界已验证普通用户/直接 service-role 表写均被拒绝、管理 allowlist 拒绝非管理员、suppress/restore 账本投影一致、扫描只产生 pending 信号且无自动处罚。
+Before the community/Note Market expands, the full checklist must be in place. The minimum gate for the Course Market private beta is: a report entry point, publish/report rate limits, a separate feature flag, verified administrators and alert recipients, audited actions, emergency hiding, no file/HTML execution, and free clones/no redistribution; before widening public scope, a queue, strong roles, author notification/appeals, policy versions, and handling SLAs must still be added. The production points moderation boundary has verified that ordinary users and direct service-role table writes are rejected, the admin allowlist rejects non-admins, suppress/restore keeps the ledger projection consistent, and the scan only produces pending signals with no automatic penalties.
 
-每周观察：报告量/千活跃用户、各级响应/解决时间、确认违规率、复犯率、申诉率与推翻率、自动检测精确/召回抽样、未成年人/隐私/版权类别、孤儿附件数量、审核员敏感内容暴露量。不得以“删除更多”作为唯一成功指标。
+Weekly metrics: reports per thousand active users, response/resolution time per level, confirmed violation rate, recidivism rate, appeal rate and overturn rate, sampled precision/recall of automatic detection, minor/privacy/copyright categories, the number of orphan attachments, and moderators' exposure to sensitive content. "Deleting more" must never be the only success metric.
 
-## 12. 相关文档
+## 12. Related documents
 
-- [安全策略](../../SECURITY.md)
-- [隐私与数据删除](PRIVACY_AND_DATA_DELETION.md)
-- [AI 评测与成本治理](../ai/EVALUATION_AND_COST.md)
-- [points/credits/VIP/支付规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md)
+- [Security policy](../../SECURITY.md)
+- [Privacy and data deletion](PRIVACY_AND_DATA_DELETION.md)
+- [AI evaluation and cost governance](../ai/EVALUATION_AND_COST.md)
+- [Points/credits/VIP/payment rules](../product/POINTS_CREDITS_VIP_PAYMENTS.md)

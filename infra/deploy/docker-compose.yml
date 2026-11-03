@@ -1,12 +1,12 @@
-# 服务器端运行用（部署到 /opt/nalanda/docker-compose.yml，由 CI 同步）
-# 运行后端 API、内部 Materials AI worker 与仅容器内网可达的 Redis；
-# 前端静态文件由宿主机 nginx 托管。仅 API 绑定 127.0.0.1:8411。
+# Used on the server (deployed to /opt/nalanda/docker-compose.yml and synced by CI)
+# Runs the backend API, the internal Materials AI worker, and Redis reachable only on the container network;
+# the host nginx serves the static frontend. Only the API binds 127.0.0.1:8411.
 
 name: nalanda
 
 services:
   api:
-    # CI 通过 .deploy.env 注入不可变 Git SHA；缺失时直接失败，避免误启 latest。
+    # CI injects the immutable Git SHA through .deploy.env; fail fast when it is missing so latest is never started by mistake.
     image: ${NALANDA_API_IMAGE:?run docker compose with --env-file .deploy.env}
     restart: unless-stopped
     env_file: .env
@@ -17,7 +17,7 @@ services:
         condition: service_healthy
       ai:
         condition: service_healthy
-    dns:                         # 宿主机用 systemd-resolved(127.0.0.53)，容器内解析不到，显式指定
+    dns:                         # The host uses systemd-resolved (127.0.0.53), which containers cannot reach, so set DNS explicitly
       - 1.1.1.1
       - 8.8.8.8
     ports:

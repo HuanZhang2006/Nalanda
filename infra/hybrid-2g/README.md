@@ -1,85 +1,85 @@
-# Nalanda · 2G 混合部署
+# Nalanda · 2 GB Hybrid Deployment
 
-> **文档定位**
-> - **内容**：说明 Caddy + NestJS + FastAPI + Redis 的通用小内存部署模板。
-> - **作用**：用于未来接入 AI/队列或独立新环境；它不是当前 `nalanda.online` 的生产拓扑。
-> - **何时更新**：compose、镜像、内存预算、服务依赖、端口、环境变量或安全基线变化时。
+> **About this document**
+> - **Contents**: Describes a generic small-memory deployment template with Caddy + NestJS + FastAPI + Redis.
+> - **Purpose**: For future AI/queue integration or a separate new environment; it is not the current production topology of `nalanda.online`.
+> - **When to update**: When the compose file, images, memory budget, service dependencies, ports, environment variables, or security baseline change.
 
-目标拓扑与开发阶段见 [项目蓝图](../../docs/PROJECT_BLUEPRINT.md)。**数据底座（数据库 / 登录 / 存储 / 实时）用 Supabase 云；2G 服务器只用 Docker 跑项目自己的代码**：Caddy + NestJS + Python AI + Redis。Materials AI 生产实现通过 OpenRouter 调用固定 DeepSeek/MiMo 模型；Stripe 仍是未实现的未来外部依赖。
+See the [project blueprint](../../docs/PROJECT_BLUEPRINT.md) for the target topology and development stages. **The data foundation (database / sign-in / storage / realtime) uses hosted Supabase; the 2 GB server only runs the project's own code in Docker**: Caddy + NestJS + Python AI + Redis. The production Materials AI implementation calls fixed DeepSeek/MiMo models through OpenRouter; Stripe is still an unimplemented future external dependency.
 
 ```
-你的服务器（2G · Docker Compose）
-  Caddy（80/443，入口 + 自动 HTTPS）
-    ├─ 前端静态文件  ./web-dist
-    ├─ NestJS 后端   api:3000   （内网）
-    ├─ Python AI     ai:8000    （内网，仅 NestJS 调用）
-    └─ Redis         redis:6379 （内网）
-        │ 联网
+Your server (2 GB · Docker Compose)
+  Caddy (80/443, entry point + automatic HTTPS)
+    ├─ Static frontend  ./web-dist
+    ├─ NestJS backend   api:3000   (internal)
+    ├─ Python AI        ai:8000    (internal, called only by NestJS)
+    └─ Redis            redis:6379 (internal)
+        │ over the network
         ▼
-  Supabase 云  ·  OpenRouter API  ·  未来 Stripe
+  Supabase Cloud  ·  OpenRouter API  ·  future Stripe
 ```
 
-> ⚠️ 这是**参考模板**，不是 `nalanda.online` 的实际发布入口。实际生产已由 `infra/deploy` 于 2026-08-11 完成 0041–0043、真实 ZDR/provider、资源 canary 与公网登录用户 smoke；单独启动本模板的四容器仍不等于复制了该发布证据。
+> ⚠️ This is a **reference template**, not the actual release entry point for `nalanda.online`. Real production, through `infra/deploy`, completed 0041–0043, real ZDR/providers, a resource canary, and a public signed-in user smoke test on 2026-08-11; starting this template's four containers on their own does not replicate that release evidence.
 
 ---
 
-## 文件一览
+## Files
 
-| 文件 | 作用 |
+| File | Purpose |
 |---|---|
-| `docker-compose.yml` | 四个服务的编排 + 2G 内存上限 |
-| `Caddyfile` | 入口路由 + 自动 HTTPS |
-| `.env.example` | 环境变量模板（复制为 `.env` 填写） |
-| `api.Dockerfile` | NestJS 多阶段构建（上下文 = monorepo 根） |
-| `ai.Dockerfile` | FastAPI 构建（上下文 = `apps/ai`） |
-| `web-dist/` | 放前端构建产物（Caddy 托管） |
+| `docker-compose.yml` | Orchestrates the four services + 2 GB memory limits |
+| `Caddyfile` | Entry routing + automatic HTTPS |
+| `.env.example` | Environment variable template (copy to `.env` and fill in) |
+| `api.Dockerfile` | NestJS multi-stage build (context = monorepo root) |
+| `ai.Dockerfile` | FastAPI build (context = `apps/ai`) |
+| `web-dist/` | Holds the frontend build output (served by Caddy) |
 
 ---
 
-## 前置准备
+## Prerequisites
 
-1. 一台 2G 内存的 Linux 服务器（推荐受支持的 Ubuntu LTS 或 Debian stable）。
-2. 一个域名，A 记录解析到服务器公网 IP；放行 80 / 443 端口。
-3. 一个 Supabase 云项目（免费档）。
-4. 启用 Materials AI 时需要 OpenRouter key 与独立内部服务 token；首版不需要 Stripe。
+1. A Linux server with 2 GB of memory (a supported Ubuntu LTS or Debian stable is recommended).
+2. A domain whose A record points at the server's public IP, with ports 80 / 443 open.
+3. A hosted Supabase project (free tier).
+4. Enabling Materials AI requires an OpenRouter key and a separate internal service token; the first version does not need Stripe.
 
 ---
 
-## 部署步骤
+## Deployment steps
 
-**1) 装 Docker**
+**1) Install Docker**
 ```bash
 curl -fsSL https://get.docker.com | sh
 ```
 
-**2) 开 2G swap（强烈建议，给内存峰值兜底）**
+**2) Enable 2 GB of swap (strongly recommended as a buffer for memory peaks)**
 ```bash
 sudo fallocate -l 2G /swapfile && sudo chmod 600 /swapfile
 sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
-**3) 填环境变量**
+**3) Fill in environment variables**
 ```bash
 cp .env.example .env
-# 编辑 .env，填 DOMAIN / ACME_EMAIL / Supabase / Redis / OpenRouter / 内部 token
+# Edit .env: DOMAIN / ACME_EMAIL / Supabase / Redis / OpenRouter / internal token
 ```
 
-模板 `.env.example` 中的 `SUPABASE_ANON_KEY` 不能直接供 Vite 构建使用；构建 Web 时必须提供 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`。同时不要让 Caddy 读取 service-role、OpenRouter 等无关秘密；API、AI、Redis 必须使用各自的最小权限 env 文件。
+`SUPABASE_ANON_KEY` in the `.env.example` template cannot be used directly by the Vite build; building the Web app requires `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`. Also, never let Caddy read unrelated secrets such as the service role or OpenRouter key; API, AI, and Redis must each use their own least-privilege env file.
 
-**4) 放入前端产物**（在本地或 CI 构建，别在 2G 机器上构建 Vite）
+**4) Add the frontend build** (build locally or in CI; do not build Vite on the 2 GB machine)
 ```bash
-# 本地：pnpm --filter @nalanda/web build  → 得到 apps/web/dist
-# 把 dist 的内容拷到服务器的 infra/hybrid-2g/web-dist/
+# Locally: pnpm --filter @nalanda/web build  → produces apps/web/dist
+# Copy the contents of dist to infra/hybrid-2g/web-dist/ on the server
 ```
 
-**5) 启动**
+**5) Start**
 ```bash
 docker compose up -d --build
 ```
-Caddy 会自动为 `DOMAIN` 申请 HTTPS 证书（确保域名已解析、80/443 已开）。
+Caddy automatically requests an HTTPS certificate for `DOMAIN` (make sure the domain resolves and 80/443 are open).
 
-**6) 看状态**
+**6) Check status**
 ```bash
 docker compose ps
 docker compose logs -f api
@@ -87,25 +87,25 @@ docker compose logs -f api
 
 ---
 
-## 两种构建模式
+## Two build modes
 
-- **简单（本机 build）**：上面的 `up -d --build`。2G 机器上构建较吃力——**构建时建议先停其他服务**或确保 swap 已开。
-- **推荐（CI 构建镜像 → 服务器 pull）**：在 GitHub Actions 构建 `nalanda-api` / `nalanda-ai` 推到镜像仓库；把 compose 里的 `build:` 换成 `image:`，服务器只 `docker compose pull && up -d`。2G 机器零构建压力。
-
----
-
-## 2G 必守约束
-
-- 生成模型走 OpenRouter，**不要在本机跑本地大模型 / 向量模型**；AI 容器只执行确定性解析、LibreOffice 渲染与 provider adapter。
-- 解析 PDF/DOCX/PPTX 可能出现内存峰值：严格执行 25MB/250 页/40 万字符限制、单并发、640MB 内存/896MB 含 swap、0.75 CPU、128 pids、硬超时和磁盘水位熔断。
-- 仅适合早期 / 小流量。流量上来：升 4–8G，或把数据库也自托管（变体 C），或迁回全托管（变体 A）。
+- **Simple (build on the host)**: the `up -d --build` above. Building on a 2 GB machine is heavy — **stop other services before building** or make sure swap is on.
+- **Recommended (CI builds images → server pulls)**: build `nalanda-api` / `nalanda-ai` in GitHub Actions and push them to a registry; replace `build:` with `image:` in the compose file so the server only runs `docker compose pull && up -d`. Zero build pressure on the 2 GB machine.
 
 ---
 
-## 备份与安全
+## Hard constraints for 2 GB
 
-- **数据库**：由 Supabase 托管；仍须按项目恢复手册验证可恢复性，不能只依赖“有备份”。
-- **本机**：备份加密 secret；Redis 不是任务事实源，Postgres reconciler 可重投。AI 临时目录不得备份并应在 `finally`/孤儿清理器中删除。
-- **端口**：只有 Caddy 对外（80/443）；api / ai / redis 全在内网，不发布端口。
-- **密钥**：`.env` 与 `web-dist/` 已在 `.gitignore`，不会进仓库。
-- **最小权限**：正式环境必须拆分 API/AI/Redis secrets；AI 不得获得 service-role/Redis/Azure，Redis 不得获得 Supabase/provider key，FastAPI 必须验证 `X-AI-Internal-Token`。
+- Generation models go through OpenRouter; **do not run local LLMs / embedding models on the host**. The AI container only does deterministic parsing, LibreOffice rendering, and provider adapters.
+- Parsing PDF/DOCX/PPTX can spike memory: strictly enforce the 25 MB/250 page/400,000 character limits, single concurrency, 640 MB memory / 896 MB including swap, 0.75 CPU, 128 pids, hard timeouts, and disk-watermark circuit breakers.
+- Only suitable for early stage / low traffic. As traffic grows: upgrade to 4–8 GB, self-host the database too (variant C), or move back to fully managed (variant A).
+
+---
+
+## Backups and security
+
+- **Database**: Managed by Supabase; recoverability must still be verified with the project recovery runbook, not just assumed from "there are backups".
+- **Host**: Back up encrypted secrets; Redis is not the job source of truth, and the Postgres reconciler can re-enqueue. AI temporary directories must not be backed up and should be deleted in `finally`/the orphan cleaner.
+- **Ports**: Only Caddy is public (80/443); api / ai / redis are all internal with no published ports.
+- **Secrets**: `.env` and `web-dist/` are in `.gitignore` and never enter the repository.
+- **Least privilege**: Real environments must split API/AI/Redis secrets; AI must not get the service role/Redis/Azure, Redis must not get Supabase/provider keys, and FastAPI must verify `X-AI-Internal-Token`.

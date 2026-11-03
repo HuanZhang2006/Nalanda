@@ -1,44 +1,45 @@
-# ADR-0003：普通 owner CRUD 可直连 Supabase，特权与跨资源流程进入 NestJS
+# ADR-0003: Ordinary owner CRUD may talk to Supabase directly; privileged and cross-resource flows go through NestJS
 
-> **本文内容：**定义浏览器可直接访问 Supabase 的业务范围，以及必须由核心 API 承担的操作。  
-> **作用：**避免“全部直连”导致服务端秘密/账本失控，也避免为简单私有 CRUD 增加无意义代理层。  
-> **何时更新：**任一模块改变数据访问路径、引入管理员/支付/AI/审核流程，或 RLS 无法表达所需规则时。  
-> **状态提示：**边界已接受并于 2026-08-10 随 0039–0040 上线：帖子/Feedback/Schedule 保持直连，同时由列级 grant/trigger 防御，points 管理与 Redis 限流位于 NestJS。
+> **About this document**
+> - **Contents**: Defines which business operations the browser may perform directly against Supabase, and which operations the core API must own.
+> - **Purpose**: Prevents "everything direct" from losing control of server secrets or ledgers, and avoids adding a pointless proxy layer for simple private CRUD.
+> - **When to update**: When any module changes its data access path, introduces admin/payment/AI/moderation flows, or RLS cannot express a required rule.
+> - **Status note**: The boundary is accepted and went live with 0039–0040 on 2026-08-10: posts/Feedback/Schedule stay direct but are defended by column grants/triggers, while points administration and Redis rate limiting live in NestJS.
 
-- **状态：**Accepted
-- **日期：**2026-06-24
-- **决策者：**项目维护者
-- **范围：**Web、NestJS API、Supabase
+- **Status:** Accepted
+- **Date:** 2026-06-24
+- **Deciders:** Project maintainer
+- **Scope:** Web, NestJS API, Supabase
 
-## 背景
+## Context
 
-Materials 实现证明，用户自己的课程/资料 CRUD 可以由浏览器配合严格 RLS 完成；另一方面，注册、AI、钱包和支付需要服务端密钥、幂等事务、第三方调用或跨用户写入，不能信任客户端。
+The Materials implementation showed that a user's own course/material CRUD can be done from the browser with strict RLS; on the other hand, sign-up, AI, wallets, and payments need server secrets, idempotent transactions, third-party calls, or cross-user writes and cannot trust the client.
 
-## 决策
+## Decision
 
-### 允许浏览器直连的操作
+### Operations the browser may perform directly
 
-满足以下全部条件时 MAY 直连：只涉及当前用户自己的数据，或明确定义的已认证公共读取；RLS/约束能完整表达权限和完整性；无服务端 secret；无资金、不可逆副作用或跨用户权益；失败可以安全重试；已覆盖双用户负向测试。
+Direct access MAY be used only when all of these hold: it touches only the current user's own data, or a clearly defined authenticated public read; RLS/constraints fully express the permissions and integrity; no server secret is involved; there is no money, irreversible side effect, or cross-user entitlement; failures can be retried safely; and two-user negative tests exist.
 
-当前符合或接近该模式的范围包括课程/资料元数据、私有资料 Storage、个人任务/目标，以及社区的普通内容 CRUD/互动。社区跨用户计数与通知虽由数据库触发器完成，仍必须限制 definer 权限和幂等行为。
+Areas that currently fit or nearly fit this pattern include course/material metadata, private material Storage, personal tasks/goals, and ordinary community content CRUD/interactions. Community cross-user counters and notifications are produced by database triggers, but definer privileges and idempotent behavior must still be restricted.
 
-### 必须进入 NestJS 的操作
+### Operations that must go through NestJS
 
-以下 MUST 由服务端执行：Admin/service-role；注册和敏感账户流程；AI job 创建/扣费/供应商调用；credits hold/commit/refund；VIP/Stripe/创作者分成；内容审核和管理员动作；签发高权限/长时签名；跨用户写入；复杂速率限制；隐私导出/删除编排；任何客户端可伪造会造成经济或安全影响的字段。
+The following MUST run on the server: admin/service-role work; sign-up and sensitive account flows; AI job creation/charging/provider calls; credits hold/commit/refund; VIP/Stripe/creator revenue share; content moderation and admin actions; issuing high-privilege or long-lived signatures; cross-user writes; complex rate limiting; privacy export/deletion orchestration; and any field that, if forged by a client, would have economic or security impact.
 
-NestJS 必须再次验证 JWT、对象归属、DTO 和幂等键，不得因为前端已验证而省略。
+NestJS must re-verify the JWT, object ownership, DTOs, and idempotency keys; it must never skip these because the frontend already validated them.
 
-## 后果
+## Consequences
 
-简单路径延迟低、代码少；代价是 RLS 与迁移成为应用 API 的一部分，必须像代码一样测试和版本化。业务从普通 CRUD 升级为收费/审核流程时，需要显式迁移访问路径，不能继续给浏览器写内部状态。
+Simple paths have low latency and little code; the cost is that RLS and migrations become part of the application API and must be tested and versioned like code. When a feature grows from ordinary CRUD into a paid/moderated flow, its access path must be migrated explicitly instead of continuing to let the browser write internal state.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **当前：**旧模块继续由 Web 直连 Supabase；NestJS 除 health/register/me 外，已承担并在生产运行 Courses 内容写入、会话/成长、Speech、分享/市场和公开脱敏读取。
-- **已收口：**Profile 只允许资料列更新，points/credits/level/VIP/streak 与内部 RPC 已封闭；Materials、Community、Schedule、Notifications、Feedback、Profile 的主要请求会检查 Supabase `{ error }`，并用会话版本阻止跨账号迟到响应；CI 已有双用户 RLS 权限矩阵。
-- **当前违规风险：**0039 已收口 Feedback 与帖子计划内可信字段；notifications 服务端字段不在本阶段，仍需持续审计。商业/AI/通用审核/删除流程仍不能沿用普通直连 CRUD。
-- **目标：**继续做旧表列级收口；把 AI、支付、通用审核和删除编排进入 API；为现有 Courses 契约生成 OpenAPI/SDK，并扩展 HTTP/权限测试。
+- **Current:** Legacy modules still talk to Supabase from the Web; besides health/register/me, NestJS owns and runs in production the Courses content writes, sessions/growth, Speech, sharing/market, and redacted public reads.
+- **Closed:** Profile only allows profile-column updates; points/credits/level/VIP/streak and internal RPCs are locked down. The main requests in Materials, Community, Schedule, Notifications, Feedback, and Profile check Supabase `{ error }` and use session versions to block late responses across accounts; CI has a two-user RLS permission matrix.
+- **Current violation risks:** 0039 locked down the planned trusted fields on Feedback and posts; notification server fields are out of scope for this phase and still need ongoing audits. Commercial/AI/general moderation/deletion flows must not reuse ordinary direct CRUD.
+- **Target:** Keep locking down legacy tables per column; move AI, payments, general moderation, and deletion orchestration into the API; generate OpenAPI/SDKs for the existing Courses contract and extend HTTP/permission tests.
 
-## 验证与复审
+## Verification and review
 
-每次新增字段都回答“谁能写、通过哪条路径、怎样重试、怎样审计”。当 RLS 表达复杂度、客户端耦合或合规需求显著上升时，复审是否把更多 CRUD 移入 API。
+Every new field must answer "who can write it, through which path, how it is retried, and how it is audited". When RLS complexity, client coupling, or compliance needs rise significantly, review whether more CRUD should move into the API.

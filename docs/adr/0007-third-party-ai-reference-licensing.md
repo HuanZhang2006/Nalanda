@@ -1,35 +1,36 @@
-# ADR-0007：未获商业许可前不复制非商业许可的 AI 实现
+# ADR-0007: Do not copy non-commercially licensed AI implementations without a commercial license
 
-> **本文内容：**记录使用 ExamPass-Assistant 等第三方 AI 项目作为参考时的许可证边界。  
-> **作用：**避免 Nalanda 的市场、VIP 和支付商业化与 CC BY-NC 等非商业条款冲突。  
-> **何时更新：**第三方项目许可证变化、取得书面商业授权、替换实现来源或引入新的解析/agent 代码时。  
-> **法律提示：**这是工程治理决策，不替代专业法律意见。
+> **About this document**
+> - **Contents**: Records the license boundary when third-party AI projects such as ExamPass-Assistant are used as references.
+> - **Purpose**: Prevents Nalanda's market, VIP, and payment monetization from conflicting with non-commercial terms such as CC BY-NC.
+> - **When to update**: When a third-party project's license changes, written commercial authorization is obtained, the implementation source is replaced, or new parsing/agent code is introduced.
+> - **Legal note**: This is an engineering governance decision and does not replace professional legal advice.
 
-- **状态：**Accepted
-- **日期：**2026-07-10
-- **决策者：**项目维护者
-- **范围：**AI 解析、prompt/agent、模板与派生实现
+- **Status:** Accepted
+- **Date:** 2026-07-10
+- **Deciders:** Project maintainer
+- **Scope:** AI parsing, prompts/agents, templates, and derived implementations
 
-## 背景
+## Context
 
-架构蓝图计划大量借鉴 ExamPass-Assistant 的解析管线和多 agent 方法，同时明确其许可证为 CC BY-NC 4.0。Nalanda 的目标包含收费 AI、VIP、内容市场和创作者分成，直接复制/派生代码可能不满足非商业限制。
+The architecture blueprint planned to borrow heavily from ExamPass-Assistant's parsing pipeline and multi-agent approach, while noting that its license is CC BY-NC 4.0. Nalanda's goals include paid AI, VIP, a content market, and creator revenue share, so directly copying or deriving code may not satisfy the non-commercial restriction.
 
-## 决策
+## Decision
 
-- 在取得版权所有者明确、书面的商业授权前，不复制、修改、打包或部署受非商业许可证约束的代码、模板、prompt、skills 或其他可版权化表达。
-- 团队 MAY 研究公开描述的通用思想、接口需求和行业方法，但生产实现应由未接触受限源码的人员按 Nalanda 需求独立编写，并保留设计/实现来源记录。
-- 若获得授权，必须把授权范围、版本、归属、通知义务、再分发和终止条款交由负责人审查，并在第三方清单中落档。
-- 每个新增依赖或复制片段在 PR 中声明来源与许可证；“开源”“GitHub 可见”不等于可商业使用。
+- Until the copyright holder grants explicit, written commercial authorization, do not copy, modify, package, or deploy code, templates, prompts, skills, or other copyrightable expression governed by a non-commercial license.
+- The team MAY study publicly described general ideas, interface requirements, and industry practices, but production implementations should be written independently for Nalanda's needs by people who have not seen the restricted source, with design/implementation provenance kept on record.
+- If authorization is obtained, the owner must review its scope, version, attribution, notice obligations, redistribution, and termination terms, and record it in the third-party inventory.
+- Every new dependency or copied snippet must declare its source and license in the PR; "open source" or "visible on GitHub" does not mean commercial use is allowed.
 
-## 后果
+## Consequences
 
-降低知识产权和下架风险，但会增加独立实现与评测成本，也可能放慢 AI 进度。授权获批前，蓝图中“基于 ExamPass 二次开发”的措辞只能解释为方法研究目标，不能作为已实现或可直接复用的工程计划。
+This lowers intellectual-property and takedown risk, but increases independent implementation and evaluation cost and may slow AI progress. Until authorization is granted, blueprint wording such as "secondary development based on ExamPass" can only be read as a research goal, not as an implemented or directly reusable engineering plan.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **当前生产实现：**0041–0043 的 Materials parser、provider adapter、prompt 与验证器为 Nalanda 自有实现，没有复制所述非商业项目；第三方 Python/Node 依赖仍须在合并门禁中扫描许可证。
-- **目标：**持续只选择商业兼容依赖或干净重写，并建立自动 SBOM/许可证扫描、NOTICE/归属和代码来源评审。
+- **Current production implementation:** The Materials parser, provider adapters, prompts, and validators from 0041–0043 are Nalanda's own implementation and copy nothing from the non-commercial project; third-party Python/Node dependencies must still be license-scanned at the merge gate.
+- **Target:** Keep choosing only commercially compatible dependencies or clean rewrites, and add automated SBOM/license scanning, NOTICE/attribution, and code provenance review.
 
-## 验证与复审
+## Verification and review
 
-AI 实现 PR 必须提供依赖许可证与来源清单。无法证明来源/授权的代码不合并。取得新授权时由新 ADR 或对本文的状态补充记录结果。
+AI implementation PRs must provide a dependency license and provenance list. Code whose provenance or authorization cannot be shown is not merged. When new authorization is obtained, record the outcome in a new ADR or as a status addendum to this one.
