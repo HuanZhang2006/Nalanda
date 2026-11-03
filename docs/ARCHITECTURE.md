@@ -1,305 +1,306 @@
-# Nalanda 当前实现架构
+# Nalanda Current Architecture
 
-> **文档定位**
-> - **内容**：记录仓库和生产配置中已经存在的系统结构、运行时数据流、模块边界、数据模型与部署方式。
-> - **作用**：回答“系统现在实际上怎样工作”，用于开发、排障、评审和新人理解；不承载尚未实现的最终蓝图。
-> - **何时更新**：入口、服务边界、表结构、RLS、部署拓扑、模块真/mock 状态或关键依赖发生变化时。
-> - **未来规划**：最终产品范围、目标架构和开发路径统一见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
+> **About this document**
+> - **Contents**: Records the system structure, runtime data flows, module boundaries, data model, and deployment method that already exist in the repository and production configuration.
+> - **Purpose**: Answers "how does the system actually work right now", for development, troubleshooting, reviews, and onboarding; it does not carry the not-yet-implemented final blueprint.
+> - **When to update**: When entry points, service boundaries, table structures, RLS, the deployment topology, a module's real/mock status, or key dependencies change.
+> - **Future plans**: The final product scope, target architecture, and development path are in [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md).
 
-最后核对：2026-08-26。生产数据库已受保护应用到 0055；0052–0055 已完成时间列 Stage B 与 Ox pipeline contract，原预留 0044–0045 没有补插。PR #78 已把 Courses Ox 输出修复为模型支持的 JSON Object 并合并，但 main run `32931681321` 的不可变应用候选在真实 DocumentIR DOCX 门禁失败后自动恢复到此前稳定 release，API/AI/Web、Supabase 和 Redis 已独立确认健康。失败候选的初始结构问题是题型数量；旧 repair 没有收到 source block 正文，结构转绿后才暴露全面语义缺陷。当前 Unreleased 修复让 repair 使用完整来源，并只在结构 repair 后首次发现语义问题时增加一次有界语义 repair；Luna/Ox Materials 因 ZDR 不可用仍保持关闭。任何本地通过、单项门禁或数据库上线都不等于候选应用切流。完整离线 PWA、支付与 credits/VIP 商业账本仍未实现。
+Last checked: 2026-08-26. The production database has a protected application up to 0055; 0052–0055 completed the timestamp-column Stage B and the Ox pipeline contract, and the originally reserved 0044–0045 were not back-filled. PR #78 fixed the Courses Ox output to the model-supported JSON Object and was merged, but the immutable app candidate of main run `32931681321` automatically restored the earlier stable release after the real DocumentIR DOCX gate failed, and API/AI/Web, Supabase, and Redis were independently confirmed healthy. The failed candidate's initial structural problem was question-type counts; the old repair did not receive the source block text, and comprehensive semantic defects only surfaced after the structure turned green. The current Unreleased fix makes the repair use the full source and adds one bounded semantic repair only when semantic problems are first found after the structural repair; Luna/Ox Materials stay off because ZDR is unavailable. No local pass, single gate, or database launch equals a candidate app cutover. A full offline PWA, payments, and the credits/VIP commercial ledgers are still not implemented.
 
-2026-08-14 候选代码（尚未部署）包含 0046–0051：0046–0048 将生成/评分改为 202 接收 + 持久回调并增加双层断点、增量 usage、知识点图谱和节点问答；0049–0051 增加 Luna 原文件流水线、provider provenance、可确认清理的任务删除/清空及私有跨设备图布局。以下带“候选”的段落描述当前分支，不改变上述生产事实。
+The 2026-08-14 candidate code (not yet deployed) includes 0046–0051: 0046–0048 switch generation/grading to 202 acceptance + durable callbacks and add two-level checkpoints, incremental usage, the knowledge-point graph, and node Q&A; 0049–0051 add the Luna native-file pipeline, provider provenance, job deletion/clearing with confirmed cleanup, and private cross-device graph layouts. Paragraphs marked "candidate" below describe the current branch and do not change the production facts above.
 
 ---
 
-## 1. 当前系统结论
+## 1. Summary of the current system
 
-Nalanda 是一个 pnpm/Turborepo 单仓：生产 Web 由 React 鉴权壳、legacy DOM 模块和 React Courses/Notes 功能组成；认证与旧业务 CRUD 直接使用 Supabase；NestJS 提供注册、JWT、健康检查、Courses/学习/语音/传播，以及 Materials AI/Notes/考试接口。0041–0043 已把 Materials AI 接到 NestJS、BullMQ/Redis 和隔离 FastAPI，并于 2026-08-11 进入生产运行时。
+Nalanda is a pnpm/Turborepo single repository: the production Web app consists of a React auth shell, legacy DOM modules, and React Courses/Notes features; authentication and legacy business CRUD use Supabase directly; NestJS provides sign-up, JWT, health checks, Courses/learning/speech/distribution, and the Materials AI/Notes/exam endpoints. 0041–0043 connected Materials AI to NestJS, BullMQ/Redis, and an isolated FastAPI, and it entered the production runtime on 2026-08-11.
 
-“真后端”在旧模块中主要表示“真实写入 Supabase 并由 RLS 保护”；Courses 的内容与学习事实写入必须经 NestJS + service-role 专用事务 RPC。当前两条路径均已部署，但这仍不把 Home/Notes/AI Create 等 mock 变成真实能力。
+In legacy modules, "real backend" mainly means "really writes to Supabase, protected by RLS"; Courses content and learning facts must be written through NestJS + dedicated service-role transaction RPCs. Both paths are deployed, but that still does not make mocks such as Home/Notes/AI Create real capabilities.
 
-## 2. 运行时拓扑
+## 2. Runtime topology
 
 ```text
-浏览器
-  ├─ GET /                 → 宿主 nginx → apps/web 构建产物
+Browser
+  ├─ GET /                 → host nginx → apps/web build output
   ├─ /api/auth/register    → nginx → NestJS → Supabase Admin API
-  ├─ /api/me               → nginx → NestJS → Supabase JWKS 验签
-  ├─ /api/learning-*       → nginx → NestJS → owner 校验 + 事务 RPC
-  │                          └─ 可选翻译前测 → OpenRouter（服务端密钥、结构化判定）
-  ├─ /api/pronunciation/*  → nginx → NestJS → Azure Speech（可降级/熔断）
-  ├─ /api/course-*         → nginx → NestJS → 分享/市场脱敏快照
+  ├─ /api/me               → nginx → NestJS → Supabase JWKS verification
+  ├─ /api/learning-*       → nginx → NestJS → owner check + transaction RPC
+  │                          └─ optional translation pre-test → OpenRouter (server-side key, structured judgement)
+  ├─ /api/pronunciation/*  → nginx → NestJS → Azure Speech (degradable/circuit-breakable)
+  ├─ /api/course-*         → nginx → NestJS → redacted share/market snapshots
   ├─ /api/materials/*/ai-* → nginx → NestJS → durable job / Free quota
   ├─ /api/ai-jobs|notes|exam-attempts/*
-  │                        → nginx → NestJS → owner-only 事务 RPC
-  ├─ /api/admin/points/*   → nginx → NestJS 管理员 allowlist → service-only RPC/表
+  │                        → nginx → NestJS → owner-only transaction RPCs
+  ├─ /api/admin/points/*   → nginx → NestJS admin allowlist → service-only RPCs/tables
   └─ Auth / PostgREST / Storage
                            → Supabase Cloud
 
-NestJS → private Docker network → Redis（滑动窗口、审计聚合、扫描器分布式锁、BullMQ UUID 投递）
+NestJS → private Docker network → Redis (sliding windows, audit aggregates, scanner distributed lock, BullMQ UUID delivery)
 
-Materials AI：NestJS → Postgres durable job → BullMQ/Redis（只存 UUID）→ 内网 FastAPI → OpenRouter ZDR；生产已启用。
+Materials AI: NestJS → durable Postgres job → BullMQ/Redis (UUIDs only) → internal FastAPI → OpenRouter ZDR; enabled in production.
 ```
 
-Supabase Cloud 当前承担：
+Supabase Cloud currently provides:
 
-- Auth：邮箱密码会话与 JWT。
-- PostgreSQL/PostgREST：资料课程、学习课程、会话/尝试/复习、社区、计划、Profile、成长、传播、通知和反馈。
-- Storage：私有资料桶、公开社区媒体桶、跨用户内容哈希去重的**私有**合成语音缓存桶；不保存用户录音。
-- RLS：主要的数据隔离边界。
+- Auth: email/password sessions and JWTs.
+- PostgreSQL/PostgREST: material courses, learning courses, sessions/attempts/reviews, community, schedule, Profile, growth, distribution, notifications, and feedback.
+- Storage: the private materials bucket, the public community media bucket, and a **private** synthesized speech cache bucket deduplicated by content hash across users; no user recordings are stored.
+- RLS: the main data isolation boundary.
 
-生产 migration history 已到 0053：0039–0040 增加并验证直接 PostgREST 防御、冻结奖励窗口、审核和协同/滥用审计；0041–0051 增加 Materials AI/Notes/在线考试、可恢复任务、图谱和生命周期事实；0052–0053 只收窄 authenticated 对两个派生时间列的 UPDATE 权限并验证最终 contract。它不改变 Materials AI、Courses、points、trigger、RLS 或 service-role，原预留 0044–0045 没有补插。
+Production migration history is at 0053: 0039–0040 add and verify direct-PostgREST defenses, frozen reward windows, moderation, and coordination/abuse auditing; 0041–0051 add Materials AI/Notes/online exams, resumable jobs, graphs, and lifecycle facts; 0052–0053 only narrow authenticated UPDATE permission on two derived timestamp columns and verify the final contract. It does not change Materials AI, Courses, points, triggers, RLS, or service-role, and the originally reserved 0044–0045 were not back-filled.
 
-同机 Redis 已纳入生产依赖：Redis 只连接默认 compose 私网、无宿主端口、密码认证、AOF `everysec`、`noeviction`；API 使用原子 Lua 滑动窗口和 HMAC(IP/email)键，不保存原始 IP/email，并用 BullMQ 只投递 durable Postgres job UUID。写入/注册/克隆/举报/成本接口在 Redis 故障时 fail-closed，私有只读 fail-open 并输出 `rate_limit_degraded`；readiness 只有 Supabase 与 Redis PING 均成功才为 200，AI readiness 还要求 worker/queue 就绪。协同扫描器每五分钟以 Redis token lock 单实例执行，只写待审 signal，不自动冻结或冲正。
+The same-host Redis is a production dependency: Redis only connects to the default compose private network, has no host port, uses password authentication, AOF `everysec`, and `noeviction`; the API uses atomic Lua sliding windows and HMAC(IP/email) keys without storing raw IPs/emails, and uses BullMQ only to deliver durable Postgres job UUIDs. Write/sign-up/clone/report/cost endpoints fail closed when Redis fails, private reads fail open and emit `rate_limit_degraded`; readiness is 200 only when both the Supabase check and the Redis PING succeed, and AI readiness also requires the worker/queue to be ready. The coordination scanner runs every five minutes as a single instance under a Redis token lock, only writes pending signals, and never automatically freezes or reverses.
 
-当前前端没有 Realtime `.channel()` 订阅；通知是查询和手动刷新。
+The frontend currently has no Realtime `.channel()` subscriptions; notifications use queries and manual refresh.
 
-## 3. 仓库结构（实际存在）
+## 3. Repository structure (as it actually exists)
 
 ```text
 Nalanda/
 ├─ apps/
-│  ├─ web/                 React/Vite 鉴权壳 + legacy 应用
-│  ├─ api/                 NestJS Auth/health + Courses/语音/市场 API
-│  └─ ai/                  隔离的 Materials 解析/生成/评分 worker（Python）
+│  ├─ web/                 React/Vite auth shell + legacy app
+│  ├─ api/                 NestJS Auth/health + Courses/speech/market API
+│  └─ ai/                  Isolated Materials parsing/generation/grading worker (Python)
 ├─ packages/
-│  ├─ ui/                  CSS，不是 React 组件库
-│  └─ types/               Courses 与 Materials AI 共享 camelCase 生产契约
-├─ app/                    独立静态桌面/移动高保真原型
+│  ├─ ui/                  CSS, not a React component library
+│  └─ types/               Shared camelCase production contracts for Courses and Materials AI
+├─ app/                    Standalone static desktop/mobile high-fidelity prototypes
 ├─ supabase/
-│  ├─ config.toml          本地/CI Supabase 基线
-│  └─ migrations/          顺序 SQL migration
+│  ├─ config.toml          Local/CI Supabase baseline
+│  └─ migrations/          Sequential SQL migrations
 ├─ infra/
-│  ├─ deploy/              当前生产 nginx + API + AI + Redis 部署
-│  └─ hybrid-2g/           Caddy + API + AI + Redis 通用模板
+│  ├─ deploy/              Current production nginx + API + AI + Redis deployment
+│  └─ hybrid-2g/           Generic Caddy + API + AI + Redis template
 ├─ scripts/
-│  ├─ db-push.mjs          旧 Management API 应急脚本
-│  └─ *db-release*.sh      加密发布恢复点与隔离恢复工具
-└─ docs/                   架构、蓝图、实现笔记和操作手册
+│  ├─ db-push.mjs          Legacy Management API emergency script
+│  └─ *db-release*.sh      Encrypted release recovery-point and isolated restore tools
+└─ docs/                   Architecture, blueprint, implementation notes, and runbooks
 ```
 
-仓库中不存在目标蓝图曾经列出的 `apps/desktop`、`apps/mobile`、`packages/api-client`、`packages/i18n`、`packages/config`。
+The repository does not contain `apps/desktop`, `apps/mobile`, `packages/api-client`, `packages/i18n`, or `packages/config`, which the target blueprint once listed.
 
-## 4. Web 前端
+## 4. Web frontend
 
-### 4.1 三类入口
+### 4.1 Three kinds of entry points
 
-1. 仓库根 `index.html`：跳转到静态 Showcase，只用于浏览设计原型。
-2. `app/`：独立桌面和手机原型，全部使用 mock 数据；Showcase 用 iframe 并排展示。
-3. `apps/web`：生产应用。`index.html → main.tsx → App.tsx → NalandaApp.tsx → legacy/app.ts`。
+1. The repository root `index.html`: redirects to the static Showcase, only for browsing the design prototype.
+2. `app/`: standalone desktop and mobile prototypes, all on mock data; the Showcase shows them side by side in iframes.
+3. `apps/web`: the production app. `index.html → main.tsx → App.tsx → NalandaApp.tsx → legacy/app.ts`.
 
-部署使用 `apps/web/dist`，不是仓库根入口。
+Deployment uses `apps/web/dist`, not the repository root entry point.
 
-### 4.2 React 与 legacy 的边界
+### 4.2 The React/legacy boundary
 
-- React 负责 Supabase session 恢复、登录/注册界面、主题和挂载容器。
-- `NalandaApp` 在 `useEffect` 中调用 `mountNalanda()`；依赖用户 ID/邮箱，切换账号会先清理旧挂载再创建新会话。
-- legacy 应用仍使用模块单例、HTML 字符串、容器级事件委托和内存路由，但挂载时会重置路由/用户/模块状态，并以 session version 丢弃旧账号迟到的异步响应。
-- 没有 react-router；URL、浏览器历史、刷新恢复和深链接尚未实现。
-- `packages/ui` 只导出 CSS；Web 导入 `nalanda.css`，没有共享 React 组件。
-- 9 个 legacy TypeScript 文件使用 `@ts-nocheck`，因此普通 `tsc` 不覆盖其内部类型。
+- React owns Supabase session restoration, the sign-in/sign-up UI, the theme, and the mount container.
+- `NalandaApp` calls `mountNalanda()` in `useEffect`; it depends on the user ID/email, so switching accounts cleans up the old mount before creating the new session.
+- The legacy app still uses module singletons, HTML strings, container-level event delegation, and in-memory routing, but mounting resets the route/user/module state, and a session version discards late async responses from the previous account.
+- There is no react-router; URLs, browser history, refresh restoration, and deep links are not implemented yet.
+- `packages/ui` only exports CSS; the Web app imports `nalanda.css`, and there are no shared React components.
+- 9 legacy TypeScript files use `@ts-nocheck`, so ordinary `tsc` does not cover their internal types.
+- **Interface language**: `apps/web/src/i18n.ts` holds the locale (`en` by default, `zh` optional, persisted in `localStorage`). UI copy is written next to the code as `l(english, chinese)`/`localize(english, chinese)` pairs; React components read it through `useI18n()`. The shell's top bar and the sign-in page have an EN/中文 toggle; on change the shell re-renders its own text and legacy views, while React islands (Courses, My Notes) re-render reactively and keep in-progress state. Known Chinese texts generated by database triggers (social notifications, course badge names) are translated for display on the client.
 
-### 4.3 当前模块状态
+### 4.3 Current module status
 
-| 模块 | 数据来源 | 状态 |
+| Module | Data source | Status |
 |---|---|---|
-| 登录/注册/退出 | Supabase Auth + Nest 注册接口 | 真实 |
-| Materials | Supabase tables + 私有 Storage | 真实 |
-| Community/Post | Supabase tables + 公开媒体 Storage | 真实 |
-| Schedule | Supabase tables + DB 触发器 | 真实 |
-| Courses | NestJS + Supabase `learning_*` + React | 真实；生产总 history 为 0043，Courses 功能迁移为 0011–0038，含显式取消、拼写/读音考试、任意选词、历史、双考试精确掌握投影、翻译中文 STT 及真实 provider 配额预留 |
-| Profile/Growth | Supabase Profile + `point_entries` projection | 真实；0008 已保护敏感列并实现幂等冲正账本 |
-| Notifications | Supabase table，查询刷新 | 真实，非 Realtime |
-| Feedback | Supabase table | 生产 0039 起用户只可新增/读取，status/time/owner 由支持流程维护 |
-| Home | `legacy/data.ts` | mock |
-| Notes/详情四 Tab | `legacy/data.ts` | mock |
-| Create | mock Materials + timeout/toast | mock |
-| Market / Note Market | `legacy/data.ts` + toast | Note Market 仍为 mock |
-| Market / Course Market | NestJS 脱敏不可变快照 | 真实；只支持免费克隆，生产已启用 |
-| Courses 文件 AI 导入、其余类别 | 禁用入口 | 未实现 |
+| Sign in/sign up/sign out | Supabase Auth + Nest sign-up endpoint | Real |
+| Materials | Supabase tables + private Storage | Real |
+| Community/Post | Supabase tables + public media Storage | Real |
+| Schedule | Supabase tables + DB triggers | Real |
+| Courses | NestJS + Supabase `learning_*` + React | Real; overall production history is 0043, and the Courses feature migrations are 0011–0038, including explicit cancel, spelling/pronunciation exams, arbitrary word selection, history, the dual-exam exact mastery projection, Chinese STT for translations, and real provider quota reservations |
+| Profile/Growth | Supabase Profile + `point_entries` projection | Real; 0008 protects sensitive columns and implements an idempotent reversible ledger |
+| Notifications | Supabase table, query refresh | Real, not Realtime |
+| Feedback | Supabase table | Since production 0039 users can only insert/read; status/time/owner are maintained by the support workflow |
+| Home | `legacy/data.ts` | Mock |
+| Notes/four-tab detail | `legacy/data.ts` | Mock |
+| Create | Mock Materials + timeout/toast | Mock |
+| Market / Note Market | `legacy/data.ts` + toast | Note Market is still a mock |
+| Market / Course Market | NestJS redacted immutable snapshots | Real; free clones only, enabled in production |
+| Courses AI file import, other categories | Disabled entry points | Not implemented |
 
-旧的 Materials/Community/Profile/Schedule/Feedback mock 视图仍保留在 `legacy/app.ts`，运行时被文件末尾的真实挂载点覆盖，属于待清理的双实现。
+The old Materials/Community/Profile/Schedule/Feedback mock views remain in `legacy/app.ts` but are overridden at runtime by the real mount points at the end of the file; they are a duplicate implementation waiting to be cleaned up.
 
-### 4.4 Supabase 访问方式
+### 4.4 Supabase access
 
-`apps/web/src/lib/supabase.ts` 用构建期 `VITE_SUPABASE_URL` 和 `VITE_SUPABASE_ANON_KEY` 创建客户端。真实模块直接调用：
+`apps/web/src/lib/supabase.ts` creates the client from the build-time `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`. Real modules call directly:
 
-- `sb.from(...)` 访问 PostgREST。
-- `sb.storage.from(...)` 上传、删除或签名访问文件。
-- 用户隔离依赖数据库 RLS，而不是前端 `.eq(user_id)`。
+- `sb.from(...)` for PostgREST.
+- `sb.storage.from(...)` to upload, delete, or sign access to files.
+- User isolation relies on database RLS, not frontend `.eq(user_id)`.
 
-`authedFetch()` 给 NestJS 请求加 Bearer token，并由 Courses Web API 客户端使用；Supabase `{ error }` 会转换为统一可见错误，跨账号挂载会清空 Courses 单例状态。
+`authedFetch()` adds the Bearer token to NestJS requests and is used by the Courses Web API client; Supabase `{ error }` is converted into a uniform visible error, and a cross-account mount clears the Courses singleton state.
 
 ## 5. NestJS API
 
-全局前缀：`/api`。基础接口为：
+Global prefix: `/api`. The base endpoints are:
 
-| 方法 | 路径 | 认证 | 行为 |
+| Method | Path | Auth | Behavior |
 |---|---|---|---|
-| GET | `/api/health` | 无 | 探测 Supabase JWKS/PostgREST、校验 HMAC secret 并真实 Redis PING；两项依赖都正常才 200，否则 503 |
-| POST | `/api/auth/register` | 无 | 用 service-role 创建 `email_confirm:true` 用户 |
-| GET | `/api/me` | Bearer | JWKS/HS256 守卫验签后回显 claims |
+| GET | `/api/health` | None | Probes Supabase JWKS/PostgREST, validates the HMAC secret, and runs a real Redis PING; 200 only when both dependencies are healthy, otherwise 503 |
+| POST | `/api/auth/register` | None | Creates an `email_confirm:true` user with service-role |
+| GET | `/api/me` | Bearer | Echoes the claims after the JWKS/HS256 guard verifies |
 
-JWT 守卫优先使用 Supabase JWKS 并验证 issuer/audience；HS256 回退验证配置的签名与声明边界。Courses 控制器另提供课程 CRUD、会话恢复/答题、复习日程、Profile 聚合、语音、分享、市场、克隆、举报、受配置管理员约束的审核接口和服务端 OpenRouter 语义翻译前测。完整表见 [API 文档](guides/API.md)。
+The JWT guard prefers the Supabase JWKS and verifies issuer/audience; the HS256 fallback verifies the configured signature and claim boundaries. The Courses controllers also provide course CRUD, session resume/answering, review schedules, Profile aggregation, speech, sharing, the market, cloning, reporting, moderation endpoints constrained by configured administrators, and the server-side OpenRouter semantic translation pre-test. See the [API docs](guides/API.md) for the full table.
 
-新接口共用 `@nalanda/types` camelCase 契约，API 显式转换数据库 snake_case，并由全局异常过滤器统一返回 `{ code, message, fieldErrors? }`。语音有 per-user/全局预算限流；市场有发布/举报限流；翻译前测有数据库租约、UUID/answer-hash 幂等与用户配额。0037 在同一 OpenRouter server adapter 边界增加 Fish Audio 中文 STT：浏览器只上传当前题的短 WAV，数据库先验证 owner/session/revision/word 并预留独立配额，供应商结果只回填可编辑输入，不推进学习。OpenRouter key/model 只存在于 API/AI 环境，浏览器不能提交参考答案或 provider 参数；用户答案、录音和 STT transcript 只在请求内存中处理，持久层只保留必要的 hash/判定/计量事实。当前已有 Materials 专用 durable queue，仍没有通用生成队列、支付模块或自动 OpenAPI 生成。
+New endpoints share the `@nalanda/types` camelCase contract, the API explicitly converts database snake_case, and a global exception filter returns `{ code, message, fieldErrors? }` uniformly. Speech has per-user/global budget rate limits; the market has publish/report rate limits; the translation pre-test has database leases, UUID/answer-hash idempotency, and user quotas. 0037 adds Fish Audio Chinese STT within the same OpenRouter server adapter boundary: the browser only uploads a short WAV for the current question, the database first validates owner/session/revision/word and reserves a separate quota, and the provider result only fills an editable input without advancing learning. The OpenRouter key/model exist only in the API/AI environments, and the browser cannot submit reference answers or provider parameters; user answers, recordings, and STT transcripts are only processed in request memory, and the persistence layer keeps only the necessary hash/judgement/metering facts. There is a dedicated Materials durable queue, but still no general generation queue, payment module, or automatic OpenAPI generation.
 
-## 6. FastAPI AI 服务
+## 6. FastAPI AI service
 
-生产 0041–0043 已替换原固定桩：FastAPI 只接受 `X-AI-Internal-Token` 的内网请求，并在 0700 独立临时目录中执行确定性解析、两次安全审查、失败范围视觉恢复、严格结构化试卷生成和批量主观题评分。固定模型为 DeepSeek V4 Flash 0731 与 MiMo V2.5；provider 请求强制 ZDR、拒绝数据收集、参数支持并禁用 reasoning/tool/Web/跨模型 fallback，避免推理 token 吞掉 strict JSON completion。同一固定模型按吞吐量优先在仍满足全部隐私/参数过滤器的 provider endpoint 间故障转移。
+Production 0041–0043 replaced the original fixed stubs: FastAPI only accepts internal requests with `X-AI-Internal-Token`, and in a separate 0700 temporary directory runs deterministic parsing, two safety reviews, failed-region visual recovery, strictly structured test-paper generation, and batch subjective grading. The fixed models are DeepSeek V4 Flash 0731 and MiMo V2.5; provider requests force ZDR, deny data collection, require parameter support, and disable reasoning/tools/Web/cross-model fallback, so reasoning tokens don't swallow the strict JSON completion. The same fixed model fails over, throughput-first, among provider endpoints that still satisfy every privacy/parameter filter.
 
-0046–0048 候选把 API→worker 改为短请求：Nest 使用显式 Undici Agent，30 秒内取得 202，worker 后续回调 progress、usage、checkpoint、complete/fail。这样业务任务不再受内置约 300 秒 response headers timeout 控制，transport timeout 会准确映射为 `AI_WORKER_TIMEOUT`。Postgres 仍是权威；Redis 只调度 UUID。BullMQ 的单并发槽在 202 后不会立即释放，而会轮询 Postgres 直到任务离开 processing/grading 或 lease 到期，避免把长任务积压到 FastAPI 内存并让尚未开始的任务租约过期。worker 另以 1200 秒生成总预算和 240 秒评分总预算防止无限占槽；生成超时保留 durable checkpoint 并允许期限内续跑。
+The 0046–0048 candidate turns API→worker into short requests: Nest uses an explicit Undici Agent, gets a 202 within 30 seconds, and the worker later calls back progress, usage, checkpoints, and complete/fail. Business jobs are thus no longer controlled by the built-in roughly 300-second response headers timeout, and transport timeouts map accurately to `AI_WORKER_TIMEOUT`. Postgres remains authoritative; Redis only schedules UUIDs. BullMQ's single concurrency slot is not released immediately after the 202, but polls Postgres until the job leaves processing/grading or the lease expires, preventing long jobs from piling up in FastAPI memory and letting not-yet-started job leases expire. The worker also has a 1200-second total generation budget and a 240-second total grading budget to prevent occupying the slot forever; a generation timeout keeps the durable checkpoint and allows resuming within the window.
 
-完整生成链路是：
+The full generation path is:
 
 ```text
-用户 Materials 文件
-  → NestJS owner/格式/额度/同意校验
-  → Postgres 原子 reservation + generation_job
-  → BullMQ 仅调度 job UUID；reconciler 补投
-  → FastAPI DocumentIR 确定性解析
-  → DeepSeek 文本完整性/注入审查
-  → 仅允许局限于解析器 failure 范围的首轮不确定性进入隔离恢复
-  → 只把诊断与审查失败范围交给 MiMo
-  → 拼接完整 DocumentIR 并再次安全审查
-  → DeepSeek 按版本化 prompt 生成 GeneratedExamV1 或 GeneratedKnowledgeGraphV1
-  → 试卷按服务端设置确定性归一化元数据、重复 ID 与可行的 marks 分配
-  → schema/题数或节点/边、答案/解释、来源与语义验证
-  → 来源感知的有界修复：初始结构/语义各一次；结构修复后新发现语义缺陷可再修复一次
-  → 单事务保存 Notes 并 consume；失败/cancel 则 release
+User Materials file
+  → NestJS owner/format/allowance/consent checks
+  → Postgres atomic reservation + generation_job
+  → BullMQ schedules only the job UUID; the reconciler re-enqueues
+  → FastAPI DocumentIR deterministic parsing
+  → DeepSeek text completeness/injection review
+  → Only first-round uncertainty confined to parser failure regions may enter isolated recovery
+  → Only diagnosed and review-failed regions go to MiMo
+  → Stitch the full DocumentIR and run the safety review again
+  → DeepSeek generates GeneratedExamV1 or GeneratedKnowledgeGraphV1 from a versioned prompt
+  → Test papers deterministically normalize metadata, duplicate IDs, and feasible marks allocation from server settings
+  → schema/question count or nodes/edges, answers/explanations, sources, and semantic validation
+  → Source-aware bounded repair: once each for initial structure/semantics; semantic defects newly found after the structural repair may be repaired once more
+  → Save Notes and consume in a single transaction; failure/cancel releases
 ```
 
-首轮审查不是安全豁免：`material-safety-audit.v2` 仅在没有确定性正文/focus 注入信号、所有报告位置均属于解析器声明的失败范围时，暂缓处置 `uncertain` 并进入视觉恢复。解析器失败范围始终触发恢复，即使模型漏回 `failedRanges`；缺少可渲染区域则失败。恢复结果拼回后必须通过严格二次审查，任何 `uncertain/malicious` 仍以 `PROMPT_INJECTION_REJECTED` 终止。
+The first-round review is not a safety exemption: `material-safety-audit.v2` only defers handling of `uncertain` and enters visual recovery when there are no deterministic body/focus injection signals and every reported location belongs to a parser-declared failure region. Parser failure regions always trigger recovery, even if the model omits `failedRanges`; a missing renderable region fails. After the recovered result is stitched back, it must pass a strict second review, and any `uncertain/malicious` still ends with `PROMPT_INJECTION_REJECTED`.
 
-DocumentIR 试卷的 `exam-generate.v4` 在生成和 repair 中都把 source blocks 当作不可信证据而非指令。repair payload 必须同时携带完整 allowlisted `sourceBlocks`、`allowedBlockIds`、`repairGate` 和当前候选；只给 ID 会让模型在补题时失去事实来源。每次 repair 后先重跑确定性结构校验，结构通过后再重跑语义审查。第二次修复仅允许处理“首轮结构 repair 后才新发现”的语义缺陷；第二次语义审查仍失败便终止，因此没有降低 grounding、答案、干扰项或解释质量门槛，也不会形成无界 provider 重试。
+DocumentIR's `exam-generate.v4` treats source blocks as untrusted evidence, not instructions, in both generation and repair. The repair payload must carry the full allowlisted `sourceBlocks`, `allowedBlockIds`, `repairGate`, and the current candidate together; giving only IDs leaves the model without the factual source when filling in questions. After each repair, deterministic structural validation runs first, and after the structure passes, the semantic review runs again. The second repair may only handle semantic defects "newly found after the first-round structural repair"; if the second semantic review still fails, the job ends, so the grounding, answer, distractor, and explanation quality bars are never lowered and no unbounded provider retries occur.
 
-Postgres 是任务、额度、结果和考试事实源；Redis/BullMQ 只负责投递。候选实现把 `parsed/audited/document_ready/artifact_ready/answer_ready` 保存到有 TTL 的私有数据库 checkpoint；worker 在同一 0700 目录保留更高阶段的短期恢复副本和 usage spool。API 回调短时中断时，下一 lease 先补记成本并恢复已验证结果，不重复付费阶段。成功/非重试终态立即清目录，默认 24 小时到期由数据库 reconciler 与 worker sweeper 双向清理。
+Postgres is the source of truth for jobs, allowances, results, and exams; Redis/BullMQ only deliver. The candidate implementation saves `parsed/audited/document_ready/artifact_ready/answer_ready` to private database checkpoints with a TTL; the worker keeps a short-lived recovery copy of a higher stage and the usage spool in the same 0700 directory. When API callbacks are briefly interrupted, the next lease first back-fills cost and recovers validated results without repeating paid stages. Success/non-retryable terminal states clear the directory immediately, and the default 24-hour expiry is cleaned up from both sides by the database reconciler and the worker sweeper.
 
-候选 worker 路由是 `GET /health`、快速接收的 `POST /internal/materials/jobs` 与 `POST /internal/exams/jobs`，以及兼容观察期保留的同步 `POST /internal/materials/exam`、`POST /internal/exams/grade`。全部内部写路由需要常量时间比较 token；FastAPI 默认 422 不回显 signed URL/callback token。同步路由只供上一不可变应用回退和直接 provider 质量 gate，不能重新成为生产长任务路径。
+The candidate worker routes are `GET /health`, the fast-accepting `POST /internal/materials/jobs` and `POST /internal/exams/jobs`, plus the synchronous `POST /internal/materials/exam` and `POST /internal/exams/grade` kept for the compatibility observation period. Every internal write route requires a constant-time token comparison; FastAPI's default 422 does not echo signed URLs/callback tokens. The synchronous routes are only for rolling back to the previous immutable app and for direct provider quality gates, and must not become the production long-job path again.
 
-### 6.1 契约边界
+### 6.1 Contract boundaries
 
-公开 Web/Nest 契约统一来自 `@nalanda/types` 的 camelCase `GeneratedExamV1`；Nest 显式转换数据库 snake_case，Python Pydantic 使用同一 camelCase JSON 与 `extra="forbid"`。试卷生成后会用服务端请求设置覆盖机械元数据、规范重复 ID，并在题数与每题 1–100 分边界可满足时按模型相对权重稳定调整 marks；该步骤不更改题干、答案、解释、rubric 或来源，之后仍需完整结构和语义门禁。考试 session 会删除答案、解析、rubric 和 accepted answer，只给作答所需字段；生成者自己的 Notes detail 仍可查看完整答案，这是自学产品而不是防作弊考试系统。
+The public Web/Nest contract comes uniformly from the camelCase `GeneratedExamV1` in `@nalanda/types`; Nest converts database snake_case explicitly, and Python Pydantic uses the same camelCase JSON with `extra="forbid"`. After generation, test papers overwrite mechanical metadata with the server request settings, normalize duplicate IDs, and stably adjust marks by the model's relative weights when the question count and the 1–100 marks-per-question bounds allow it; this step never changes stems, answers, explanations, rubrics, or sources, and full structural and semantic gates still follow. Exam sessions remove answers, explanations, rubrics, and accepted answers, giving only the fields needed to answer; the generator's own Notes detail can still show the full answers — this is a self-study product, not an anti-cheating exam system.
 
-Knowledge list 与独立 Quiz 的历史 Demo 形状没有冒充真实契约，仍为 Coming soon。候选 `GeneratedKnowledgeGraphV1` 是新的真实契约：节点按 source order，带层级、详细解释、例子/公式/误区/自测与严格引用；edge 有受限关系类型。节点问答只使用所选节点、相邻节点及这两类节点引用到的 source blocks，答案不能越过该来源并集。当前候选仍不含 embeddings、pgvector、Notes 编辑、导出、credits 或支付。
+The historical demo shapes of the knowledge list and standalone quiz do not pose as real contracts and still show Coming soon. The candidate `GeneratedKnowledgeGraphV1` is a new real contract: nodes are in source order, with levels, detailed explanations, examples/formulas/misconceptions/self-checks, and strict citations; edges have restricted relationship types. Node Q&A only uses the selected node, its neighbors, and the source blocks those two kinds of nodes cite, and answers cannot go beyond that union of sources. The candidate still has no embeddings, pgvector, Notes editing, export, credits, or payments.
 
-### 6.2 Luna 原文件与任务清理候选（0049–0051、0056–0057）
+### 6.2 Luna native files and job cleanup candidate (0049–0051, 0056–0057)
 
-创建 job 时 Web 必须显式发送 `pipeline`。`GET /api/materials/:id/ai-capabilities` 只把通过真实逐格式门禁且由 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` 允许的格式标为 Luna 可用；默认候选 allowlist 为 PDF/PNG。`luna_native_file_v1` 下载私有 Storage 原字节后校验声明大小、MIME 与 SHA-256，以 inline base64 发送给固定 `openai/gpt-6-luna`：PDF 使用 `type:file` + `file-parser.native`，图片使用 `image_url`。该路径不调用解析器、OCR、LibreOffice、DocumentIR 或 parse cache，也不使用会产生远端 workspace 留存的 Files API。每次请求强制 `provider.only=["azure"]`、`allow_fallbacks=false`、ZDR、deny data collection、require parameters、strict schema、no tools/Web；usage 先落库，实际上游不是 Azure 时完成事务拒绝产物但保留成本证据。
+When creating a job, the Web app must explicitly send `pipeline`. `GET /api/materials/:id/ai-capabilities` only marks Luna as available for formats that passed real per-format gates and are allowed by `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS`; the default candidate allowlist is PDF/PNG. `luna_native_file_v1` downloads the raw bytes from private Storage, validates the declared size, MIME, and SHA-256, and sends them as inline base64 to the fixed `openai/gpt-6-luna`: PDFs use `type:file` + `file-parser.native`, and images use `image_url`. This path does not call parsers, OCR, LibreOffice, DocumentIR, or the parse cache, and does not use the Files API, which would create remote workspace retention. Every request forces `provider.only=["azure"]`, `allow_fallbacks=false`, ZDR, deny data collection, require parameters, strict schema, and no tools/Web; usage is recorded first, and if the actual upstream is not Azure, the completion transaction rejects the artifact while keeping the cost evidence.
 
-0054–0055 曾增加第三条 `ox_alpha_native_file_v1`；该模型已从 OpenRouter 下线且从未在生产启用，0056–0057 把 pipeline constraint 与全部 service-role RPC 收敛回 DocumentIR/Luna，应用、门禁与环境变量也不再包含 Ox（[ADR-0016](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)）。
+0054–0055 added a third `ox_alpha_native_file_v1`; that model has been removed from OpenRouter and was never enabled in production, and 0056–0057 narrow the pipeline constraint and every service-role RPC back to DocumentIR/Luna, with the app, gates, and environment variables no longer containing Ox ([ADR-0016](adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)).
 
-受保护发布还读取 OpenRouter 的实时 ZDR endpoint catalog。只有 catalog 同时包含 `openai/gpt-6-luna`、`provider_name=Azure` 且 endpoint 可用时，才运行 Luna 原文件门禁并允许把 `FEATURE_MATERIAL_AI_LUNA` 从 false 改为 true；否则保持原文件能力关闭、以 `OPENROUTER_ZDR_UNAVAILABLE` 返回原因，并让用户显式使用 DocumentIR。2026-10-03 catalog 显示 GPT-6 Luna 的 ZDR endpoint 只有 Azure（`azure`、`azure/us`、`azure/eu`），first-party OpenAI 仍不满足 ZDR；发布不得关闭 ZDR、允许 fallback 或自动选择旧流水线来伪造 Luna 成功。
+The protected release also reads OpenRouter's live ZDR endpoint catalog. Only when the catalog contains `openai/gpt-6-luna` with `provider_name=Azure` and the endpoint is available does it run the Luna native-file gate and allow changing `FEATURE_MATERIAL_AI_LUNA` from false to true; otherwise the native-file capability stays off, `OPENROUTER_ZDR_UNAVAILABLE` is returned as the reason, and users explicitly use DocumentIR. The 2026-10-03 catalog showed GPT-6 Luna's ZDR endpoints are only Azure (`azure`, `azure/us`, `azure/eu`), and first-party OpenAI still does not meet ZDR; a release must never turn off ZDR, allow fallback, or automatically pick the old pipeline to fake Luna success.
 
-Courses 非字面翻译判定独立于 Materials：固定 `nvidia/nemotron-3-super-120b-a12b:free` + Nvidia-only，只发送最小服务端词义上下文；其真实文本 gate 不能替代 Materials 原文件的 ZDR gate。
+Courses non-literal translation judging is independent of Materials: it is fixed to `nvidia/nemotron-3-super-120b-a12b:free` + Nvidia-only and only sends minimal server-side word-meaning context; its real text gate cannot replace the ZDR gate for Materials native files.
 
-知识图画布动态加载 React Flow 与 ELK，按 level 建立从左到右泳道并用 sourceOrder 约束同层顺序；关联边弱化为虚线。节点拖动结束及自动布局后执行碰撞消解，位置/viewport 保存到 owner 私有 `knowledge_graph_layouts`。artifact 改版时只复用仍存在的 node ID，revision 冲突由 Web 拉取最新布局、合并非重叠节点后重试。详情永远在画布外：桌面右侧、移动端下方，hover/focus 临时预览，click 固定，Esc 解除。
+The knowledge-graph canvas loads React Flow and ELK dynamically, building left-to-right lanes by level with sourceOrder constraining order within a level; association edges are de-emphasized as dashed lines. Collision resolution runs after node drags and after auto-layout, and positions/viewport are saved to the owner-private `knowledge_graph_layouts`. When an artifact is revised, only positions of node IDs that still exist are reused, and on a revision conflict the Web app fetches the latest layout, merges non-overlapping nodes, and retries. Details always sit outside the canvas: on the right on desktop, below on mobile; hover/focus previews temporarily, click pins, and Esc releases.
 
-删除任务先由 service-role 事务锁行并进入 `deleting/cleaning`：queued 释放 reservation，已被 worker 接受的 processing consume 一次，终态不回退历史额度。BullMQ 删除待投递项后调用 worker cancel/purge；worker 取消 HTTPX await 和 Office 进程组，先重放 usage spool，再删除 0700 目录/checkpoint。只有 worker 返回 `purged=true` 才硬删 job/events/checkpoint；worker 不可达时 reconciler 重试，UI 保持 Cleaning up。provider usage 的 job UUID 是非 FK 审计引用，任务删除后仍保留。
+Deleting a job first has a service-role transaction lock the row and enter `deleting/cleaning`: queued releases the reservation, a processing job already accepted by the worker consumes one run, and terminal states do not roll back historical allowances. BullMQ removes the pending delivery item and then calls the worker cancel/purge; the worker cancels the HTTPX await and the Office process group, replays the usage spool first, and then deletes the 0700 directory/checkpoint. The job/events/checkpoint are hard-deleted only after the worker returns `purged=true`; when the worker is unreachable the reconciler retries, and the UI stays on Cleaning up. Provider usage's job UUID is a non-FK audit reference and is kept after the job is deleted.
 
-## 7. 数据库与 Storage
+## 7. Database and Storage
 
-### 7.1 当前表
+### 7.1 Current tables
 
-| 数据域 | 表 |
+| Domain | Tables |
 |---|---|
-| 用户 | `profiles` |
-| 课程资料 | `courses`, `materials` |
-| 通知反馈 | `notifications`, `feedback` |
-| 社区 | `posts`, `comments`, `post_likes`, `post_favorites`, `follows`, `tags` |
-| 计划 | `study_goals`, `study_tasks` |
-| 成长积分/反滥用（0039 生产） | `point_entries`, `point_event_states`, `point_daily_windows`, `point_daily_award_claims`, `point_moderation_actions`, `point_abuse_signals` |
-| 学习内容 | `learning_courses`, `learning_course_units`, `learning_course_words` |
-| 学习事实 | `learning_sessions`, `learning_session_items`, `learning_attempts`, `learning_word_progress`, `learning_spelling_translation_assessments` |
-| 复习 | `learning_review_schedules` |
-| 分享市场 | `learning_course_shares`, `learning_course_publications`, `learning_course_reports`, `learning_course_moderation_actions` |
-| 课程徽章/语音配额 | `badge_definitions`, `user_badge_awards`, `learning_speech_usage` |
-| Materials AI 计划/额度 | `ai_plans`, `ai_user_plans`, `ai_daily_usage` |
-| Materials AI 任务/缓存 | 生产：`generation_jobs`, `generation_job_events`, `ai_material_parse_cache`, `ai_provider_usage_events`；0046–0051 候选增加 checkpoints、`knowledge_node_questions`、usage `event_id`/upstream/pipeline、job cleanup 状态与 `knowledge_graph_layouts` |
-| 私有 Notes/来源 | `notes`, `note_materials`, `note_artifacts` |
-| 在线考试 | `exam_attempts`, `exam_attempt_answers`, `exam_attempt_operations` |
+| Users | `profiles` |
+| Course materials | `courses`, `materials` |
+| Notifications/feedback | `notifications`, `feedback` |
+| Community | `posts`, `comments`, `post_likes`, `post_favorites`, `follows`, `tags` |
+| Schedule | `study_goals`, `study_tasks` |
+| Growth points/anti-abuse (production 0039) | `point_entries`, `point_event_states`, `point_daily_windows`, `point_daily_award_claims`, `point_moderation_actions`, `point_abuse_signals` |
+| Learning content | `learning_courses`, `learning_course_units`, `learning_course_words` |
+| Learning facts | `learning_sessions`, `learning_session_items`, `learning_attempts`, `learning_word_progress`, `learning_spelling_translation_assessments` |
+| Review | `learning_review_schedules` |
+| Sharing/market | `learning_course_shares`, `learning_course_publications`, `learning_course_reports`, `learning_course_moderation_actions` |
+| Course badges/speech quotas | `badge_definitions`, `user_badge_awards`, `learning_speech_usage` |
+| Materials AI plans/allowances | `ai_plans`, `ai_user_plans`, `ai_daily_usage` |
+| Materials AI jobs/caches | Production: `generation_jobs`, `generation_job_events`, `ai_material_parse_cache`, `ai_provider_usage_events`; the 0046–0051 candidate adds checkpoints, `knowledge_node_questions`, usage `event_id`/upstream/pipeline, job cleanup states, and `knowledge_graph_layouts` |
+| Private Notes/sources | `notes`, `note_materials`, `note_artifacts` |
+| Online exams | `exam_attempts`, `exam_attempt_answers`, `exam_attempt_operations` |
 
-完整关系、字段和策略见 [ERD](guides/ERD.md)。
+See the [ERD](guides/ERD.md) for full relationships, fields, and policies.
 
-### 7.2 RLS 概览
+### 7.2 RLS overview
 
-- `profiles/courses/materials/notifications/study_*` 采用 owner-only 行策略；Profile 另以列级 UPDATE grant 和触发器保护服务端字段。0039 已把 Feedback 拆为 owner SELECT/INSERT，用户无 UPDATE/DELETE。
-- `posts/comments` 对认证用户公共读，作者写删；0039 已把帖子 INSERT/UPDATE 收敛为内容列白名单，并由 trigger 维护 owner、作者快照、计数、业务键和时间。
-- likes/favorites 只允许用户读写自己的记录。
-- follows 允许关注双方读取，关注者创建/删除。
-- tags 对认证用户公共读，当前也允许任意插入。
-- 私有 `materials` bucket 按对象路径第一段 `user_id` 隔离。
-- `community-media` 是公开桶，写删按用户文件夹限制。
-- `point_entries` 只允许用户读取自己的条目；客户端不能直接写，`point_event_states` 及 0039 新增的 claim/moderation/signal/audit 表对客户端完全隐藏。service-role 只经受控函数形成奖励和审核转换。
-- `learning_*` 私有表只允许 owner 读，客户端不能写内容、会话、尝试、progress、日程、徽章或奖励；评判事实表甚至不授予 owner SELECT。写入经 API 调用撤销了 `public/anon/authenticated` 权限的 service-role RPC。
-- 分享/出版物/举报/审核表不向匿名 PostgREST 开放。匿名分享和市场读取只能经过 API 返回转义、脱敏快照；出版快照由 trigger 保持不可变。
-- 生产 0041–0043 AI 私有表允许 authenticated 用户 SELECT 自己的 plan/额度/job/events/Notes/答卷；解析缓存、provider usage 与 operation 幂等表无客户端访问。0046–0051 候选进一步使 checkpoint 完全服务端私有，知识问答仅 owner SELECT、图布局仅 owner SELECT 且不能直写；所有创建/删除/清理/布局/usage/completion RPC 均只授予 service role。provider usage 的 job/attempt UUID 是不可变审计引用，新增 event UUID 防止断线回放重复计费。
+- `profiles/courses/materials/notifications/study_*` use owner-only row policies; Profile also protects server fields with column-level UPDATE grants and triggers. 0039 split Feedback into owner SELECT/INSERT, with no UPDATE/DELETE for users.
+- `posts/comments` are publicly readable by authenticated users, with author write/delete; 0039 narrowed post INSERT/UPDATE to a content-column allowlist, with triggers maintaining owner, author snapshot, counters, business key, and time.
+- likes/favorites only allow users to read and write their own records.
+- follows can be read by both parties, and created/deleted by the follower.
+- tags are publicly readable by authenticated users and currently also allow arbitrary inserts.
+- The private `materials` bucket is isolated by the `user_id` in the first segment of the object path.
+- `community-media` is a public bucket, with writes/deletes restricted to the user's folder.
+- `point_entries` only lets users read their own entries; clients cannot write directly, and `point_event_states` plus the claim/moderation/signal/audit tables added in 0039 are completely hidden from clients. service-role only forms reward and moderation transitions through controlled functions.
+- `learning_*` private tables only allow owner reads; clients cannot write content, sessions, attempts, progress, schedules, badges, or rewards, and the judgement fact table does not even grant owner SELECT. Writes go through the API calling service-role RPCs with `public/anon/authenticated` permissions revoked.
+- Share/publication/report/moderation tables are not open to anonymous PostgREST. Anonymous share and market reads can only go through the API, which returns escaped, redacted snapshots; publication snapshots are kept immutable by a trigger.
+- The production 0041–0043 AI private tables allow authenticated users to SELECT their own plan/allowances/jobs/events/Notes/answer sheets; the parse cache, provider usage, and operation idempotency tables have no client access. The 0046–0051 candidate further makes checkpoints completely server-private, knowledge Q&A owner-SELECT only, and graph layouts owner-SELECT only with no direct writes; every create/delete/cleanup/layout/usage/completion RPC is granted only to the service role. Provider usage's job/attempt UUIDs are immutable audit references, and the new event UUID prevents disconnect replays from double billing.
 
-### 7.3 已关闭项与剩余数据完整性边界
+### 7.3 Closed items and remaining data-integrity boundaries
 
-- 0008 已关闭 Profile 敏感列写入、内部 RPC 客户端 EXECUTE，以及赞/评论/原创/转发/任务删除重做累计获分问题。
-- points 使用 append-only entries、持久 event state、稳定业务键和冲正；Profile 的 points/level 只是账本投影。迁移前缓存先作为 `legacy_opening` 留痕，再由 0009 追加 reversal 归零，无法追溯为逐笔可信历史。
-- Courses 的尝试 append-only、progress 是保护投影；复习只有在会话完成时才写入不同本地日期并累计复习次数。+20 课程奖励使用用户与规范化不同词集合的 SHA-256 业务键，删除/重建/克隆不能重复领取。
-- 0039 已用内容列白名单与防御 trigger 补齐帖子 owner/快照/计数/时间边界；兼容期只保留会被服务器覆盖的 `updated_at` grant。
-- 0039 已验证 `study_goals.course_id` 以及 task 的 course/material/goal 均属于记录 owner；它不强制 material 必须与 task.course_id 是同一课程，这仍是产品级一致性改进项。
-- 0039 已移除 Feedback UPDATE/DELETE，状态只由 service-role 支持流程维护。
-- Storage 文件和 metadata 删除不是事务；社区媒体存在孤儿文件。
-- 生产 0039 已实现 points 冻结 decision、每日计分上限、人工 root-chain suppress/restore 和只待审协同信号。内容质量检测、自动处罚、审核 UI/申诉仍未实现；credits/VIP 虽已锁写，但没有商业事实账本。
+- 0008 closed Profile sensitive-column writes, client EXECUTE on internal RPCs, and points accumulation through like/comment/original/repost/task delete-and-redo.
+- Points use append-only entries, durable event state, stable business keys, and reversals; Profile's points/level are just ledger projections. The pre-migration cache was first recorded as `legacy_opening`, then zeroed by a reversal appended in 0009, and cannot be traced as trustworthy per-entry history.
+- Courses attempts are append-only and progress is a protected projection; reviews only write distinct local dates and accumulate review counts when the session completes. The +20 course reward uses a SHA-256 business key of the user and the normalized distinct word set, so deleting/recreating/cloning cannot claim it twice.
+- 0039 completed the post owner/snapshot/counter/time boundary with a content-column allowlist and defensive triggers; the compatibility period only kept the `updated_at` grant, whose values the server overwrites.
+- 0039 verifies that `study_goals.course_id` and a task's course/material/goal all belong to the record owner; it does not force the material to be in the same course as task.course_id, which remains a product-level consistency improvement.
+- 0039 removed Feedback UPDATE/DELETE; status is only maintained by the service-role support workflow.
+- Deleting Storage files and metadata is not transactional; community media has orphan files.
+- Production 0039 implements frozen points decisions, daily scoring caps, manual root-chain suppress/restore, and pending-review-only coordination signals. Content-quality detection, automatic penalties, and a moderation UI/appeals are still not implemented; credits/VIP are write-locked but have no commercial ledger of record.
 
-剩余授权/完整性项仍属于阶段 A；商业账本、反滥用和 Storage 治理必须在相应功能开放前完成。
+The remaining authorization/integrity items still belong to stage A; commercial ledgers, anti-abuse, and Storage governance must be completed before the corresponding features open.
 
-## 8. 当前部署
+## 8. Current deployment
 
-### 8.1 生产方案
+### 8.1 Production approach
 
-GitHub Actions 在 runner 上：
+On the runner, GitHub Actions:
 
-1. 运行 docs check、workspace typecheck、Vitest/jsdom/API 测试和 build。
-2. 自动暂存所有 0008 及之后迁移，先验证 0007 历史数据升级、opening reversal 与最新发布断言，再从空库重建本地 Supabase、lint，并执行真实 RLS/Storage/points/Courses E2E。
-3. 启动 Web/API 与 Azure/OpenRouter fake，以固定 WAV 执行 Playwright 登录→多单元创建→纠错/排序→四阶段（含限时拼写、翻译前测、语音回填和三处实时波形）→刷新续学→复习安排→发布/另一用户克隆。
-4. 新增 migration 时经受保护 environment 完成 dry-run、加密恢复点、CLI push 和验证；失败阻断应用。
-5. 构建 Web 与同 Git SHA 的 API/AI image，经预先核验 host key 的 SSH/SCP 上传；服务器不构建。
-6. 生产主机先以 `FEATURE_MATERIAL_AI=false` 启动隔离 AI/候选 API，执行 2G Office canary、真实 DeepSeek/MiMo 固定样本、临时目录清理，以及既有 Azure/OpenRouter/Courses gates；失败不激活 release。
-7. Supabase/Redis/AI readiness 和鉴权通过后开启 flag，再执行登录用户 Materials→队列→Notes→考试→评分→删除完整 smoke，最后原子切换 Web release并验证公网 Web/API。
-8. 应用验证失败自动恢复上一 Web/API 不可变 release；数据库保持向后兼容的 forward migration。
+1. Runs the docs check, workspace typecheck, Vitest/jsdom/API tests, and build.
+2. Automatically stages every migration from 0008 on, first verifying the 0007 historical data upgrade, opening reversals, and the latest release assertions, then rebuilds a local Supabase from an empty database, lints, and runs real RLS/Storage/points/Courses E2E.
+3. Starts Web/API with Azure/OpenRouter fakes and runs Playwright with fixed WAVs: sign in → multi-unit creation → error correction/reordering → four stages (including the timed spelling test, translation pre-test, voice fill-in, and three live waveforms) → refresh to resume → schedule a review → publish/clone as another user.
+4. When there are new migrations, completes dry-run, an encrypted recovery point, CLI push, and verification through the protected environment; failures block the app.
+5. Builds the Web app and same-Git-SHA API/AI images, and uploads them via SSH/SCP with a pre-verified host key; the server does not build.
+6. The production host first starts the isolated AI/candidate API with `FEATURE_MATERIAL_AI=false` and runs the 2 GB Office canary, fixed real DeepSeek/MiMo samples, temporary directory cleanup, and the existing Azure/OpenRouter/Courses gates; on failure the release is not activated.
+7. After Supabase/Redis/AI readiness and authentication pass, it turns on the flag, runs the full signed-in user Materials → queue → Notes → exam → grading → delete smoke, and finally atomically switches the Web release and verifies the public Web/API.
+8. If app verification fails, it automatically restores the previous immutable Web/API release; the database keeps backward-compatible forward migrations.
 
-服务器上宿主 nginx 托管 `/opt/nalanda/web`，把 `/api/` 反代到仅绑定 `127.0.0.1:8411` 的 API 容器。当前生产 compose 同时运行仅私网开放的 Redis 和 FastAPI AI；AI 不发布宿主端口，只接受 API 的独立内部 token。
-Courses 的合法整课 JSON 最坏情况超过 nginx 默认 1 MB：仓库参考 server block 与 Nest body parser 都设为 10 MB；评分 multipart 仍为 2 MB。CI 不自动改 certbot 管理的现网站点，所以首次启用前必须按发布手册同步并 reload nginx。
+On the server, host nginx serves `/opt/nalanda/web` and reverse-proxies `/api/` to the API container bound only to `127.0.0.1:8411`. The current production compose also runs Redis and FastAPI AI, open only on the private network; AI publishes no host port and only accepts the API's separate internal token.
+The worst case of a legitimate whole-course Courses JSON exceeds nginx's default 1 MB: the repository's reference server block and the Nest body parser are both set to 10 MB; scoring multipart is still 2 MB. CI does not automatically change the certbot-managed live site, so before first enabling it, nginx must be synced and reloaded per the release runbook.
 
-### 8.2 通用 2G 模板
+### 8.2 Generic 2 GB template
 
-`infra/hybrid-2g` 可启动 Caddy、API、AI、Redis；它仍是通用参考模板。当前生产的 nginx、API、AI 与 Redis 配置都位于 `infra/deploy`，不采用该模板的 Caddy 拓扑。
+`infra/hybrid-2g` can start Caddy, API, AI, and Redis; it remains a generic reference template. The current production nginx, API, AI, and Redis configuration is all in `infra/deploy`, which does not use this template's Caddy topology.
 
-### 8.3 发布局限
+### 8.3 Release limitations
 
-- API health 会真实验证 Supabase JWKS/PostgREST 与 Redis PING/HMAC 配置，AI health 验证 worker/queue/内部依赖就绪；它们仍不持续调用真实模型，也不覆盖 Storage、注册写入、完整 RLS 或浏览器登录路径。
-- Azure Speech 与 OpenRouter 的回归/Playwright 自动化使用 fake provider；生产激活前另以服务器密钥执行真实 provider gate。0037–0038 已于 2026-08-04 通过 Azure 合成中文 WAV→待激活 Nalanda API→真实 Fish Audio 的 gate 后发布；`transcriptionMatched=true` 证明固定样本与当时 endpoint/key/额度可用。该单次合成样本仍不代表真实口音、物理麦克风、持续可用率、准确率或费用对账。
-- 数据库 release archive 仍不含 Storage 文件字节，且 CI 不自动逆向生产数据。
-- 不可变 image/release 目前仍主要保留在单台服务器，缺少异地 registry 和自动容量策略。
-- SSH 部署用户在当前文档中为 root。
-- 仓库 nginx 文件不含 certbot 实际生成的完整 TLS 状态。
+- API health really verifies Supabase JWKS/PostgREST and the Redis PING/HMAC configuration, and AI health verifies worker/queue/internal dependencies are ready; they still don't call real models continuously, and don't cover Storage, sign-up writes, full RLS, or the browser sign-in path.
+- Azure Speech and OpenRouter regression/Playwright automation use fake providers; before production activation, real provider gates run separately with the server keys. 0037–0038 shipped on 2026-08-04 after passing the gate Azure-synthesized Chinese WAV → Nalanda API awaiting activation → real Fish Audio; `transcriptionMatched=true` proves the fixed sample and the endpoint/key/credit worked at that time. That single synthetic sample still does not represent real accents, physical microphones, continuous availability, accuracy, or cost reconciliation.
+- The database release archive still does not contain Storage file bytes, and CI does not automatically reverse production data.
+- Immutable images/releases are still mainly kept on a single server, with no off-site registry or automatic capacity policy.
+- The SSH deployment user is root in the current docs.
+- The repository nginx file does not contain the full TLS state certbot actually generated.
 
-操作流程见 [数据库发布与回滚](operations/DATABASE_RELEASE_ROLLBACK.md)、[备份恢复](operations/BACKUP_RECOVERY.md) 和 [监控告警](operations/OBSERVABILITY_ALERTING.md)。
+See [database release and rollback](operations/DATABASE_RELEASE_ROLLBACK.md), [backup and recovery](operations/BACKUP_RECOVERY.md), and [monitoring and alerting](operations/OBSERVABILITY_ALERTING.md) for operational procedures.
 
-## 9. 构建、测试与质量边界
+## 9. Build, test, and quality boundaries
 
-- Node 20、pnpm 9.12.3、Turborepo。
-- Web 使用 Vite；`vite build` 不等同于 TypeScript 类型检查。
-- Python AI 不属于 pnpm workspace，需要独立安装和启动。
-- 可执行测试命令和环境要求见 [测试指南](guides/TESTING.md)。
-- 默认 `pnpm test` 运行 Web jsdom、API/Courses/Materials AI 单元测试和发布工具测试；本机未设置显式开关时真实 RLS 套件安全跳过。PR/main workflow 启动一次性本地 Supabase，运行 0007→最新迁移升级夹具、空库重建、双用户 RLS/Storage/points/Courses/Materials AI E2E，以及 Courses 与 Materials→Notes→Exam Playwright；手工托管运行仍需隔离项目和 Ref 二次确认。
-- 历史实现笔记中的“已验证”必须能映射到仓库测试；不能复现的旧验证只能作为历史记录。
+- Node 20, pnpm 9.12.3, Turborepo.
+- The Web app uses Vite; `vite build` is not the same as TypeScript type checking.
+- The Python AI is not part of the pnpm workspace and needs to be installed and started separately.
+- See the [testing guide](guides/TESTING.md) for runnable test commands and environment requirements.
+- The default `pnpm test` runs Web jsdom, API/Courses/Materials AI unit tests, and release-tool tests; without the explicit local switch, the real RLS suite skips safely. The PR/main workflow starts a throwaway local Supabase and runs the 0007→latest migration upgrade fixture, an empty-database rebuild, two-user RLS/Storage/points/Courses/Materials AI E2E, and the Courses and Materials → Notes → Exam Playwright; manual hosted runs still need an isolated project and a second ref confirmation.
+- "Verified" in historical implementation notes must map to repository tests; old verifications that can't be reproduced are historical records only.
 
-## 10. 当前优先风险
+## 10. Current top risks
 
-- 0046–0051 尚未在真实 Supabase/生产应用，长任务恢复、图谱和 Luna 只能称为候选实现；必须由 CI migration/RLS、真实 OpenRouter/OpenAI 与公网 smoke 关闭门禁。
-- TTL 内 worker checkpoint 会包含私有 DocumentIR/已验证产物。目录权限、磁盘水位、sweeper 和“不得备份/记录正文”属于安全控制；主机被攻破时它仍是敏感数据。
-- prompt injection 检测无法数学上保证绝对正确；节点问题同样是不可信数据。任何模型输出都必须通过 schema、引用和产品约束，且不得获得工具/Web。
+- 0046–0051 have not been applied to real Supabase/the production app, so long-job recovery, the graph, and Luna can only be called candidate implementations; the gates must be closed by CI migration/RLS, real OpenRouter/OpenAI, and a public smoke test.
+- Within the TTL, worker checkpoints contain private DocumentIR/validated artifacts. Directory permissions, disk watermarks, the sweeper, and "never back up/log the content" are security controls; it is still sensitive data if the host is compromised.
+- Prompt-injection detection cannot be mathematically guaranteed correct; node questions are untrusted data too. Every model output must pass the schema, citations, and product constraints, and models never get tools/Web.
 
-1. 独立修复并重新验证最新 main 的真实 Materials AI PPTX provider gate；0052–0053 数据库 contract 已生产完成，不能通过放宽 provider gate 或重复碰运气来冒充应用发布。
-2. 在第一阶段生产观察中核对 points cap/审核/协同信号的误报、投影差异和 Redis 降级；再补完整审核 UI/申诉与内容质量检测。credits/VIP 另建商业账本。
-3. 实现 Courses 文件 AI 导入前先统一模型契约、人工确认、评测集、成本和隐私留存；当前禁用入口不能算能力。
-4. 为已上线 Courses/Azure/市场建立持续指标、成本对账和审核工作台；执行数据库/Storage/TTS 缓存恢复与告警演练。
-5. 逐步移除 `@ts-nocheck`/legacy 双实现并增加 URL 深链接，补全旧模块 API HTTP/浏览器 E2E。
+1. Independently fix and re-verify the latest main's real Materials AI PPTX provider gate; the 0052–0053 database contract is complete in production, and an app release must not be faked by loosening the provider gate or retrying for luck.
+2. During phase-one production observation, check points cap/moderation/coordination signal false positives, projection differences, and Redis degradation; then add a full moderation UI/appeals and content-quality detection. Build a separate commercial ledger for credits/VIP.
+3. Before implementing Courses AI file import, unify the model contract, human confirmation, evaluation set, cost, and privacy retention; the current disabled entry point does not count as a capability.
+4. Build continuous metrics, cost reconciliation, and a moderation workbench for the live Courses/Azure/market; run database/Storage/TTS cache recovery and alert drills.
+5. Gradually remove `@ts-nocheck`/the legacy duplicate implementations, add URL deep links, and complete API HTTP/browser E2E for the legacy modules.
 
-处理顺序和验收门见 [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md)。
+See [PROJECT_BLUEPRINT.md](PROJECT_BLUEPRINT.md) for processing order and acceptance gates.

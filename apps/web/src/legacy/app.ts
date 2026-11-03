@@ -4,19 +4,20 @@ import { ICON } from "./icons";
 import { initMaterials, mountMaterials } from "./materials";
 import { initNotifications, openNotifications, refreshNotifBadge } from "./notifications";
 import { initFeedback, mountFeedback } from "./feedback";
-import { initProfile, mountProfile, syncShellUser } from "./profile";
+import { initProfile, mountProfile, shellUserSubtitle, syncShellUser } from "./profile";
 import { initCommunity, mountCommunity, mountPost } from "./community";
 import { initSchedule, mountSchedule } from "./schedule";
 import { mountCourses } from "../features/courses/mount";
 import { mountCourseMarket } from "../features/courses/CourseMarket";
 import { mountAiNotes } from "../features/material-ai/mount";
-import { localize, toggleLocale } from "../i18n";
+import { localize, subscribeLocale, toggleLocale } from "../i18n";
 
 const VIEWS: any = {};
 let _root: any = null;
 let _opts: any = {};
 let _onResize: any = null;
 let _islandCleanup: any = null;
+let _localeCleanup: any = null;
 
 /* ============================================================
    Nalanda — app shell, routing, interactions
@@ -43,18 +44,18 @@ const INITIAL_S = {
 };
 
 const NAV = [
-  { sect:"Workspace" },
-  { id:"home", label:"Home", icon:"home" },
-  { id:"notes", label:"My Notes", icon:"notes", badge:"5" },
-  { id:"materials", label:"Materials", icon:"folder" },
-  { id:"courses", label:"Courses", icon:"quiz" },
-  { id:"schedule", label:"Schedule", icon:"calendar" },
-  { sect:"Discover" },
-  { id:"market", label:"Market", icon:"market" },
-  { id:"community", label:"Community", icon:"users" },
-  { sect:"You" },
-  { id:"profile", label:"Profile & Growth", icon:"chart" },
-  { id:"feedback", label:"Feedback", icon:"feedback" },
+  { sect:["Workspace","工作区"] },
+  { id:"home", label:["Home","首页"], icon:"home" },
+  { id:"notes", label:["My Notes","我的笔记"], icon:"notes", badge:"5" },
+  { id:"materials", label:["Materials","资料"], icon:"folder" },
+  { id:"courses", label:["Courses","课程"], icon:"quiz" },
+  { id:"schedule", label:["Schedule","学习计划"], icon:"calendar" },
+  { sect:["Discover","发现"] },
+  { id:"market", label:["Market","市场"], icon:"market" },
+  { id:"community", label:["Community","社区"], icon:"users" },
+  { sect:["You","我的"] },
+  { id:"profile", label:["Profile & Growth","资料与成长"], icon:"chart" },
+  { id:"feedback", label:["Feedback","反馈"], icon:"feedback" },
 ];
 
 const ROUTE_OF = { home:"home", notes:"notes", note:"notes", create:"notes",
@@ -86,7 +87,7 @@ function renderShell(){
           <div class="brand-mark">${ICON("notes")}</div>
           <div>
             <div class="brand-name">Nalanda</div>
-            <div class="brand-sub">Learn · Create · Share</div>
+            <div class="brand-sub" id="brandSub">${localize("Learn · Create · Share", "学习 · 创作 · 分享")}</div>
           </div>
         </div>
       </div>
@@ -96,29 +97,30 @@ function renderShell(){
           <div class="avatar" style="background:${DB.user.color}">${DB.user.initials}</div>
           <div class="uchip-meta fill">
             <div class="uchip-name">${DB.user.name}</div>
-            <div class="uchip-sub">Lv ${DB.user.level} · ${DB.user.levelName} · ${fmt(DB.user.credits)} cr</div>
+            <div class="uchip-sub">${shellUserSubtitle()}</div>
           </div>
         </div>
       </div>
     </aside>
     <div class="main">
       <header class="topbar">
-        <button class="icon-btn" id="railBtn" title="Toggle sidebar">${ICON("list")}</button>
+        <button class="icon-btn" id="railBtn">${ICON("list")}</button>
         <label class="search">
           ${ICON("search")}
-          <input placeholder="Search notes, materials, courses, people…" id="globalSearch"/>
+          <input id="globalSearch"/>
         </label>
         <div class="topbar-spacer"></div>
-        <button class="btn btn-primary btn-sm" data-go="create">${ICON("sparkles")}<span>Create</span></button>
+        <button class="btn btn-primary btn-sm" data-go="create">${ICON("sparkles")}<span id="createLabel"></span></button>
+        <button class="btn btn-sm" id="localeBtn" data-act="locale"></button>
         <button class="icon-btn" id="themeBtn">${ICON("moon")}</button>
-        <button class="icon-btn" id="bellBtn" data-act="notifications" title="通知" style="position:relative">${ICON("bell")}<span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:15px;height:15px;padding:0 4px;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:10px;font-weight:700;line-height:15px;text-align:center">0</span></button>
-        <button class="icon-btn" data-act="signOut" title="退出登录">${ICON("logout")}</button>
+        <button class="icon-btn" id="bellBtn" data-act="notifications" style="position:relative">${ICON("bell")}<span id="notif-badge" style="display:none;position:absolute;top:2px;right:2px;min-width:15px;height:15px;padding:0 4px;border-radius:9px;background:var(--accent);color:var(--on-accent);font-size:10px;font-weight:700;line-height:15px;text-align:center">0</span></button>
+        <button class="icon-btn" id="signOutBtn" data-act="signOut">${ICON("logout")}</button>
         <div class="avatar" style="background:${DB.user.color};width:34px;height:34px" data-go="profile">${DB.user.initials}</div>
       </header>
       <div class="content" id="content"></div>
     </div>`;
 
-  renderNav();
+  renderShellText();
   document.getElementById("themeBtn").addEventListener("click", toggleTheme);
   setTheme(document.documentElement.getAttribute("data-theme")||"light");
   document.getElementById("railBtn").addEventListener("click", ()=>{
@@ -130,12 +132,37 @@ function renderShell(){
   _root.addEventListener("click", onClick);
 }
 
+// Text in the persistent shell, re-applied whenever the interface language changes.
+function renderShellText(){
+  const setLabel = (id, label) => { const el = document.getElementById(id); if(el){ el.title = label; el.setAttribute("aria-label", label); } };
+  setLabel("railBtn", localize("Toggle sidebar", "切换侧栏"));
+  setLabel("themeBtn", localize("Toggle theme", "切换主题"));
+  setLabel("bellBtn", localize("Notifications", "通知"));
+  setLabel("signOutBtn", localize("Sign out", "退出登录"));
+  setLabel("localeBtn", localize("Switch to Chinese", "切换到英文"));
+  const localeBtn = document.getElementById("localeBtn"); if(localeBtn) localeBtn.textContent = localize("中文", "EN");
+  const search = document.getElementById("globalSearch"); if(search) search.placeholder = localize("Search notes, materials, courses, people…", "搜索笔记、资料、课程、用户…");
+  const create = document.getElementById("createLabel"); if(create) create.textContent = localize("Create", "创建");
+  const brandSub = document.getElementById("brandSub"); if(brandSub) brandSub.textContent = localize("Learn · Create · Share", "学习 · 创作 · 分享");
+  const userSub = _root && _root.querySelector(".uchip-sub"); if(userSub) userSub.textContent = shellUserSubtitle();
+  renderNav();
+}
+
+// React islands follow the locale on their own and keep in-progress state; legacy views re-render.
+function onLocaleChange(){
+  if(!_root) return;
+  renderShellText();
+  const reactiveRoute = S.route==="courses" || S.route==="notes" || (S.route==="note" && isUuid(S.noteId));
+  if(!reactiveRoute) go(S.route);
+}
+
 function renderNav(){
   document.getElementById("nav").innerHTML = NAV.map(n=>{
-    if(n.sect) return `<div class="nav-sect">${n.sect}</div>`;
+    if(n.sect) return `<div class="nav-sect">${localize(...n.sect)}</div>`;
     const active = ROUTE_OF[S.route]===n.id ? "active" : "";
-    return `<a class="nav-item ${active}" data-go="${n.id}" title="${n.label}">
-      ${ICON(n.icon)}<span class="nav-label">${n.label}</span>
+    const label = localize(...n.label);
+    return `<a class="nav-item ${active}" data-go="${n.id}" title="${label}">
+      ${ICON(n.icon)}<span class="nav-label">${label}</span>
       ${n.badge?`<span class="nav-badge">${n.badge}</span>`:""}</a>`;
   }).join("");
 }
@@ -214,26 +241,26 @@ const ACTIONS = {
   },
   runGen(){
     const version = _mountVersion;
-    toast("Generating from your material…");
+    toast(localize("Generating from your material…", "正在根据资料生成…"));
     clearTimeout(generationTimer);
     generationTimer = setTimeout(()=>{
       if(version !== _mountVersion || !_root) return;
-      toast("Note created — added to My Notes", "check");
+      toast(localize("Note created — added to My Notes", "笔记已创建，已加入我的笔记"), "check");
       go("note",{noteId:"n1",noteTab:"list"});
     }, 900);
   },
   marketFilter(t){ S.marketFilter = t.dataset.f; go("market"); },
   marketTab(t){ S.marketTab = t.dataset.marketTab; go("market"); },
   openBuy(t){ openModal(buyModal(t.dataset.k)); },
-  confirmBuy(t){ closeModal(); toast("Added to your notes — "+fmt(+t.dataset.price)+" credits spent","check"); },
+  confirmBuy(t){ closeModal(); toast(localize(`Added to your notes — ${fmt(+t.dataset.price)} credits spent`, `已加入你的笔记，花费 ${fmt(+t.dataset.price)} credits`),"check"); },
   closeModal(){ closeModal(); },
   like(t){ t.classList.toggle("liked"); const s=t.querySelector("span"); if(s){ let n=+s.dataset.n; n+=t.classList.contains("liked")?1:-1; s.dataset.n=n; s.textContent=fmt(n);} t.style.color = t.classList.contains("liked")?"var(--pink)":""; },
-  save(t){ t.classList.toggle("liked"); t.style.color = t.classList.contains("liked")?"var(--accent)":""; toast(t.classList.contains("liked")?"Saved":"Removed"); },
-  toast(t){ toast(t.dataset.msg || "Done","check"); },
+  save(t){ t.classList.toggle("liked"); t.style.color = t.classList.contains("liked")?"var(--accent)":""; toast(t.classList.contains("liked")?localize("Saved", "已收藏"):localize("Removed", "已移除")); },
+  toast(t){ toast(t.dataset.msg || localize("Done", "完成"),"check"); },
   toggleTask(t){ t.classList.toggle("done"); },
   signOut(){ if(_opts && _opts.onSignOut) _opts.onSignOut(); },
   notifications(){ openNotifications(); },
-  courseLocale(){ toggleLocale(); go(S.route); },
+  locale(){ toggleLocale(); },
 };
 
 /* ---------- modal + toast ---------- */
@@ -297,7 +324,7 @@ export function mountNalanda(container, opts){
     DB.user.name = nm;
     DB.user.handle = "@" + nm;
     DB.user.initials = nm.slice(0, 2).toUpperCase();
-    // 真实资料返回前不展示上一账号的财富/成长数据。
+    // Do not show the previous account's wealth/growth data before the real profile returns.
     DB.user.credits = 0;
     DB.user.points = 0;
     DB.user.level = 1;
@@ -315,7 +342,10 @@ export function mountNalanda(container, opts){
   go("home");
   refreshNotifBadge();
   syncShellUser();
+  if(_localeCleanup) _localeCleanup();
+  _localeCleanup = subscribeLocale(onLocaleChange);
   return () => {
+    if(_localeCleanup){ _localeCleanup(); _localeCleanup=null; }
     if(_islandCleanup){ try{ _islandCleanup(); }catch(e){} _islandCleanup=null; }
     try { if (_root === container) _root.innerHTML = ""; } catch (e) {}
     if (_onResize) window.removeEventListener("resize", _onResize);
@@ -324,7 +354,7 @@ export function mountNalanda(container, opts){
       _mountVersion++;
       clearTimeout(generationTimer); generationTimer = null;
       clearTimeout(toastTimer); toastTimer = null;
-      // 立即使所有在途请求失效；不能等到下一个账号 mount 才递增模块版本。
+      // Invalidate every in-flight request now; do not wait for the next account's mount to bump module versions.
       initMaterials(null, null, null);
       initNotifications(null, null, null);
       initFeedback(null, null, null);
@@ -344,20 +374,20 @@ export function mountNalanda(container, opts){
 VIEWS.home = function(){
   const u = DB.user;
   const stats = [
-    { ic:"clock", n:u.stats.hours+"h", l:"Studied this term" },
-    { ic:"notes", n:DB.notes.length, l:"Notes in library" },
-    { ic:"coin", n:fmt(u.credits), l:"Credits balance" },
-    { ic:"flame", n:"30", l:"Day streak" },
+    { ic:"clock", n:u.stats.hours+"h", l:localize("Studied this term", "本学期学习时长") },
+    { ic:"notes", n:DB.notes.length, l:localize("Notes in library", "笔记库中的笔记") },
+    { ic:"coin", n:fmt(u.credits), l:localize("Credits balance", "Credits 余额") },
+    { ic:"flame", n:"30", l:localize("Day streak", "连续学习天数") },
   ];
   return `<div class="wrap">
     <section class="hero">
       <div class="hero-glyph">${ICON("graph")}</div>
-      <div class="eyebrow">Good morning, ${u.name.split(" ")[0]}</div>
-      <h1 class="serif">Turn this week's chaos into one clean body of knowledge.</h1>
-      <p class="page-sub" style="margin-top:12px">You have <b>3 tasks</b> due before Friday and <b>2 new materials</b> waiting to become notes.</p>
+      <div class="eyebrow">${localize(`Good morning, ${u.name.split(" ")[0]}`, `早上好，${u.name.split(" ")[0]}`)}</div>
+      <h1 class="serif">${localize("Turn this week's chaos into one clean body of knowledge.", "把这一周的零散内容整理成一套清晰的知识体系。")}</h1>
+      <p class="page-sub" style="margin-top:12px">${localize("You have <b>3 tasks</b> due before Friday and <b>2 new materials</b> waiting to become notes.", "周五前你有 <b>3 个任务</b>到期，还有 <b>2 份新资料</b>等待生成笔记。")}</p>
       <div class="row gap-12 mt-24 wrap-flex">
-        <button class="btn btn-primary btn-lg" data-go="create">${ICON("sparkles")}<span>Create a note with AI</span></button>
-        <button class="btn btn-lg" data-go="schedule">${ICON("calendar")}<span>View study plan</span></button>
+        <button class="btn btn-primary btn-lg" data-go="create">${ICON("sparkles")}<span>${localize("Create a note with AI", "用 AI 创建笔记")}</span></button>
+        <button class="btn btn-lg" data-go="schedule">${ICON("calendar")}<span>${localize("View study plan", "查看学习计划")}</span></button>
       </div>
     </section>
 
@@ -366,7 +396,7 @@ VIEWS.home = function(){
         <div class="stat-n">${s.n}</div><div class="stat-l">${s.l}</div></div>`).join("")}
     </div>
 
-    <div class="sec-h"><h2 class="serif">Continue learning</h2><a class="btn btn-ghost btn-sm" data-go="materials">All courses ${ICON("chevright")}</a></div>
+    <div class="sec-h"><h2 class="serif">${localize("Continue learning", "继续学习")}</h2><a class="btn btn-ghost btn-sm" data-go="materials">${localize("All courses", "全部课程")} ${ICON("chevright")}</a></div>
     <div class="grid g-2">
       ${DB.courses.slice(0,4).map(c=>`
         <div class="card card-pad hoverable" data-go="materials" style="cursor:pointer">
@@ -374,7 +404,7 @@ VIEWS.home = function(){
             <div class="row gap-12">
               <div class="av" style="background:${c.color};width:42px;height:42px;border-radius:12px;font-size:13px">${c.code.split(" ")[0]}</div>
               <div><div style="font-weight:700;font-size:14px">${c.name}</div>
-                <div class="faint" style="font-size:12px">${c.code} · ${c.instr} · ${c.mats} materials</div></div>
+                <div class="faint" style="font-size:12px">${c.code} · ${c.instr} · ${localize(`${c.mats} materials`, `${c.mats} 份资料`)}</div></div>
             </div>
             <span class="chip chip-outline">${c.progress}%</span>
           </div>
@@ -384,7 +414,7 @@ VIEWS.home = function(){
 
     <div class="grid" style="grid-template-columns:1.4fr 1fr;margin-top:30px;align-items:start">
       <div>
-        <div class="sec-h" style="margin-top:0"><h2 class="serif">Recent notes</h2><a class="btn btn-ghost btn-sm" data-go="notes">Open library ${ICON("chevright")}</a></div>
+        <div class="sec-h" style="margin-top:0"><h2 class="serif">${localize("Recent notes", "最近笔记")}</h2><a class="btn btn-ghost btn-sm" data-go="notes">${localize("Open library", "打开笔记库")} ${ICON("chevright")}</a></div>
         <div class="card">
           ${DB.notes.slice(0,4).map(n=>`
             <div class="list-row" data-go="note" data-note="${n.id}" style="cursor:pointer;padding-left:16px;padding-right:16px">
@@ -396,7 +426,7 @@ VIEWS.home = function(){
         </div>
       </div>
       <div>
-        <div class="sec-h" style="margin-top:0"><h2 class="serif">Activity</h2><span class="chip chip-accent">${ICON("coin")} +405 today</span></div>
+        <div class="sec-h" style="margin-top:0"><h2 class="serif">${localize("Activity", "动态")}</h2><span class="chip chip-accent">${ICON("coin")} ${localize("+405 today", "今日 +405")}</span></div>
         <div class="card card-pad">
           ${DB.activity.map(a=>`
             <div class="row gap-12" style="padding:11px 0;border-bottom:1px solid var(--border-soft)">
@@ -456,19 +486,19 @@ function noteCard(n){
 /* ---------------- NOTE DETAIL (core feature) ---------------- */
 VIEWS.note = function(){
   const n = DB.notes.find(x=>x.id===S.noteId) || DB.notes[0];
-  const tabs = [["list","Knowledge List","list"],["quiz","Interactive Quiz","quiz"],["graph","Knowledge Graph","graph"],["exam","Mock Exam","exam"]];
+  const tabs = [["list",localize("Knowledge List", "知识清单"),"list"],["quiz",localize("Interactive Quiz", "互动测验"),"quiz"],["graph",localize("Knowledge Graph", "知识图谱"),"graph"],["exam",localize("Mock Exam", "模拟考试"),"exam"]];
   return `<div class="wrap">
-    <a class="btn btn-ghost btn-sm" data-go="notes" style="margin-bottom:18px">${ICON("chevleft")}<span>My Notes</span></a>
+    <a class="btn btn-ghost btn-sm" data-go="notes" style="margin-bottom:18px">${ICON("chevleft")}<span>${localize("My Notes", "我的笔记")}</span></a>
     <div class="page-head" style="margin-bottom:18px">
       <div>
-        <div class="row gap-8" style="margin-bottom:10px"><span class="chip chip-accent">${ICON("sparkles")} AI-generated</span><span class="chip chip-tag">${n.courseName}</span></div>
+        <div class="row gap-8" style="margin-bottom:10px"><span class="chip chip-accent">${ICON("sparkles")} ${localize("AI-generated", "AI 生成")}</span><span class="chip chip-tag">${n.courseName}</span></div>
         <h1 class="page-title serif">${n.title}</h1>
-        <p class="meta mt-8">${ICON("file")}<span>From <b style="color:var(--ink-soft)">${n.source}</b></span><span class="dot"></span><span>Updated ${n.updated}</span></p>
+        <p class="meta mt-8">${ICON("file")}<span>${localize("From", "来源")} <b style="color:var(--ink-soft)">${n.source}</b></span><span class="dot"></span><span>${localize("Updated", "更新于")} ${n.updated}</span></p>
       </div>
       <div class="row gap-8">
-        <button class="btn btn-sm" data-act="toast" data-msg="Note shared to market">${ICON("market")}<span>Sell</span></button>
-        <button class="btn btn-sm" data-act="toast" data-msg="Editing enabled">${ICON("edit")}<span>Edit</span></button>
-        <button class="btn btn-sm btn-primary" data-act="toast" data-msg="Exported as PDF">${ICON("download")}<span>Export</span></button>
+        <button class="btn btn-sm" data-act="toast" data-msg="${localize("Note shared to market", "笔记已发布到市场")}">${ICON("market")}<span>${localize("Sell", "出售")}</span></button>
+        <button class="btn btn-sm" data-act="toast" data-msg="${localize("Editing enabled", "已开启编辑")}">${ICON("edit")}<span>${localize("Edit", "编辑")}</span></button>
+        <button class="btn btn-sm btn-primary" data-act="toast" data-msg="${localize("Exported as PDF", "已导出为 PDF")}">${ICON("download")}<span>${localize("Export", "导出")}</span></button>
       </div>
     </div>
     <div class="tabs">
@@ -482,10 +512,10 @@ function tabList(){
   return `<div class="grid" style="grid-template-columns:1fr 280px;align-items:start">
     <div class="card card-pad">
       <div class="row between" style="margin-bottom:6px">
-        <h3 class="serif" style="font-size:18px">Structured knowledge</h3>
-        <span class="chip chip-outline">${DB.knowledge.length} concepts</span>
+        <h3 class="serif" style="font-size:18px">${localize("Structured knowledge", "结构化知识")}</h3>
+        <span class="chip chip-outline">${localize(`${DB.knowledge.length} concepts`, `${DB.knowledge.length} 个概念`)}</span>
       </div>
-      <p class="muted" style="font-size:13px;margin-bottom:6px">Auto-extracted and ordered by dependency. Click any concept to edit.</p>
+      <p class="muted" style="font-size:13px;margin-bottom:6px">${localize("Auto-extracted and ordered by dependency. Click any concept to edit.", "自动提取并按依赖关系排序。点击任意概念即可编辑。")}</p>
       ${DB.knowledge.map((k,i)=>`
         <div class="kitem">
           <div class="knum">${String(i+1).padStart(2,"0")}</div>
@@ -497,13 +527,13 @@ function tabList(){
         </div>`).join("")}
     </div>
     <aside class="card card-pad" style="position:sticky;top:8px">
-      <div class="eyebrow">From this note</div>
-      <h4 class="serif" style="font-size:15px;margin-bottom:12px">Generate more</h4>
-      ${[["quiz","quiz","Practice quiz"],["graph","graph","Knowledge graph"],["exam","exam","Mock exam"]].map(([t,ic,l])=>`
+      <div class="eyebrow">${localize("From this note", "基于本笔记")}</div>
+      <h4 class="serif" style="font-size:15px;margin-bottom:12px">${localize("Generate more", "继续生成")}</h4>
+      ${[["quiz","quiz",localize("Practice quiz", "练习测验")],["graph","graph",localize("Knowledge graph", "知识图谱")],["exam","exam",localize("Mock exam", "模拟考试")]].map(([t,ic,l])=>`
         <button class="btn btn-sm" style="width:100%;justify-content:flex-start;margin-bottom:8px" data-act="noteTab" data-tab="${t}">${ICON(ic)}<span>${l}</span></button>`).join("")}
       <div class="divider"></div>
-      <div class="eyebrow">Mastery</div>
-      <div class="row between" style="font-size:13px;margin:8px 0 6px"><span class="muted">Concepts reviewed</span><b>4 / 6</b></div>
+      <div class="eyebrow">${localize("Mastery", "掌握度")}</div>
+      <div class="row between" style="font-size:13px;margin:8px 0 6px"><span class="muted">${localize("Concepts reviewed", "已复习概念")}</span><b>4 / 6</b></div>
       <div class="bar"><i style="width:66%"></i></div>
     </aside>
   </div>`;
@@ -519,7 +549,7 @@ function tabQuiz(){
         const chosen = S.quiz[qi];
         const done = chosen!=null;
         return `<div class="quiz-q">
-          <div class="row gap-8" style="margin-bottom:4px"><span class="knum">${qi+1}</span><span class="chip chip-tag">Single choice</span></div>
+          <div class="row gap-8" style="margin-bottom:4px"><span class="knum">${qi+1}</span><span class="chip chip-tag">${localize("Single choice", "单选题")}</span></div>
           <h4 class="serif" style="font-size:16px;margin:6px 0 4px">${q.q}</h4>
           ${q.opts.map((o,oi)=>{
             let cls=""; let mk = String.fromCharCode(65+oi);
@@ -527,19 +557,19 @@ function tabQuiz(){
             return `<div class="opt ${cls}" ${done?'':`data-act="answer" data-q="${qi}" data-o="${oi}" style="cursor:pointer"`}>
               <span class="mk">${mk}</span><span>${o}</span></div>`;
           }).join("")}
-          ${done?`<div class="card-2" style="background:var(--accent-tint);border-radius:10px;padding:11px 13px;margin-top:12px;font-size:13px"><b style="color:var(--accent)">Why:</b> <span class="muted">${q.why}</span></div>`:""}
+          ${done?`<div class="card-2" style="background:var(--accent-tint);border-radius:10px;padding:11px 13px;margin-top:12px;font-size:13px"><b style="color:var(--accent)">${localize("Why:", "解析：")}</b> <span class="muted">${q.why}</span></div>`:""}
         </div>`;
       }).join("")}
     </div>
     <aside class="card card-pad" style="position:sticky;top:8px">
-      <div class="eyebrow">Session</div>
+      <div class="eyebrow">${localize("Session", "本轮")}</div>
       <div class="lvl-ring" style="--p:${total?Math.round(answered/total*100):0};width:96px;height:96px;margin:10px auto">
         <div style="width:74px;height:74px"><div style="font-family:var(--font-serif);font-size:22px;font-weight:600">${correct}/${total}</div></div>
       </div>
-      <div class="center muted" style="font-size:12.5px;margin-bottom:14px">${answered===total?`Score ${Math.round(correct/total*100)}% — well done`:`${answered} of ${total} answered`}</div>
-      <button class="btn btn-sm" style="width:100%" data-act="resetQuiz">${ICON("clock")}<span>Restart quiz</span></button>
+      <div class="center muted" style="font-size:12.5px;margin-bottom:14px">${answered===total?localize(`Score ${Math.round(correct/total*100)}% — well done`, `得分 ${Math.round(correct/total*100)}%，做得好`):localize(`${answered} of ${total} answered`, `已答 ${answered}/${total}`)}</div>
+      <button class="btn btn-sm" style="width:100%" data-act="resetQuiz">${ICON("clock")}<span>${localize("Restart quiz", "重新测验")}</span></button>
       <div class="divider"></div>
-      <p class="faint" style="font-size:12px">Quiz auto-generated from 18 source questions. ${total} shown in practice mode.</p>
+      <p class="faint" style="font-size:12px">${localize(`Quiz auto-generated from 18 source questions. ${total} shown in practice mode.`, `测验由 18 道原始题目自动生成，练习模式显示 ${total} 道。`)}</p>
     </aside>
   </div>`;
 }
@@ -551,13 +581,13 @@ function tabGraph(){
       ${DB.graph.nodes.map(n=>`<div class="gnode ${n.cls}" style="left:${n.x}%;top:${n.y}%">${n.label}</div>`).join("")}
     </div>
     <aside class="card card-pad" style="position:sticky;top:8px">
-      <div class="eyebrow">Knowledge graph</div>
-      <h4 class="serif" style="font-size:15px;margin-bottom:8px">8 concepts · 7 links</h4>
-      <p class="muted" style="font-size:13px">Nodes are concepts; edges are dependencies extracted from your material. Hover to highlight, drag to rearrange.</p>
+      <div class="eyebrow">${localize("Knowledge graph", "知识图谱")}</div>
+      <h4 class="serif" style="font-size:15px;margin-bottom:8px">${localize("8 concepts · 7 links", "8 个概念 · 7 条关系")}</h4>
+      <p class="muted" style="font-size:13px">${localize("Nodes are concepts; edges are dependencies extracted from your material. Hover to highlight, drag to rearrange.", "节点是概念，连线是从资料中提取的依赖关系。悬停可高亮，拖动可重新排列。")}</p>
       <div class="divider"></div>
-      <div class="row gap-8" style="font-size:12.5px;margin-bottom:7px"><span class="av" style="background:var(--accent);width:14px;height:14px"></span><span class="muted">Root concept</span></div>
-      <div class="row gap-8" style="font-size:12.5px"><span class="av" style="background:transparent;width:14px;height:14px;border:1.5px solid var(--accent-line)"></span><span class="muted">Sub-concept</span></div>
-      <button class="btn btn-sm mt-16" style="width:100%" data-act="toast" data-msg="Graph exported as PNG">${ICON("download")}<span>Export graph</span></button>
+      <div class="row gap-8" style="font-size:12.5px;margin-bottom:7px"><span class="av" style="background:var(--accent);width:14px;height:14px"></span><span class="muted">${localize("Root concept", "核心概念")}</span></div>
+      <div class="row gap-8" style="font-size:12.5px"><span class="av" style="background:transparent;width:14px;height:14px;border:1.5px solid var(--accent-line)"></span><span class="muted">${localize("Sub-concept", "子概念")}</span></div>
+      <button class="btn btn-sm mt-16" style="width:100%" data-act="toast" data-msg="${localize("Graph exported as PNG", "图谱已导出为 PNG")}">${ICON("download")}<span>${localize("Export graph", "导出图谱")}</span></button>
     </aside>
   </div>`;
 }
@@ -567,7 +597,7 @@ function tabExam(){
   return `<div class="grid" style="grid-template-columns:1fr 280px;align-items:start">
     <div class="exam-paper">
       <div class="exam-head">
-        <div class="eyebrow" style="margin-bottom:6px">Nalanda · Generated paper</div>
+        <div class="eyebrow" style="margin-bottom:6px">${localize("Nalanda · Generated paper", "Nalanda · 生成试卷")}</div>
         <h2 class="serif" style="font-size:22px">${e.title}</h2>
         <p class="faint" style="font-size:12.5px;margin-top:6px">${e.meta}</p>
       </div>
@@ -578,14 +608,14 @@ function tabExam(){
         </div>`).join("")}
     </div>
     <aside class="card card-pad" style="position:sticky;top:8px">
-      <div class="eyebrow">Mock exam</div>
-      <h4 class="serif" style="font-size:15px;margin-bottom:8px">Exam-ready paper</h4>
-      <p class="muted" style="font-size:13px">Difficulty calibrated to your course's past papers and the concepts in this note.</p>
+      <div class="eyebrow">${localize("Mock exam", "模拟考试")}</div>
+      <h4 class="serif" style="font-size:15px;margin-bottom:8px">${localize("Exam-ready paper", "可直接使用的试卷")}</h4>
+      <p class="muted" style="font-size:13px">${localize("Difficulty calibrated to your course's past papers and the concepts in this note.", "难度根据课程往年试卷和本笔记中的概念校准。")}</p>
       <div class="divider"></div>
-      <div class="row between" style="font-size:13px;margin-bottom:8px"><span class="muted">Difficulty</span><span class="chip chip-accent">Hard</span></div>
-      <div class="row between" style="font-size:13px"><span class="muted">Est. time</span><b>120 min</b></div>
-      <button class="btn btn-sm btn-primary mt-16" style="width:100%" data-act="toast" data-msg="Timed attempt started">${ICON("play")}<span>Start timed attempt</span></button>
-      <button class="btn btn-sm mt-8" style="width:100%" data-act="toast" data-msg="Exported as PDF">${ICON("download")}<span>Export PDF</span></button>
+      <div class="row between" style="font-size:13px;margin-bottom:8px"><span class="muted">${localize("Difficulty", "难度")}</span><span class="chip chip-accent">${localize("Hard", "困难")}</span></div>
+      <div class="row between" style="font-size:13px"><span class="muted">${localize("Est. time", "预计用时")}</span><b>${localize("120 min", "120 分钟")}</b></div>
+      <button class="btn btn-sm btn-primary mt-16" style="width:100%" data-act="toast" data-msg="${localize("Timed attempt started", "计时作答已开始")}">${ICON("play")}<span>${localize("Start timed attempt", "开始计时作答")}</span></button>
+      <button class="btn btn-sm mt-8" style="width:100%" data-act="toast" data-msg="${localize("Exported as PDF", "已导出为 PDF")}">${ICON("download")}<span>${localize("Export PDF", "导出 PDF")}</span></button>
     </aside>
   </div>`;
 }
@@ -593,40 +623,40 @@ function tabExam(){
 /* ---------------- CREATE FLOW ---------------- */
 VIEWS.create = function(){
   const gens = [
-    { k:"list", ic:"list", t:"Knowledge list", d:"Structured, dependency-ordered concept breakdown" },
-    { k:"quiz", ic:"quiz", t:"Interactive quiz", d:"Auto-graded practice questions with explanations" },
-    { k:"graph", ic:"graph", t:"Knowledge graph", d:"Visual concept map of how ideas connect" },
-    { k:"exam", ic:"exam", t:"Mock exam", d:"Full-length practice paper in your course's style" },
+    { k:"list", ic:"list", t:localize("Knowledge list", "知识清单"), d:localize("Structured, dependency-ordered concept breakdown", "按依赖关系排序的结构化概念拆解") },
+    { k:"quiz", ic:"quiz", t:localize("Interactive quiz", "互动测验"), d:localize("Auto-graded practice questions with explanations", "自动判分并附解析的练习题") },
+    { k:"graph", ic:"graph", t:localize("Knowledge graph", "知识图谱"), d:localize("Visual concept map of how ideas connect", "展示概念如何关联的可视化图谱") },
+    { k:"exam", ic:"exam", t:localize("Mock exam", "模拟考试"), d:localize("Full-length practice paper in your course's style", "符合课程风格的完整练习试卷") },
   ];
   return `<div class="wrap">
-    <a class="btn btn-ghost btn-sm" data-go="notes" style="margin-bottom:18px">${ICON("chevleft")}<span>My Notes</span></a>
-    <div class="eyebrow">AI creation</div>
-    <h1 class="page-title serif">Create a note</h1>
-    <p class="page-sub">Pick your source material, choose what to generate, and Nalanda builds it.</p>
+    <a class="btn btn-ghost btn-sm" data-go="notes" style="margin-bottom:18px">${ICON("chevleft")}<span>${localize("My Notes", "我的笔记")}</span></a>
+    <div class="eyebrow">${localize("AI creation", "AI 创作")}</div>
+    <h1 class="page-title serif">${localize("Create a note", "创建笔记")}</h1>
+    <p class="page-sub">${localize("Pick your source material, choose what to generate, and Nalanda builds it.", "选择资料和要生成的内容，Nalanda 会帮你完成。")}</p>
 
     <div class="create-step mt-24">
       <div class="step-dot">1</div>
       <div class="fill">
-        <h3 class="serif" style="font-size:17px;margin-bottom:3px">Choose source material</h3>
-        <p class="muted" style="font-size:13px;margin-bottom:14px">From <b>COGS 210 · Foundations of Cognition</b></p>
+        <h3 class="serif" style="font-size:17px;margin-bottom:3px">${localize("Choose source material", "选择资料")}</h3>
+        <p class="muted" style="font-size:13px;margin-bottom:14px">${localize("From", "来自")} <b>COGS 210 · Foundations of Cognition</b></p>
         <div class="grid g-2">
           ${DB.materials.filter(m=>m.course==="c1").map((m,i)=>`
             <label class="gen-card ${i===0?'sel':''}" style="cursor:pointer">
               <span class="mat-ic">${ICON("file")}<span class="ftype ft-${m.type}" style="position:absolute;bottom:-6px">${m.type.toUpperCase()}</span></span>
               <div class="fill"><div style="font-weight:650;font-size:13.5px">${m.name}</div>
-                <div class="faint" style="font-size:12px">${m.size} · ${m.pages} pages</div></div>
+                <div class="faint" style="font-size:12px">${m.size} · ${localize(`${m.pages} pages`, `${m.pages} 页`)}</div></div>
               <span class="mk" style="width:22px;height:22px;border-radius:6px;border:1.5px solid var(--border-strong);display:grid;place-items:center;color:var(--accent)">${i===0?ICON("check"):""}</span>
             </label>`).join("")}
         </div>
-        <button class="btn btn-sm mt-12">${ICON("upload")}<span>Upload new material</span></button>
+        <button class="btn btn-sm mt-12">${ICON("upload")}<span>${localize("Upload new material", "上传新资料")}</span></button>
       </div>
     </div>
 
     <div class="create-step mt-24">
       <div class="step-dot">2</div>
       <div class="fill">
-        <h3 class="serif" style="font-size:17px;margin-bottom:3px">What should Nalanda generate?</h3>
-        <p class="muted" style="font-size:13px;margin-bottom:14px">Select one or more — they'll all live inside one note.</p>
+        <h3 class="serif" style="font-size:17px;margin-bottom:3px">${localize("What should Nalanda generate?", "要让 Nalanda 生成什么？")}</h3>
+        <p class="muted" style="font-size:13px;margin-bottom:14px">${localize("Select one or more — they'll all live inside one note.", "可多选，所有内容都会放在同一篇笔记里。")}</p>
         <div class="grid g-2">
           ${gens.map(g=>`
             <div class="gen-card ${S.genSel.includes(g.k)?'sel':''}" data-act="genToggle" data-gen="${g.k}" style="cursor:pointer">
@@ -642,19 +672,19 @@ VIEWS.create = function(){
     <div class="create-step mt-24">
       <div class="step-dot">3</div>
       <div class="fill">
-        <h3 class="serif" style="font-size:17px;margin-bottom:3px">Tune & generate</h3>
-        <p class="muted" style="font-size:13px;margin-bottom:14px">${S.genSel.length} output${S.genSel.length===1?'':'s'} selected.</p>
+        <h3 class="serif" style="font-size:17px;margin-bottom:3px">${localize("Tune & generate", "调整并生成")}</h3>
+        <p class="muted" style="font-size:13px;margin-bottom:14px">${localize(`${S.genSel.length} output${S.genSel.length===1?'':'s'} selected.`, `已选择 ${S.genSel.length} 项输出。`)}</p>
         <div class="card card-pad">
           <div class="row between wrap-flex gap-16">
-            <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Depth</div>
-              <div class="row gap-6">${["Concise","Balanced","Exhaustive"].map((d,i)=>`<span class="chip ${i===1?'chip-accent':'chip-outline'}">${d}</span>`).join("")}</div></div>
-            <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Language</div>
-              <div class="row gap-6"><span class="chip chip-accent">English</span><span class="chip chip-outline">中文</span></div></div>
-            <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Cost</div>
+            <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">${localize("Depth", "深度")}</div>
+              <div class="row gap-6">${[localize("Concise", "简洁"),localize("Balanced", "均衡"),localize("Exhaustive", "详尽")].map((d,i)=>`<span class="chip ${i===1?'chip-accent':'chip-outline'}">${d}</span>`).join("")}</div></div>
+            <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">${localize("Language", "语言")}</div>
+              <div class="row gap-6"><span class="chip chip-accent">English</span><span class="chip chip-outline">${localize("Chinese", "中文")}</span></div></div>
+            <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">${localize("Cost", "费用")}</div>
               <span class="chip chip-accent">${ICON("coin")} 25 credits</span></div>
           </div>
           <div class="divider"></div>
-          <button class="btn btn-primary btn-lg" data-act="runGen" style="width:100%;justify-content:center">${ICON("sparkles")}<span>Generate note</span></button>
+          <button class="btn btn-primary btn-lg" data-act="runGen" style="width:100%;justify-content:center">${ICON("sparkles")}<span>${localize("Generate note", "生成笔记")}</span></button>
         </div>
       </div>
     </div>
@@ -714,39 +744,39 @@ ACTIONS.upload = function(){ toast("Upload — choose a course to file it under"
 VIEWS.market = function(){
   if(S.marketTab==="courses") return `<div class="wrap wrap-wide">
     <div class="page-head"><div><div class="eyebrow">${localize("Marketplace", "市场")}</div><h1 class="page-title">${localize("Market", "市场")}</h1>
-      <p class="page-sub">${localize("Note Market keeps demo data; Course Market provides real, free clones from independent snapshots.", "Note Market 保留演示数据；Course Market 提供真实、免费、独立快照克隆。")}</p></div><button class="btn btn-sm" data-act="courseLocale" aria-label="${localize("Switch to Chinese", "切换为英文")}">${localize("中文", "EN")}</button></div>
+      <p class="page-sub">${localize("Note Market keeps demo data; Course Market provides real, free clones from independent snapshots.", "Note Market 保留演示数据；Course Market 提供真实、免费、独立快照克隆。")}</p></div></div>
     <div class="tabs"><button class="tab" data-act="marketTab" data-market-tab="notes">${localize("Note Market · Demo", "笔记市场 · 演示")}</button><button class="tab active" data-act="marketTab" data-market-tab="courses">${localize("Course Market", "课程市场")}</button></div>
     <div id="course-market-root"></div></div>`;
-  const cats = ["All","Free","Top rated","Sciences","CS & Math","Premium"];
+  const cats = [["All","全部"],["Free","免费"],["Top rated","高分"],["Sciences","理科"],["CS & Math","计算机与数学"],["Premium","精品"]];
   let list = DB.market.slice();
   if(S.marketFilter==="Free") list = list.filter(m=>m.free);
   if(S.marketFilter==="Top rated") list = list.slice().sort((a,b)=>b.rating-a.rating);
   if(S.marketFilter==="Premium") list = list.filter(m=>m.price>=110);
   return `<div class="wrap wrap-wide">
-    <div class="tabs"><button class="tab active" data-act="marketTab" data-market-tab="notes">Note Market · Demo</button><button class="tab" data-act="marketTab" data-market-tab="courses">${localize("Course Market", "课程市场")}</button></div>
+    <div class="tabs"><button class="tab active" data-act="marketTab" data-market-tab="notes">${localize("Note Market · Demo", "笔记市场 · 演示")}</button><button class="tab" data-act="marketTab" data-market-tab="courses">${localize("Course Market", "课程市场")}</button></div>
     <div class="page-head">
-      <div><div class="eyebrow">Marketplace</div><h1 class="page-title">Note Market</h1>
-        <p class="page-sub">Buy and sell exam-ready notes. Purchases drop straight into your library; creators earn credits.</p></div>
-      <button class="btn btn-primary" data-act="toast" data-msg="Listing flow opened">${ICON("plus")}<span>Sell a note</span></button>
+      <div><div class="eyebrow">${localize("Marketplace", "市场")}</div><h1 class="page-title">${localize("Note Market", "笔记市场")}</h1>
+        <p class="page-sub">${localize("Buy and sell exam-ready notes. Purchases drop straight into your library; creators earn credits.", "买卖可直接备考的笔记。购买后直接进入你的笔记库，创作者获得 credits。")}</p></div>
+      <button class="btn btn-primary" data-act="toast" data-msg="${localize("Listing flow opened", "已打开上架流程")}">${ICON("plus")}<span>${localize("Sell a note", "出售笔记")}</span></button>
     </div>
 
     <div class="card card-pad" style="background:linear-gradient(120deg,var(--accent-tint),var(--card));border-color:var(--accent-line);margin-bottom:22px">
       <div class="row between wrap-flex gap-16">
         <div class="row gap-16">
           <div class="badge-medal" style="width:48px;height:48px;font-size:20px">${ICON("crown")}</div>
-          <div><div class="eyebrow" style="margin-bottom:2px">Editor's pick · this week</div>
+          <div><div class="eyebrow" style="margin-bottom:2px">${localize("Editor's pick · this week", "本周编辑精选")}</div>
             <h3 class="serif" style="font-size:18px">Neuroanatomy Visual Notes — by Kenji T.</h3>
-            <p class="muted" style="font-size:13px">5.0 ★ · 640 sold · hand-illustrated, clinically annotated.</p></div>
+            <p class="muted" style="font-size:13px">${localize("5.0 ★ · 640 sold · hand-illustrated, clinically annotated.", "5.0 ★ · 已售 640 · 手绘插图，附临床注释。")}</p></div>
         </div>
-        <button class="btn btn-primary" data-act="openBuy" data-k="k4">View note</button>
+        <button class="btn btn-primary" data-act="openBuy" data-k="k4">${localize("View note", "查看笔记")}</button>
       </div>
     </div>
 
     <div class="row between wrap-flex" style="margin-bottom:16px">
       <div class="row gap-8 wrap-flex">
-        ${cats.map(c=>`<button class="chip ${S.marketFilter===c?'chip-accent':'chip-outline'}" data-act="marketFilter" data-f="${c}">${c}</button>`).join("")}
+        ${cats.map(([c,zh])=>`<button class="chip ${S.marketFilter===c?'chip-accent':'chip-outline'}" data-act="marketFilter" data-f="${c}">${localize(c, zh)}</button>`).join("")}
       </div>
-      <span class="chip chip-tag">${ICON("filter")} ${list.length} notes</span>
+      <span class="chip chip-tag">${ICON("filter")} ${localize(`${list.length} notes`, `${list.length} 篇笔记`)}</span>
     </div>
 
     <div class="grid g-3">
@@ -757,7 +787,7 @@ VIEWS.market = function(){
 function marketCard(m){
   return `<div class="card ncard hoverable" style="cursor:pointer" data-act="openBuy" data-k="${m.id}">
     <div class="ncard-top" style="height:108px;background:${m.grad}">
-      <div style="position:absolute;top:11px;right:11px">${m.free?`<span class="chip" style="background:rgba(255,255,255,.25);color:#fff">Free</span>`:`<span class="chip" style="background:rgba(255,255,255,.25);color:#fff">${ICON("coin")} ${m.price}</span>`}</div>
+      <div style="position:absolute;top:11px;right:11px">${m.free?`<span class="chip" style="background:rgba(255,255,255,.25);color:#fff">${localize("Free", "免费")}</span>`:`<span class="chip" style="background:rgba(255,255,255,.25);color:#fff">${ICON("coin")} ${m.price}</span>`}</div>
       <span class="chip" style="background:rgba(255,255,255,.2);color:#fff;backdrop-filter:blur(4px)">${m.course}</span>
     </div>
     <div class="ncard-body">
@@ -768,7 +798,7 @@ function marketCard(m){
         <div class="row gap-8">${av(m.ai,m.color,26)}<span class="faint" style="font-size:12px">${m.author}</span></div>
         <div class="row gap-12">
           <span class="rating">${ICON("star")}${m.rating}</span>
-          <span class="price">${m.free?'<span class="cr">Free</span>':`<span class="cr">${m.price}</span> cr`}</span>
+          <span class="price">${m.free?`<span class="cr">${localize("Free", "免费")}</span>`:`<span class="cr">${m.price}</span> cr`}</span>
         </div>
       </div>
     </div>
@@ -784,18 +814,18 @@ function buyModal(id){
     <div class="modal-pad">
       <h2 class="serif" style="font-size:23px;margin-bottom:6px">${m.title}</h2>
       <div class="row gap-12 wrap-flex" style="margin-bottom:14px">
-        <div class="row gap-8">${av(m.ai,m.color,28)}<span class="muted" style="font-size:13px">by <b style="color:var(--ink)">${m.author}</b></span></div>
+        <div class="row gap-8">${av(m.ai,m.color,28)}<span class="muted" style="font-size:13px">${localize("by", "作者")} <b style="color:var(--ink)">${m.author}</b></span></div>
         <span class="rating">${ICON("star")}${m.rating}</span>
-        <span class="meta">${ICON("download")} ${fmt(m.sales)} sold</span>
+        <span class="meta">${ICON("download")} ${localize(`${fmt(m.sales)} sold`, `已售 ${fmt(m.sales)}`)}</span>
       </div>
-      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:14px">${m.desc} Includes lifetime updates and is added directly to your personal note library on purchase.</p>
+      <p class="muted" style="font-size:14px;line-height:1.6;margin-bottom:14px">${m.desc} ${localize("Includes lifetime updates and is added directly to your personal note library on purchase.", "包含终身更新，购买后直接加入你的个人笔记库。")}</p>
       <div class="row gap-8 wrap-flex" style="margin-bottom:18px">${m.tags.map(t=>`<span class="chip chip-tag">${t}</span>`).join("")}</div>
       <div class="card-2" style="background:var(--accent-tint);border-radius:12px;padding:14px 16px;display:flex;align-items:center;justify-content:space-between">
-        <div><div class="faint" style="font-size:12px">Price</div>
-          <div class="price" style="font-size:24px">${m.free?'<span class="cr">Free</span>':`<span class="cr">${m.price}</span> credits`}</div></div>
-        <button class="btn btn-primary btn-lg" data-act="confirmBuy" data-price="${m.price}">${ICON(m.free?"download":"coin")}<span>${m.free?'Add to library':'Buy & add to library'}</span></button>
+        <div><div class="faint" style="font-size:12px">${localize("Price", "价格")}</div>
+          <div class="price" style="font-size:24px">${m.free?`<span class="cr">${localize("Free", "免费")}</span>`:`<span class="cr">${m.price}</span> credits`}</div></div>
+        <button class="btn btn-primary btn-lg" data-act="confirmBuy" data-price="${m.price}">${ICON(m.free?"download":"coin")}<span>${m.free?localize("Add to library", "加入笔记库"):localize("Buy & add to library", "购买并加入笔记库")}</span></button>
       </div>
-      <p class="faint center" style="font-size:11.5px;margin-top:12px">Your balance: ${fmt(DB.user.credits)} credits · Creator earns ${Math.round(m.price*0.7)} cr</p>
+      <p class="faint center" style="font-size:11.5px;margin-top:12px">${localize(`Your balance: ${fmt(DB.user.credits)} credits · Creator earns ${Math.round(m.price*0.7)} cr`, `你的余额：${fmt(DB.user.credits)} credits · 创作者获得 ${Math.round(m.price*0.7)} cr`)}</p>
     </div>
   </div>`;
 }

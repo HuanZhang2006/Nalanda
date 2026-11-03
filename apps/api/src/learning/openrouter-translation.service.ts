@@ -53,7 +53,7 @@ function parseDecision(payload: unknown): ProviderDecision {
   if (typeof root.provider !== "string" || root.provider.toLocaleLowerCase() !== PROVIDER_SLUG) {
     throw new BadGatewayException({
       code: "TRANSLATION_PROVIDER_INVALID",
-      message: "翻译判分服务未使用指定供应商",
+      message: "The translation checker did not use the required provider.",
     });
   }
   const message = root.choices?.[0]?.message;
@@ -77,7 +77,7 @@ function parseDecision(payload: unknown): ProviderDecision {
     } catch {
       throw new BadGatewayException({
         code: "TRANSLATION_PROVIDER_INVALID",
-        message: "翻译判分服务返回了无效结果",
+        message: "The translation checker returned an invalid result.",
       });
     }
   }
@@ -91,7 +91,7 @@ function parseDecision(payload: unknown): ProviderDecision {
   ) {
     throw new BadGatewayException({
       code: "TRANSLATION_PROVIDER_INVALID",
-      message: "翻译判分服务返回了无效结果",
+      message: "The translation checker returned an invalid result.",
     });
   }
   const fallbackFeedback = value.correct ? DEFAULT_FEEDBACK.correct : DEFAULT_FEEDBACK.incorrect;
@@ -222,18 +222,18 @@ export class OpenRouterTranslationService {
         if (error instanceof DOMException && error.name === "TimeoutError") {
           throw new GatewayTimeoutException({
             code: "TRANSLATION_PROVIDER_TIMEOUT",
-            message: "翻译判分服务连接超时",
+            message: "The translation checker timed out.",
           });
         }
         throw new BadGatewayException({
           code: "TRANSLATION_PROVIDER_ERROR",
-          message: "翻译判分服务暂不可用",
+          message: "The translation checker is temporarily unavailable.",
         });
       }
       if (response.status === 429) {
         throw new HttpException({
           code: "TRANSLATION_PROVIDER_RATE_LIMIT",
-          message: "翻译判分服务繁忙，请稍后重试",
+          message: "The translation checker is busy. Please try again shortly.",
         }, 503);
       }
       if (!response.ok) {
@@ -261,7 +261,7 @@ export class OpenRouterTranslationService {
         }));
         throw new BadGatewayException({
           code: "TRANSLATION_PROVIDER_ERROR",
-          message: "翻译判分服务暂不可用",
+          message: "The translation checker is temporarily unavailable.",
         });
       }
       try {
@@ -283,7 +283,7 @@ export class OpenRouterTranslationService {
     }
     throw firstInvalid ?? new BadGatewayException({
       code: "TRANSLATION_PROVIDER_INVALID",
-      message: "翻译判分服务返回了无效结果",
+      message: "The translation checker returned an invalid result.",
     });
   }
 
@@ -297,13 +297,13 @@ export class OpenRouterTranslationService {
     const wordId = assertUuid(String(body?.wordId || ""), "wordId");
     const attemptId = assertUuid(String(body?.attemptId || ""), "attemptId");
     if (!Number.isSafeInteger(body?.expectedRevision) || body.expectedRevision < 0) {
-      throw new BadRequestException({ code: "INVALID_REVISION", message: "会话版本无效" });
+      throw new BadRequestException({ code: "INVALID_REVISION", message: "The learning-session version is invalid." });
     }
     const answer = typeof body?.answer === "string" ? body.answer.normalize("NFKC").trim() : "";
     if (!answer || answer.length > 500) {
       throw new BadRequestException({
         code: "INVALID_TRANSLATION_ANSWER",
-        message: "翻译答案需为 1–500 个字符",
+        message: "Enter a translation between 1 and 500 characters.",
       });
     }
     const config = this.configuration();
@@ -322,7 +322,7 @@ export class OpenRouterTranslationService {
     if (claim.conflict) {
       throw new HttpException({
         code: "SESSION_REVISION_CONFLICT",
-        message: "学习进度已在其它位置更新",
+        message: "Learning progress was updated elsewhere.",
         currentRevision: Number(claim.current_revision),
       }, 409);
     }
@@ -335,7 +335,7 @@ export class OpenRouterTranslationService {
     if (claim.pending) {
       throw new HttpException({
         code: "TRANSLATION_ASSESSMENT_PENDING",
-        message: "翻译判分仍在处理中，请稍后重试",
+        message: "The translation is still being checked. Please retry in a moment.",
       }, 425);
     }
     const startedAt = Date.now();

@@ -1,6 +1,7 @@
 // @ts-nocheck
-// 真后端的 Materials 模块：课程 + 资料的增删改查 + 文件上传 + 软件内多格式预览（Supabase 直连，RLS 保护）。
-// 渲染进 legacy 应用提供的 #mat-root 容器，自管状态与事件。
+// Real-backend Materials module: course + material CRUD, file uploads, and in-app multi-format preview (direct Supabase, RLS-protected).
+// Renders into the #mat-root container provided by the legacy app and manages its own state and events.
+import { localize } from "../i18n";
 import { ICON } from "./icons";
 import { marked } from "marked";
 import { materialsAiApi } from "../features/material-ai/api";
@@ -17,10 +18,7 @@ let fileInput = null;
 let uploading = false;
 let sessionVersion = 0;
 let jobsTimer = null;
-// Materials and My Notes intentionally remain English-only during this phase.
-// Keep the two-argument call shape so the surrounding legacy layout can be
-// migrated later without introducing a second visual implementation.
-const l = (en, _zh) => en;
+const l = (en, zh) => localize(en, zh);
 const AI_EXT = new Set(["pdf", "docx", "pptx", "md", "markdown", "html", "htm", "txt", "json", "csv", "png", "jpg", "jpeg", "webp"]);
 
 const FT = { pdf: "pdf", ppt: "ppt", pptx: "ppt", doc: "doc", docx: "doc", md: "md", markdown: "md", html: "html", htm: "html", txt: "txt" };
@@ -132,7 +130,7 @@ function aiJobsHtml() {
     auditing: l("Safety review", "安全审查"), visualRecovery: l("Visual recovery", "视觉补全"),
     generating: l("Generating", "生成中"), organizing: l("Organizing knowledge points", "梳理知识点"),
     answering: l("Answering", "回答中"), reviewing: l("Reviewing", "复核中"), saving: l("Saving", "保存中"),
-    preparingSource: "Preparing source", cleaning: "Cleaning up…",
+    preparingSource: l("Preparing source", "准备源文件"), cleaning: l("Cleaning up…", "正在清理…"),
     succeeded: l("Ready", "已完成"), failed: l("Failed", "失败"), cancelled: l("Cancelled", "已取消"),
   };
   const jobKind = {
@@ -146,14 +144,14 @@ function aiJobsHtml() {
         <h2 class="serif" style="font-size:17px">${l("Materials AI", "资料 AI")}</h2></div>
       <div class="row gap-8 wrap-flex">
         ${state.quota ? `<span class="chip chip-accent">${l("Free today", "今日免费额度")} · ${state.quota.generation.remaining}/${state.quota.generation.limit}</span>` : ""}
-        ${state.jobs.some((job) => ["succeeded", "failed", "cancelled"].includes(job.status)) ? `<button class="btn btn-sm" data-mat="clearAiHistory">Clear history</button>` : ""}
+        ${state.jobs.some((job) => ["succeeded", "failed", "cancelled"].includes(job.status)) ? `<button class="btn btn-sm" data-mat="clearAiHistory">${l("Clear history", "清除历史")}</button>` : ""}
       </div>
     </div>
     ${state.jobsError ? `<div class="course-feedback wrong" role="alert">${esc(state.jobsError)}</div>` : ""}
     ${state.jobs.slice(0, 10).map((job) => `<div class="list-row" style="padding:11px 0">
       <div class="stat-ic" style="margin:0">${job.status === "succeeded" ? ICON("check") : job.status === "failed" ? ICON("close") : ICON("sparkles")}</div>
       <div class="fill"><div style="font-weight:650;font-size:13px">${esc(job.materialName)}</div>
-        <div class="faint" style="font-size:11.5px">${esc(jobKind[job.kind] || job.kind)} · ${esc(stage[job.stage] || job.stage)} · ${esc(job.pipeline === "luna_native_file_v1" ? "Luna native file" : "Document IR")}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
+        <div class="faint" style="font-size:11.5px">${esc(jobKind[job.kind] || job.kind)} · ${esc(stage[job.stage] || job.stage)} · ${esc(job.pipeline === "luna_native_file_v1" ? l("Luna native file", "Luna 原生文件") : "Document IR")}${job.queuePosition ? ` · ${l("queue", "队列")} #${job.queuePosition}` : ""}</div>
         <div class="bar" style="margin-top:6px"><i style="width:${Math.max(0, Math.min(100, job.progress))}%"></i></div>
         ${job.errorCode ? `<div class="course-feedback wrong" style="margin-top:7px">${esc(job.errorCode)} · ${esc(materialAiErrorText(job.errorCode, job.errorMessage || l("Try again later.", "请稍后重试。"), l))}</div>` : ""}
       </div>
@@ -161,13 +159,13 @@ function aiJobsHtml() {
         ${job.status === "succeeded" && job.noteId ? `<button class="btn btn-sm" data-mat="openAiNote" data-note-id="${job.noteId}">${l("Open result", "打开结果")}</button>` : ""}
         ${job.status === "queued" || job.status === "processing" ? `<button class="btn btn-sm" data-mat="cancelAiJob" data-id="${job.id}">${l("Cancel", "取消")}</button>` : ""}
         ${job.status === "failed" && job.retryable ? `<button class="btn btn-sm" data-mat="retryAiJob" data-id="${job.id}">${l("Resume", "继续")}</button>` : ""}
-        ${job.status === "deleting" ? `<button class="btn btn-sm" disabled><span class="spin"></span>Cleaning up…</button>` : `<button class="icon-btn" data-mat="deleteAiJob" data-id="${job.id}" title="Delete task" aria-label="Delete task" style="width:32px;height:32px">${ICON("close")}</button>`}
+        ${job.status === "deleting" ? `<button class="btn btn-sm" disabled><span class="spin"></span>${l("Cleaning up…", "正在清理…")}</button>` : `<button class="icon-btn" data-mat="deleteAiJob" data-id="${job.id}" title="${l("Delete task", "删除任务")}" aria-label="${l("Delete task", "删除任务")}" style="width:32px;height:32px">${ICON("close")}</button>`}
       </div>
     </div>`).join("")}
   </section>`;
 }
 
-/* ---------- 应用内确认弹窗（替代浏览器原生 confirm） ---------- */
+/* ---------- In-app confirmation dialog (replaces the browser's native confirm) ---------- */
 function confirmDialog({ title, message, confirmText = l("Delete", "删除"), danger = true }) {
   return new Promise((resolve) => {
     const scrim = document.createElement("div");
@@ -248,7 +246,7 @@ function render() {
         ? emptyNoCourse()
         : `<div class="card card-pad" style="padding:10px">
             <div class="mat-row" style="border:0;color:var(--ink-faint);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.06em;padding-bottom:4px">
-              <span style="width:40px">Type</span><span>Name</span><span class="nowrap">Course</span><span>Actions</span>
+              <span style="width:40px">${l("Type", "类型")}</span><span>${l("Name", "名称")}</span><span class="nowrap">${l("Course", "科目")}</span><span>${l("Actions", "操作")}</span>
             </div>
             ${list.length === 0
               ? `<div class="muted" style="padding:18px 14px">${l("No materials in this course. Choose Upload material to add one.", "该科目暂无资料，请点击“上传资料”添加。")}</div>`
@@ -372,17 +370,17 @@ function pipelineSelector(capabilityResponse) {
     || capabilities.find((item) => item.available)?.pipeline
     || "document_ir_v1";
   const labels = {
-    luna_native_file_v1: ["Luna native file", "Sends the original file directly to GPT-6 Luna through the Azure Zero Data Retention provider."],
-    document_ir_v1: ["Document IR", "Uses deterministic extraction, targeted visual recovery, and DeepSeek generation."],
+    luna_native_file_v1: [l("Luna native file", "Luna 原生文件"), l("Sends the original file directly to GPT-6 Luna through the Azure Zero Data Retention provider.", "通过 Azure 零数据保留供应商把原始文件直接发送给 GPT-6 Luna。")],
+    document_ir_v1: ["Document IR", l("Uses deterministic extraction, targeted visual recovery, and DeepSeek generation.", "使用确定性解析、定向视觉补全和 DeepSeek 生成。")],
   };
-  return `<fieldset style="border:0;margin:0 0 16px;padding:0"><legend class="eyebrow" style="margin-bottom:7px">Processing pipeline</legend>
+  return `<fieldset style="border:0;margin:0 0 16px;padding:0"><legend class="eyebrow" style="margin-bottom:7px">${l("Processing pipeline", "处理流水线")}</legend>
     <div class="grid g-2">${capabilities.map((item) => {
       const copy = labels[item.pipeline] || [item.pipeline, item.model];
-      const reason = item.reasonCode === "AI_LUNA_DISABLED" ? "Luna is not enabled yet."
+      const reason = item.reasonCode === "AI_LUNA_DISABLED" ? l("Luna is not enabled yet.", "Luna 尚未开放。")
         : item.reasonCode === "OPENROUTER_ZDR_UNAVAILABLE"
-          ? "No compliant Zero Data Retention endpoint is currently available. Document IR remains available."
+          ? l("No compliant Zero Data Retention endpoint is currently available. Document IR remains available.", "当前没有符合零数据保留要求的端点，Document IR 仍可使用。")
           : item.reasonCode === "AI_LUNA_FORMAT_NOT_VERIFIED"
-            ? "This file format has not passed the native-input gate."
+            ? l("This file format has not passed the native-input gate.", "该文件格式尚未通过原生输入验证。")
             : "";
       return `<label class="card card-pad row gap-10" style="padding:12px;align-items:flex-start;${item.available ? "cursor:pointer" : "opacity:.55"}">
         <input type="radio" name="ai-pipeline" value="${esc(item.pipeline)}" ${item.pipeline === selected ? "checked" : ""} ${item.available ? "" : "disabled"} style="margin-top:3px">
@@ -397,14 +395,14 @@ function knowledgeSettingsModal(material, capabilities) {
   const alreadyConsented = localStorage.getItem(consentKey) === "1";
   const scrim = document.createElement("div"); scrim.className = "scrim";
   scrim.innerHTML = `<div class="modal" style="width:min(620px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto"><div class="modal-pad">
-    <div class="eyebrow">Organize knowledge points</div><h2 class="serif" style="font-size:21px;margin-bottom:4px">${esc(material.name)}</h2>
-    <p class="muted" style="font-size:12.5px;line-height:1.55;margin-bottom:18px">Build a comprehensive knowledge map in source order. Every point includes a detailed explanation, citations, relationships, examples, misconceptions, and review questions.</p>
+    <div class="eyebrow">${l("Organize knowledge points", "知识点梳理")}</div><h2 class="serif" style="font-size:21px;margin-bottom:4px">${esc(material.name)}</h2>
+    <p class="muted" style="font-size:12.5px;line-height:1.55;margin-bottom:18px">${l("Build a comprehensive knowledge map in source order. Every point includes a detailed explanation, citations, relationships, examples, misconceptions, and review questions.", "按源文件顺序构建完整的知识图。每个知识点都包含详细解释、来源引用、关联关系、示例、常见误区和复习题。")}</p>
     ${pipelineSelector(capabilities)}
-    <label><span class="eyebrow">Output language</span><select class="search" id="ai-language" style="width:100%;background:var(--card-2);margin-top:6px"><option value="auto">Match material</option><option value="en">English</option><option value="zh">Chinese</option></select></label>
-    <label style="display:block;margin-top:16px"><span class="eyebrow">Topic focus (optional, 200 characters)</span><textarea class="search" id="ai-focus" maxlength="200" style="width:100%;min-height:76px;background:var(--card-2);margin-top:6px"></textarea></label>
+    <label><span class="eyebrow">${l("Output language", "输出语言")}</span><select class="search" id="ai-language" style="width:100%;background:var(--card-2);margin-top:6px"><option value="auto">${l("Match material", "跟随资料")}</option><option value="en">English</option><option value="zh">${l("Chinese", "中文")}</option></select></label>
+    <label style="display:block;margin-top:16px"><span class="eyebrow">${l("Topic focus (optional, 200 characters)", "重点主题（可选，200 字以内）")}</span><textarea class="search" id="ai-focus" maxlength="200" style="width:100%;min-height:76px;background:var(--card-2);margin-top:6px"></textarea></label>
     ${consentBlock(alreadyConsented)}
     <div class="course-feedback wrong" data-ai-error style="display:none;margin-top:12px"></div>
-    <div class="row gap-8" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-ai-cancel>Cancel</button><button class="btn btn-primary" data-ai-submit>${ICON("sparkles")}<span>Generate</span></button></div>
+    <div class="row gap-8" style="justify-content:flex-end;margin-top:18px"><button class="btn" data-ai-cancel>${l("Cancel", "取消")}</button><button class="btn btn-primary" data-ai-submit>${ICON("sparkles")}<span>${l("Generate", "开始生成")}</span></button></div>
   </div></div>`;
   document.body.appendChild(scrim);
   const close = () => scrim.remove();
@@ -414,9 +412,9 @@ function knowledgeSettingsModal(material, capabilities) {
   submit.onclick = async () => {
     const error = scrim.querySelector("[data-ai-error]");
     if (!alreadyConsented && !scrim.querySelector("#ai-consent")?.checked) {
-      error.textContent = "Confirm AI processing consent to continue."; error.style.display = "block"; return;
+      error.textContent = l("Confirm AI processing consent to continue.", "请确认 AI 处理同意后继续。"); error.style.display = "block"; return;
     }
-    submit.disabled = true; submit.querySelector("span").textContent = "Queuing…"; error.style.display = "none";
+    submit.disabled = true; submit.querySelector("span").textContent = l("Queuing…", "正在入队…"); error.style.display = "none";
     try {
       await materialsAiApi.createJob(material.id, {
         idempotencyKey: crypto.randomUUID(), kind: "knowledge_graph", pipeline: scrim.querySelector('[name="ai-pipeline"]:checked').value, consentVersion: 1,
@@ -427,10 +425,10 @@ function knowledgeSettingsModal(material, capabilities) {
         },
       });
       localStorage.setItem(consentKey, "1"); close();
-      toastFn("Knowledge point organization queued", "check"); await loadAiJobs();
+      toastFn(l("Knowledge point organization queued", "知识点梳理任务已入队"), "check"); await loadAiJobs();
     } catch (failure) {
-      error.textContent = materialAiErrorText(failure, "The AI job could not be created.", l);
-      error.style.display = "block"; submit.disabled = false; submit.querySelector("span").textContent = "Generate";
+      error.textContent = materialAiErrorText(failure, l("The AI job could not be created.", "无法创建 AI 任务。"), l);
+      error.style.display = "block"; submit.disabled = false; submit.querySelector("span").textContent = l("Generate", "开始生成");
     }
   };
 }
@@ -503,11 +501,11 @@ async function cancelAiJob(id) {
   const job = state.jobs.find((item) => item.id === id);
   if (!job) return;
   const accepted = await confirmDialog({
-    title: "Cancel AI task",
+    title: l("Cancel AI task", "取消 AI 任务"),
     message: job.status === "processing"
-      ? `Cancel “${job.materialName}”? The worker will stop and clean temporary files. Because processing already started, this uses one free generation.`
-      : `Cancel “${job.materialName}”? The queued reservation will be released after cleanup.`,
-    confirmText: "Cancel task",
+      ? l(`Cancel “${job.materialName}”? The worker will stop and clean temporary files. Because processing already started, this uses one free generation.`, `取消“${job.materialName}”？工作进程会停止并清理临时文件。由于处理已经开始，会消耗一次免费生成额度。`)
+      : l(`Cancel “${job.materialName}”? The queued reservation will be released after cleanup.`, `取消“${job.materialName}”？清理完成后会释放排队预留的额度。`),
+    confirmText: l("Cancel task", "取消任务"),
   });
   if (!accepted) return;
   try { await materialsAiApi.cancel(id); toastFn(l("AI job cancelled", "AI 任务已取消"), "check"); await loadAiJobs(); }
@@ -519,18 +517,18 @@ async function deleteAiJob(id) {
   if (!job) return;
   const active = job.status === "queued" || job.status === "processing";
   const message = job.status === "queued"
-    ? `Delete “${job.materialName}”? The queued job will stop, temporary state will be purged, and its reserved generation will be released.`
+    ? l(`Delete “${job.materialName}”? The queued job will stop, temporary state will be purged, and its reserved generation will be released.`, `删除“${job.materialName}”？排队任务会停止，临时状态会被清除，并释放预留的生成额度。`)
     : job.status === "processing"
-      ? `Delete “${job.materialName}”? Processing will be interrupted and temporary files will be purged. One free generation is consumed because the worker already accepted it.`
-      : `Delete this ${job.status} task record for “${job.materialName}”? Existing My Notes content and provider cost records are kept, and past quota usage is not reversed.`;
-  const accepted = await confirmDialog({ title: active ? "Stop and delete AI task" : "Delete AI task record", message });
+      ? l(`Delete “${job.materialName}”? Processing will be interrupted and temporary files will be purged. One free generation is consumed because the worker already accepted it.`, `删除“${job.materialName}”？处理会被中断并清除临时文件。由于工作进程已接收任务，会消耗一次免费生成额度。`)
+      : l(`Delete this ${job.status} task record for “${job.materialName}”? Existing My Notes content and provider cost records are kept, and past quota usage is not reversed.`, `删除“${job.materialName}”的这条任务记录（${job.status}）？已有的 My Notes 内容和供应商成本记录会保留，过去的额度使用不会撤销。`);
+  const accepted = await confirmDialog({ title: active ? l("Stop and delete AI task", "停止并删除 AI 任务") : l("Delete AI task record", "删除 AI 任务记录"), message });
   if (!accepted) return;
   try {
     const result = await materialsAiApi.deleteJob(id);
-    toastFn(result.status === "cleaning" ? "Cleaning temporary AI files…" : "AI task deleted", "check");
+    toastFn(result.status === "cleaning" ? l("Cleaning temporary AI files…", "正在清理 AI 临时文件…") : l("AI task deleted", "AI 任务已删除"), "check");
     await loadAiJobs();
   } catch (error) {
-    toastFn(materialAiErrorText(error, "The AI task could not be deleted.", l));
+    toastFn(materialAiErrorText(error, l("The AI task could not be deleted.", "无法删除 AI 任务。"), l));
   }
 }
 
@@ -538,32 +536,32 @@ async function clearAiHistory() {
   const count = state.jobs.filter((job) => ["succeeded", "failed", "cancelled"].includes(job.status)).length;
   if (!count) return;
   const accepted = await confirmDialog({
-    title: "Clear AI task history",
-    message: `Delete ${count} completed, failed, or cancelled task record${count === 1 ? "" : "s"}? Active tasks are not affected. Existing My Notes results, provider cost records, and past quota usage are kept.`,
-    confirmText: "Clear history",
+    title: l("Clear AI task history", "清除 AI 任务历史"),
+    message: l(`Delete ${count} completed, failed, or cancelled task record${count === 1 ? "" : "s"}? Active tasks are not affected. Existing My Notes results, provider cost records, and past quota usage are kept.`, `删除 ${count} 条已完成、失败或已取消的任务记录？进行中的任务不受影响，已有的 My Notes 结果、供应商成本记录和过去的额度使用都会保留。`),
+    confirmText: l("Clear history", "清除历史"),
   });
   if (!accepted) return;
   try {
     const result = await materialsAiApi.clearHistory();
-    toastFn(result.cleaning ? `Cleaning ${result.cleaning} task record${result.cleaning === 1 ? "" : "s"}…` : "AI history cleared", "check");
+    toastFn(result.cleaning ? l(`Cleaning ${result.cleaning} task record${result.cleaning === 1 ? "" : "s"}…`, `正在清理 ${result.cleaning} 条任务记录…`) : l("AI history cleared", "AI 历史已清除"), "check");
     await loadAiJobs();
   } catch (error) {
-    toastFn(materialAiErrorText(error, "AI task history could not be cleared.", l));
+    toastFn(materialAiErrorText(error, l("AI task history could not be cleared.", "无法清除 AI 任务历史。"), l));
   }
 }
 
 async function retryAiJob(id) {
   try {
     await materialsAiApi.retry(id);
-    toastFn("AI job resumed from its latest saved checkpoint", "check");
+    toastFn(l("AI job resumed from its latest saved checkpoint", "AI 任务已从最近保存的检查点继续"), "check");
     await loadAiJobs();
   } catch (error) {
-    toastFn(materialAiErrorText(error, "The AI job could not be resumed.", l));
+    toastFn(materialAiErrorText(error, l("The AI job could not be resumed.", "无法继续 AI 任务。"), l));
     await loadAiJobs();
   }
 }
 
-/* ---------- 课程：新建 / 重命名（带加载态 + 防重复提交） ---------- */
+/* ---------- Courses: create / rename (with loading state + duplicate-submit guard) ---------- */
 function courseModal(existing) {
   const isEdit = !!existing;
   const scrim = document.createElement("div");
@@ -587,7 +585,7 @@ function courseModal(existing) {
 
   let saving = false;
   saveBtn.onclick = async () => {
-    if (saving) return; // 防重复点击 → 防止建出两个同名课程
+    if (saving) return; // Guard against double clicks so two courses with the same name are not created
     const currentVersion = sessionVersion, client = sb;
     const code = scrim.querySelector("#nc-code").value.trim();
     const name = scrim.querySelector("#nc-name").value.trim() || code;
@@ -637,12 +635,12 @@ async function deleteCourse(id) {
     toastFn(l("Course deleted", "科目已删除"), "check");
   } catch (e) {
     if (currentVersion !== sessionVersion) return;
-    toastFn(materialAiErrorText(e, "The course could not be deleted.", l));
+    toastFn(materialAiErrorText(e, l("The course could not be deleted.", "无法删除科目。"), l));
   }
   await Promise.all([load(), loadAiJobs()]);
 }
 
-/* ---------- 上传 ---------- */
+/* ---------- Upload ---------- */
 function pickFiles() {
   if (state.courses.length === 0) { toastFn(l("Create a course first", "请先新建科目"), "folder"); courseModal(null); return; }
   if (state.course === "all") { toastFn(l("Choose a course before uploading", "请先选择科目再上传")); return; }
@@ -706,12 +704,12 @@ async function delMaterial(id) {
     toastFn(l("Material deleted", "资料已删除"), "check");
   } catch (e) {
     if (currentVersion !== sessionVersion) return;
-    toastFn(materialAiErrorText(e, "The material could not be deleted.", l));
+    toastFn(materialAiErrorText(e, l("The material could not be deleted.", "无法删除资料。"), l));
   }
   await Promise.all([load(), loadAiJobs()]);
 }
 
-/* ---------- 下载（不跳新页，触发浏览器下载） ---------- */
+/* ---------- Download (triggers a browser download without opening a new page) ---------- */
 async function downloadMaterial(id) {
   const currentVersion = sessionVersion, client = sb;
   const m = state.materials.find((x) => x.id === id); if (!m) return;
@@ -723,13 +721,13 @@ async function downloadMaterial(id) {
   document.body.appendChild(a); a.click(); a.remove();
 }
 
-/* ---------- 软件内预览（多格式） ---------- */
+/* ---------- In-app preview (multiple formats) ---------- */
 async function previewMaterial(id) {
   const currentVersion = sessionVersion, client = sb;
   const m = state.materials.find((x) => x.id === id); if (!m) return;
   const ext = extOf(m.name);
   const kind = previewKind(ext);
-  const { data, error } = await client.storage.from("materials").createSignedUrl(m.storage_path, 600); // 10 分钟
+  const { data, error } = await client.storage.from("materials").createSignedUrl(m.storage_path, 600); // 10 minutes
   if (currentVersion !== sessionVersion) return;
   if (error || !data) { toastFn(l("Could not create a file link", "无法获取文件链接")); return; }
   const url = data.signedUrl;

@@ -1,566 +1,569 @@
-# 变更日志
+# Changelog
 
-> **本文内容：**按版本/日期记录面向用户、开发者、数据和运维的重要新增、变更、修复、安全事项与废弃项。  
-> **作用：**提供从发布结果回溯代码、迁移和运营影响的入口；它不是 Git 提交列表，也不替代发布说明。  
-> **何时更新：**每个可发布 PR 合并时更新 `Unreleased`；正式发布时移动到带日期版本；紧急安全修复公开范围由安全负责人决定。  
-> **状态基线：**2026-10-03。历史条目依据 Git 历史和受保护发布记录归纳；尚未发布的工作只列在 `Unreleased`，数据库 apply、应用激活和供应商能力分别记录，不得互相冒充。
+> **Contents:** Records, by version/date, significant additions, changes, fixes, security items, and deprecations for users, developers, data, and operations.  
+> **Purpose:** An entry point for tracing release outcomes back to code, migrations, and operational impact; it isn't a list of Git commits and doesn't replace release notes.  
+> **When to update:** Update `Unreleased` whenever a releasable PR merges; move it into a dated version on a formal release; the public scope of urgent security fixes is decided by the security owner.  
+> **Status baseline:** 2026-10-03. Historical entries are summarized from Git history and protected release records; unreleased work is only listed under `Unreleased`, and database applies, application activation, and provider capabilities are recorded separately and must never stand in for one another.
 
-格式参考 Keep a Changelog，版本策略在首个稳定 API 发布前保持 `0.x`。分类使用 Added、Changed、Fixed、Security、Deprecated、Removed。
+The format follows Keep a Changelog, and versioning stays at `0.x` until the first stable API release. Categories are Added, Changed, Fixed, Security, Deprecated, and Removed.
 
 ## [Unreleased]
 
 ### Added
 
-- 追加候选迁移 0056–0057：退役 0054–0055 引入的 `ox_alpha_native_file_v1`（三张 pipeline constraint 与全部 service-role RPC 收敛回 DocumentIR/Luna），Luna job 改写 `openai/gpt-6-luna`，三个完成 RPC 改为要求 Azure usage；签名不变，0057 失败关闭验证约束、模型映射、路由门与权限。见 [ADR-0016](docs/adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)。
-- 新增并在生产数据库应用 Stage B 迁移 0052–0053：在 0051 后严格追加，撤销 authenticated 对 `posts.updated_at` 和 `study_tasks.done_at` 的兼容 UPDATE 权限，并失败关闭验证最终内容列、Schedule 列、service-role 与时间维护 trigger。原预留的 0044–0045 保持未使用，没有补插远端 migration history。
-- 追加候选迁移 0049–0051：为 job/Note 增加显式 `pipeline`，为成本事件记录实际 upstream provider/endpoint，新增 `deleting` 清理状态、私有 `knowledge_graph_layouts`、任务删除/清空/取消清理事务、Luna 完成路由门和精确权限断言；旧签名继续保留用于数据库先行和应用回滚。
-- 新增 `luna_native_file_v1`：固定 `openai/gpt-6-luna`、`provider.only=["azure"]`（GPT-6 Luna 唯一 ZDR 上游）、无 fallback、ZDR/deny collection/require parameters、禁用工具/Web，并以内联 base64 原文件处理已通过门禁 allowlist 的 PDF/图片。它不调用确定性解析、OCR、LibreOffice、DocumentIR 或 parse cache，且不会使用具有远端留存语义的 Files API。
-- 知识图改为动态 React Flow + ELK 分层画布，支持平移、缩放、拖动/键盘移动节点、适应视图、自动整理、无重叠碰撞消解、外部 hover/click 详情和带 revision 的跨设备布局保存；fake-provider Chromium 路径加入 250 节点及活动删除夹具。
-- AI 队列增加逐条 Delete 与 Clear history 的应用内确认；worker 使用可取消 task registry/Office 进程组并在确认 usage spool 落账后清理 0700 目录。
-- Materials 新增 “Organize knowledge points”：固定 DeepSeek 生成按来源顺序、带严格引用的 `GeneratedKnowledgeGraphV1`，My Notes 以交互图谱、hover 解释、点击详情呈现，并可对选定节点发起限定来源的问答。Knowledge list 与独立 Quiz 继续显示 Coming soon。
-- 追加候选迁移 0046–0048：`generation_job_checkpoints`、`exam_grading_checkpoints`、`knowledge_node_questions`、单调 usage `event_id`、可恢复 job 字段、知识图谱 artifact 约束、service-role-only 工作流和失败关闭权限断言。
-- 真实 provider/public smoke 候选覆盖知识图谱、节点问答、来源顺序、ZDR、增量成本账本和级联删除；fake Playwright 扩展到试卷、评分、图谱和节点问答完整路径。
+- Added an MIT `LICENSE` in preparation for making the repository public.
+- Appended candidate migrations 0056–0057: retire `ox_alpha_native_file_v1` introduced in 0054–0055 (the three pipeline constraints and all service-role RPCs converge back to DocumentIR/Luna), Luna jobs now write `openai/gpt-6-luna`, and the three completion RPCs now require Azure usage; signatures are unchanged, and 0057 fail-closed verifies the constraints, model mapping, routing gate, and permissions. See [ADR-0016](docs/adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md).
+- Added and applied to the production database Stage B migrations 0052–0053: appended strictly after 0051, they revoke authenticated's compatibility UPDATE permission on `posts.updated_at` and `study_tasks.done_at`, and fail-closed verify the final content columns, Schedule columns, service role, and time-maintenance triggers. The originally reserved 0044–0045 stay unused, and the remote migration history was not back-filled.
+- Appended candidate migrations 0049–0051: an explicit `pipeline` on jobs/Notes, recording the actual upstream provider/endpoint on cost events, a new `deleting` cleanup state, private `knowledge_graph_layouts`, job delete/clear/cancel cleanup transactions, the Luna completion routing gate, and exact permission assertions; old signatures are kept for database-first rollout and application rollback.
+- Added `luna_native_file_v1`: pins `openai/gpt-6-luna`, `provider.only=["azure"]` (GPT-6 Luna's only ZDR upstream), no fallback, ZDR/deny collection/require parameters, tools/Web disabled, and processes PDFs/images on the gate-approved allowlist as inline base64 original files. It doesn't call deterministic parsing, OCR, LibreOffice, DocumentIR, or the parse cache, and never uses the Files API with its remote retention semantics.
+- The knowledge graph is now a dynamic React Flow + ELK layered canvas, supporting panning, zooming, dragging/keyboard-moving nodes, fit view, auto layout, non-overlapping collision resolution, external hover/click details, and revisioned cross-device layout saving; the fake-provider Chromium path adds a 250-node fixture and an active deletion fixture.
+- The AI queue adds in-app confirmation for per-item Delete and Clear history; the worker uses a cancellable task registry/Office process group and cleans the 0700 directory after confirming the usage spool has been recorded.
+- Materials adds "Organize knowledge points": the pinned DeepSeek generates a source-ordered `GeneratedKnowledgeGraphV1` with strict citations, My Notes presents it as an interactive graph with hover explanations and click-through details, and users can ask source-restricted questions about a selected node. Knowledge list and standalone Quiz still show Coming soon.
+- Appended candidate migrations 0046–0048: `generation_job_checkpoints`, `exam_grading_checkpoints`, `knowledge_node_questions`, a monotonic usage `event_id`, resumable job fields, knowledge graph artifact constraints, service-role-only workflows, and fail-closed permission assertions.
+- Real provider/public smoke candidates cover the knowledge graph, node Q&A, source order, ZDR, the incremental cost ledger, and cascading deletion; fake Playwright extends to the full exam paper, grading, graph, and node Q&A paths.
 
 ### Changed
 
-- Courses 拼写前非字面翻译语义判定由 Gemma 4 改为固定免费 `nvidia/nemotron-3-super-120b-a12b:free`，锁定 Nvidia provider、禁止 fallback、关闭 reasoning 并使用 JSON Object 模式；Nalanda 对 `{correct:boolean}` 执行本地严格字段/类型校验。免费 endpoint 不承诺 deny collection，请求只含最小词义上下文。完全匹配仍由服务端确定性零 token 判定，模型不能直接写进度或奖励。（中间候选曾使用 `stealth/ox-alpha`，从未上线，现已移除。）
-- 在线考试的选择与草稿保存不再判分或返回任何答案/解析；只有整卷二次确认提交或到期自动交卷后，服务端才在同一提交事务内批改全部客观题，并把主观题合并为一次模型评分。`in_progress` 响应强制 `results=[]`。
-- Luna Note 的节点问答会在来源仍存在时重新附原文件；来源删除后只使用持久图谱、选中节点和邻接关系。Luna 试卷主观评分继续使用 GPT-6 Luna/Azure，但不重复发送源材料。
-- 清理额度规则统一：queued 删除释放 reservation；worker 已接收的 processing 删除/Cancel 消耗一次；历史删除不回退额度、不删除 My Notes，并保留 provider usage 审计。
-- API→FastAPI 生成与评分改为 30 秒内返回 202，后续由内部 token 回调 progress/usage/checkpoint/complete/fail；兼容同步路由暂留供旧应用回退和直接 provider gate 使用。
-- BullMQ 单并发槽现在持有到 Postgres 终态或 lease 到期，不会因 FastAPI 的 202 提前把 backlog 塞进进程内存；worker 以 1200/240 秒限制生成/评分总执行时间，生成超时可从 durable checkpoint 续跑。
-- 可恢复错误在默认 24 小时内复用同一 job。数据库保存阶段 checkpoint，worker 0700 目录另保存已验证结果和 usage spool；成功、非重试终态和过期均清理，重试重新预留、成功才消费 Free quota。
-- 恢复调度会先扣除该 job/attempt 已持久化的 provider cost，再把剩余预算交给 worker；worker 同时把上次回调失败留下的 usage spool 计入本地硬门，API 暂时不可用也不能借恢复流程重置单次成本上限。
-- Materials 与 My Notes 在本阶段固定全英文并保持既有 class/token/字体/动画；不扩大为全站 React 或视觉迁移。
+- The whole Web app — documentation, code comments, and every page and dialog — is now English by default. The top bar keeps a persistent English/Chinese toggle (stored as `nalanda-locale`) that switches every legacy module and React island, including Courses, My Notes, Materials, Community, Schedule, Profile, Feedback, notifications, and sign-in. Server-written notification texts and seeded course badge names are translated for display on the client, so no migration was needed; API error messages are now English.
+- Semantic judgement of non-literal translations before spelling in Courses switched from Gemma 4 to the pinned free `nvidia/nemotron-3-super-120b-a12b:free`, locked to the Nvidia provider, with fallback forbidden, reasoning off, and JSON Object mode; Nalanda performs strict local field/type validation of `{correct:boolean}`. The free endpoint doesn't promise deny collection, so requests only contain minimal meaning context. Exact matches are still judged deterministically by the server with zero tokens, and the model can't write progress or rewards directly. (An intermediate candidate used `stealth/ox-alpha`, which never went live and has been removed.)
+- Choosing answers and saving drafts in online exams no longer grades or returns any answers/explanations; only after a double-confirmed whole-paper submission or automatic submission at the deadline does the server grade all objective questions in the same submit transaction and combine the subjective questions into one model grading call. `in_progress` responses force `results=[]`.
+- Node Q&A on a Luna Note re-attaches the original file when the source still exists; after the source is deleted it only uses the durable graph, the selected node, and adjacency. Subjective grading of Luna exams continues to use GPT-6 Luna/Azure, without resending the source material.
+- The cleanup quota rules are unified: deleting while queued releases the reservation; deleting/cancelling while processing after the worker has accepted consumes once; deleting history doesn't refund quota or delete My Notes, and keeps the provider usage audit.
+- API→FastAPI generation and grading now return 202 within 30 seconds, followed by internal-token callbacks for progress/usage/checkpoint/complete/fail; the compatibility synchronous routes remain temporarily for old application rollback and direct provider gates.
+- The BullMQ single concurrency slot is now held until the Postgres terminal state or lease expiry, so FastAPI's 202 no longer pushes the backlog into process memory early; the worker limits total execution time for generation/grading to 1200/240 seconds, and generation timeouts can resume from the durable checkpoint.
+- Recoverable errors reuse the same job within a default 24 hours. The database stores stage checkpoints, and the worker's 0700 directory additionally stores validated results and the usage spool; success, non-retry terminal states, and expiry all clean up, and retries reserve again and only consume Free quota on success.
+- Resume scheduling first deducts the provider cost already persisted for that job/attempt before handing the remaining budget to the worker; the worker also counts the usage spool left over from a previous failed callback against its local hard gate, so even when the API is temporarily unavailable the recovery flow can't reset the per-job cost cap.
+- Materials and My Notes keep their existing classes/tokens/fonts/animations in this phase; this doesn't expand into a site-wide React or visual migration.
 
 ### Removed
 
-- 移除 Ox Alpha（`stealth/ox-alpha`，已从 OpenRouter 下线、生产从未启用）的全部代码、类型、UI、环境变量（`FEATURE_MATERIAL_AI_OX_ALPHA`、`MATERIAL_AI_OX_ALPHA_*`）、发布门禁与 smoke；安装/激活/回滚脚本只剥离旧键。
+- Removed all code, types, UI, environment variables (`FEATURE_MATERIAL_AI_OX_ALPHA`, `MATERIAL_AI_OX_ALPHA_*`), release gates, and smokes for Ox Alpha (`stealth/ox-alpha`, removed from OpenRouter and never enabled in production); the install/activate/rollback scripts only strip the old keys.
 
 ### Fixed
 
-- 修复受保护发布 run `37156943711`：throughput 排序反复把 DeepSeek 试卷生成路由到同一个输出失控的 Wafer endpoint（四次均 10.5k token 截断）。非锁定路由在结构化输出失败后把该上游加入 `provider.ignore` 再重试；Luna 等锁定路由不受影响。
-- 修复 GPT-6 Luna 请求在 `require_parameters=true` 下被 OpenRouter 以 HTTP 404（`OPENROUTER_MODEL_UNAVAILABLE`）拒绝：Azure endpoint 只支持 `max_completion_tokens` 且所有 GPT-6 Luna endpoint 都不支持 `temperature`；Luna 请求改用 `max_completion_tokens` 并省略 `temperature`，原文件门禁失败时输出逐次尝试的上游元数据。（受保护发布 run `37154031417` 中 DocumentIR 全部 fixture 已通过。）
-- 修复受保护发布 run `37150425945`/`37151943226` 中 DocumentIR 试卷生成连续以 `AI_OUTPUT_TRUNCATED`（30k token 上限）后 `OPENROUTER_UNREACHABLE` 失败：试卷输出上限按题数收敛、路由排除 fp4 量化 endpoint、移除易诱发失控输出的“返回前重新计数”提示句，并让真实 provider gate 输出逐次尝试的上游/endpoint/token/耗时（不含正文）。
-- 修复 DocumentIR 试卷在初次生成只有题型数量错误时，repair 仅收到 source block ID、无法读取来源正文，导致结构转绿后答案/干扰项/解析/引用全面失去 grounding 的链路缺口。`exam-generate.v4` 的结构与语义 repair 均携带完整 allowlisted `sourceBlocks` 和显式 `repairGate`，要求最小修改与逐题来源支撑；若结构 repair 后才首次发现语义缺陷，只允许一次额外语义 repair，之后重新执行结构和语义双门并失败关闭，不形成无限重试或降低质量标准。
-- 修复 PR #77 候选把 Ox Alpha 不支持的 `json_schema` 结构化输出与 `require_parameters=true` 同时发送，导致真实 Courses 翻译门在 OpenRouter 以 HTTP 404 拒绝并自动回滚的问题。交互 API 与真实发布 smoke 现在都使用模型元数据声明支持的 `response_format:{type:"json_object"}`，并在本地严格拒绝额外字段、缺失字段、错误类型、重复/未知 smoke case；Stealth-only、no fallback、provider 校验、幂等数据库事实及失败关闭边界不变。非 2xx 诊断只记录 HTTP 状态、结构化上游 code 和 request ID，不记录答案、参考翻译、prompt、供应商 message 或 API key。
+- The real provider gate's fixed chart fixture now uses a 28px font: Pillow's default ~10px bitmap font made MiMo reasonably report an unreadable region (`AI_VISUAL_UNREADABLE`) in run `37158999212`, and the product rule fails closed on any unreadable region. The product rule is unchanged.
+- Fixed protected release run `37156943711`: throughput sorting repeatedly routed DeepSeek exam generation to the same Wafer endpoint with runaway output (truncated at 10.5k tokens all four times). Unlocked routes now add that upstream to `provider.ignore` after a structured output failure and retry; locked routes such as Luna are unaffected.
+- Fixed GPT-6 Luna requests being rejected by OpenRouter with HTTP 404 (`OPENROUTER_MODEL_UNAVAILABLE`) under `require_parameters=true`: the Azure endpoints only support `max_completion_tokens`, and no GPT-6 Luna endpoint supports `temperature`; Luna requests now use `max_completion_tokens` and omit `temperature`, and the original-file gate prints per-attempt upstream metadata on failure. (All DocumentIR fixtures had passed in protected release run `37154031417`.)
+- Fixed DocumentIR exam generation in protected release runs `37150425945`/`37151943226` repeatedly failing with `AI_OUTPUT_TRUNCATED` (30k token cap) followed by `OPENROUTER_UNREACHABLE`: the exam output cap now scales with the question count, routing excludes fp4-quantized endpoints, the "recount before returning" prompt sentence that tended to trigger runaway output was removed, and the real provider gate prints per-attempt upstream/endpoint/tokens/duration (without content).
+- Fixed the gap where, when the initial DocumentIR exam only had wrong per-type counts, repair only received source block IDs and couldn't read the source text, so answers/distractors/explanations/citations completely lost grounding after the structure turned green. Both the structural and semantic repairs in `exam-generate.v4` carry the full allowlisted `sourceBlocks` and an explicit `repairGate`, requiring minimal changes and per-question source support; if semantic defects are first found only after the structural repair, only one extra semantic repair is allowed, after which both the structural and semantic gates run again and fail closed, with no infinite retries or lowered quality bar.
+- Fixed the PR #77 candidate sending the `json_schema` structured output that Ox Alpha doesn't support together with `require_parameters=true`, which made OpenRouter reject the real Courses translation gate with HTTP 404 and roll back automatically. The interactive API and the real release smoke now both use the `response_format:{type:"json_object"}` that the model metadata declares as supported, and strictly reject extra fields, missing fields, wrong types, and duplicate/unknown smoke cases locally; the Stealth-only, no fallback, provider checks, idempotent database facts, and fail-closed boundaries are unchanged. Non-2xx diagnostics only record the HTTP status, structured upstream code, and request ID, never answers, reference translations, prompts, provider messages, or API keys.
 
-- 修复试卷生成/语义 repair 偶发返回不存在的 `sourceRef.blockId`，导致题数/总分正确的候选在结构门以 `SOURCE_REFERENCE` 失败的问题。worker 现在只保留 DocumentIR allowlist 内的引用、用服务端 block 元数据规范 locator；只有稳定 question ID 相同且 repair 删除全部有效引用时才恢复该题 repair 前引用，或在整份 DocumentIR 恰好只有一个 block 时选择这个唯一可能的 allowlisted block。多 block、跨题/换 ID 仍不猜测，最终必须重新通过结构校验和语义复核，不能用机械规范化伪造 grounding。
-- 修复真实 Materials AI 发布门禁把最终 `AI_EXAM_VALIDATION_FAILED` 压缩成单一 code，导致无法区分题数/总分/引用等结构错误与 grounding/答案/干扰项等语义错误的问题。worker 现在只返回稳定类别、门禁阶段和题数/总分计数，不返回课件、题目、答案、prompt、reviewer 原文或 provider body；诊断不会改变当前来源感知、有界且最终失败关闭的 repair 策略。
-- 固定 PDF/DOCX/PPTX 真实供应商样本由不足以稳定支撑五道题的三条事实扩展为八个独立、无个人数据的学习科学事实，避免把过薄 fixture 自身造成的随机不可出题误判成服务故障；题数、答案、语义、引用和费用门禁没有放宽。
-- 修复真实登录生产 smoke 中知识图最低层级从 `1` 开始、通过 worker 校验后却被完成 RPC 以 SQLSTATE `22023` 拒绝，任务随后停在 `saving` 直到 15 分钟门禁超时的问题。`knowledge-graph.v2` 与 `knowledge-graph-native-file.v2` 现在在不改节点内容、引用、顺序或相对层级的前提下，把最小 level 确定性归零；DocumentIR validator 同时补齐 `sourceMode=document_ir` 与 level-0 root 检查，和数据库保存 contract 保持一致。
-- 完成回调若仍被数据库以结果结构约束拒绝，会原子写入对应的试卷/图谱/问答/评分 validation failure 并返回成功确认，使 worker 清理 checkpoint/spool，而不是把永久性错误误当 callback outage 无限恢复；provider 路由违规同样终止且保留 usage，过期 lease 映射 409 让 worker 安全退出。
-- 修复真实 DocumentIR 发布门禁中试卷模型偶发返回“题数正确、单题分值合法，但合计分值不等于用户设置”的 `AI_EXAM_VALIDATION_FAILED`。`exam-generate.v3` 与 `exam-native-file.v2` 现在先用服务端设置确定性归一化语言、难度、时长、总分、重复 section/question ID，并在可行范围内按原相对权重稳定重分配单题分值；题数、答案、语义和引用仍由原 validator/DeepSeek 复核严格把关。复核结果若 `issues` 非空不再因 `valid=true` 被忽略。
-- 修复真实 DocumentIR chart 门禁把“解析器已隔离、尚待视觉恢复的纯图片范围”误判为整份文件 prompt injection，并在 MiMo 恢复前返回 `PROMPT_INJECTION_REJECTED`。`material-safety-audit.v2` 只允许没有确定性注入信号、且所有不确定位置均属于解析器失败范围的首轮 `uncertain` 进入隔离恢复；未知范围、已解析文本/focus 信号和 `malicious` 仍立即拒绝，恢复后的完整 DocumentIR 仍以严格二次审查失败关闭。
-- 真实发布 run `31824832947` 暴露出 Luna 的 OpenAI-only 与 ZDR 组合当前无可路由 endpoint；原发布正确自动恢复旧 Web/API，但会阻断已经通过的 DocumentIR/图谱/任务/考试改进。向前修复把真实门禁拆为必须通过的旧流水线和实时 Luna ZDR catalog 决策：只有 first-party OpenAI ZDR endpoint 存在才开启 Luna，否则稳定返回 `OPENROUTER_ZDR_UNAVAILABLE`、保持子开关 false并继续让用户显式使用 DocumentIR，绝不关闭 ZDR、改用 Azure或允许 fallback。
-- 修复 OpenRouter adapter 将所有 HTTP 400/404 都误报为 `OPENROUTER_ZDR_UNAVAILABLE` 的过宽分类；现在只有响应明确包含 ZDR/Zero Data Retention 证据才使用该 code，普通坏请求和模型不可用分别为 `OPENROUTER_BAD_REQUEST`、`OPENROUTER_MODEL_UNAVAILABLE`，仍不记录 provider 原始正文。
+- Fixed exam generation/semantic repair occasionally returning a nonexistent `sourceRef.blockId`, causing candidates with the correct question count/total points to fail the structural gate with `SOURCE_REFERENCE`. The worker now keeps only citations within the DocumentIR allowlist and normalizes locators from server block metadata; it only restores a question's pre-repair citations when the stable question ID is the same and the repair removed all valid citations, or picks the only possible allowlisted block when the whole DocumentIR has exactly one block. Multiple blocks and cross-question/changed IDs are still never guessed, and the result must pass structural validation and semantic review again, so mechanical normalization can't fake grounding.
+- Fixed the real Materials AI release gate collapsing the final `AI_EXAM_VALIDATION_FAILED` into a single code, which made it impossible to tell structural errors such as question count/total points/citations from semantic errors such as grounding/answers/distractors. The worker now only returns stable categories, the gate stage, and question/total-point counts, never course material, questions, answers, prompts, reviewer text, or provider bodies; the diagnostics don't change the current source-aware, bounded, and ultimately fail-closed repair strategy.
+- The fixed PDF/DOCX/PPTX real provider samples were expanded from three facts, not enough to reliably support five questions, to eight independent learning-science facts with no personal data, so random failures to generate questions caused by an overly thin fixture aren't mistaken for a service fault; the question count, answer, semantic, citation, and cost gates were not relaxed.
+- Fixed the real signed-in production smoke where the knowledge graph's lowest level started at `1`, passed worker validation, but was rejected by the completion RPC with SQLSTATE `22023`, after which the job stayed in `saving` until the 15-minute gate timed out. `knowledge-graph.v2` and `knowledge-graph-native-file.v2` now deterministically reset the minimum level to zero without changing node content, citations, order, or relative levels; the DocumentIR validator also adds `sourceMode=document_ir` and level-0 root checks to stay consistent with the database save contract.
+- If a completion callback is still rejected by the database's result structure constraints, it atomically writes the corresponding exam/graph/Q&A/grading validation failure and returns a successful acknowledgement, letting the worker clean up its checkpoint/spool instead of treating a permanent error as a callback outage and recovering forever; provider routing violations likewise terminate while keeping usage, and expired leases map to 409 so the worker exits safely.
+- Fixed the exam model in the real DocumentIR release gate occasionally returning `AI_EXAM_VALIDATION_FAILED` with "correct question count and valid per-question marks, but a total that doesn't equal the user's setting". `exam-generate.v3` and `exam-native-file.v2` now first deterministically normalize the language, difficulty, duration, total points, and duplicate section/question IDs from server-side settings, and where feasible stably redistribute per-question marks by their original relative weights; question count, answers, semantics, and citations are still strictly checked by the original validator/DeepSeek review. Review results with non-empty `issues` are no longer ignored because of `valid=true`.
+- Fixed the real DocumentIR chart gate misjudging "pure image ranges the parser had isolated and were pending vision recovery" as a whole-file prompt injection and returning `PROMPT_INJECTION_REJECTED` before MiMo recovery. `material-safety-audit.v2` only lets a first-round `uncertain` with no deterministic injection signals, and whose uncertain positions all belong to the parser's failed ranges, enter isolated recovery; unknown ranges, parsed text/focus signals, and `malicious` are still rejected immediately, and the recovered full DocumentIR still fails closed under a strict second review.
+- Real release run `31824832947` exposed that Luna's OpenAI-only + ZDR combination currently has no routable endpoint; the release correctly restored the old Web/API automatically, but this would block the DocumentIR/graph/job/exam improvements that had already passed. The forward fix splits the real gate into the old pipeline, which must pass, and a live Luna ZDR catalog decision: Luna is only turned on when a first-party OpenAI ZDR endpoint exists; otherwise it stably returns `OPENROUTER_ZDR_UNAVAILABLE`, keeps the sub-switch false, and lets users keep explicitly using DocumentIR, never turning off ZDR, switching to Azure, or allowing fallback.
+- Fixed the OpenRouter adapter's overly broad classification that reported every HTTP 400/404 as `OPENROUTER_ZDR_UNAVAILABLE`; that code is now only used when the response explicitly contains ZDR/Zero Data Retention evidence, ordinary bad requests and unavailable models are `OPENROUTER_BAD_REQUEST` and `OPENROUTER_MODEL_UNAVAILABLE` respectively, and the raw provider body is still never recorded.
 
-- 修复旧知识图卡片和详情互相覆盖、节点不可移动/缩放、详情常驻遮挡、同类字段重复显示，以及 artifact 更新后全部布局坐标丢失的问题；旧节点坐标按 ID 复用，新节点重新布局，revision 冲突会合并后重试。
-- 修复已成功/失败任务无法清除、活动任务删除只改 UI 不真正中断、清理前记录提前消失的问题；记录只有在 worker 确认取消请求、usage spool 与临时目录均处理后才最终删除。
-- 修复答题草稿响应可能提前携带判分结果的问题；服务端序列化现在对所有 `in_progress` 尝试剥离答案字段并强制空结果。
-- Courses 音频预热、manifest 与单词音频准备现在只对可安全重放的 Supabase 408/425/429/5xx、连接失败和响应体超时做三次有限重试；最终失败统一返回带重试提示的 503，而不是无信息 500。Supabase REST/Storage 的响应正文读取也纳入 20 秒 transport 边界，发布失败会输出仅含 route、错误类别、上游 HTTP/稳定 code 的脱敏 API 日志，不记录数据库正文或用户内容。
-- 真实 Courses 音频发布 gate 对幂等 prewarm/manifest 增加三次有限瞬时重试，并在同一超时边界内消费 JSON/音频正文；401/403/契约错误仍立即失败。这样一次可重试的上游 500 不再直接回滚已通过 DeepSeek/MiMo、Azure 和 Gemma 的候选，同时持续失败仍阻断切流并保留诊断日志。
-- 真实 Gemma 发布门禁不再把交互 API 的 12 秒 SLA 当作整次 release smoke 的预算：每次尝试使用独立 30 秒上限、全部尝试共享 180 秒硬预算，并在同一重试边界内读取完整响应体。这样即使 2xx 响应头已到但正文流超时，也会以同一固定模型有限重试，而不会让 `DOMException TimeoutError` 逃逸并误触发无诊断回滚；坏 JSON/坏语义、永久 HTTP 状态和预算耗尽仍失败关闭。
-- 受保护应用发布现在会在上传前删除同 SHA 的半成品、清理超过 24 小时的 abandoned incoming 目录，并只回收未被容器或当前 `.deploy.env` 引用的 Nalanda 镜像；可用空间不足 6 GiB 时在切流前失败。失败候选通过 EXIT trap 删除自身 Web 目录、incoming 包和镜像，避免连续失败把共享主机磁盘填满。
-- 应用回滚不再让上一 API 等待可选 AI 容器达到 healthy：Redis/AI 分开尽力恢复，上一 API 使用 `--no-deps` 从已审计镜像强制重建并独立验证进程、鉴权和公网契约。AI 因磁盘水位等原因 unhealthy 时不再把一次受保护发布失败扩大成 nginx 502；readiness 失败日志同时输出脱敏 `/health` 依赖状态。
-- 受保护发布的真实 Gemma 翻译 gate 现在只对网络错误及 408/425/429/5xx 做有限指数退避并遵守 `Retry-After`；401/402/403、坏契约、持续限流或超过等待预算仍失败关闭，避免一次瞬时 OpenRouter 429 在其他真实 AI/Azure 门禁已通过后无条件回滚候选 release。
-- 修复 Node/Undici 默认约 300 秒 response headers timeout 把正常长任务误报为 `AI_WORKER_UNREACHABLE`；显式 dispatcher 现区分 `AI_WORKER_TIMEOUT`、不可达和协议错误。
-- 修复 provider 已返回但 API 回调断开时成本事件或已验证产物可能丢失、重试可能再次付费的问题；生成和评分在完成/失败前先幂等 flush usage，评分结果与生成阶段均可恢复。
-- 修复传给 FastAPI 的 `budgetMicroUsd` 过去只作为未使用元数据的问题；每个增量 usage event 现在会在继续下一次模型调用前更新 worker 预算，超限事实仍先写 spool/账本再失败关闭。
-- Materials AI 队列现在标明每项是 Test paper、Knowledge map 或 Knowledge question；同一文件存在多个历史任务时，用户与浏览器测试不会再把旧试卷误认成最新知识图。
-- 修复过期/耗尽 retry RPC 在抛异常后回滚自身清理的问题；终态现在持久保存稳定错误并由 API 映射 409。
+- Fixed old knowledge graph cards and details overlapping each other, nodes that couldn't be moved/zoomed, details permanently covering the graph, duplicated fields of the same kind, and all layout coordinates being lost after an artifact update; old node coordinates are reused by ID, new nodes are laid out again, and revision conflicts merge and retry.
+- Fixed succeeded/failed jobs that couldn't be cleared, deleting active jobs only changing the UI without really interrupting them, and records disappearing before cleanup; a record is only finally deleted after the worker confirms the cancellation request and the usage spool and temporary directory have all been handled.
+- Fixed answer draft responses possibly carrying grading results early; server serialization now strips answer fields from every `in_progress` attempt and forces empty results.
+- Courses audio prewarm, manifest, and word audio preparation now only retry three times, with limits, on safely replayable Supabase 408/425/429/5xx, connection failures, and response body timeouts; final failures uniformly return a 503 with a retry hint instead of an uninformative 500. Reading Supabase REST/Storage response bodies is also included in the 20-second transport boundary, and release failures print redacted API logs containing only the route, error category, and upstream HTTP/stable code, never database bodies or user content.
+- The real Courses audio release gate adds three bounded transient retries for idempotent prewarm/manifest and consumes JSON/audio bodies within the same timeout boundary; 401/403/contract errors still fail immediately. This way a single retryable upstream 500 no longer directly rolls back a candidate that already passed DeepSeek/MiMo, Azure, and Gemma, while persistent failures still block the cutover and keep diagnostic logs.
+- The real Gemma release gate no longer treats the interactive API's 12-second SLA as the budget for the whole release smoke: each attempt has its own 30-second cap, all attempts share a 180-second hard budget, and the full response body is read within the same retry boundary. This way, even when 2xx response headers arrive but the body stream times out, it retries with the same pinned model within limits, instead of letting `DOMException TimeoutError` escape and falsely trigger a rollback without diagnostics; bad JSON/bad semantics, permanent HTTP statuses, and budget exhaustion still fail closed.
+- Protected application releases now delete half-finished artifacts of the same SHA before upload, clean up abandoned incoming directories older than 24 hours, and only reclaim Nalanda images not referenced by any container or the current `.deploy.env`; they fail before cutover when free space is under 6 GiB. Failed candidates delete their own Web directory, incoming package, and images through the EXIT trap, so consecutive failures can't fill up the shared host's disk.
+- Application rollback no longer makes the previous API wait for the optional AI container to become healthy: Redis/AI are restored separately on a best-effort basis, and the previous API is force-recreated with `--no-deps` from the audited image and independently verified for the process, authentication, and public contract. An AI container that is unhealthy because of disk watermarks or similar no longer escalates a failed protected release into an nginx 502; readiness failure logs also print the redacted `/health` dependency status.
+- The protected release's real Gemma translation gate now only applies bounded exponential backoff for network errors and 408/425/429/5xx and honors `Retry-After`; 401/402/403, bad contracts, persistent rate limiting, or exceeding the wait budget still fail closed, so a single transient OpenRouter 429 no longer unconditionally rolls back a candidate release after the other real AI/Azure gates have passed.
+- Fixed Node/Undici's default response headers timeout of about 300 seconds reporting normal long jobs as `AI_WORKER_UNREACHABLE`; the explicit dispatcher now distinguishes `AI_WORKER_TIMEOUT`, unreachability, and protocol errors.
+- Fixed cost events or validated artifacts possibly being lost, and retries possibly paying again, when the provider had returned but the API callback disconnected; generation and grading now idempotently flush usage before complete/fail, and both grading results and generation stages are recoverable.
+- Fixed `budgetMicroUsd` passed to FastAPI previously being only unused metadata; each incremental usage event now updates the worker budget before the next model call, and over-budget facts are still written to the spool/ledger first before failing closed.
+- The Materials AI queue now labels each item as Test paper, Knowledge map, or Knowledge question; when the same file has several historical jobs, users and browser tests no longer mistake an old exam paper for the latest knowledge map.
+- Fixed expired/exhausted retry RPCs rolling back their own cleanup after throwing; the terminal state now durably stores a stable error, which the API maps to 409.
 
 ### Testing
 
-- PR #78 合并为 main `1281510c94b4da5a765211df8467f9a26be393f0` 后，run [`32931681321`](https://github.com/1590703336/Nalanda/actions/runs/32931681321) 通过 quality、0007→0055、空库/database lint、双用户 RLS/Storage、fake Chromium与生产镜像，且没有 migration 变更。application candidate 的 220 页 canary通过，但真实 DOCX 初次输出以 `QUESTION_TYPE_COUNT` 进入 repair；repair 后结构已满足 5 题/20 分，最终语义门仍报告五类质量缺陷，候选自动回滚且尚未运行 Ox 翻译 gate。向前修复本地 Python suite 现覆盖结构 repair 获取完整 source blocks、结构后新语义问题的一次有界 repair，以及持续不合格时严格终止；新的真实 provider/candidate/cutover 证据仍未产生。
-- PR #75 合并为 main `ad4b98b041ccb38954ac3bba705b26a92b70cca2` 后，run [`32587844503`](https://github.com/1590703336/Nalanda/actions/runs/32587844503) 通过 quality、0007→0053、空库/database lint、双用户 RLS/Storage、fake Chromium和生产镜像，且没有 migration 变更。application attempt 1 的 220 页 canary 通过，但固定 PDF 在一次 repair 后仍为 6 题而设置要求 5 题，以 `QUESTION_TYPE_COUNT` 失败并回退；唯一一次失败 job 重跑的 attempt 2 通过完整 DeepSeek/MiMo Materials suite、注入/安全教材、评分、9-node graph 与 Japan East Azure（accuracy 98、pronunciation 98.8），Luna 因 OpenAI-only ZDR 不可用保持 false，随后 Gemma 免费模型连续五次 HTTP 429并再次回退。两次均未切流；独立核对确认旧 Web/API/AI、false flags、公网 health/auth 和候选清理正常，因此 PR #75 已合并但未部署到生产。
-- PR #74 合并为 main `5b4cad883b628fd21cc1d104227be6dfb746834f` 后，run [`32585659792`](https://github.com/1590703336/Nalanda/actions/runs/32585659792) 通过 quality、0007→0053、空库/lint、双用户 RLS/Storage 和 fake Chromium。生产 attempt 1 的真实 Materials suite、220 页 canary和 Japan East Azure均通过，但 Gemma 翻译 smoke 在 5 次有界退避后仍为 HTTP 429并回退；同 SHA 仅重跑失败 job 的 attempt 2 又在单 block PDF 首次生成及 repair 都返回无效引用时失败为 `SOURCE_REFERENCE`。两次候选均未切流且生产独立 health 正常。唯一 block 回归修复本地通过 ruff 与 78 个 Python 测试；真实 provider、Gemma、Azure、登录 smoke、切流和公网独立验证仍须由新 PR/main run 证明。
-- PR #71 合并后的 main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) 首次执行通过完整 fake/local 门禁和真实 Materials provider suite，但 Japan East Azure TTS 返回 HTTP 401，候选在切流前自动回退。用户要求重试后的 attempt 2 通过 220 页资源 canary（主/子进程峰值 107,868,160/221,601,792 bytes），随后固定 DOCX 试卷初次语义复核失败、一次 repair 后只剩最终结构 code `SOURCE_REFERENCE`，再次在切流前回退。新回归本地通过 ruff 与 77 个 Python 测试，覆盖引用去重/规范化、同题恢复、换题 ID 失败关闭及恢复后第二次语义复核；真实 provider、Azure、候选激活和公网独立验证仍须由新的 main run 证明。
-- PR #70 的完整门禁 run [`32499521666`](https://github.com/1590703336/Nalanda/actions/runs/32499521666) 通过后合并为 main `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e`。main run [`32540131549`](https://github.com/1590703336/Nalanda/actions/runs/32540131549) 再次通过 lint/typecheck、131 个 API、113 个 Web、72 个 Python测试、0007→0051、空库/lint/RLS/Storage、fake Chromium、镜像构建和 220 页 canary，但真实 DOCX 试卷返回 `AI_EXAM_VALIDATION_FAILED`；候选在 API/Web 切流前回退并清除，因此该 run 不是生产上线证据。
-- validation 诊断/fixture 向前修复本地通过 74 个 Python 测试、ruff、26 个 release tooling 测试与 `git diff --check`；真实供应商、完整 CI 和生产激活仍须由新的 PR/main run 证明。
-- PR #69 与 main run [`31838779292`](https://github.com/1590703336/Nalanda/actions/runs/31838779292) 的 fake/local 门禁、真实 provider fixture、220 页 canary、Azure/Courses gate均通过；登录生产 smoke 的固定知识图返回 3 nodes/2 edges 但没有 level-0 root，数据库拒绝完成回调，候选 `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` 未切 Web 且自动恢复旧 API/AI。该 run 是发现并隔离发布缺陷的证据，不是上线证据。
-- 根节点/完成回调向前修复本地通过 72 个 Python、131 个 API、113 个 Web/jsdom 测试，以及 ruff、docs 55、release tooling 26、lint、typecheck 和 Web/API build；真实 Supabase、Chromium 与真实 provider仍须由新 PR/main/protected run 再证明。
+- After PR #78 merged as main `1281510c94b4da5a765211df8467f9a26be393f0`, run [`32931681321`](https://github.com/1590703336/Nalanda/actions/runs/32931681321) passed quality, 0007→0055, empty database/database lint, two-user RLS/Storage, fake Chromium, and production images, with no migration changes. The application candidate's 220-page canary passed, but the real DOCX's initial output entered repair with `QUESTION_TYPE_COUNT`; after repair the structure satisfied 5 questions/20 points, but the final semantic gate still reported quality defects in five categories, and the candidate rolled back automatically before running the Ox translation gate. The forward fix's local Python suite now covers the structural repair getting the full source blocks, one bounded repair for new semantic issues after the structural step, and strict termination when it keeps failing; new real provider/candidate/cutover evidence hasn't been produced yet.
+- After PR #75 merged as main `ad4b98b041ccb38954ac3bba705b26a92b70cca2`, run [`32587844503`](https://github.com/1590703336/Nalanda/actions/runs/32587844503) passed quality, 0007→0053, empty database/database lint, two-user RLS/Storage, fake Chromium, and production images, with no migration changes. Application attempt 1's 220-page canary passed, but the fixed PDF still had 6 questions after one repair while the settings required 5, failed with `QUESTION_TYPE_COUNT`, and rolled back; attempt 2, the only rerun of the failed job, passed the full DeepSeek/MiMo Materials suite, injection/safe material, grading, the 9-node graph, and Japan East Azure (accuracy 98, pronunciation 98.8), Luna stayed false because the OpenAI-only ZDR was unavailable, and then the free Gemma model returned HTTP 429 five times in a row and it rolled back again. Neither attempt cut over; independent checks confirmed the old Web/API/AI, false flags, public health/auth, and candidate cleanup were normal, so PR #75 is merged but not deployed to production.
+- After PR #74 merged as main `5b4cad883b628fd21cc1d104227be6dfb746834f`, run [`32585659792`](https://github.com/1590703336/Nalanda/actions/runs/32585659792) passed quality, 0007→0053, empty database/lint, two-user RLS/Storage, and fake Chromium. Production attempt 1's real Materials suite, 220-page canary, and Japan East Azure all passed, but the Gemma translation smoke still returned HTTP 429 after 5 bounded backoffs and rolled back; attempt 2, rerunning only the failed job on the same SHA, then failed with `SOURCE_REFERENCE` when both the first generation and the repair for a single-block PDF returned invalid citations. Neither candidate cut over, and independent production health was normal. The single-block regression fix passed ruff and 78 Python tests locally; real providers, Gemma, Azure, the signed-in smoke, cutover, and independent public verification still have to be proven by a new PR/main run.
+- After PR #71 merged, the first execution of main run [`32543270581`](https://github.com/1590703336/Nalanda/actions/runs/32543270581) passed the full fake/local gates and the real Materials provider suite, but Japan East Azure TTS returned HTTP 401 and the candidate rolled back automatically before cutover. Attempt 2, retried at the user's request, passed the 220-page resource canary (main/child process peaks 107,868,160/221,601,792 bytes), then the fixed DOCX exam failed the initial semantic review, and after one repair only the final structural code `SOURCE_REFERENCE` remained, rolling back again before cutover. New regressions passed ruff and 77 Python tests locally, covering citation dedupe/normalization, same-question restoration, changed question IDs failing closed, and the second semantic review after restoration; real providers, Azure, candidate activation, and independent public verification still have to be proven by a new main run.
+- PR #70's full gate run [`32499521666`](https://github.com/1590703336/Nalanda/actions/runs/32499521666) passed and it was merged as main `e6fa854dd6517a2a2ccd4152b60ca37078f6af4e`. Main run [`32540131549`](https://github.com/1590703336/Nalanda/actions/runs/32540131549) again passed lint/typecheck, 131 API, 113 Web, and 72 Python tests, 0007→0051, empty database/lint/RLS/Storage, fake Chromium, image builds, and the 220-page canary, but the real DOCX exam returned `AI_EXAM_VALIDATION_FAILED`; the candidate rolled back and was cleaned up before the API/Web cutover, so this run isn't evidence of going live in production.
+- The validation diagnostics/fixture forward fix passed 74 Python tests, ruff, 26 release tooling tests, and `git diff --check` locally; real providers, full CI, and production activation still have to be proven by a new PR/main run.
+- PR #69 and main run [`31838779292`](https://github.com/1590703336/Nalanda/actions/runs/31838779292) passed the fake/local gates, real provider fixtures, the 220-page canary, and the Azure/Courses gates; the signed-in production smoke's fixed knowledge graph returned 3 nodes/2 edges but no level-0 root, the database rejected the completion callback, and candidate `669f3f423e712fe561496dae6b0ab9b16c799025-31838779292-1` didn't switch the Web and automatically restored the old API/AI. This run is evidence of finding and isolating a release defect, not of going live.
+- The root node/completion callback forward fix passed 72 Python, 131 API, and 113 Web/jsdom tests locally, plus ruff, docs 55, release tooling 26, lint, typecheck, and the Web/API build; real Supabase, Chromium, and real providers still have to be proven again by a new PR/main/protected run.
 
 ### Security
 
-- Luna 的模型/provider/reasoning/格式能力均由服务端固定；客户端不能选择模型或直接执行 Materials AI 工作流。Luna 在实时 ZDR catalog 没有 Azure endpoint 时失败关闭；first-party OpenAI 上游的 usage 会被数据库完成事务视为路由违规。
-- 2026-08-22 go/no-go 复核确认兼容观察已超过 24 小时；现网与最新 Web 均不提交两个时间字段，Redis PING/AOF/noeviction 正常、无 error/eviction，points ledger/Profile projection 差异为 0。只读 plan run `32581192318` 仅列 0052–0053；protected run `32581805613` 在 artifact `9478168126` 后应用并验证到 0053。该 run 的最新应用候选两次均被真实 Materials AI PPTX gate 拦截并自动恢复 `3c095a55ced21cee11a1b3131dd2889ec1f70733`，因此数据库权限已上线，但最新 main 应用没有切流。
-- 新 checkpoint 表不开放客户端读取；知识问答仅 owner 可读且不能由客户端写。所有新 RPC 撤销 `public/anon/authenticated` EXECUTE，问题和来源内容继续按不可信数据处理，不能改变模型、工具或 system prompt。
+- Luna's model/provider/reasoning/format capabilities are all pinned by the server; clients can't choose models or execute Materials AI workflows directly. Luna fails closed when the live ZDR catalog has no Azure endpoint; usage from a first-party OpenAI upstream is treated as a routing violation by the database completion transaction.
+- The 2026-08-22 go/no-go review confirmed the compatibility observation had exceeded 24 hours; neither the live nor the latest Web submits the two time fields, Redis PING/AOF/noeviction are normal with no errors/evictions, and the points ledger/Profile projection difference is 0. Read-only plan run `32581192318` listed only 0052–0053; protected run `32581805613` applied and verified up to 0053 after artifact `9478168126`. The latest application candidate of that run was stopped twice by the real Materials AI PPTX gate and automatically restored `3c095a55ced21cee11a1b3131dd2889ec1f70733`, so the database permissions are live, but the latest main application didn't cut over.
+- The new checkpoint tables aren't readable by clients; knowledge Q&A is readable only by the owner and can't be written by clients. All new RPCs revoke EXECUTE from `public/anon/authenticated`, and questions and source content continue to be treated as untrusted data that can't change the model, tools, or system prompt.
 
 ## [0.11.1] - 2026-08-11
 
 ### Fixed
 
-- Materials AI 固定 OpenRouter 路由增加网络错误与 408/429/502/503/504 的共享 wall-clock 预算内指数退避，遵守数值型 `Retry-After`；不提供跨模型 fallback，并让同一固定模型按吞吐量优先、只在满足 ZDR、拒绝数据收集与参数支持过滤器的 provider endpoint 间故障转移。固定关闭可选 reasoning，避免 completion 预算耗尽后 `message.content=null`；401/402/403、ZDR/参数错误立即失败，真实门禁失败只输出稳定 worker/provider purpose/error code，不回显响应正文。
-- 修复受保护部署远端 heredoc 被 `docker compose exec -T` 继承 stdin 后提前吃掉后续脚本、却以零状态退出的假绿缺陷；所有远端 compose exec 统一显式读取 `/dev/null`，发布工具测试会拒绝重新引入裸调用。
+- The pinned Materials AI OpenRouter route adds exponential backoff within a shared wall-clock budget for network errors and 408/429/502/503/504, honoring numeric `Retry-After`; it provides no cross-model fallback, and lets the same pinned model prioritize throughput and fail over only between provider endpoints that satisfy the ZDR, deny data collection, and parameter support filters. Optional reasoning is pinned off to avoid `message.content=null` after the completion budget is exhausted; 401/402/403 and ZDR/parameter errors fail immediately, and real gate failures only print stable worker/provider purpose/error codes without echoing response bodies.
+- Fixed the false green in protected deploys where the remote heredoc was inherited as stdin by `docker compose exec -T`, which swallowed the rest of the script early but exited with status zero; every remote compose exec now explicitly reads `/dev/null`, and release tooling tests reject reintroducing bare calls.
 
 ### Testing
 
-- PR [#56](https://github.com/1590703336/Nalanda/pull/56) run [`31462982923`](https://github.com/1590703336/Nalanda/actions/runs/31462982923) 与 PR [#57](https://github.com/1590703336/Nalanda/pull/57) run [`31465041901`](https://github.com/1590703336/Nalanda/actions/runs/31465041901) 均通过 docs/lint/typecheck、104 个 API、105 个 Web/jsdom、25 个 Python AI 测试、AI/API/Web build、真实 Redis、0007→0043、空库重建/lint、双用户 RLS/Storage 和 fake-provider Chromium Playwright。fake Playwright 不构成真实模型证明。
-- main 验证 run [`31465776658`](https://github.com/1590703336/Nalanda/actions/runs/31465776658) 通过；独立只读 plan [`31465816321`](https://github.com/1590703336/Nalanda/actions/runs/31465816321) 确认本地/远端均到 0043、dry-run 为空且未执行写库或部署。
+- PR [#56](https://github.com/1590703336/Nalanda/pull/56) run [`31462982923`](https://github.com/1590703336/Nalanda/actions/runs/31462982923) and PR [#57](https://github.com/1590703336/Nalanda/pull/57) run [`31465041901`](https://github.com/1590703336/Nalanda/actions/runs/31465041901) both passed docs/lint/typecheck, 104 API, 105 Web/jsdom, and 25 Python AI tests, the AI/API/Web build, real Redis, 0007→0043, empty-database rebuild/lint, two-user RLS/Storage, and fake-provider Chromium Playwright. Fake Playwright isn't proof of real models.
+- Main verification run [`31465776658`](https://github.com/1590703336/Nalanda/actions/runs/31465776658) passed; a separate read-only plan [`31465816321`](https://github.com/1590703336/Nalanda/actions/runs/31465816321) confirmed local/remote were both at 0043 with an empty dry-run, and nothing was written to the database or deployed.
 
 ### Release
 
-- 最终受保护 run [`31467153739`](https://github.com/1590703336/Nalanda/actions/runs/31467153739) 创建并上传 14 天加密恢复 artifact [`9092230348`](https://github.com/1590703336/Nalanda/actions/runs/31467153739/artifacts/9092230348)（824,125 bytes，artifact zip SHA-256 `6939309024094791bb639112eaf73a1429d588a4800c42703e579185a0aa817f`），确认 0041–0043 history、空 dry-run 和远端 database lint。
-- 近上限 Office canary 处理 220 页/366,412 字符，主进程峰值约 101.8 MiB、子进程约 211.9 MiB，无 OOM 或邻站故障。真实 OpenRouter gate 使用固定 DeepSeek/MiMo 完成 PDF/DOCX/PPTX/chart、局部视觉恢复、注入拒绝、安全教材放行和主观题评分；真实 Japan East Azure、Gemma 翻译、队列/private Storage/重复词复用/评分也全部通过。
-- 登录生产 smoke 完成 `queued → succeeded` 生成、异步评分、Free 双额度各消费一次、5 条 provider usage、来源与结果清理，并返回 `deps.supabase=ok/deps.ai=ok`；任务前后临时目录清理门禁通过。
-- 不可变 release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 于 `2026-08-11T07:20:02Z` 健康激活，API/AI image 与 Web symlink 均指向该 commit，`FEATURE_MATERIAL_AI=true`。独立公网复核：首页 200，`/api/health` 为 `deps.supabase=ok/deps.redis=ok`，`/api/health/ai` 为 worker/queue ok，匿名 `/api/me` 和 `/api/profile/ai-quota` 均为 401。
-- 更早的 main run [`31463661987`](https://github.com/1590703336/Nalanda/actions/runs/31463661987) 虽显示绿色，独立检查发现生产仍是旧 image/Web、flag=false 且 AI endpoint 404；根因正是首个远端 `compose exec` 消耗 heredoc stdin。该 run 没有被计作上线，修复并重新走完整受保护门禁后才发布。
+- Final protected run [`31467153739`](https://github.com/1590703336/Nalanda/actions/runs/31467153739) created and uploaded the 14-day encrypted recovery artifact [`9092230348`](https://github.com/1590703336/Nalanda/actions/runs/31467153739/artifacts/9092230348) (824,125 bytes, artifact zip SHA-256 `6939309024094791bb639112eaf73a1429d588a4800c42703e579185a0aa817f`), and confirmed the 0041–0043 history, an empty dry-run, and remote database lint.
+- The near-limit Office canary processed 220 pages/366,412 characters, with main process peak about 101.8 MiB and child process about 211.9 MiB, and no OOM or neighbor-site failure. The real OpenRouter gate used the pinned DeepSeek/MiMo to complete PDF/DOCX/PPTX/chart, partial vision recovery, injection rejection, safe material acceptance, and subjective grading; real Japan East Azure, Gemma translation, and queue/private Storage/duplicate word reuse/scoring all passed too.
+- The signed-in production smoke completed `queued → succeeded` generation, asynchronous grading, one consumption each of the two Free quotas, 5 provider usage rows, source and result cleanup, and returned `deps.supabase=ok/deps.ai=ok`; the temporary directory cleanup gates before and after the job passed.
+- Immutable release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` activated healthily at `2026-08-11T07:20:02Z`, with the API/AI images and Web symlink all pointing at that commit and `FEATURE_MATERIAL_AI=true`. Independent public re-check: home page 200, `/api/health` `deps.supabase=ok/deps.redis=ok`, `/api/health/ai` worker/queue ok, and anonymous `/api/me` and `/api/profile/ai-quota` both 401.
+- The earlier main run [`31463661987`](https://github.com/1590703336/Nalanda/actions/runs/31463661987) showed green, but independent checks found production was still on the old image/Web with flag=false and the AI endpoint returning 404; the root cause was exactly the first remote `compose exec` consuming the heredoc stdin. That run wasn't counted as going live, and the release only happened after the fix went through the full protected gates again.
 
 ## [0.11.0] - 2026-08-10
 
 ### Added
 
-- 新增 0041–0043 Materials AI 发布候选：Free plan、按 Profile 时区重置的生成/评分双额度、持久 generation job/events、私有解析缓存、真实 Notes/来源快照、在线答卷/幂等草稿/评分事实、脱敏 provider usage 及完整结构/RLS/RPC 断言。
-- Materials 每个文件增加复用现有视觉与双语 locale 的 “Use AI” 菜单；仅 “Generate test paper” 开放，其余三项显示 Coming soon。My Notes 将真实 Materials 课程/试卷与历史 Demo 分组；Profile 显示 Free plan 双额度。
-- NestJS 增加 owner-only AI/Notes/Exam API、成功后消费的 reservation 事务、Postgres durable job、BullMQ UUID 调度/reconciler/延迟交卷和内部回调；FastAPI 增加 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片解析、选择性 MiMo 视觉恢复、两次注入审查、DeepSeek 严格试卷生成与批量主观题评分。
-- 新增受保护部署的 AI image、私有 Redis/worker readiness、真实模型固定样本 gate、2G 资源 canary、临时目录孤儿清理与失败自动回滚。
+- Added the 0041–0043 Materials AI release candidate: the Free plan, dual generation/grading quotas that reset by Profile time zone, durable generation jobs/events, a private parse cache, real Notes/source snapshots, online answer sheets/idempotent drafts/grading facts, redacted provider usage, and full structure/RLS/RPC assertions.
+- Each Materials file gets a "Use AI" menu that reuses the existing visuals and bilingual locale; only "Generate test paper" is open, and the other three show Coming soon. My Notes groups real Materials courses/exam papers separately from the historical Demo; Profile shows the Free plan's two quotas.
+- NestJS adds owner-only AI/Notes/Exam APIs, reservation transactions consumed on success, Postgres durable jobs, BullMQ UUID scheduling/reconciler/delayed submission, and internal callbacks; FastAPI adds PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/image parsing, selective MiMo vision recovery, two injection reviews, strict DeepSeek exam generation, and batched subjective grading.
+- Added the protected deploy's AI image, private Redis/worker readiness, the real model fixed-sample gate, the 2G resource canary, temporary directory orphan cleanup, and automatic rollback on failure.
 
-- 新增并发布第一阶段 0039–0040：冻结用户时区的 points 日窗口、稳定 business-key 奖励 decision、owner-only reward receipt、每日上限通知、append-only 审核冲正和四类只待审协同信号。
-- NestJS 增加同机私有 Redis 原子 Lua 滑动窗口、注册 IP+邮箱双限流、认证/Courses/公开市场分层限流、HMAC 滥用聚合、真实 Redis readiness 和 points 管理 API；协同扫描使用分布式锁且不自动处罚。
-- 生产 compose 增加密码认证、AOF `everysec`、`noeviction`、私有网络 Redis，以及 secret 原子安装、nginx 标准 JSON 429、配置验证和两阶段发布脚本/门禁。
+- Added and released stage one, 0039–0040: points daily windows frozen to the user's time zone, stable business-key reward decisions, the owner-only reward receipt, daily cap notifications, append-only moderation reversals, and four kinds of pending-review-only coordination signals.
+- NestJS adds same-host private Redis atomic Lua sliding windows, IP+email dual rate limiting for sign-up, layered rate limiting for authenticated/Courses/public market, HMAC abuse aggregation, real Redis readiness, and the points admin API; coordination scanning uses a distributed lock and never penalizes automatically.
+- Production compose adds a private-network Redis with password authentication, AOF `everysec`, and `noeviction`, plus atomic secret installation, nginx standard JSON 429s, configuration validation, and the two-phase release scripts/gates.
 
 ### Changed
 
-- 帖子直接 Supabase 写入收敛为内容列白名单，owner/作者快照/计数/repost/key/时间由数据库维护；Feedback 用户仅可新增/读取；Schedule 引用由 owner trigger 校验，`done_at` 由数据库派生。
-- Web 在社区与任务业务写成功后读取服务端 points receipt，超限提示不回滚内容操作；Courses outbox 对 429 保持相同 attempt UUID 并按 `Retry-After` 串行恢复，音频 manifest 轮询退避而不误报永久失败。
+- Direct Supabase writes to posts are narrowed to a content column allowlist, with owner/author snapshot/counts/repost/key/times maintained by the database; Feedback users can only add/read; Schedule references are validated by an owner trigger, and `done_at` is derived by the database.
+- After community and task business writes succeed, the Web app reads the server points receipt, and the over-cap notice doesn't roll back the content action; the Courses outbox keeps the same attempt UUID on 429 and resumes serially per `Retry-After`, and audio manifest polling backs off without falsely reporting a permanent failure.
 
 ### Security
 
-- Materials AI 固定使用服务端 OpenRouter key、`deepseek/deepseek-v4-flash-0731` 和 `xiaomi/mimo-v2.5`，请求要求 ZDR、拒绝数据收集、禁止工具/Web 与 provider 参数降级；恶意或不确定 prompt injection 均拒绝并释放额度。
-- AI 事务 RPC 全部撤销 `public/anon/authenticated` EXECUTE；用户只能读取自身任务/额度/Notes/答卷，不能写缓存、provider usage、结果、分数或配额。每任务 0700 临时目录在成功、失败、取消、超时的 `finally` 清理。
-- Materials AI 删除含已评分答卷的 Note/科目时不再因 provider usage 外键置空而回滚；job/attempt UUID 作为不可变成本审计引用保留，内容删除不能抹掉月度预算事实，Auth owner 删除仍级联清理。
-- Materials AI 近上限 Office 资源 canary 现在显式以 `PYTHONPATH=/app` 运行挂载到 `/tmp` 的脚本，并在普通 CI 镜像门禁中执行与生产相同的 640MB/896MB、0.75 CPU、128 pids 全量渲染，避免到生产激活时才发现镜像模块路径漂移。
+- Materials AI always uses the server-side OpenRouter key, `deepseek/deepseek-v4-flash-0731`, and `xiaomi/mimo-v2.5`, and requests require ZDR, deny data collection, and forbid tools/Web and provider parameter downgrades; malicious or uncertain prompt injection is always rejected and the quota released.
+- Every AI transactional RPC revokes `public/anon/authenticated` EXECUTE; users can only read their own jobs/quota/Notes/answer sheets and can't write caches, provider usage, results, scores, or quotas. Each job's 0700 temporary directory is cleaned up in `finally` on success, failure, cancellation, and timeout.
+- Deleting a Note/subject that has graded answer sheets in Materials AI no longer rolls back because of the provider usage foreign key being set to null; job/attempt UUIDs are kept as immutable cost audit references, content deletion can't erase monthly budget facts, and deleting the Auth owner still cascades the cleanup.
+- The Materials AI near-limit Office resource canary now explicitly runs the script mounted at `/tmp` with `PYTHONPATH=/app`, and runs the same full rendering with 640MB/896MB, 0.75 CPU, and 128 pids as production in the ordinary CI image gate, so module path drift in the image isn't first discovered at production activation.
 
-- 新内部 points/audit 表对客户端完全隐藏；service-role 也只有 SELECT，所有奖励、signal review、moderation 和审计变更均经固定 `search_path` 的受控函数执行。新增函数默认撤销 `public/anon/authenticated` EXECUTE。
-- 历史 points grandfather 只把存在 transition 1 正向分录的业务键视为实际获奖；0008/0009 零金额占位永久不可冲正/补领，既有无来源负 transition 通过 append-only `grandfather-zero-reset-v1` 等额归零，避免吞掉未来合法积分。
-- 普通奖励与人工审核分别取得共享/独占 advisory gate，并统一 Profile→状态行锁序；重复审核留下 0 变化审计，不再与“目标不存在”混淆。
-- Redis 故障时注册、写入、克隆、举报及成本路径 fail-closed，私有只读 fail-open 并记录脱敏降级事件；日志和数据库不保存原始 IP、邮箱、正文或课程内容。
+- The new internal points/audit tables are completely hidden from clients; the service role also only has SELECT, and every reward, signal review, moderation, and audit change runs through controlled functions with a pinned `search_path`. New functions revoke `public/anon/authenticated` EXECUTE by default.
+- Historical points grandfathering only treats business keys with a positive transition-1 entry as actually rewarded; 0008/0009 zero-amount placeholders can never be reversed/reclaimed, and existing unsourced negative transitions are zeroed by an equal append-only `grandfather-zero-reset-v1`, so they can't swallow future legitimate points.
+- Ordinary rewards and manual moderation take a shared/exclusive advisory gate respectively, with a unified Profile→state row lock order; repeated moderation leaves a 0-change audit and is no longer confused with "target doesn't exist".
+- When Redis fails, sign-up, writes, cloning, reporting, and cost paths fail closed, while private reads fail open and record a redacted degradation event; logs and the database never store raw IPs, emails, content, or course content.
 
 ### Testing
 
-- 增加 Python 解析/安全/视觉范围/清理/schema 测试、Nest 配额/幂等/队列/revision/期限/评分测试、Web 队列/Demo/真实 Notes/草稿/计时/账号隔离 jsdom、双用户 AI RLS、fake-provider Playwright、真实 provider smoke 和近上限 Office 资源 canary。fake 自动化不构成真实模型或生产证据。
+- Added Python parsing/security/vision range/cleanup/schema tests, Nest quota/idempotency/queue/revision/deadline/grading tests, Web queue/Demo/real Notes/drafts/timer/account isolation jsdom, two-user AI RLS, fake-provider Playwright, real provider smokes, and the near-limit Office resource canary. Fake automation isn't real model or production evidence.
 
-- 增加帖子/Feedback/Schedule 双用户负向 RLS、points 并发上限/时区/删除重建/suppress-restore/协同信号、Redis Lua/路由分类、Web 上限通知与 429 回退、nginx/secret 安装脚本回归。真实 Redis、一次性 Supabase、nginx 容器和 Playwright 仍须由 PR/main CI 形成证据，本地跳过不算通过。
+- Added two-user negative RLS for posts/Feedback/Schedule, points concurrent caps/time zones/delete-recreate/suppress-restore/coordination signals, Redis Lua/route classification, Web cap notices and 429 fallback, and nginx/secret install script regressions. Real Redis, a one-off Supabase, the nginx container, and Playwright must still produce evidence through PR/main CI; local skips don't count as passing.
 
 ### Release
 
-- 0041–0043 尚未进入生产；只有完整 CI、只读迁移计划、加密恢复点、真实 OpenRouter/ZDR 固定样本、2G canary、`deps.supabase=ok`/Redis/AI readiness、公网登录用户 smoke 全部通过后才可开启 `FEATURE_MATERIAL_AI`。
-- PR [#51](https://github.com/1590703336/Nalanda/pull/51) 与修复远端 SSH heredoc stdin 的 PR [#52](https://github.com/1590703336/Nalanda/pull/52) 已合入 main；PR/main CI 均通过 quality、真实 Redis、0007→0040、空库/lint、双用户 RLS/Storage 与 Chromium Playwright。
-- [只读 plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端都到 0040 且 dry-run 为空；[受保护 run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 保留加密恢复 artifact `9057062920`（800,819 bytes，zip SHA-256 `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并验证远端 history、database lint 与空 dry-run。
-- 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 激活。Redis PING/AOF/private-port/noeviction 与 nginx 配置通过；真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8，真实 OpenRouter Gemma 返回 253/27/280 tokens，候选 API/Storage gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`transcriptionMatched=true`。公网复核确认 `deps.supabase=ok/deps.redis=ok`、匿名 me/admin 401、注册 `RateLimit-*`、Web 与 Course Market 200。
-- 首个 apply run 虽已安全应用 0039–0040，但 Redis `docker compose exec` 消耗远端 heredoc stdin，导致 workflow 错报部署成功而应用未切换；PR #52 加入 stdin 分离和回归测试后修复。随后 OpenRouter free route 的一次超时和三次瞬时 429 均在切流前阻断；同凭据额度正常且本机/生产主机真实诊断恢复 200 后，第五次尝试完整通过。没有把失败候选计作上线。
-- 0039–0040 现已进入生产兼容观察；最早在 `2026-08-11T09:35:34Z` 且 go/no-go 通过后，才允许另行创建 0044–0045 撤销兼容时间列 grant。0041–0043 是纯新增 Materials AI，不执行撤权。
+- 0041–0043 haven't reached production yet; `FEATURE_MATERIAL_AI` may only be turned on after full CI, a read-only migration plan, an encrypted recovery point, real OpenRouter/ZDR fixed samples, the 2G canary, `deps.supabase=ok`/Redis/AI readiness, and the public signed-in user smoke all pass.
+- PR [#51](https://github.com/1590703336/Nalanda/pull/51) and PR [#52](https://github.com/1590703336/Nalanda/pull/52), which fixes the remote SSH heredoc stdin, are merged into main; PR/main CI both passed quality, real Redis, 0007→0040, empty database/lint, two-user RLS/Storage, and Chromium Playwright.
+- [Read-only plan `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) confirmed local/remote are both at 0040 with an empty dry-run; [protected run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) kept encrypted recovery artifact `9057062920` (800,819 bytes, zip SHA-256 `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`) and verified remote history, database lint, and an empty dry-run.
+- Immutable release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` was activated at `2026-08-10T09:35:34Z`. Redis PING/AOF/private-port/noeviction and the nginx config passed; real Japan East Azure returned a 10,656-byte MP3, accuracy 98, pronunciation 98.8, real OpenRouter Gemma returned 253/27/280 tokens, and the candidate API/Storage gate returned `generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=98.2`, `transcriptionMatched=true`. The public re-check confirmed `deps.supabase=ok/deps.redis=ok`, anonymous me/admin 401, sign-up `RateLimit-*`, and Web and Course Market 200.
+- The first apply run had already applied 0039–0040 safely, but the Redis `docker compose exec` consumed the remote heredoc stdin, so the workflow falsely reported a successful deployment while the application hadn't switched; PR #52 fixed it by detaching stdin and adding regression tests. Afterwards, one timeout and three transient 429s on the OpenRouter free route were all blocked before cutover; after the same credential's quota was confirmed normal and real diagnostics from the local machine/production host returned 200 again, the fifth attempt passed completely. No failed candidate was counted as going live.
+- 0039–0040 are now under production compatibility observation; only at the earliest `2026-08-11T09:35:34Z` and after the go/no-go passes may 0044–0045 be created separately to revoke the compatibility time-column grants. 0041–0043 are pure Materials AI additions and don't revoke anything.
 
 ## [0.10.2] - 2026-08-04
 
 ### Added
 
-- 新增仅用于拼写前翻译输入的 OpenRouter `fish-audio/transcribe-1` 中文语音识别：输入框右端录音、识别后只填入文本且不自动提交，用户可继续编辑。
-- 翻译语音输入、认词朗读反馈和读音考试共用实时波形组件；录音仍只在请求内存中处理，不持久化用户音频。
-- 新增 0037–0038：service-role-only STT active session/revision/word 校验、每用户分钟/本地日配额、独立月预算预留及结构/权限发布断言。
+- Added OpenRouter `fish-audio/transcribe-1` Chinese speech recognition, only for the translation input before spelling: record at the right end of the input, and after recognition the text is only filled in without auto-submitting, so the user can keep editing.
+- Translation voice input, recognition read-aloud feedback, and the pronunciation exam share a live waveform component; recordings are still only handled in request memory, and user audio is never persisted.
+- Added 0037–0038: service-role-only STT active session/revision/word validation, per-user minute/local-day quotas, an independent monthly budget reservation, and structure/permission release assertions.
 
 ### Security
 
-- STT model、语言和参考学习状态均由服务端固定；客户端不能选择 provider、读取 OpenRouter key、绕过当前题校验或通过识别结果直接推进进度/奖励。
+- The STT model, language, and reference learning state are all pinned by the server; clients can't choose the provider, read the OpenRouter key, bypass the current-question check, or advance progress/rewards directly through recognition results.
 
 ### Testing
 
-- PR [#49](https://github.com/1590703336/Nalanda/pull/49) run `30904901828` 通过 docs/lint/typecheck、72 个 API 测试、85 个 Web/jsdom 测试、build、0007→0038、空库重建/database lint、一次性真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright；Playwright 的 Azure/OpenRouter 仍为 fake。
-- 充值后独立真实 OpenRouter smoke 使用 0.526 秒、16 kHz 单声道合成中文 WAV 成功调用 `fish-audio/transcribe-1`，识别结果包含预期关键词并记录约 `$0.0001` provider cost；真实 `google/gemma-4-26b-a4b-it:free` structured smoke 同时成功。该证据证明当时的 endpoint/key/额度与固定中文样本可用，不代表真实用户口音、物理麦克风或持续准确率。
+- PR [#49](https://github.com/1590703336/Nalanda/pull/49) run `30904901828` passed docs/lint/typecheck, 72 API tests, 85 Web/jsdom tests, build, 0007→0038, empty-database rebuild/database lint, one-off real local Supabase two-user RLS/Storage E2E, and Chromium Playwright; Playwright's Azure/OpenRouter were still fakes.
+- After topping up, an independent real OpenRouter smoke successfully called `fish-audio/transcribe-1` with a 0.526-second, 16 kHz mono synthetic Chinese WAV; the recognition result contained the expected keyword and recorded about `$0.0001` of provider cost; a real `google/gemma-4-26b-a4b-it:free` structured smoke succeeded at the same time. This evidence proves the endpoint/key/quota and the fixed Chinese sample worked at the time, and doesn't represent real users' accents, physical microphones, or sustained accuracy.
 
 ### Release
 
-- PR #49 合入 main SHA `66c919833693971ba1bda4ea33a3fdf6717ef1ca`；main run `30905971129` 完成验证并按迁移保护规则跳过生产写入。只读 [plan run `30906629924`](https://github.com/1590703336/Nalanda/actions/runs/30906629924) 首次遇到一次性 Supabase 上游瞬时错误；同 SHA 仅重跑失败 job 后真实 RLS/Storage 与 Playwright 通过，最终 dry-run 唯一列出 0037–0038，未创建恢复点、写库或部署。
-- [受保护 apply/deploy run `30907716733`](https://github.com/1590703336/Nalanda/actions/runs/30907716733) 在 apply 前保留加密 artifact `8892006761`（`db-recovery-66c919833693971ba1bda4ea33a3fdf6717ef1ca`，730,159 bytes），随后应用 0037–0038，并通过结构/权限断言、remote database lint 与空 dry-run。
-- 不可变 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter structured 判分和生产候选 API 的 Azure 中文 WAV→Fish Audio STT gate；后者返回 `transcriptionMatched=true`，同时 Courses API/Storage gate 验证 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回新 React 资产；生产主机只读复核确认 Web 软链和 API image 都指向同一 main SHA。
+- PR #49 merged into main SHA `66c919833693971ba1bda4ea33a3fdf6717ef1ca`; main run `30905971129` completed verification and skipped production writes per the migration protection rule. The read-only [plan run `30906629924`](https://github.com/1590703336/Nalanda/actions/runs/30906629924) first hit a transient upstream error from the one-off Supabase; after rerunning only the failed job on the same SHA, real RLS/Storage and Playwright passed, and the final dry-run listed exactly 0037–0038, without creating a recovery point, writing to the database, or deploying.
+- [Protected apply/deploy run `30907716733`](https://github.com/1590703336/Nalanda/actions/runs/30907716733) kept encrypted artifact `8892006761` (`db-recovery-66c919833693971ba1bda4ea33a3fdf6717ef1ca`, 730,159 bytes) before apply, then applied 0037–0038 and passed the structure/permission assertions, remote database lint, and an empty dry-run.
+- Before activation, immutable release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` passed real Japan East Azure (10,656-byte MP3, accuracy 98, pronunciation 98.8), real OpenRouter structured grading, and the production candidate API's Azure Chinese WAV→Fish Audio STT gate; the latter returned `transcriptionMatched=true`, while the Courses API/Storage gate verified `generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=96.4`. The independent public re-check confirmed `/api/health` `status=ok` with `deps.supabase=ok`, anonymous `/api/me` 401, and the Web returning new React assets; a read-only check on the production host confirmed the Web symlink and API image both point to the same main SHA.
 
 ## [0.10.1] - 2026-08-04
 
 ### Added
 
-- 新增 0035–0036：把 `learned_at` 收敛为数据库触发器维护的精确派生值，并在发布时验证当前数据、约束、触发器、考试写入、review 无写入和客户端无表权限。
+- Added 0035–0036: converge `learned_at` into an exact derived value maintained by a database trigger, and verify at release the current data, constraints, triggers, exam writes, no writes from reviews, and no client table permissions.
 
 ### Changed
 
-- 发音评分录音移除浏览器端 20ms VAD、噪声阈值、250ms 最短清晰语音判断、首尾静音裁剪和 6 秒内容截断；录音期间明确关闭浏览器 echo cancellation、noise suppression 与 auto gain control，完整保留用户实际录到的帧。客户端只执行 Azure REST 契约必需的 16kHz 单声道 PCM WAV 格式转换，最多录制 6 秒，服务端仍限制 2MB/8 秒并把未修改的 WAV 转发 Azure。
-- `learning_word_progress.learned_at` 现在总是等于两个考试通过时间中的较晚值；缺少任一考试事实时强制为空。首次学习、复习、单项考试、客户端状态和直接赋值都不能形成掌握。
+- Pronunciation scoring recordings remove the browser-side 20 ms VAD, noise threshold, 250 ms minimum clear-speech check, leading/trailing silence trimming, and 6-second content truncation; during recording the browser's echo cancellation, noise suppression, and auto gain control are explicitly off, and every frame the user actually recorded is kept. The client only performs the 16 kHz mono PCM WAV conversion required by the Azure REST contract and records at most 6 seconds; the server still limits 2 MB/8 seconds and forwards the unmodified WAV to Azure.
+- `learning_word_progress.learned_at` now always equals the later of the two exam pass times; it is forced to null when either exam fact is missing. Initial learning, reviews, single exams, client state, and direct assignment can't create mastery.
 
 ### Fixed
 
-- 修复轻声、低增益麦克风、快速起音或录音开头已经说话时，本地自适应阈值误报“没有检测到清晰语音”并阻止录音送达 Azure 的问题。
+- Fixed the local adaptive threshold falsely reporting "no clear speech detected" and preventing recordings from reaching Azure with quiet speech, low-gain microphones, fast onsets, or speech already under way when recording started.
 
 ### Testing
 
-- 增加静音、低幅度音频、首尾帧和完整时长均不被客户端删除的 WAV 回归；API 单元测试断言上传字节原样转发 Azure；真实 Supabase E2E 断言手工写 `learned_at` 或只有一个考试事实都仍为未学习。
+- Added WAV regressions that silence, low-amplitude audio, leading/trailing frames, and the full duration are never removed by the client; API unit tests assert uploaded bytes are forwarded to Azure unchanged; real Supabase E2E asserts that manually writing `learned_at` or having only one exam fact still means not learned.
 
 ### Release
 
-- PR [#47](https://github.com/1590703336/Nalanda/pull/47) 合入 main SHA `51252527645d9438df0414f056c8a3b088b360d8`；最终 PR run `30831319634` 与 main run `30831964846` 通过 docs/lint/typecheck、Web/API tests、build、0007→0036、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake。
-- [只读 plan run `30832581552`](https://github.com/1590703336/Nalanda/actions/runs/30832581552) 确认生产远端完整到 0034，唯一待办为 0035–0036；恢复、apply 和应用部署步骤全部跳过。
-- [受保护 apply/deploy run `30833228406`](https://github.com/1590703336/Nalanda/actions/runs/30833228406) 在 apply 前保留加密 artifact `8864033351`（`db-recovery-51252527645d9438df0414f056c8a3b088b360d8`，657,467 bytes，digest `sha256:36a9ec08516dff5cb198511d71b69bb63533727cad9826db050dff4a33025625`，保留至 2026-08-17），随后把远端 history 同步到 0036，并通过 0036 结构/权限断言、remote database lint 与空 dry-run。
-- 不可变 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` 激活前通过真实 Japan East Azure 直连（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（253/27/280 tokens）和 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=96.4`、未裁剪 `assessmentBytes=88444`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回新 React 资产、Course Market 返回 200。未使用真实用户账号在生产提交完整拼写/读音考试，因此不能把发布 gate 描述为生产用户考试流程 E2E。
+- PR [#47](https://github.com/1590703336/Nalanda/pull/47) merged into main SHA `51252527645d9438df0414f056c8a3b088b360d8`; final PR run `30831319634` and main run `30831964846` passed docs/lint/typecheck, Web/API tests, build, 0007→0036, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Playwright's Azure/OpenRouter were still fakes.
+- [Read-only plan run `30832581552`](https://github.com/1590703336/Nalanda/actions/runs/30832581552) confirmed the production remote was complete through 0034 with 0035–0036 as the only pending items; the recovery, apply, and application deploy steps were all skipped.
+- [Protected apply/deploy run `30833228406`](https://github.com/1590703336/Nalanda/actions/runs/30833228406) kept encrypted artifact `8864033351` (`db-recovery-51252527645d9438df0414f056c8a3b088b360d8`, 657,467 bytes, digest `sha256:36a9ec08516dff5cb198511d71b69bb63533727cad9826db050dff4a33025625`, retained until 2026-08-17) before apply, then synced remote history to 0036 and passed the 0036 structure/permission assertions, remote database lint, and an empty dry-run.
+- Before activation, immutable release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` passed direct real Japan East Azure (10,656-byte MP3, accuracy 98, pronunciation 98.8), real OpenRouter (253/27/280 tokens), and the Courses API/Storage gate (`generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=96.4`, untrimmed `assessmentBytes=88444`). The independent public re-check confirmed `/api/health` `status=ok` with `deps.supabase=ok`, anonymous `/api/me` 401, the Web returning new React assets, and Course Market returning 200. No real user account was used to submit full spelling/pronunciation exams in production, so the release gates can't be described as production user exam-flow E2E.
 
 ## [0.10.0] - 2026-08-03
 
 ### Added
 
-- Courses 考试入口新增“读音考试”：默认要求完整第一轮 90% 正确率（可设 1–100%），单词逐题打乱展示并通过现有 Azure 发音评分判定；每次评分后无论正确或错误都停留显示分数、音素反馈、翻译和“听正确读音”，用户再进入下一词。
-- 发音考试每轮结束会持久展示全部错词、该轮分数、IPA、翻译和标准音频；用户确认后，服务端才打乱错词并开始下一轮。第一轮达线且全部候补轮完成后，只记录本次选中词的发音考试通过事实。
-- 新增 0029–0030：考试类型契约、发音考试工作流、通用候补轮确认 RPC、发音评分前当前题校验，以及结构/权限自验证。
-- 复习和两类考试现在都可在所选单元内任意勾选 1–2,000 个词；服务端验证去重、owner、课程/单元归属和 `unlearned` 范围，并把选中集合固化到独立 session。
-- Courses 新增考试历史和详情：最多列出最近 100 场，区分进行中、取消、通过及“首轮未通过但错题已全部修正”，并展示选词、错误次数、逐次拼写/读音结果和时间。考试词面、翻译、音标和最终结果使用 owner 私有快照，之后编辑或删除单词不会改写既有考试；删除整门课程仍按原规则级联删除历史。
-- 课程编辑器在每个既有词旁显示累计错误次数、复习次数及是否已学习；这些只读属性不会随课程内容 payload 回写。
-- 新增 0031–0032：自定义复习/考试范围、`practiceCompleted` 补练完成事实、私有不可变考试词快照、owner-scoped 历史 RPC，以及精确权限/结构自验证。
-- 新增 0033–0034：`spelling_exam_passed_at`、`pronunciation_exam_passed_at`、双考试 check constraint、唯一 `learned_at` 投影、内容编辑撤销 trigger、单 RPC snapshot 字段，以及结构/权限自验证。迁移会从可证明的已通过考试回填两个事实，并清除仅由旧复习或单项考试形成的 `learned_at`。
+- The Courses exam entry adds a "Pronunciation exam": by default it requires 90% accuracy on the full first round (configurable 1–100%), shows words shuffled one per question, and judges them with the existing Azure pronunciation scoring; after each scoring, right or wrong, it stays on the score, phoneme feedback, translations, and "Hear the correct pronunciation" until the user moves to the next word.
+- At the end of each pronunciation exam round, all wrong words, that round's scores, IPA, translations, and standard audio are shown durably; only after the user confirms does the server shuffle the wrong words and start the next round. Once the first round meets the threshold and all retry rounds are complete, only the pronunciation exam pass facts of the words selected this time are recorded.
+- Added 0029–0030: the exam kind contract, the pronunciation exam workflow, the general retry round confirmation RPC, current-question validation before pronunciation scoring, and structure/permission self-verification.
+- Reviews and both exam types can now tick any 1–2,000 words within the selected unit; the server validates dedupe, owner, course/unit membership, and the `unlearned` scope, and pins the selected set into a separate session.
+- Courses adds exam history and details: lists at most the latest 100, distinguishing in progress, cancelled, passed, and "first round failed but every wrong answer has been corrected", and shows the word selection, error counts, per-attempt spelling/pronunciation results, and times. Exam word forms, translations, IPA, and final results use owner-private snapshots, so later editing or deleting words never rewrites existing exams; deleting a whole course still cascades the history per the existing rules.
+- The course editor shows cumulative error counts, review counts, and whether each existing word is learned; these read-only attributes are never written back with the course content payload.
+- Added 0031–0032: custom review/exam scopes, the `practiceCompleted` fact, private immutable exam word snapshots, owner-scoped history RPCs, and exact permission/structure self-verification.
+- Added 0033–0034: `spelling_exam_passed_at`, `pronunciation_exam_passed_at`, the dual-exam check constraint, the single `learned_at` projection, the content edit revocation trigger, single-RPC snapshot fields, and structure/permission self-verification. The migration back-fills both facts from provably passed exams and clears `learned_at` that was formed only by old reviews or single exams.
 
 ### Changed
 
-- 词汇掌握规则收敛为唯一条件：同一词必须分别通过并完整结束拼写考试与发音考试，两个考试事实都存在后才标为已学习。首次四阶段与任何次数/日期的复习都只保留练习事实，不再形成掌握；单独通过任一考试也不会提升课程熟练度。
-- 课程编辑器逐词展示两项考试是否通过。修改英文会撤销两项考试，修改翻译只撤销拼写考试，修改 IPA 只撤销发音考试；任一考试事实失效都会清空该词的 `learned_at`。
+- The vocabulary mastery rule converges on a single condition: the same word must separately pass and fully complete both a spelling exam and a pronunciation exam, and is only marked learned once both exam facts exist. The initial four stages and reviews of any count/date only keep practice facts and no longer create mastery; passing either exam alone doesn't raise course mastery either.
+- The course editor shows per word whether each of the two exams has been passed. Changing the English revokes both exams, changing translations only revokes the spelling exam, and changing IPA only revokes the pronunciation exam; any exam fact becoming invalid clears that word's `learned_at`.
 
 ### Security
 
-- 发音考试的单词 70 分线（可由现有服务端环境变量调整）、第一轮正确率、错词池、轮次、错误次数和 `learned_at` 均由 service-role 事务决定；Web 只显示响应。评分前 RPC 还会验证 owner、活动会话和当前词，避免伪造 `wordId` 消耗 Azure 配额。
-- 自定义 `wordIds` 不能改变 owner/scope 安全边界；浏览器不能直接调用选词或考试历史 RPC。未达首轮阈值的考试即使自动完成全部错题修正，也只写 `practiceCompleted=true`，不会写 `learned_at`。
-- `learning_word_progress` 新增数据库约束，禁止缺少任一考试通过事实时存在 `learned_at`；复习推进函数不再包含正向掌握写入，内部掌握/编辑函数与 snapshot RPC 继续只允许 service role。
+- The pronunciation exam's per-word 70-point pass mark (adjustable through the existing server environment variable), first-round accuracy, wrong-word pool, rounds, error counts, and `learned_at` are all decided by service-role transactions; the Web app only displays responses. The pre-scoring RPC also validates the owner, active session, and current word, so forged `wordId`s can't consume Azure quota.
+- Custom `wordIds` can't change the owner/scope security boundary; browsers can't call the selection or exam history RPCs directly. An exam that missed the first-round threshold, even after automatically completing every wrong-answer correction, only writes `practiceCompleted=true` and never `learned_at`.
+- `learning_word_progress` adds a database constraint forbidding `learned_at` when either exam pass fact is missing; the review advancement function no longer contains forward mastery writes, and the internal mastery/edit functions and the snapshot RPC remain service-role only.
 
 ### Testing
 
-- 增加 API 参数/RPC 映射、考试类型 UI、评分后标准音频、实时正确率、轮末错词分数、手动确认/打乱重考、通过后发音熟练投影、双用户 RPC 拒绝和固定录音 Chromium 流程；自动化 Azure 仍为 fake，不能作为真实供应商或生产发布证据。
-- 增加复习/考试任意选词、失败考试自动完成、考试历史列表/详情、编辑器只读学习属性的 API/jsdom，以及 selected RPC owner/scope、历史脱敏、客户端拒绝、课程编辑后历史快照不变和失败考试不写熟练度的 RLS/Playwright 覆盖。
-- 增加跨日三能力复习仍不 learned、单项考试仍不 learned、两项考试任意顺序共同 learned、失败考试不写考试事实、内容编辑精确撤销和 snapshot 映射的回归；0034 在空库/升级时验证唯一投影与权限边界。
+- Added API parameter/RPC mapping, exam kind UI, standard audio after scoring, live accuracy, end-of-round wrong-word scores, manual confirmation/shuffled retakes, pronunciation mastery projection after passing, two-user RPC rejection, and a fixed-recording Chromium flow; automated Azure is still a fake and can't serve as real provider or production release evidence.
+- Added API/jsdom for arbitrary word selection in reviews/exams, automatic completion of failed exams, exam history list/detail, and read-only editor learning attributes, plus RLS/Playwright coverage of selected RPC owner/scope, redacted history, client rejection, unchanged history snapshots after course edits, and failed exams not writing mastery.
+- Added regressions that cross-day three-skill reviews still don't make words learned, single exams still don't, both exams in either order jointly do, failed exams don't write exam facts, content edits revoke precisely, and the snapshot mapping; 0034 verifies the single projection and permission boundary on empty databases/upgrades.
 
 ### Documentation
 
-- 将 Courses `learned_at` 文档统一为“拼写考试事实 + 发音考试事实”唯一服务端投影；补充复习只记录练习、单项考试不掌握、编辑撤销、课程进度/成长投影、安全边界，以及 Web/共享类型/NestJS/迁移/测试的逐层代码索引。同步更新积分产品规则、ERD、API、测试、隐私、监控和项目状态。
+- Unified the Courses `learned_at` documentation on the single server projection of "spelling exam fact + pronunciation exam fact"; added that reviews only record practice, single exams don't create mastery, edit revocation, course progress/growth projection, the security boundary, and a layer-by-layer code index across Web/shared types/NestJS/migrations/tests. Updated the points product rules, ERD, API, testing, privacy, monitoring, and project status accordingly.
 
 ### Release
 
-- PR [#45](https://github.com/1590703336/Nalanda/pull/45) 合入 main SHA `1a58d2164f6d58feea4d3a2c8925211b8cc60dde`；最终 PR run `30811283164`、main run `30811817461` 与受保护 run `30813047562` 通过 docs/lint/typecheck、Web/API tests、build、0007→0034、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake。
-- [只读 plan run `30812467085`](https://github.com/1590703336/Nalanda/actions/runs/30812467085) 确认生产远端完整到 0028，唯一待办为 0029–0034；恢复、apply 和应用部署步骤均跳过。
-- [受保护 apply/deploy run `30813047562`](https://github.com/1590703336/Nalanda/actions/runs/30813047562) 在 apply 前保留加密 artifact `8855819351`（`db-recovery-1a58d2164f6d58feea4d3a2c8925211b8cc60dde`，593,399 bytes，digest `sha256:5f36f770aab133f24e12d461e66b0c4b744303ca1dbfd1600215163e4ad14796`，工作流保留 14 天），随后把远端 history 同步到 0034，并通过 0030/0032/0034 结构/权限断言、remote database lint 与空 dry-run。
-- 不可变 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（1,604 ms、253/27/280 tokens）和 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回 React root、Course Market 返回 200。未使用真实用户账号在生产提交完整拼写/读音考试，因此不能把发布 gate 描述为生产用户考试流程 E2E。
+- PR [#45](https://github.com/1590703336/Nalanda/pull/45) merged into main SHA `1a58d2164f6d58feea4d3a2c8925211b8cc60dde`; final PR run `30811283164`, main run `30811817461`, and protected run `30813047562` passed docs/lint/typecheck, Web/API tests, build, 0007→0034, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Playwright's Azure/OpenRouter were still fakes.
+- [Read-only plan run `30812467085`](https://github.com/1590703336/Nalanda/actions/runs/30812467085) confirmed the production remote was complete through 0028 with 0029–0034 as the only pending items; the recovery, apply, and application deploy steps were all skipped.
+- [Protected apply/deploy run `30813047562`](https://github.com/1590703336/Nalanda/actions/runs/30813047562) kept encrypted artifact `8855819351` (`db-recovery-1a58d2164f6d58feea4d3a2c8925211b8cc60dde`, 593,399 bytes, digest `sha256:5f36f770aab133f24e12d461e66b0c4b744303ca1dbfd1600215163e4ad14796`, retained 14 days by the workflow) before apply, then synced remote history to 0034 and passed the 0030/0032/0034 structure/permission assertions, remote database lint, and an empty dry-run.
+- Before activation, immutable release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` passed real Japan East Azure (10,656-byte MP3, accuracy 98, pronunciation 98.8), real OpenRouter (1,604 ms, 253/27/280 tokens), and the Courses API/Storage gate (`generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=97`). The independent public re-check confirmed `/api/health` `status=ok` with `deps.supabase=ok`, anonymous `/api/me` 401, the Web returning the React root, and Course Market returning 200. No real user account was used to submit full spelling/pronunciation exams in production, so the release gates can't be described as production user exam-flow E2E.
 
 ## [0.9.0] - 2026-08-01
 
 ### Added
 
-- 进行中的 Courses 学习/复习页在“暂停并返回”旁新增中英文“取消学习”。确认后会话以服务端事务显式终止且不能恢复；已确认的 attempts、错误次数和熟练度历史保留，关联复习日程不被取消，之后可以开始一条新会话。
-- 新增 0025–0026：owner 校验、行锁和 revision 推进的 `learning_cancel_session`，以及精确函数定义与 service-role-only 权限断言。
-- 每一轮拼写结束且存在错词时，新增持久化轮末复盘页，逐项显示英文、IPA、独立翻译和读音；用户确认后，服务器才打乱错词顺序并开始下一轮。
-- 新增独立考试模式：默认要求第一轮正确率 90%，支持 1–100% 自定义、实时显示第一轮正确率，并把所选单元全部词打乱后只考“翻译前测 + 拼写”。第一轮通过且所有错题补练完成后，服务端才把该单元词汇标为已学习。
-- 新增 0027–0028：`exam` 会话、第一轮考试事实、拼写候补轮确认边界、语义评判实际供应商配额预留和对应结构/权限断言。
+- In-progress Courses learning/review pages add a bilingual "Cancel learning" next to "Pause and return". After confirmation, the session is explicitly terminated by a server transaction and can't be resumed; confirmed attempts, error counts, and mastery history are kept, linked review schedules aren't cancelled, and a new session can be started afterwards.
+- Added 0025–0026: `learning_cancel_session` with owner validation, row locks, and revision advancement, plus exact function definition and service-role-only permission assertions.
+- When a spelling round ends with wrong words, a durable end-of-round review page shows each one's English, IPA, separate translations, and pronunciation; only after the user confirms does the server shuffle the wrong words and start the next round.
+- Added a separate exam mode: by default it requires 90% first-round accuracy, supports a custom 1–100%, shows live first-round accuracy, and shuffles every word in the selected unit to test only "translation pre-test + spelling". Only after the first round passes and all wrong-answer practice is complete does the server mark the unit's words learned.
+- Added 0027–0028: the `exam` session, first-round exam facts, the spelling retry round confirmation boundary, actual provider quota reservation for semantic judgement, and the corresponding structure/permission assertions.
 
 ### Changed
 
-- OpenRouter 配额不再被确定性完全匹配、幂等重放或仅领取评判租约消耗；只有即将发生的真实模型评判才预留额度。默认仍为每用户 20 次/分钟，滚动 24 小时上限提高到 500 次；429 响应携带可恢复等待秒数。
+- OpenRouter quota is no longer consumed by deterministic exact matches, idempotent replays, or merely claiming a judgement lease; only an imminent real model judgement reserves quota. The default is still 20 per minute per user, and the rolling 24-hour limit rises to 500; 429 responses carry the number of seconds to wait before recovering.
 
 ### Security
 
-- 取消动作只经 NestJS 与 service-role RPC 执行；浏览器不能直接调用 RPC。服务端确认取消后，Web 仅清除当前账号、当前会话尚未同步的 IndexedDB 答案，不能影响其它会话或账号。
-- retry pool、考试分数、通过状态、`learned_at`、积分与徽章继续只由数据库事务决定；考试 UI 的实时正确率不是客户端可写的成长事实。新考试、轮次确认与配额 RPC 均拒绝 public/anon/authenticated 执行。
+- Cancellation only runs through NestJS and a service-role RPC; browsers can't call the RPC directly. After the server confirms cancellation, the Web app only clears the current account's and current session's not-yet-synced IndexedDB answers and can't affect other sessions or accounts.
+- The retry pool, exam scores, pass status, `learned_at`, points, and badges continue to be decided only by database transactions; the exam UI's live accuracy isn't a client-writable growth fact. The new exam, round confirmation, and quota RPCs all reject public/anon/authenticated execution.
 
 ### Testing
 
-- 增加取消按钮/确认/返回、session-scoped outbox 清理、API 映射/跨 owner 隐藏、RPC 幂等取消/revision 和客户端拒绝执行的 Web、API 与真实 Supabase 回归覆盖。
-- 增加轮末错词清单/音频/手动确认、候补顺序重排、考试默认/自定义阈值、实时正确率、通过后单元熟练度，以及确定性匹配零配额、真实 provider 预留、滚动限额与权限边界的 API、jsdom、RLS 和 Playwright 覆盖。
+- Added Web, API, and real Supabase regression coverage for the cancel button/confirmation/return, session-scoped outbox cleanup, API mapping/cross-owner hiding, RPC idempotent cancellation/revision, and client execution rejection.
+- Added API, jsdom, RLS, and Playwright coverage for the end-of-round wrong-word list/audio/manual confirmation, retry reordering, default/custom exam thresholds, live accuracy, unit mastery after passing, zero quota for deterministic matches, real provider reservation, rolling limits, and permission boundaries.
 
 ### Release
 
-- PR [#40](https://github.com/1590703336/Nalanda/pull/40) 合入 main SHA `93354a56044470fb5d2b1fd6aeabcf82f459bb52`；PR run `30705662543` 与 main run `30705946921` 均通过 quality、0007→0028、空库重建/database lint、真实本地 Supabase RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake。
-- [只读 plan run `30706279006`](https://github.com/1590703336/Nalanda/actions/runs/30706279006) 确认生产远端完整到 0024，唯一待办为 0025–0028；恢复、apply 和应用部署步骤均跳过。
-- [受保护 apply/deploy run `30706731292`](https://github.com/1590703336/Nalanda/actions/runs/30706731292) 在 apply 前保留加密 artifact `8820657507`（`db-recovery-93354a56044470fb5d2b1fd6aeabcf82f459bb52`，418 KB，digest `sha256:02ea6fef5481756b17f79fbbd82c023d9c9ba085accfc1e28f9a268d24645ad9`，工作流保留 14 天），随后把远端 history 同步到 0028，并通过结构/权限断言、remote database lint 与空 dry-run。
-- 不可变 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（9,364 ms、253/27/280 tokens）和候选 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回 React root；已登录只读检查确认既有课程/进度仍可读取，并显示默认 90% 的考试配置。未在生产提交真实用户考试答案，因此不能把该只读 UI 检查描述为生产考试流程 E2E。
+- PR [#40](https://github.com/1590703336/Nalanda/pull/40) merged into main SHA `93354a56044470fb5d2b1fd6aeabcf82f459bb52`; PR run `30705662543` and main run `30705946921` both passed quality, 0007→0028, empty-database rebuild/database lint, real local Supabase RLS/Storage E2E, and Chromium Playwright. Playwright's Azure/OpenRouter were still fakes.
+- [Read-only plan run `30706279006`](https://github.com/1590703336/Nalanda/actions/runs/30706279006) confirmed the production remote was complete through 0024 with 0025–0028 as the only pending items; the recovery, apply, and application deploy steps were all skipped.
+- [Protected apply/deploy run `30706731292`](https://github.com/1590703336/Nalanda/actions/runs/30706731292) kept encrypted artifact `8820657507` (`db-recovery-93354a56044470fb5d2b1fd6aeabcf82f459bb52`, 418 KB, digest `sha256:02ea6fef5481756b17f79fbbd82c023d9c9ba085accfc1e28f9a268d24645ad9`, retained 14 days by the workflow) before apply, then synced remote history to 0028 and passed the structure/permission assertions, remote database lint, and an empty dry-run.
+- Before activation, immutable release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` passed real Japan East Azure (10,656-byte MP3, accuracy 98, pronunciation 98.8), real OpenRouter (9,364 ms, 253/27/280 tokens), and the candidate Courses API/Storage gate (`generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=97`). The independent public re-check confirmed `/api/health` `status=ok` with `deps.supabase=ok`, anonymous `/api/me` 401, and the Web returning the React root; a signed-in read-only check confirmed existing courses/progress were still readable and the exam configuration showed the 90% default. No real user exam answers were submitted in production, so this read-only UI check can't be described as production exam-flow E2E.
 
 ## [0.8.2] - 2026-07-31
 
 ### Changed
 
-- 拼写题现在把“仅标点不同”判为正确：标点遗漏、替换或增加不会进入候补池，例如 `You're welcome.` / `Youre welcome!`、`check-in` / `check in` / `checkin` 均可通过。字母、数字、词序和没有标点参与的词间空格仍必须正确，`ice cream` / `icecream` 仍判错。
-- Web 即时反馈与七参数数据库权威 attempt RPC 共用相同的“保留标点、移除标点、把标点视为空格”三路比较；原始答案继续写入 append-only attempt，retry pool、错误次数、进度和奖励仍只由服务器决定。
+- Spelling questions now judge "only punctuation differs" as correct: omitting, replacing, or adding punctuation doesn't enter the retry pool, so for example `You're welcome.` / `Youre welcome!` and `check-in` / `check in` / `checkin` all pass. Letters, digits, word order, and inter-word spaces with no punctuation involved must still be correct, so `ice cream` / `icecream` is still wrong.
+- The Web app's instant feedback and the seven-parameter authoritative database attempt RPC share the same three-way comparison: "punctuation kept, punctuation removed, punctuation treated as spaces"; the raw answer is still written to the append-only attempt, and the retry pool, error counts, progress, and rewards are still decided only by the server.
 
 ### Testing
 
-- 增加标点遗漏/替换/增加、全角大写、真实字母错误和无标点空格错误的 Web 单元/jsdom；追加 0023–0024 数据库迁移、自验证及双用户 RLS 用例，验证标点容错不增加 `wrong_count`/候补池且内部 helper 仍拒绝客户端执行。
-- PR #37、main 与受保护发布 run 均通过 docs/lint/typecheck、Web/API tests、build、0007→0024 升级、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍是 fake，真实供应商证据只来自生产激活 gate。
+- Added Web units/jsdom for punctuation omission/substitution/addition, full-width caps, real letter errors, and space errors without punctuation; appended the 0023–0024 database migrations, self-verification, and two-user RLS cases, verifying that punctuation tolerance doesn't increase `wrong_count`/the retry pool and that internal helpers still reject client execution.
+- PR #37, main, and the protected release run all passed docs/lint/typecheck, Web/API tests, build, the 0007→0024 upgrade, empty-database rebuild, database lint, real local Supabase RLS/Storage E2E, and Chromium Playwright. Playwright's Azure/OpenRouter are still fakes, and real provider evidence only comes from the production activation gate.
 
 ### Release
 
-- PR [#37](https://github.com/1590703336/Nalanda/pull/37) 合入 main SHA `9b62951a8895aa6cf3ff0f9dce8395df239e6089`；PR run `30620350644` 和 main run `30620879282` 完整通过。[只读 plan run `30623522232`](https://github.com/1590703336/Nalanda/actions/runs/30623522232) 确认远端停在 0022 且唯一待办为 0023–0024，没有创建恢复点、写入数据库或部署应用。
-- [受保护 apply/deploy run `30624104943`](https://github.com/1590703336/Nalanda/actions/runs/30624104943) 在 apply 前保留加密恢复 artifact `8790816378`（`db-recovery-9b62951a8895aa6cf3ff0f9dce8395df239e6089`，366,417 bytes，digest `sha256:887b1ac42c267ca7bb1cde810920702dde64f8d74112b3b39def6254d5bf0fca`，保留至 2026-08-14），随后把远端 history 同步到 0024，并通过函数/权限断言、database lint 与空 dry-run。
-- 不可变 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` 激活前通过真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8）、真实 OpenRouter（2,790 ms、253/27/280 tokens）和候选 Courses API/Storage gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`）。独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 200 并返回 React root。没有使用真实用户账号在生产提交拼写答案；迁移自验证与一次性真实 Supabase E2E 是本次判定行为证据。
+- PR [#37](https://github.com/1590703336/Nalanda/pull/37) merged into main SHA `9b62951a8895aa6cf3ff0f9dce8395df239e6089`; PR run `30620350644` and main run `30620879282` passed fully. [Read-only plan run `30623522232`](https://github.com/1590703336/Nalanda/actions/runs/30623522232) confirmed the remote stopped at 0022 with 0023–0024 as the only pending items, without creating a recovery point, writing to the database, or deploying the application.
+- [Protected apply/deploy run `30624104943`](https://github.com/1590703336/Nalanda/actions/runs/30624104943) kept encrypted recovery artifact `8790816378` (`db-recovery-9b62951a8895aa6cf3ff0f9dce8395df239e6089`, 366,417 bytes, digest `sha256:887b1ac42c267ca7bb1cde810920702dde64f8d74112b3b39def6254d5bf0fca`, retained until 2026-08-14) before apply, then synced remote history to 0024 and passed the function/permission assertions, database lint, and an empty dry-run.
+- Before activation, immutable release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` passed real Japan East Azure (10,656-byte MP3, accuracy 98, pronunciation 98.8), real OpenRouter (2,790 ms, 253/27/280 tokens), and the candidate Courses API/Storage gate (`generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=97`). The independent public re-check confirmed `/api/health` `status=ok` with `deps.supabase=ok`, anonymous `/api/me` 401, and Web 200 returning the React root. No real user account was used to submit spelling answers in production; migration self-verification and the one-off real Supabase E2E are the evidence for this judgement behavior.
 
 ## [0.8.1] - 2026-07-31
 
 ### Fixed
 
-- 拼写即时判定与数据库权威判定改用同一份英语规范化契约：NFKC 兼容字符、ASCII 大小写、首尾/重复 Unicode 空白、弯/直撇号及常见连字符变体会得到一致结果；标点本身仍必须存在。修复全大写或输入法产生的全角大写先被前端接受、随后又被服务器判错并加入候补池的问题。
-- Courses 弱网答题提示改为独立的等待/成功状态：待同步答案全部获得服务器确认后显示“答案同步成功”两秒并自动消失，后续再次超时会恢复本地保存提示；正常在线答题不会逐题显示同步成功。
-- 拼写测试答对后，正确拼写与翻译的反馈停留时间由约 520 ms 延长到 1.5 秒；翻译选择题和发音匹配仍保持原有快速推进节奏。拼写题卡会固定显示当前计时状态：翻译前测期间显示配置秒数及“翻译通过后开始计时”，进入拼写输入后显示实时倒计时，不限时会话也会明确标注。
-- 翻译多选题在单词进入新一轮候补池时会重置上一轮的本地选项；即使候补池只剩同一个词，也不会携带旧的错误选项或阻止正确答案进入下一阶段。
+- Instant spelling judgement and the authoritative database judgement now use the same English normalization contract: NFKC compatibility characters, ASCII case, leading/trailing/repeated Unicode whitespace, curly/straight apostrophes, and common hyphen variants produce consistent results; punctuation itself must still be present. Fixes all-caps or IME-produced full-width caps being accepted by the frontend first and then judged wrong by the server and added to the retry pool.
+- The Courses weak-network answer notice now has separate waiting/success states: once all pending answers are confirmed by the server it shows "Answers synced" for two seconds and disappears automatically, and a later timeout brings back the saved-locally notice; normal online answering doesn't show a sync success per question.
+- After a correct spelling answer, the feedback with the correct spelling and translation now stays for 1.5 seconds instead of about 520 ms; translation multiple choice and pronunciation matching keep their original fast pace. The spelling card always shows the current timer state: during the translation pre-test it shows the configured seconds and "Timer starts after the translation passes", once spelling input begins it shows the live countdown, and untimed sessions are labeled explicitly.
+- Translation multiple-choice questions reset the previous round's local options when a word enters a new retry round; even when the retry pool only contains that one word, old wrong options aren't carried over and don't block the correct answer from advancing to the next stage.
 
 ### Testing
 
-- Web 单元/jsdom 覆盖全角全大写、弯撇号、连字符变体、不可省略标点及原始答案提交；真实一次性 Supabase RLS E2E 以 `ＷＯＲＤ－０１` 和 `WORD-02` 验证服务器均判对、revision 单调推进、`wrong_count=0` 且候补池为空，同时验证客户端不能执行内部规范化 helper。
-- PR #35 和 main/受保护发布 run 均通过 docs/lint/typecheck、Web/API tests、build、0007→0022 升级、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍是 fake，真实供应商证据只来自生产激活 gate。
+- Web units/jsdom cover full-width all caps, curly apostrophes, hyphen variants, mandatory punctuation, and submitting the raw answer; the one-off real Supabase RLS E2E verifies with `ＷＯＲＤ－０１` and `WORD-02` that the server judges both correct, the revision advances monotonically, `wrong_count=0`, and the retry pool is empty, and that clients can't execute the internal normalization helper.
+- PR #35 and the main/protected release runs all passed docs/lint/typecheck, Web/API tests, build, the 0007→0022 upgrade, empty-database rebuild, database lint, real local Supabase RLS/Storage E2E, and Chromium Playwright. Playwright's Azure/OpenRouter are still fakes, and real provider evidence only comes from the production activation gate.
 
 ### Release
 
-- PR [#35](https://github.com/1590703336/Nalanda/pull/35) 合入 main SHA `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`；[只读 plan run `30616030488`](https://github.com/1590703336/Nalanda/actions/runs/30616030488) 只列 0021–0022，没有创建恢复点、写入数据库或部署应用。
-- [受保护 apply/deploy run `30616540480`](https://github.com/1590703336/Nalanda/actions/runs/30616540480) 在 apply 前保留加密恢复 artifact `8787805291`（`db-recovery-fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`，digest `sha256:fd553ea9c4898d72928db64bcbd979e13dff50f6b50a2138ec7113958709c199`），把远端 history 同步到 0022，并通过远端函数验证、lint 和空 dry-run。
-- 不可变 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 激活前通过真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate；独立公网复核确认 `/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 401、Web 返回 React root。
+- PR [#35](https://github.com/1590703336/Nalanda/pull/35) merged into main SHA `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`; [read-only plan run `30616030488`](https://github.com/1590703336/Nalanda/actions/runs/30616030488) listed only 0021–0022, without creating a recovery point, writing to the database, or deploying the application.
+- [Protected apply/deploy run `30616540480`](https://github.com/1590703336/Nalanda/actions/runs/30616540480) kept encrypted recovery artifact `8787805291` (`db-recovery-fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`, digest `sha256:fd553ea9c4898d72928db64bcbd979e13dff50f6b50a2138ec7113958709c199`) before apply, synced remote history to 0022, and passed remote function verification, lint, and an empty dry-run.
+- Before activation, immutable release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` passed real Japan East Azure, real OpenRouter, and the candidate Courses API/Storage gates; the independent public re-check confirmed `/api/health` `status=ok` with `deps.supabase=ok`, anonymous `/api/me` 401, and the Web returning the React root.
 
 ## [0.8.0] - 2026-07-28
 
 ### Added
 
-- 新增 0019–0020：`learning_sessions.spelling_options`、只保存用户译文 SHA-256 的 `learning_spelling_translation_assessments`、评判租约/配额/幂等响应，以及精确 RLS/grant 发布断言。
-- 拼写测试可选 3–300 秒限时；倒计时只在拼写输入可作答后开始，超时按当前内容自动提交一次。可选翻译前测先由服务端 OpenRouter structured output 判断语义，正确后才进入拼写，错误直接形成一次权威 spelling 错误。
-- 拼写结果无论正确或错误都显示正确英文与逐项翻译；翻译评判失败可重试且不记错。
+- Added 0019–0020: `learning_sessions.spelling_options`, `learning_spelling_translation_assessments` that only stores the SHA-256 of the user's translation, the judgement lease/quota/idempotent response, and exact RLS/grant release assertions.
+- Spelling tests can optionally be timed at 3–300 seconds; the countdown only starts once the spelling input is answerable, and on timeout the current content is auto-submitted once. The optional translation pre-test first has the server judge the meaning with OpenRouter structured output; only when correct does it continue to spelling, and a wrong answer directly creates one authoritative spelling error.
+- Spelling results show the correct English and each translation whether right or wrong; translation judgement failures can be retried and aren't recorded as errors.
 
 ### Fixed
 
-- OpenRouter free route 偶发返回有效 boolean 但空 feedback，或 200 响应暂时缺少结构化 content。服务端契约收窄为只让模型决定 `{correct:boolean}`，用固定安全教学文案补齐 feedback；非法 200 在原 12 秒总预算内只重试一次，仍失败时释放租约且不记错。该修复不允许客户端自判，也不改变数据库权威。
-- OpenRouter free route 会把与服务端参考翻译逐字相同的合成占位答案偶发判错。NestJS 现先执行服务端 NFKC/空白/大小写规范化；与任一参考翻译完全一致时以 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不调用供应商，只有非字面同义/改写才交给 OpenRouter。该快速路径仍经过 owner、租约、配额、幂等和数据库权威事务。
-- 修复翻译评测的幂等 claim 已命中首次完成事实时，API 映射丢失外层 `replayed=true` 的问题；现在相同 UUID/答案重放明确返回 `true`，且不会重复调用供应商、推进会话或累计错误。
+- The OpenRouter free route occasionally returned a valid boolean with empty feedback, or a 200 response temporarily missing structured content. The server contract is narrowed so the model only decides `{correct:boolean}`, with fixed safe teaching copy filling in feedback; an invalid 200 is retried only once within the original 12-second total budget, and if it still fails the lease is released without recording an error. This fix doesn't allow client self-judgement and doesn't change the database's authority.
+- The OpenRouter free route occasionally misjudged synthetic placeholder answers identical to the server reference translation. NestJS now first performs server-side NFKC/whitespace/case normalization; when it exactly matches any reference translation it is judged correct deterministically with `nalanda-normalized-exact/normalized-exact-v1` without calling the provider, and only non-literal synonyms/paraphrases go to OpenRouter. This fast path still goes through the owner, lease, quota, idempotency, and authoritative database transaction.
+- Fixed the API mapping losing the outer `replayed=true` when the translation assessment's idempotent claim hit an already completed first fact; same-UUID/answer replays now explicitly return `true`, without calling the provider again, advancing the session, or accumulating errors.
 
 ### Security
 
-- OpenRouter key 仅进入本地/服务器 mode-600 API env 和 GitHub protected environment，不进入 Web、数据库、日志或仓库。生产显式拒绝 `OPENROUTER_FAKE=true`；新表与 RPC 对 public/anon/authenticated 全部关闭。
-- 用户键入的翻译只在 API 请求内存中转发；数据库保存 answer hash、boolean、短反馈、model/token 计量、租约和首次响应。正确翻译与后续拼写复用同一 UUID，重复/超时重放不重复调用供应商或推进会话。
+- The OpenRouter key only goes into the local/server mode-600 API env and the GitHub protected environment, never into the Web app, database, logs, or repository. Production explicitly rejects `OPENROUTER_FAKE=true`; the new tables and RPCs are fully closed to public/anon/authenticated.
+- The translation the user types is only forwarded in API request memory; the database stores the answer hash, boolean, short feedback, model/token metering, lease, and first response. A correct translation and the following spelling reuse the same UUID, and duplicate/timeout replays never call the provider again or advance the session.
 
 ### Testing
 
-- 增加 fake-clock jsdom 的单次超时提交、翻译通过前不计时、语义错误手动推进、provider 失败不记错和双语结果渲染；API 覆盖规范化完全匹配零供应商调用、boolean-only structured schema、安全 feedback 回退、缺失 content 的单次有界重试、幂等 replay、租约释放、超时/非法响应；双用户 RLS 覆盖客户端拒绝、hash-only 持久化、revision 与级联；Playwright 使用 OpenRouter fake，不作为真实供应商证据。
-- 发布工具新增 OpenRouter structured smoke 和生产 env 安装脚本测试。生产启用前必须另取得真实 OpenRouter 同义/无关判定及真实 Courses API 幂等证据。
+- Added fake-clock jsdom for single timeout submission, no timing before the translation passes, manual advancing after semantic errors, provider failures not counting as errors, and bilingual result rendering; API coverage of zero provider calls for exact normalized matches, the boolean-only structured schema, safe feedback fallback, a single bounded retry for missing content, idempotent replay, lease release, and timeout/invalid responses; two-user RLS covering client rejection, hash-only persistence, revision, and cascades; Playwright uses the OpenRouter fake and isn't real provider evidence.
+- Release tooling adds an OpenRouter structured smoke and production env install script tests. Before enabling in production, real OpenRouter synonym/unrelated judgements and real Courses API idempotency evidence must be obtained separately.
 
 ### Release
 
-- PR #26、#27、#28、#29 依次合入功能及三项生产 gate 前向修复；最终 main SHA `a4c230e1aa6f29abbd4fbe944a1b76c625107003` 的 run `30374301472` 通过 docs/lint/typecheck、Web/API tests、build、0007→0020、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright。Playwright 的 Azure/OpenRouter 仍为 fake，不能作为真实供应商证据。
-- 只读 plan run `30366334157` 只列 0019–0020；受保护 run `30367263486` 创建加密恢复 artifact `8691620673`（`db-recovery-7c8b516ec4fc9086a6bae816966cb7f688c19746`）并把生产数据库同步到 0020。该 run 与随后 `30370419397`、`30372651419` 的候选应用分别因 provider 契约、合成答案模型误判和幂等 replay 映射被 gate 拦截，均自动恢复上一应用；数据库按规则保持 0020。
-- 最终 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` 激活前，真实 Japan East Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 固定模型返回 1,365 ms、253/27/280 tokens；候选 Courses API 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，并持久证明 `nalanda-normalized-exact/normalized-exact-v1`、0 token、`replayed=true`、revision 1。独立公网复核确认 `deps.supabase=ok`、匿名 `/api/me` 401 和 React root。
+- PRs #26, #27, #28, and #29 merged the feature and three production gate forward fixes in turn; run `30374301472` on final main SHA `a4c230e1aa6f29abbd4fbe944a1b76c625107003` passed docs/lint/typecheck, Web/API tests, build, 0007→0020, empty-database rebuild, database lint, real local Supabase RLS/Storage E2E, and Chromium Playwright. Playwright's Azure/OpenRouter were still fakes and can't serve as real provider evidence.
+- Read-only plan run `30366334157` listed only 0019–0020; protected run `30367263486` created encrypted recovery artifact `8691620673` (`db-recovery-7c8b516ec4fc9086a6bae816966cb7f688c19746`) and synced the production database to 0020. The candidate applications of that run and the later `30370419397` and `30372651419` were stopped by gates for the provider contract, the model misjudging synthetic answers, and the idempotent replay mapping respectively, each automatically restoring the previous application; the database stayed at 0020 per the rules.
+- Before activating final release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3`, real Japan East Azure returned a 10,656-byte MP3, accuracy 98, pronunciation 98.8; the real OpenRouter pinned model returned 1,365 ms and 253/27/280 tokens; the candidate Courses API returned `generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=97`, and durably proved `nalanda-normalized-exact/normalized-exact-v1`, 0 tokens, `replayed=true`, revision 1. The independent public re-check confirmed `deps.supabase=ok`, anonymous `/api/me` 401, and the React root.
 
 ## [0.7.1] - 2026-07-27
 
 ### Added
 
-- 新增 0017–0018：学习会话以受保护 `resume_key` 按请求意图恢复，并验证新索引与 service-role-only `learning_start_session` 权限。首次学习、临时复习和日程复习可分别保留进度，相同意图的并发开始仍只创建一个 active session。
+- Added 0017–0018: learning sessions resume by request intent with a protected `resume_key`, with verification of the new index and the service-role-only `learning_start_session` permission. Initial learning, ad-hoc reviews, and scheduled reviews can each keep their own progress, and concurrent starts with the same intent still create only one active session.
 
 ### Fixed
 
-- 修复历史/冷课程开始学习或复习时，浏览器只预取已经 ready 的未来音频，导致待生成词没有提升优先级并在点击时直接长期降级浏览器朗读。当前词和后四词现会以最多两个并发请求主动排队；manifest 变 ready 后立即写入 Cache Storage，清除对应的过期降级提示，后续播放改用缓存音频。
-- 修复同一课程存在暂停的首次学习时，显式复习另一单元仍返回原学习 session。服务端现在只恢复课程、单元、模式、范围、规范化测试项或日程均匹配的会话；课程卡的快捷继续入口稳定选择最近活动的未完成会话。
+- Fixed starting learning or a review on historical/cold courses where the browser only prefetched future audio that was already ready, so words waiting to be generated never got a priority boost and fell back to long-term browser speech when clicked. The current word and the next four are now proactively queued with at most two concurrent requests; once the manifest turns ready, audio is written to Cache Storage immediately, the matching stale degradation notice is cleared, and later playback uses the cached audio.
+- Fixed an explicit review of another unit still returning the original learning session when the same course had a paused initial learning session. The server now only resumes sessions whose course, unit, mode, scope, normalized test items, or schedule all match; the course card's quick continue entry stably picks the most recently active unfinished session.
 
 ### Testing
 
-- 增加八词历史冷单元 pending→ready→Cache Storage jsdom、五词双并发上限、跨单元学习/复习意图 RLS，以及无预下载复习、缓存替换与原学习 cursor 恢复的 Playwright 回归覆盖。
+- Added regression coverage for an eight-word historical cold unit pending→ready→Cache Storage in jsdom, the five-word two-concurrency cap, cross-unit learning/review intent RLS, and Playwright for reviews without pre-download, cache replacement, and resuming the original learning cursor.
 
 ### Release
 
-- PR #24 run `30263277807` 与 main run `30263794368` 通过 docs/lint/typecheck、Web/API tests、build、0007→0018、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright；Playwright 使用 Azure fake，只证明浏览器/API/一次性数据库协作。
-- main SHA `99313bd3763ce5bf1f7ffb252f821f7b21a67eec` 的只读 plan run `30264327821` 只列 0017–0018；apply/deploy run `30264979509` 保留加密恢复点 artifact `8652623403`、同步远端到 0018，并激活 release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1`。
-- 切流前 Japan East 真实基础 smoke 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；队列/Storage/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`。独立公网与服务器复核确认 Web 200、`deps.supabase=ok`、匿名 `/api/me` 401、Web symlink 和 API image 均指向同一 release SHA。
+- PR #24 run `30263277807` and main run `30263794368` passed docs/lint/typecheck, Web/API tests, build, 0007→0018, empty-database rebuild, database lint, real local Supabase RLS/Storage E2E, and Chromium Playwright; Playwright used the Azure fake and only proves browser/API/one-off database collaboration.
+- Read-only plan run `30264327821` on main SHA `99313bd3763ce5bf1f7ffb252f821f7b21a67eec` listed only 0017–0018; apply/deploy run `30264979509` kept encrypted recovery point artifact `8652623403`, synced the remote to 0018, and activated release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1`.
+- Before cutover, the Japan East real basic smoke returned a 10,656-byte MP3, accuracy 98, pronunciation 98.8; the queue/Storage/scoring gate returned `generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=97`. Independent public and server re-checks confirmed Web 200, `deps.supabase=ok`, anonymous `/api/me` 401, and the Web symlink and API image both pointing to the same release SHA.
 
 ## [0.7.0] - 2026-07-27
 
 ### Added
 
-- 新增 0015–0016：`learning_sessions.revision`、attempt UUID/首次响应快照与复合唯一约束、单 RPC session snapshot、service-only `learning_audio_assets` 持久任务表、全局单租约/配额预留和结构/权限断言；保留旧答题 RPC 供数据库先行与应用回滚。
-- 新增 IndexedDB 答题 outbox、同 attempt UUID 超时重放、revision 冲突恢复、账号隔离与离线完成待服务器确认；客户端 Cache Storage 支持未来五词双并发预取、整单元续传下载、持久存储申请和本地删除。
-- 新增单元音频预热/manifest API、异步 `202 AUDIO_PENDING` 音频读取、20 ms VAD 裁剪，以及真实生产 gate 脚本验证 Japan East 队列生成、private Storage 命中、跨用户重复词复用和裁剪后朗读评分。
+- Added 0015–0016: `learning_sessions.revision`, attempt UUIDs/first-response snapshots with a composite unique constraint, a single-RPC session snapshot, the service-only `learning_audio_assets` durable job table, a global single lease/quota reservation, and structure/permission assertions; the old answer RPC is kept for database-first rollout and application rollback.
+- Added the IndexedDB answer outbox, same-attempt-UUID timeout replay, revision conflict recovery, account isolation, and offline completion pending server confirmation; client Cache Storage supports prefetching the next five words with two concurrent requests, resumable whole-unit downloads, persistent storage requests, and local deletion.
+- Added the unit audio prewarm/manifest API, asynchronous `202 AUDIO_PENDING` audio reads, 20 ms VAD trimming, and a real production gate script verifying Japan East queue generation, private Storage hits, cross-user duplicate word reuse, and trimmed read-aloud scoring.
 
 ### Changed
 
-- 测试阶段答错后不再在约 1.15 秒后自动进入下一题；错误选项、正确答案或拼写差异会持续显示并锁定当前题，直到用户点击中英文“下一题”。答对仍保留短暂正确动画并自动推进。
-- 翻译、拼写和发音匹配会在当前渲染帧显示 provisional 正误；普通成功响应返回增量 `sessionPatch`，不再每题重拉完整会话和 Courses 列表。服务端仍是 retry pool、阶段、进度、奖励和完成状态的唯一权威。
-- 合成音频未命中不再在用户请求中同步等待 Azure；后台任务以至少 3.1 秒间隔和默认 20 次/分钟、500,000 字符/月生成，private Supabase Storage 继续是唯一服务端缓存。
+- After a wrong answer in the test stages, the app no longer moves to the next question automatically after about 1.15 seconds; the wrong option, correct answer, or spelling differences stay visible and lock the current question until the user clicks the bilingual "Next question". Correct answers still keep the brief success animation and advance automatically.
+- Translation, spelling, and pronunciation matching show provisional correctness in the current render frame; ordinary success responses return an incremental `sessionPatch` instead of refetching the full session and Courses list per question. The server is still the only authority on the retry pool, stage, progress, rewards, and completion state.
+- Synthesized audio misses no longer wait synchronously for Azure in the user's request; background jobs generate with at least 3.1 seconds between requests and defaults of 20 per minute and 500,000 characters per month, and private Supabase Storage remains the only server-side cache.
 
 ### Security
 
-- 所有新增 RPC 均撤销 `public/anon/authenticated` EXECUTE；音频任务表不开放 PostgREST。客户端不能用 provisional 状态发放积分/徽章，重复或超时答题只提交一次事实。
-- 生产运行时显式拒绝 `AZURE_SPEECH_FAKE=true`；Storage 网络故障不会被降格成缓存未命中而触发不必要的 Azure 生成。
+- Every new RPC revokes `public/anon/authenticated` EXECUTE; the audio job table isn't exposed to PostgREST. Clients can't use provisional state to award points/badges, and duplicate or timed-out answers submit only one fact.
+- The production runtime explicitly rejects `AZURE_SPEECH_FAKE=true`; Storage network failures aren't downgraded to cache misses that trigger unnecessary Azure generation.
 
 ### Testing
 
-- 增加预测/权威修正、连续弱网 outbox、Cache Storage、VAD、queue lease/quota、并发幂等/revision 冲突和客户端 RPC 拒绝覆盖；Playwright fake 仅证明浏览器流程，不作为真实 Azure 证据。
+- Added coverage for prediction/authoritative correction, consecutive weak-network outbox, Cache Storage, VAD, queue lease/quota, concurrent idempotency/revision conflicts, and client RPC rejection; the Playwright fake only proves the browser flow and isn't real Azure evidence.
 
 ### Release
 
-- PR #21、main push 与受保护发布均通过 docs/lint/typecheck、Web/API tests、build、0007→0016、空库重建、database lint、真实本地 Supabase RLS/Storage E2E 和 Chromium Playwright；Playwright 使用 Azure fake，不作为供应商证明。
-- main SHA `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2` 的只读 plan run `30244967669` 只列 0015–0016；apply/deploy run `30245430630` 保留加密恢复点 artifact `8644999285`、同步远端到 0016，并激活 release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1`。
-- 切流前 Japan East 真实 gate 验证 Azure TTS/评分、4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象且不增加 Azure 生成、VAD 裁剪后评分；独立公网复核 Web 200、`deps.supabase=ok` 和匿名 `/api/me` 401。
+- PR #21, the main push, and the protected release all passed docs/lint/typecheck, Web/API tests, build, 0007→0016, empty-database rebuild, database lint, real local Supabase RLS/Storage E2E, and Chromium Playwright; Playwright used the Azure fake and isn't provider proof.
+- Read-only plan run `30244967669` on main SHA `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2` listed only 0015–0016; apply/deploy run `30245430630` kept encrypted recovery point artifact `8644999285`, synced the remote to 0016, and activated release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1`.
+- Before cutover, the Japan East real gate verified Azure TTS/scoring, 4 first-generated objects, private Storage hits, a second user reusing the same 4 objects without extra Azure generation, and VAD-trimmed scoring; the independent public re-check showed Web 200, `deps.supabase=ok`, and anonymous `/api/me` 401.
 
 ## [0.6.2] - 2026-07-23
 
 ### Added
 
-- 朗读评分响应明确返回整体 `PronScore` 通过线（默认 70）、是否通过及是否已进入候补池；低分持久加入认单词候补池，重新朗读达标会在继续前移除该候补项。
-- 评分结果增加显式“重新朗读并评分”操作，并在中英文 UI 中说明通过分数和候补池状态。
+- Read-aloud scoring responses now explicitly return the overall `PronScore` pass mark (default 70), whether it passed, and whether it entered the retry pool; low scores are durably added to the word recognition retry pool, and a passing re-read removes that retry item before continuing.
+- Scoring results add an explicit "Read again and score" action, and the bilingual UI explains the pass score and retry pool status.
 
 ### Changed
 
-- 发音匹配和翻译测试改为选择后立即判定：正确/错误直接在所选项播放可感知动画，服务端立即执行通过或候补池逻辑，短暂反馈后自动进入下一题，不再显示 `Check answer` 或 `Continue`。
-- 多翻译题会逐个确认正确选择，最后一个正确翻译自动提交；任何错误选择立即记录本题错误。拼写仍需 Enter 或一次提交来确定输入边界，但结果后自动推进，不再二次确认。
+- Pronunciation matching and translation tests now judge immediately on selection: correct/wrong plays a noticeable animation directly on the chosen item, the server immediately runs the pass or retry pool logic, and after brief feedback it advances to the next question automatically, no longer showing `Check answer` or `Continue`.
+- Multi-translation questions confirm each correct choice in turn, and the last correct translation submits automatically; any wrong choice immediately records an error for the question. Spelling still needs Enter or one submit to set the input boundary, but advances automatically after the result, with no second confirmation.
 
 ### Fixed
 
-- 修复 Supabase Storage 把 TTS 缓存未命中表示成 HTTP 400 + JSON `statusCode=404` 时被误判为服务器错误，导致所有首次 Azure 音频请求返回 500；缓存读写失败现在不会阻断已经可以生成/返回的 Azure 音频。
+- Fixed Supabase Storage representing a TTS cache miss as HTTP 400 + JSON `statusCode=404` being misjudged as a server error, which made every first Azure audio request return 500; cache read/write failures no longer block Azure audio that can already be generated/returned.
 
 ### Release
 
-- main SHA `02ba1b682c104947aa0b80707c143b8e921870f0` 已通过只读 plan run `29939798432` 与受保护 apply/deploy run `29940292716` 发布；生产 migration history 已到 0014，加密恢复点 artifact `8538123165` 保留 14 天。
-- 激活前真实 Azure Speech gate 使用 `japaneast`/`en-US-JennyNeural` 成功返回 10,656-byte MP3、98 accuracy、98.8 pronunciation 和 4 个音素；最终 release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` 通过公网 readiness/auth/Web smoke。
+- Main SHA `02ba1b682c104947aa0b80707c143b8e921870f0` was released through read-only plan run `29939798432` and protected apply/deploy run `29940292716`; the production migration history reached 0014, and encrypted recovery point artifact `8538123165` is kept for 14 days.
+- Before activation, the real Azure Speech gate with `japaneast`/`en-US-JennyNeural` successfully returned a 10,656-byte MP3, 98 accuracy, 98.8 pronunciation, and 4 phonemes; final release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` passed the public readiness/auth/Web smoke.
 
 ## [0.6.1] - 2026-07-22
 
 ### Added
 
-- Courses 创建流程新增“整份多单元词表”导入：可直接识别 `Starter Unit 1`、`Unit 2`、`Lesson 3`、`Chapter`、`Module`、`Section` 及对应中文编号标题；任意自定义标题使用 `[名称]` 或 `# 名称` 显式标记，避免与词条混淆。
-- Edit/Review Course 的每个单元新增“批量粘贴单词”，可把多行词表追加到已有单元；会同时校验已有词重复、课程 2,000 词上限和原有格式规则。
+- The Courses creation flow adds "Whole multi-unit word list" import: it directly recognizes `Starter Unit 1`, `Unit 2`, `Lesson 3`, `Chapter`, `Module`, `Section`, and the corresponding numbered Chinese headings; any custom heading is marked explicitly with `[Name]` or `# Name`, avoiding confusion with entries.
+- Each unit in Edit/Review Course adds "Bulk paste words", which appends a multi-line word list to an existing unit; it also validates duplicates of existing words, the 2,000-word course limit, and the existing format rules.
 
 ### Changed
 
-- Courses、学习/复习流程、公开分享与 Course Market 统一使用默认英文、可持久切换中文的前端 locale；课程 API 稳定错误码在 Web 端按当前语言显示。
-- `courses.css` 只保留课程专属布局，并把字体、字号、颜色、按钮、输入框、卡片、弹窗、边框、圆角、阴影、focus/disabled 状态和响应式断点对齐现有 Nalanda 设计 token。
-- 整份多单元解析器沿用“每行最后一个 ASCII 空格分隔英文与翻译”的契约，并把所有错误映射回整份原文的精确行号、列号和错误码。
-- Chromium Playwright 主流程改为从整份多单元文本创建课程，先触发并修正重复错误，再验证真实滚动区域、底部按钮可达及后续完整学习/复习/市场克隆流程。
-- 以上变更已随 main SHA `d31af905b44ca4df39c70e271a7c7a51612916e3` 通过受保护流水线发布为不可变 release `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`；未修改数据库、API、环境变量或安全边界。
+- Courses, the learning/review flows, public sharing, and Course Market uniformly use a frontend locale that defaults to English and can be switched to Chinese persistently; the course API's stable error codes are displayed in the current language on the Web.
+- `courses.css` only keeps course-specific layout, and aligns fonts, font sizes, colors, buttons, inputs, cards, modals, borders, radii, shadows, focus/disabled states, and responsive breakpoints with the existing Nalanda design tokens.
+- The whole multi-unit parser keeps the "the last ASCII space on each line separates the English from the translation" contract and maps every error back to the exact line number, column number, and error code in the whole original text.
+- The Chromium Playwright main flow now creates a course from a whole multi-unit text, first triggers and fixes a duplicate error, then verifies the real scroll area, reachable bottom buttons, and the rest of the full learning/review/market clone flow.
+- The changes above were released through the protected pipeline with main SHA `d31af905b44ca4df39c70e271a7c7a51612916e3` as immutable release `d31af905b44ca4df39c70e271a7c7a51612916e3-29932840103-1`; the database, API, environment variables, and security boundaries were not modified.
 
 ### Fixed
 
-- 修复 Courses/Course Market 与现有主界面在表单底色、卡片密度、空状态、交互焦点和移动端布局上的视觉不一致；语言切换不会改变课程业务行为或 API 契约。
-- 修复应用主列 flex 子项缺少 `min-height: 0` 导致 Courses 创建、编辑和 Review 长内容无法滚动到底部的问题；共享 `.content` 继续作为唯一纵向滚动容器，其他长页面同时受益。
-- Review/Edit Course 的多个翻译不再以 `东西/事情` 这样的合并字符串显示，而是渲染为可独立修改、删除和新增的文本块，每词仍最多 10 个翻译。
+- Fixed visual inconsistencies between Courses/Course Market and the existing main UI in form backgrounds, card density, empty states, interaction focus, and mobile layout; switching language doesn't change course business behavior or the API contract.
+- Fixed the app's main column flex children missing `min-height: 0`, which kept long Courses create, edit, and Review content from scrolling to the bottom; the shared `.content` remains the only vertical scroll container, and other long pages benefit too.
+- Multiple translations in Review/Edit Course are no longer shown as a merged string like `thing/matter`; they render as text blocks that can be edited, deleted, and added independently, still with at most 10 translations per word.
 
 ### Not included
 
-- PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR/AI 导入仍只是禁用占位；本次文本导入扩展没有上传文件、调用模型或改变 AI 契约。
+- PDF, DOC/DOCX, JSON, Markdown, HTML, and image OCR/AI import are still only disabled placeholders; this text import extension didn't upload files, call models, or change the AI contract.
 
 ## [0.6.0] - 2026-07-22
 
 ### Added
 
-- 新增 Courses 英语单词学习：空状态/类别选择、逐单元文本解析与精确错误位置、结构化编辑、dnd-kit/键盘排序、CMUdict IPA、课程卡熟练度，以及可恢复的认词/发音匹配/翻译/拼写四阶段。
-- 新增独立 `learning_*` 0011–0013：私有课程/单元/词、会话/items/append-only attempts/progress、复习日程、分享、不可变市场版本、举报/审核动作、语音配额、九级徽章和发布断言；Materials `courses` 不变。
-- Schedule 聚合 3/7/15/30 天课程复习，Profile 聚合课程数、不同熟练词、复习日期和课程徽章；20 个不同词且 100% 熟练的词集合首次发放指纹幂等 +20 points。
-- 新增 NestJS Courses、会话/答题、复习、学习 Profile、分享/撤销/克隆、免费 Course Market、举报/审核接口，以及统一 `{ code,message,fieldErrors? }` 错误。
-- 新增 Azure Speech 服务端适配：私有 TTS cache、16 kHz 单声道 WAV 限制、≤8 秒/2 MB 评分、音素反馈、持久用户限额/月预算、熔断和浏览器朗读降级；用户录音不持久化。
-- 新增 Courses parser/jsdom/API/CMUdict/Azure tests、双用户 Courses RLS E2E 和 Playwright 双账号主流程；升级夹具自动暂存全部 0008+ migration，避免未来文件提前进入 0007 schema。
-- 新增可执行真实 Azure Speech smoke：验证 MP3 TTS、16 kHz PCM TTS、scripted pronunciation assessment 和音素结果；生产主机在新 API image 激活前使用仅存在服务器 `.env` 的凭据执行该 gate。
-- 新增 Courses 实现笔记和 ADR 0008，并同步 README、架构、蓝图、ERD/API、环境、本地开发、测试、数据库/恢复/监控/轮换、安全、隐私、审核、AI 成本和经济规则。
+- Added Courses English vocabulary learning: empty state/category selection, per-unit text parsing with exact error positions, structured editing, dnd-kit/keyboard sorting, CMUdict IPA, course card mastery, and the resumable four stages of word recognition/pronunciation matching/translation/spelling.
+- Added the separate `learning_*` 0011–0013: private courses/units/words, sessions/items/append-only attempts/progress, review schedules, sharing, immutable market versions, reports/moderation actions, speech quotas, nine-tier badges, and release assertions; Materials `courses` is unchanged.
+- Schedule aggregates 3/7/15/30-day course reviews, and Profile aggregates the course count, distinct mastered words, review dates, and course badges; a word set of 20 distinct words at 100% mastery awards a fingerprint-idempotent +20 points the first time.
+- Added NestJS Courses, session/answer, review, learning Profile, share/revoke/clone, free Course Market, and report/moderation endpoints, plus the unified `{ code,message,fieldErrors? }` error.
+- Added the Azure Speech server adapter: a private TTS cache, a 16 kHz mono WAV limit, ≤8 seconds/2 MB scoring, phoneme feedback, durable per-user limits/monthly budget, a circuit breaker, and browser speech fallback; user recordings aren't persisted.
+- Added Courses parser/jsdom/API/CMUdict/Azure tests, two-user Courses RLS E2E, and the Playwright two-account main flow; the upgrade fixture automatically stages all 0008+ migrations so future files don't leak into the 0007 schema early.
+- Added an executable real Azure Speech smoke: verifies MP3 TTS, 16 kHz PCM TTS, scripted pronunciation assessment, and phoneme results; the production host runs this gate before activating the new API image, with credentials that only exist in the server `.env`.
+- Added the Courses implementation notes and ADR 0008, and updated the README, architecture, blueprint, ERD/API, environment, local development, testing, database/recovery/monitoring/rotation, security, privacy, moderation, AI cost, and economy rules accordingly.
 
 ### Changed
 
-- Market 现在有 Note Market（仍为 Demo）和 Course Market（真实免费快照）两个 Tab；Course Market 不使用 credits、支付或分成。
-- `packages/types` 的 Courses camelCase 契约由 Web/API 共用；数据库继续 snake_case，由 API 显式转换。
-- Courses 请求契约现在同时约束共享类型、Nest DTO 与 Web client；分享/市场克隆保留私有来源引用和作者署名，来源删除后只清空引用、不伪造署名。
-- 根 `pnpm lint` 从空 Turbo 任务改为 API、Web 和共享类型都实际执行的严格 TypeScript 静态检查，并进入 PR quality gate。
-- Azure pronunciation adapter 同时兼容官方文档的嵌套 `PronunciationAssessment` 与 Japan East REST 实际返回的扁平 score/error/phoneme 字段，并有两种响应形状的回归测试。
-- 生产通过 main SHA `53d0eabf767725b6e9ca83367c0e17c47a479eca` 的独立 plan/apply 发布 0011–0013、Courses/分享/免费市场与 Azure Speech；数据库回退仍只使用 forward-fix，应用/功能通过 release 与 flags 回退。
+- Market now has two tabs: Note Market (still a Demo) and Course Market (real free snapshots); Course Market doesn't use credits, payments, or revenue share.
+- The Courses camelCase contract in `packages/types` is shared by the Web app and API; the database stays snake_case, converted explicitly by the API.
+- The Courses request contract now constrains the shared types, Nest DTOs, and Web client together; share/market clones keep private origin references and author attribution, and after the origin is deleted only the reference is cleared, without faking attribution.
+- The root `pnpm lint` changed from an empty Turbo task to strict TypeScript static checks that actually run for the API, Web, and shared types, and joined the PR quality gate.
+- The Azure pronunciation adapter supports both the nested `PronunciationAssessment` from the official docs and the flat score/error/phoneme fields actually returned by the Japan East REST API, with regression tests for both response shapes.
+- Production released 0011–0013, Courses/sharing/free market, and Azure Speech through a separate plan/apply on main SHA `53d0eabf767725b6e9ca83367c0e17c47a479eca`; database rollback still uses only forward-fix, and the application/features roll back through releases and flags.
 
 ### Security
 
-- Courses 私有表禁止客户端写入，progress、badge、points、传播和审核写操作全部经 owner 校验后的 service-role 专用事务 RPC；RPC 默认撤销 `public/anon/authenticated` EXECUTE。
-- 分享只存 32 字节 token 的 SHA-256，撤销与克隆在事务中复查；公开响应脱敏，publication 内容由 trigger 保持不可变，克隆课禁止再次分享/上架。
-- `profiles.timezone` 只允许合法 IANA 名称；复习保存发生时本地日期。用户朗读音频不进数据库、Storage、日志或备份。
-- HS256 JWT 回退与 JWKS 一致校验 issuer/audience；Azure TTS/评分增加 1–60 秒硬超时；Course Market 响应移除私有 unit/word ID 与进度字段。
-- 复习日程只能由已完成 initial session 创建，并在服务端固定其 skills/scope；并发 session start 稳定恢复同一个 active session。
-- 朗读评分在调用 Azure 前校验会话仍为 active，避免已结束会话消耗供应商配额或发送录音。
-- NestJS CORS 从任意 Origin 改为 `CORS_ALLOWED_ORIGINS`/`PUBLIC_ORIGIN` allowlist；生产缺配置时只保留同源使用。
+- Courses private tables forbid client writes, and progress, badge, points, distribution, and moderation writes all go through service-role-only transactional RPCs after owner validation; RPCs revoke `public/anon/authenticated` EXECUTE by default.
+- Shares only store the SHA-256 of a 32-byte token, and revocation and cloning re-check within a transaction; public responses are redacted, publication content is kept immutable by a trigger, and cloned courses can't be shared or listed again.
+- `profiles.timezone` only allows valid IANA names; reviews store the local date at the time they happen. User read-aloud audio never enters the database, Storage, logs, or backups.
+- The HS256 JWT fallback validates issuer/audience the same way as JWKS; Azure TTS/scoring adds a 1–60 second hard timeout; Course Market responses remove private unit/word IDs and progress fields.
+- Review schedules can only be created from completed initial sessions, with their skills/scope pinned on the server; concurrent session starts stably resume the same active session.
+- Read-aloud scoring checks that the session is still active before calling Azure, so ended sessions can't consume provider quota or send recordings.
+- NestJS CORS changed from any Origin to a `CORS_ALLOWED_ORIGINS`/`PUBLIC_ORIGIN` allowlist; when the configuration is missing in production, only same-origin use remains.
 
 ### Not included
 
-- PDF、DOC/DOCX、JSON、Markdown、HTML、图片 OCR/AI 导入及知识点、阅读理解、题库训练仍未实现；现有入口只显示“AI 解析即将推出”。
+- PDF, DOC/DOCX, JSON, Markdown, HTML, image OCR/AI import, and knowledge points, reading comprehension, and question bank training are still not implemented; the existing entry only shows "AI parsing coming soon".
 
 ## [0.5.0] - 2026-07-21
 
 ### Added
 
-- 建立项目蓝图/最终说明、ERD/API、本地开发、环境变量、测试、数据库发布/回滚、备份恢复、监控告警和密钥轮换等文档体系。
-- 建立 SECURITY、CONTRIBUTING、ADR、隐私与数据删除、内容审核、AI 评测/成本以及 points/credits/VIP/支付统一规则。
-- 为 Web 补齐 9 个 jsdom 回归、为 API readiness 增加 2 个单元测试，并扩展 3 个 Supabase 双用户 RLS/Storage E2E；API HTTP、FastAPI 和真浏览器 E2E 仍明确列为待补。
-- 增加本地 Supabase CLI 基线、PR/main 的 0007→0010 历史数据升级、旧 opening 归零与发布断言夹具、空库迁移重建、数据库 lint 与真实本地 RLS/Storage/points CI 门禁。
-- 增加 0009 append-only legacy opening reversal，并将生产数据库发布拆分为只读 plan 与独立 apply 两次人工执行。
-- 增加 0010 无写入的安全/积分发布断言；针对生产 migration history 为空的既有项目，在加密备份后以 0001–0007 public schema 零差异及 Storage policy/bucket 核验为前提自动建立 baseline，拒绝 partial、gap 和未知远端版本。
-- 加密恢复点可显式记录尚不存在的 `supabase_migrations` schema；只有该精确状态可降级为 `migration_history_state=absent`，其他 dump 错误继续失败。数据库发布控制文件变更也会触发 main 的发布门禁。
-- 修正空 history 基线脚本调用 `supabase db diff` 时误用全局 `--output` 格式参数的问题，并以可执行 CLI 夹具覆盖 diff 捕获、Storage 核验和 history repair 全路径。
-- 增加生产 migration dry-run、加密发布恢复点、隔离恢复脚本和 migration history 发布流程。
+- Established the documentation system: the project blueprint/final specification, ERD/API, local development, environment variables, testing, database release/rollback, backup and recovery, monitoring and alerting, and secret rotation.
+- Established SECURITY, CONTRIBUTING, ADRs, privacy and data deletion, content moderation, AI evaluation/cost, and unified points/credits/VIP/payment rules.
+- Added 9 jsdom regressions for the Web app and 2 unit tests for API readiness, and extended 3 Supabase two-user RLS/Storage E2E suites; API HTTP, FastAPI, and real browser E2E are still explicitly listed as to-do.
+- Added the local Supabase CLI baseline, the PR/main 0007→0010 historical data upgrade, the legacy opening reset and release assertion fixtures, empty-database migration rebuild, database lint, and real local RLS/Storage/points CI gates.
+- Added the 0009 append-only legacy opening reversal, and split production database releases into two manual runs: a read-only plan and a separate apply.
+- Added the write-free 0010 security/points release assertions; for existing projects with an empty production migration history, the baseline is established automatically after an encrypted backup, on the condition of a zero 0001–0007 public schema diff and Storage policy/bucket checks, rejecting partial, gap, and unknown remote versions.
+- Encrypted recovery points can explicitly record a not-yet-existing `supabase_migrations` schema; only that exact state can be downgraded to `migration_history_state=absent`, and other dump errors still fail. Changes to database release control files also trigger main's release gate.
+- Fixed the empty-history baseline script misusing the global `--output` format argument when calling `supabase db diff`, and covered the whole path of diff capture, Storage checks, and history repair with an executable CLI fixture.
+- Added the production migration dry-run, encrypted release recovery points, the isolated recovery script, and the migration history release flow.
 
 ### Changed
 
-- 旧文档按当前代码与迁移重新标注“当前、部分实现、目标”，不再把蓝图能力描述为已经上线。
-- 生产 Web/API 改用 Git SHA 不可变 release；本机或公网 smoke 失败时自动恢复上一应用 release，数据库仍采用向前迁移。
-- `/api/health` 从变量存在检查升级为 Supabase JWKS + PostgREST 双探针；失败返回 sanitized 503，部署 smoke 只接受真实 readiness。
-- 生产已通过独立 plan/apply 发布 0008–0010：建立 0001–0007 history baseline、追加冲正旧 11 points、验证权限/账本投影，并激活对应不可变 Web/API release。
+- Old documents were relabeled as "current, partially implemented, target" according to the current code and migrations, and blueprint capabilities are no longer described as live.
+- Production Web/API now use Git SHA immutable releases; when the local or public smoke fails, the previous application release is restored automatically, and the database still uses forward migrations.
+- `/api/health` was upgraded from a variable presence check to dual Supabase JWKS + PostgREST probes; failures return a sanitized 503, and the deploy smoke only accepts real readiness.
+- Production released 0008–0010 through a separate plan/apply: established the 0001–0007 history baseline, appended the reversal of the legacy 11 points, verified permissions/the ledger projection, and activated the corresponding immutable Web/API release.
 
 ### Fixed
 
-- 重置 legacy 模块级会话状态并丢弃旧账号迟到响应，修复跨账号资料/社区/通知残留；账号变化会重新挂载应用。
-- 把 resize 监听改为挂载/清理对称生命周期，修复退出再登录后无法重挂。
-- 登录态读取、退出、Materials、通知、反馈、Profile、Community 和 Schedule 现在检查 Supabase/Storage `{ error }`；社区关系动作只在后端成功后更新界面，避免假成功。
-- 会话变化会复位登录按钮 loading，退出失败在已登录界面可见。
+- Reset legacy module-level session state and discard late responses for the old account, fixing leftover profile/community/notification data across accounts; an account change remounts the app.
+- Changed the resize listener to a symmetric mount/cleanup lifecycle, fixing the inability to remount after signing out and back in.
+- Sign-in state reads, sign-out, Materials, notifications, feedback, Profile, Community, and Schedule now check the Supabase/Storage `{ error }`; community relationship actions only update the UI after the backend succeeds, avoiding fake success.
+- Session changes reset the sign-in button loading state, and sign-out failures are visible in the signed-in UI.
 
 ### Security
 
-- 新增 0008 migration：Profile 只允许客户端更新公开资料列，并以防御触发器保护 credits、points、等级、VIP 和 streak。
-- 撤销 `_add_points`、`_notify`、`_set_point_event` 与新旧 trigger helpers 的客户端 EXECUTE；旧 `_add_points` 对 service-role 也不可调用。
-- 新增 append-only `point_entries`、内部 `point_event_states`、稳定业务键、冲正和并发串行化；点赞、评论、原创/转发和任务取消后重做不再累计刷分。
-- 剩余开放项包括帖子 UPDATE 可信字段、feedback 状态、注册滥用、公开媒体治理，以及 credits/VIP/支付商业账本。
+- Added the 0008 migration: Profile only allows clients to update public profile columns, and defensive triggers protect credits, points, level, VIP, and streak.
+- Revoked client EXECUTE on `_add_points`, `_notify`, `_set_point_event`, and the new and old trigger helpers; the old `_add_points` can't be called by the service role either.
+- Added append-only `point_entries`, internal `point_event_states`, stable business keys, reversals, and concurrency serialization; likes, comments, original posts/reposts, and redoing tasks after cancelling no longer accumulate farmed points.
+- Remaining open items include trusted fields on post UPDATE, feedback status, sign-up abuse, public media governance, and the credits/VIP/payment commercial ledger.
 
 ## [0.4.0] - 2026-06-27
 
 ### Added
 
-- 学习目标与任务真后端、课程/资料关联、任务完成 points、streak 和里程碑通知。
-- 通知、反馈、Profile、Community 和 Schedule 的函数级实现说明。
+- Real backend for study goals and tasks, course/material links, task completion points, streak, and milestone notifications.
+- Function-level implementation notes for notifications, feedback, Profile, Community, and Schedule.
 
 ## [0.3.0] - 2026-06-25
 
 ### Added
 
-- 通知面板、真实 Feedback 和 Profile 数据。
-- Community 真后端：帖子、评论、点赞、收藏、转发、关注、标签、媒体、points、等级和互动通知。
+- The notification panel, real Feedback, and Profile data.
+- Real Community backend: posts, comments, likes, favorites, reposts, follows, tags, media, points, levels, and interaction notifications.
 
 ### Security
 
-- 社区作者展示字段由数据库从 profile 快照生成，降低客户端伪造作者信息的风险。
+- Community author display fields are generated by the database from a profile snapshot, reducing the risk of clients forging author information.
 
 ## [0.2.0] - 2026-06-24
 
 ### Added
 
-- GitHub Actions 到 `nalanda.online` 的生产部署流程。
-- React Web 登录壳接入完整高保真原型界面。
-- Materials 真后端：课程、资料、Supabase Storage、预览、下载和删除。
-- 数据库迁移推送脚本与首批实现说明。
+- The GitHub Actions production deployment flow to `nalanda.online`.
+- The React Web sign-in shell wired up to the full high-fidelity prototype UI.
+- Real Materials backend: courses, materials, Supabase Storage, preview, download, and deletion.
+- The database migration push script and the first implementation notes.
 
 ### Changed
 
-- 注册改为 NestJS 后端调用 Supabase Admin 创建已确认用户。
-- Supabase JWT 验证优先使用 JWKS，并保留旧 HS256 回退。
+- Sign-up now has the NestJS backend call Supabase Admin to create a confirmed user.
+- Supabase JWT verification prefers JWKS and keeps the old HS256 fallback.
 
 ### Security
 
-- Materials RLS 增加“资料必须属于当前用户自己的课程”校验，修复跨用户课程外键完整性问题。
+- Materials RLS adds the check that "a material must belong to the current user's own course", fixing a cross-user course foreign key integrity issue.
 
 ## [0.1.0] - 2026-06-20
 
 ### Added
 
-- pnpm + Turborepo monorepo，包含 Web、NestJS API、FastAPI AI 骨架和共享类型/UI 包。
-- Supabase Auth、profiles 注册触发器和首版 owner-only RLS。
-- Caddy + API + AI + Redis 的 2G 混合部署脚手架与部署变体说明。
+- pnpm + Turborepo monorepo, including Web, NestJS API, the FastAPI AI skeleton, and shared types/UI packages.
+- Supabase Auth, the profiles sign-up trigger, and the first owner-only RLS.
+- The 2G hybrid deployment scaffold with Caddy + API + AI + Redis and notes on deployment variants.
 
 ## [0.0.2] - 2026-06-13
 
 ### Added
 
-- 可运行的桌面/移动高保真 Showcase 原型。
-- 首版架构与开发路线图。
+- A runnable desktop/mobile high-fidelity Showcase prototype.
+- The first architecture and development roadmap.
 
 ## [0.0.1] - 2026-06-12
 
 ### Added
 
-- 初始化仓库与产品 README。
+- Initialized the repository and the product README.

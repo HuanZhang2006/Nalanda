@@ -1,58 +1,61 @@
 # Nalanda
 
-> **文档定位**
-> - **内容**：项目入口、当前可用能力、真实/mock 边界、快速开始和文档导航。
-> - **作用**：让首次进入仓库的人在几分钟内知道“项目现在是什么、如何运行、下一步去哪里看”。
-> - **何时更新**：模块状态、启动命令、线上入口、技术栈或文档导航变化时；不得把蓝图功能提前写成已实现。
+> **About this document**
+> - **Contents**: The project entry point: current capabilities, the real/mock boundary, quick start, and documentation navigation.
+> - **Purpose**: Lets someone new to the repository learn within minutes "what the project is now, how to run it, and where to look next".
+> - **When to update**: When module status, startup commands, the live entry point, the tech stack, or documentation navigation change; never describe blueprint features as already implemented.
 
-> 以古印度那烂陀大学命名——世界上最早的知识殿堂。
+> Named after the ancient Indian university of Nalanda — one of the world's earliest great seats of learning.
 
-Nalanda 的最终目标是把大学课程资料转化为知识清单、交互测验、知识图谱和模拟试卷，并围绕这些知识资产提供学习计划、社区、成长和交易能力。
+Nalanda's ultimate goal is to turn university course materials into knowledge lists, interactive quizzes, knowledge graphs, and mock exams, and to build study plans, community, growth, and trading around those knowledge assets.
 
-在线环境（仓库文档所记录）：[https://nalanda.online](https://nalanda.online)。本 README 不承担线上可用性监控证明。
+Live environment (as recorded in the repository docs): [https://nalanda.online](https://nalanda.online). This README is not proof of live availability.
 
-## 当前状态
+The web interface is in English by default, with an EN/中文 toggle in the top bar (and on the sign-in page) that switches every page to Chinese.
 
-| 模块 | 当前实现 |
+## Current status
+
+| Module | Current implementation |
 |---|---|
-| 注册 / 登录 / 退出 | ✅ Supabase Auth；注册经 NestJS service-role 接口创建已确认账号 |
-| Materials | ✅ Supabase 表 + 私有 Storage + RLS；课程、上传、预览、下载、删除。生产 0041–0043 已为每个受支持文件上线服务端 “Generate test paper”、持久队列、安全解析和实时进度 |
-| Community | ✅ 发帖、评论、赞藏、转发、关注、标签、图片/音频；生产 0039–0040 已收紧帖子可信列并启用 points 日上限、人工审核冲正与只标记协同检测 |
-| Schedule | ✅ 任务、目标、课程/资料关联、幂等积分和 streak；生产 0039–0040 已启用关联 owner trigger、数据库维护 `done_at` 和任务奖励日上限；“智能填充”为规则式生成 |
-| Courses / Course Market | ✅ 生产已上线英语词表文本导入、编辑、四阶段学习、复习、Schedule/Profile、免费分享/市场、徽章与积分、即时反馈、幂等弱网答题、持久音频预热、浏览器离线音频、按意图独立续学、显式取消、可选限时拼写、OpenRouter 语义翻译前测、中文翻译语音输入、统一录音波形、轮末错题复盘、默认 90% 可调阈值的拼写/读音考试、复习/考试任意选词、失败考试补练自动结束、考试历史详情和编辑器学习属性；Courses 功能迁移到 0038，生产总 history 已到 0043。词汇只有拼写考试和发音考试均通过才算已学习，`learned_at` 由数据库 trigger 精确派生为两个考试通过时间的较晚值；首次学习、复习、单项考试或手工赋值都不能形成掌握。发音录音已移除本地 VAD/静音裁剪，只保留 Azure 要求的 PCM 格式转换。 |
-| Profile / Growth / 通知 / 反馈 | ✅ Profile 敏感列由服务端维护，points 有冲正账本；生产 0039–0040 已把 Feedback 收敛为用户只读/新增，并启用奖励日上限、回执/通知与审核审计；通知当前是查询刷新，不是 Realtime |
-| Home | 🟡 高保真 mock，统计/课程/活动不是真实聚合 |
-| Notes / AI Create | 🟡 My Notes 的历史演示卡片继续保留为 Demo；生产 0041–0043 已接入 Materials 课程下的私有生成试卷、在线考试与主观题异步评分。未发布 0046–0051 候选另实现知识点图谱/节点问答、可恢复长任务、React Flow + ELK 跨设备布局、任务删除/清空和 Luna 原文件流水线；独立 AI Create 仍为 mock |
-| Note Market / credits / VIP / 支付 | 🟡 Note Market 仍为 Demo，Course Market 只支持免费克隆；无 credits 账本、订单或 Stripe |
-| Courses 文件导入 / 其他类别 | ⬜ PDF/Word/JSON/Markdown/HTML/图片仅有禁用入口；AI 解析、知识点/阅读理解/题库训练未实现 |
-| Electron / React Native / 完整 i18n | ⬜ 未开始 |
+| Sign up / sign in / sign out | ✅ Supabase Auth; sign-up creates a confirmed account through a NestJS service-role endpoint |
+| Materials | ✅ Supabase tables + private Storage + RLS; courses, upload, preview, download, delete. Production 0041–0043 launched server-side "Generate test paper" for every supported file, with a durable queue, safe parsing, and live progress |
+| Community | ✅ Posts, comments, likes/saves, reposts, follows, tags, images/audio; production 0039–0040 tightened trusted post columns and enabled the points daily cap, manual-review reversals, and flag-only coordination detection |
+| Schedule | ✅ Tasks, goals, course/material links, idempotent points, and streaks; production 0039–0040 enabled the linked-owner trigger, database-maintained `done_at`, and the daily task reward cap; "Auto-fill" is rule-based |
+| Courses / Course Market | ✅ Live in production: English word-list text import, editing, four-stage learning, review, Schedule/Profile integration, free sharing/market, badges and points, instant feedback, idempotent answering on weak networks, durable audio prewarming, browser offline audio, intent-specific resume, explicit cancel, an optional timed spelling test, an OpenRouter semantic translation pre-test, Chinese translation voice input, a unified recording waveform, end-of-round mistake review, spelling/pronunciation exams with an adjustable threshold defaulting to 90%, arbitrary word selection for reviews/exams, automatic end of practice after a failed exam, exam history details, and learning properties in the editor; the Courses feature migrations reach 0038, and the overall production history is at 0043. A word counts as learned only after both the spelling exam and the pronunciation exam pass, and `learned_at` is derived exactly by a database trigger as the later of the two exam pass times; initial learning, review, a single exam, or manual assignment cannot create mastery. Pronunciation recordings no longer use local VAD/silence trimming and only keep the PCM format conversion Azure requires. |
+| Profile / Growth / notifications / feedback | ✅ Profile sensitive columns are server-maintained, and points have a reversible ledger; production 0039–0040 narrowed Feedback to read/insert for users and enabled the reward daily cap, receipts/notifications, and moderation auditing; notifications are currently refreshed by query, not Realtime |
+| Home | 🟡 High-fidelity mock; stats/courses/activity are not real aggregates |
+| Notes / AI Create | 🟡 The historical demo cards in My Notes stay as a demo; production 0041–0043 wired private generated test papers, online exams, and async subjective grading under Materials courses. The unreleased 0046–0051 candidate also implements the knowledge-point graph/node Q&A, resumable long jobs, React Flow + ELK cross-device layout, job delete/clear, and the Luna native-file pipeline; the standalone AI Create is still a mock |
+| Note Market / credits / VIP / payments | 🟡 Note Market is still a demo, and Course Market only supports free clones; no credits ledger, orders, or Stripe |
+| Courses file import / other categories | ⬜ PDF/Word/JSON/Markdown/HTML/images only have disabled entry points; AI parsing and knowledge points/reading comprehension/question bank training are not implemented |
+| Interface language | ✅ English by default with a Chinese toggle across the shell and every page; bilingual strings live next to the code as `l(english, chinese)` pairs |
+| Electron / React Native | ⬜ Not started |
 
-旧模块大多由浏览器直连 Supabase；Courses 和 Materials AI 的业务写入都经过 NestJS 与 service-role 专用事务 RPC。生产已于 2026-08-10 完成 0039–0040 安全第一阶段，随后于 2026-08-11 通过独立只读 plan、加密恢复点、0041–0043 远端验证、2G 资源 canary、真实 DeepSeek/MiMo/Azure/OpenRouter 门禁、登录用户完整链路和不可变应用发布启用 Materials AI。当前所有用户 Free，每个 Profile 本地日期分别有 10 次成功生成和 10 次成功主观题评分；只有成功才消耗，拒绝/失败/取消释放预留，不读取 credits。时间列 Stage B 已于 2026-08-22 将生产数据库应用到 0053；2026-08-23 的受保护 run `32628757656` 又在加密恢复点后应用并验证 0054–0055。2026-08-26 main run `32931681321` 在真实 DocumentIR DOCX 试卷门禁失败后自动恢复此前稳定 release：旧结构 repair 没有 source block 正文，结构转绿后才暴露五类语义缺陷。当前 Unreleased `exam-generate.v4` 为 repair 提供完整来源并增加严格有界的后续语义修复；新的真实 provider 与应用切流尚未证明，Materials AI/Luna flags 继续关闭。数据库 0055 上线不等于候选 UI/AI 能力切流；原预留 0044–0045 没有补插。完整离线 PWA、销售 credits/VIP 商业账本仍未实现。其余边界与发布证据见[当前架构](docs/ARCHITECTURE.md)和[部署记录](docs/notes/03-deployment-and-cicd.md)。
+Most legacy modules talk to Supabase directly from the browser; Courses and Materials AI business writes go through NestJS and dedicated service-role transaction RPCs. Production completed security phase one (0039–0040) on 2026-08-10, then on 2026-08-11 enabled Materials AI through a separate read-only plan, an encrypted recovery point, remote verification of 0041–0043, a 2 GB resource canary, real DeepSeek/MiMo/Azure/OpenRouter gates, a full signed-in user path, and an immutable app release. Every user is currently Free, with 10 successful generations and 10 successful subjective gradings per Profile local day; only success consumes, rejection/failure/cancellation releases the reservation, and credits are never read. The timestamp-column Stage B applied the production database to 0053 on 2026-08-22; protected run `32628757656` on 2026-08-23 then applied and verified 0054–0055 after an encrypted recovery point. On 2026-08-26, main run `32931681321` automatically restored the earlier stable release after the real DocumentIR DOCX test-paper gate failed: the old structural repair had no source block text, and five classes of semantic defects only surfaced after the structure turned green. The current Unreleased `exam-generate.v4` gives the repair the full source and adds a strictly bounded follow-up semantic repair; the new real provider and app cutover have not been proven yet, and the Materials AI/Luna flags stay off. Database 0055 going live does not mean the candidate UI/AI capabilities are cut over; the originally reserved 0044–0045 were not back-filled. A full offline PWA and the credits/VIP commercial ledgers are still not implemented. See the [current architecture](docs/ARCHITECTURE.md) and the [deployment notes](docs/notes/03-deployment-and-cicd.md) for other boundaries and release evidence.
 
-当前分支的 **Unreleased** 候选包含 0046–0051 以及追加式 0054–0057：0046–0048 将生成/评分改为 202 + 持久回调，修复 Undici 五分钟响应头超时误报，并加入 24 小时双层断点、知识点梳理与节点问答；0049–0051 增加 `luna_native_file_v1`、实际上游审计、任务中断/删除/清空、私有跨设备图布局及权限验证；0054–0055 曾增加的 Ox Alpha 流水线已由 0056–0057 完全退役（模型已从 OpenRouter 下线，生产从未启用），同时 Luna 升级为 `openai/gpt-6-luna` 并锁定唯一提供 ZDR 的 Azure 上游（[ADR-0016](docs/adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)）。知识图使用动态 React Flow + ELK，支持缩放、平移、拖动、键盘移动、自动整理和移动端下置详情；考试草稿不批改且不返回答案，整卷提交/到期后才统一批改。Courses 的非字面翻译判定改用 OpenRouter 免费 `nvidia/nemotron-3-super-120b-a12b:free`。此段是代码状态，不是生产声明；上线前仍须通过真实 Supabase、真实 OpenRouter、资源 canary 和受保护发布。
+The current branch's **Unreleased** candidate includes 0046–0051 and the appended 0054–0057: 0046–0048 change generation/grading to 202 + durable callbacks, fix the misreported Undici five-minute response-header timeout, and add 24-hour two-level checkpoints, knowledge-point organization, and node Q&A; 0049–0051 add `luna_native_file_v1`, actual-upstream auditing, job interruption/delete/clear, private cross-device graph layouts, and permission verification; the Ox Alpha pipeline added in 0054–0055 is fully retired by 0056–0057 (the model was removed from OpenRouter and never enabled in production), while Luna is upgraded to `openai/gpt-6-luna` locked to Azure, the only upstream offering ZDR ([ADR-0016](docs/adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)). The knowledge graph uses dynamic React Flow + ELK with zoom, pan, drag, keyboard movement, auto-arrange, and details below the canvas on mobile; exam drafts are not graded and return no answers, and grading happens together only after the whole paper is submitted or time runs out. Courses non-literal translation judging moves to OpenRouter's free `nvidia/nemotron-3-super-120b-a12b:free`. This paragraph describes code status, not a production claim; real Supabase, real OpenRouter, a resource canary, and a protected release are still required before launch.
 
-## 当前技术结构
+## Current technical structure
 
-- Web：React 18 + Vite 鉴权壳，内部挂载 legacy DOM 应用。
-- 数据/Auth/Storage：Supabase PostgreSQL、Auth、Storage、RLS。
-- API：NestJS，提供 health/auth/me、Courses、语音/AI 适配和 points 管理接口；生产已启用 ioredis 原子限流、协同扫描器和真实 Redis readiness。
-- AI：生产 0041–0043 使用内网 FastAPI、确定性解析器、固定 OpenRouter ZDR 模型和严格 schema；NestJS 以 Postgres 任务事实 + BullMQ/Redis 调度。Unreleased 候选把长任务改为快速接收/回调，并增加可恢复图谱/节点问答；显式原文件路径 Luna（GPT-6 Luna）处理 PDF/图片，锁定 Azure ZDR 上游且不进入 DocumentIR/parse cache。实时 ZDR catalog 没有 Azure endpoint 时保持关闭，不静默降级。
-- 共享：pnpm + Turborepo；`packages/ui` 是 CSS 包，Courses 的 camelCase 契约由 `packages/types` 在 Web/API 共用。
-- 生产：GitHub Actions 构建，宿主 nginx 托管 Web，Docker 运行 API、隔离 FastAPI AI worker 与仅容器内网可达、密码认证、AOF everysec 的 Redis；Supabase 继续使用云服务。
+- Web: a React 18 + Vite auth shell that mounts the legacy DOM app inside.
+- Data/Auth/Storage: Supabase PostgreSQL, Auth, Storage, RLS.
+- API: NestJS, providing health/auth/me, Courses, speech/AI adapters, and points admin endpoints; production enables ioredis atomic rate limiting, the coordination scanner, and real Redis readiness.
+- AI: production 0041–0043 uses an internal FastAPI, deterministic parsers, fixed OpenRouter ZDR models, and strict schemas; NestJS schedules with Postgres job facts + BullMQ/Redis. The Unreleased candidate switches long jobs to fast acceptance/callbacks and adds resumable graphs/node Q&A; the explicit native-file path Luna (GPT-6 Luna) handles PDFs/images, locked to the Azure ZDR upstream, without entering DocumentIR/parse cache. When the live ZDR catalog has no Azure endpoint it stays off and never silently downgrades.
+- Shared: pnpm + Turborepo; `packages/ui` is a CSS package, and the Courses camelCase contract is shared by Web/API through `packages/types`.
+- Production: built by GitHub Actions; host nginx serves the Web app, and Docker runs the API, an isolated FastAPI AI worker, and a password-protected, AOF-everysec Redis reachable only on the container network; Supabase stays on the cloud service.
 
-## 仓库入口
+## Repository entry points
 
-- `apps/web`：生产 Web。
-- `apps/api`：NestJS 鉴权/健康检查，以及 Courses、学习会话、语音、分享和课程市场的服务端边界。
-- `apps/ai`：生产 Materials AI 隔离 worker；解析 PDF/Office/文本/图片并只恢复失败视觉范围，内部 token 认证，不是公网服务。
-- `app/`：独立静态桌面/移动原型和 Showcase，不是生产应用入口。
-- `supabase/migrations`：追加式迁移；生产 migration history 已到 0053。0052–0053 只执行安全时间列 contract；原 0044–0045 空号没有补插。数据库版本与当前不可变应用 release 必须分别核对。
-- `infra/deploy`：当前生产部署配置。
-- `infra/hybrid-2g`：未来 AI/BullMQ 接入时的通用部署模板；当前生产 Redis 配置在 `infra/deploy`，两者不可混称。
+- `apps/web`: production Web app.
+- `apps/api`: NestJS auth/health checks, plus the server boundary for Courses, learning sessions, speech, sharing, and the course market.
+- `apps/ai`: the production Materials AI isolated worker; parses PDF/Office/text/images and only recovers failed visual regions, authenticated with an internal token, not a public service.
+- `app/`: standalone static desktop/mobile prototypes and the Showcase, not the production app entry point.
+- `supabase/migrations`: append-only migrations; production migration history is at 0053. 0052–0053 only run the security timestamp-column contract; the empty 0044–0045 numbers were not back-filled. The database version and the current immutable app release must be checked separately.
+- `infra/deploy`: the current production deployment configuration.
+- `infra/hybrid-2g`: a generic deployment template for future AI/BullMQ integration; the current production Redis configuration is in `infra/deploy`, and the two must not be confused.
 
-## 快速开始
+## Quick start
 
-要求：Node 20、pnpm 9.12.3；真实登录和业务数据需要 Supabase 项目。
+Requirements: Node 20, pnpm 9.12.3; real sign-in and business data need a Supabase project.
 
 ```bash
 pnpm install --frozen-lockfile
@@ -64,42 +67,42 @@ pnpm --filter @nalanda/api start
 pnpm --filter @nalanda/web dev
 ```
 
-完整的从零环境、AI Python 环境和数据库准备见 [本地开发手册](docs/guides/LOCAL_DEVELOPMENT.md)。
+See the [local development guide](docs/guides/LOCAL_DEVELOPMENT.md) for a from-scratch environment, the AI Python environment, and database setup.
 
-常用校验：
+Common checks:
 
 ```bash
 pnpm check   # docs:check + release-tool tests + code lint + typecheck + test + build
 ```
 
-默认 `pnpm test` 运行 Web jsdom 与 API 单元测试，不连接外部项目；真实 RLS 套件只有在显式安全开关下运行。PR/main CI 还启动真实 Redis 与一次性本地 Supabase，验证 Lua 原子窗口、0007→最新、空库重建、帖子/Feedback/Schedule 权限、points 并发上限/审核/协同信号及 Courses，并以供应商 fake 运行 Playwright。生产应用激活前仍执行真实 Azure/OpenRouter/Fish gates，同时要求 `deps.supabase=ok` 和 `deps.redis=ok`。本地跳过的 Redis/RLS、jsdom 或 fake provider 都不能称为对应真实 E2E，见[测试指南](docs/guides/TESTING.md)。
+The default `pnpm test` runs Web jsdom and API unit tests without connecting to external projects; the real RLS suite only runs behind an explicit safety switch. PR/main CI also starts a real Redis and a throwaway local Supabase to verify the Lua atomic window, 0007→latest, an empty-database rebuild, post/Feedback/Schedule permissions, points concurrent caps/moderation/coordination signals, and Courses, and runs Playwright with provider fakes. Before the production app activates, real Azure/OpenRouter/Fish gates still run, and `deps.supabase=ok` and `deps.redis=ok` are required. Locally skipped Redis/RLS, jsdom, or fake providers cannot be called the corresponding real E2E; see the [testing guide](docs/guides/TESTING.md).
 
-## 静态设计原型
+## Static design prototype
 
-不配置后端也可查看原型：
+You can view the prototype without configuring a backend:
 
 ```bash
 python3 -m http.server 8000
-# 打开 http://localhost:8000/
+# open http://localhost:8000/
 ```
 
-根入口会跳转到 `app/Nalanda Showcase.html`。静态原型依赖 Google Fonts、unpkg React/Babel，并不完全离线；其中所有业务数据都是 mock。
+The root entry redirects to `app/Nalanda Showcase.html`. The static prototype depends on Google Fonts and unpkg React/Babel, so it is not fully offline; all of its business data is mock.
 
-## 文档导航
+## Documentation
 
-- [文档总索引](docs/README.md)
-- [最终项目说明与开发路线图](docs/PROJECT_BLUEPRINT.md)
-- [当前实现架构](docs/ARCHITECTURE.md)
-- [实现笔记](docs/notes/README.md)
+- [Documentation index](docs/README.md)
+- [Final project description and development roadmap](docs/PROJECT_BLUEPRINT.md)
+- [Current architecture](docs/ARCHITECTURE.md)
+- [Implementation notes](docs/notes/README.md)
 - [ERD](docs/guides/ERD.md) / [API](docs/guides/API.md)
-- [环境变量矩阵](docs/guides/ENVIRONMENT_VARIABLES.md) / [测试指南](docs/guides/TESTING.md)
-- [数据库发布与回滚](docs/operations/DATABASE_RELEASE_ROLLBACK.md)
-- [安全政策](SECURITY.md) / [贡献指南](CONTRIBUTING.md) / [变更记录](CHANGELOG.md)
+- [Environment variable matrix](docs/guides/ENVIRONMENT_VARIABLES.md) / [Testing guide](docs/guides/TESTING.md)
+- [Database release and rollback](docs/operations/DATABASE_RELEASE_ROLLBACK.md)
+- [Security policy](SECURITY.md) / [Contributing guide](CONTRIBUTING.md) / [Changelog](CHANGELOG.md)
 
-## 规划中的核心能力
+## Planned core capabilities
 
-Materials 文件生成试卷与在线考试第一阶段已经上线；Knowledge list、独立 Quiz 仍显示 Coming soon。仓库候选已实现 Knowledge graph/节点问答、可恢复长任务、Luna 原文件处理和完整任务清理，但在 CI、真实供应商门禁和受保护生产发布完成前不计为线上功能。后续还会覆盖 Courses 文件 AI 解析、其它 AI 产物、真实 Home、笔记市场/credits/Stripe、完整内容治理、Realtime、管理端、双语、Electron 和 React Native。依赖、顺序和验收标准只以 [PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md) 为准。
+Phase one of Materials file-to-test-paper generation and online exams is live; Knowledge list and standalone Quiz still show Coming soon. The repository candidate implements the knowledge graph/node Q&A, resumable long jobs, Luna native-file processing, and full job cleanup, but these do not count as live features until CI, real provider gates, and a protected production release are complete. Later work covers Courses file AI parsing, other AI artifacts, a real Home, the note market/credits/Stripe, full content governance, Realtime, an admin back office, Electron, and React Native. Dependencies, order, and acceptance criteria are defined only by [PROJECT_BLUEPRINT.md](docs/PROJECT_BLUEPRINT.md).
 
-## 许可证状态
+## License
 
-仓库历史 README 声明 MIT，但当前没有独立 `LICENSE` 文件；在正式对外发布前必须补齐准确许可证。计划参考的 ExamPass-Assistant 使用 CC BY-NC 4.0，商业项目不得在未获授权时直接复用其非商业代码。
+Nalanda is released under the [MIT License](LICENSE). The ExamPass-Assistant project used as a methodology reference is licensed CC BY-NC 4.0; none of its non-commercial code may be copied into this repository without the author's authorization.

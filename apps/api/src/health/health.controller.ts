@@ -5,7 +5,7 @@ const dependencyState = () => ({
   ai: process.env.AI_SERVICE_URL ? "configured" : "unset",
 });
 
-// GET /api/health —— 部署 readiness：配置存在且 Supabase Auth/PostgREST 可访问。
+// GET /api/health — deployment readiness: configuration is present and Supabase Auth/PostgREST are reachable.
 @Controller("health")
 export class HealthController {
   constructor(private readonly redis: RedisService) {}

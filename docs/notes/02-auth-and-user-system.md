@@ -1,123 +1,123 @@
-# 02 · 用户系统与认证
+# 02 · User system and authentication
 
-> **文档定位**
-> - **内容**：记录当前 Supabase Auth、NestJS JWT 守卫、Profile 建档和注册流程。
-> - **作用**：说明认证数据流与安全边界，供登录故障排查和后续邮箱/OAuth 改造参考。
-> - **何时更新**：认证提供商、令牌校验、注册/找回密码、角色、Profile 权限或密钥变化时。
-> - **状态基线**：2026-08-11。生产总 history 已到 0043；注册 Redis/HMAC 双限流已受保护发布并通过公网 RateLimit header smoke。
+> **About this document**
+> - **Contents**: Records the current Supabase Auth, NestJS JWT guard, Profile creation, and sign-up flow.
+> - **Purpose**: Explains the authentication data flow and security boundaries, for troubleshooting sign-in issues and as a reference for future email/OAuth work.
+> - **When to update**: When the authentication provider, token verification, sign-up/password recovery, roles, Profile permissions, or secrets change.
+> - **Status baseline**: 2026-08-11. The overall production history is at 0043; the dual Redis/HMAC sign-up rate limit has a protected release and passed a public RateLimit header smoke test.
 
-> 目标：用户能注册 / 登录 / 退出（真实后端），后端能信任登录态，每个用户有自己的资料档案且只能访问自己的数据。
+> Goal: users can sign up / sign in / sign out (real backend), the backend can trust the session, and every user has their own profile and can only access their own data.
 
-## 1. 技术方案总览
+## 1. Technical approach overview
 
-- **身份与令牌**：Supabase Auth（GoTrue）。负责注册、登录、签发 JWT、会话刷新。
-- **令牌验证**：NestJS 用项目的 **JWKS**（非对称 ES256 公钥）验证 Supabase 签发的访问令牌。
-- **用户资料**：PostgreSQL `public.profiles` 表，与 `auth.users` 一一对应；注册时触发器自动建档；RLS 保证只能访问自己的行，0008 的列级授权保证只能改公开资料字段。
-- **注册策略**：自建 `POST /api/auth/register`，用 service_role 直接创建「已确认」账号，绕开不可靠的确认邮件（详见第 6 节）。
+- **Identity and tokens**: Supabase Auth (GoTrue). Handles sign-up, sign-in, JWT issuance, and session refresh.
+- **Token verification**: NestJS verifies Supabase-issued access tokens with the project's **JWKS** (asymmetric ES256 public keys).
+- **User profiles**: the PostgreSQL `public.profiles` table, one-to-one with `auth.users`; a trigger creates the profile at sign-up; RLS ensures users can only access their own row, and 0008's column grants ensure only public profile fields can be changed.
+- **Sign-up strategy**: a custom `POST /api/auth/register` that uses service_role to create an already-confirmed account, bypassing the unreliable confirmation email (see section 6).
 
 ```
-浏览器 (supabase-js) ──登录──> Supabase 签发 ES256 JWT（存 localStorage）
-   │ 调 /api/* 带 Authorization: Bearer <jwt>
+Browser (supabase-js) ──sign in──> Supabase issues an ES256 JWT (stored in localStorage)
+   │ calls /api/* with Authorization: Bearer <jwt>
    ▼
-NestJS 网关 ── SupabaseAuthGuard 用项目 JWKS 验签 ──> req.user = {id,email,role}
+NestJS gateway ── SupabaseAuthGuard verifies with the project JWKS ──> req.user = {id,email,role}
    │
-   └─ /api/me 返回身份；其余受保护接口可用 @CurrentUser 取用户
+   └─ /api/me returns the identity; other protected endpoints can read the user with @CurrentUser
 ```
 
-## 2. 数据层：profiles + RLS + 触发器
+## 2. Data layer: profiles + RLS + triggers
 
-迁移文件：`supabase/migrations/20260620000001_profiles.sql`（建表/RLS）、`20260710000008_security_points_ledger.sql`（敏感列收口）与 `20260722000011_learning_courses.sql`（IANA 时区）。
+Migration files: `supabase/migrations/20260620000001_profiles.sql` (table/RLS), `20260710000008_security_points_ledger.sql` (sensitive-column lockdown), and `20260722000011_learning_courses.sql` (IANA time zone).
 
-- 表 `public.profiles`：`id uuid PK → auth.users(id) ON DELETE CASCADE`，外加 `username/email/university/major/year/language/timezone/credits/points/level/level_name/vip_until/streak/streak_date/created_at/updated_at`；`timezone` 由数据库触发器校验为合法 IANA 名称。
-- **RLS**（数据库层强制，绕不过去）：
-  - `profiles_select_own`：`auth.uid() = id` 才能 select。
-  - `profiles_update_own`：`auth.uid() = id` 才能 update 该行（`using` + `with check`）；表级 UPDATE 已从 authenticated 撤销，只授予 `username/university/major/year/language/timezone` 六列，防御触发器再次保护 points/credits/level/VIP/streak。
-- **注册自动建档**：函数 `handle_new_user()`（`security definer`）在 `auth.users` 插入后，向 `profiles` 插一行（`username` 取邮箱 `@` 前缀）；触发器 `on_auth_user_created`。
-- **维护 `updated_at`**：`touch_updated_at()` + before-update 触发器。
+- Table `public.profiles`: `id uuid PK → auth.users(id) ON DELETE CASCADE`, plus `username/email/university/major/year/language/timezone/credits/points/level/level_name/vip_until/streak/streak_date/created_at/updated_at`; `timezone` is validated as a legal IANA name by a database trigger.
+- **RLS** (enforced in the database, cannot be bypassed):
+  - `profiles_select_own`: select only when `auth.uid() = id`.
+  - `profiles_update_own`: update the row only when `auth.uid() = id` (`using` + `with check`); table-level UPDATE has been revoked from authenticated, only the six columns `username/university/major/year/language/timezone` are granted, and a defensive trigger additionally protects points/credits/level/VIP/streak.
+- **Automatic profile on sign-up**: the `handle_new_user()` function (`security definer`) inserts a row into `profiles` after an insert into `auth.users` (`username` is the part of the email before `@`); trigger `on_auth_user_created`.
+- **Maintaining `updated_at`**: `touch_updated_at()` + a before-update trigger.
 
-> 逻辑要点：业务表用 `auth.uid()`（来自已验证 JWT 的 sub）做 RLS 隔离；service_role 走后端、绕过 RLS，仅用于管理操作（如建用户）。
+> Key logic: business tables use `auth.uid()` (the sub from the verified JWT) for RLS isolation; service_role is used by the backend, bypasses RLS, and is only for administrative operations (such as creating users).
 
-## 3. 后端：验签守卫 + 接口
+## 3. Backend: verification guard + endpoints
 
-文件：`apps/api/src/auth/supabase.guard.ts`、`current-user.decorator.ts`、`me/me.controller.ts`、`auth/auth.controller.ts`
+Files: `apps/api/src/auth/supabase.guard.ts`, `current-user.decorator.ts`, `me/me.controller.ts`, `auth/auth.controller.ts`
 
-### SupabaseAuthGuard（验签）
-- 从 `Authorization: Bearer` 取令牌。
-- **首选 JWKS**：`createRemoteJWKSet(<SUPABASE_URL>/auth/v1/.well-known/jwks.json)`，`jwtVerify(token, jwks, { issuer, audience:"authenticated" })`，支持 ES256/RS256。
-- **回退 HS256**：若 JWKS 验不过且配了 `SUPABASE_JWT_SECRET`，只允许 HS256，并与 JWKS 路径一致校验 `issuer=<SUPABASE_URL>/auth/v1` 和 `audience=authenticated`。
-- **要求用户 claims**：`sub` 必须是 UUID 且 `role=authenticated`，否则一律 401（anon/service_role key 不会被当成用户）。
-- 通过后写入 `req.user = { id: sub, email, role }`。
+### SupabaseAuthGuard (verification)
+- Takes the token from `Authorization: Bearer`.
+- **JWKS first**: `createRemoteJWKSet(<SUPABASE_URL>/auth/v1/.well-known/jwks.json)`, `jwtVerify(token, jwks, { issuer, audience:"authenticated" })`, supporting ES256/RS256.
+- **HS256 fallback**: if JWKS verification fails and `SUPABASE_JWT_SECRET` is configured, only HS256 is allowed, with the same `issuer=<SUPABASE_URL>/auth/v1` and `audience=authenticated` checks as the JWKS path.
+- **User claims required**: `sub` must be a UUID and `role=authenticated`, otherwise 401 (anon/service_role keys are never treated as users).
+- On success it sets `req.user = { id: sub, email, role }`.
 
-### 接口
-- `GET /api/me`（`@UseGuards(SupabaseAuthGuard)`）：返回当前用户，用于「证明后端信任登录态」。
-- `POST /api/auth/register`：见第 6 节。
+### Endpoints
+- `GET /api/me` (`@UseGuards(SupabaseAuthGuard)`): returns the current user, used to "prove the backend trusts the session".
+- `POST /api/auth/register`: see section 6.
 
-> **关键认知**：本项目 Supabase 用**非对称密钥（ES256）**签发用户令牌（令牌头 `alg:ES256, kid:...`）。最初守卫只做 HS256 + JWT secret，导致真实用户令牌验不过、`/api/me` 401。改用 JWKS 后通过。教训：先看令牌头的 `alg` 再决定验签方式。
+> **Key insight**: this project's Supabase signs user tokens with **asymmetric keys (ES256)** (token header `alg:ES256, kid:...`). The guard originally only did HS256 + the JWT secret, so real user tokens failed verification and `/api/me` returned 401. Switching to JWKS fixed it. Lesson: check the token header's `alg` before deciding how to verify.
 
-HS256 回退已有错误 issuer/audience 的单元回归；真实 JWKS 拉取、密钥轮换与完整登录链路仍由一次性 Supabase/线上 smoke 验证。
+The HS256 fallback has unit regressions for wrong issuer/audience; real JWKS fetching, key rotation, and the full sign-in chain are still verified by one-off Supabase/production smoke tests.
 
-## 4. 前端：客户端 + 带令牌请求 + 登录界面
+## 4. Frontend: client + authenticated requests + sign-in UI
 
-文件：`apps/web/src/lib/supabase.ts`、`lib/api.ts`、`App.tsx`、`NalandaApp.tsx`
+Files: `apps/web/src/lib/supabase.ts`, `lib/api.ts`, `App.tsx`, `NalandaApp.tsx`
 
-- `lib/supabase.ts`：用 `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY`（构建期注入）创建客户端；未配置时为 `null` 并在界面提示，不崩。
-- `lib/api.ts`：`authedFetch(path)` 取当前 session 的 `access_token`，加 `Authorization: Bearer` 调后端。
-- `App.tsx`（鉴权门 + 登录页）：
-  - `onAuthStateChange` 订阅会话；有 session → 渲染 `<NalandaApp>`，否则渲染登录页。
-  - 登录页：**登录/注册分段切换**、邮箱**trim+小写规范化**、实时校验（邮箱格式 + 密码≥6）、密码显示/隐藏、loading/错误红框、主题切换。
-  - 注册：先 `POST /api/auth/register`，成功后 `signInWithPassword` **自动登录**；错误码映射明确文案。
-  - 登录：`signInWithPassword`（规范化邮箱）。
-  - 初始化 session、登录和退出都会检查 Supabase `{ error }`；账号切换会复位提交 loading，退出失败显示在已登录界面。
+- `lib/supabase.ts`: creates the client with `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` (injected at build time); when not configured it is `null` and the UI shows a hint instead of crashing.
+- `lib/api.ts`: `authedFetch(path)` takes the current session's `access_token` and calls the backend with `Authorization: Bearer`.
+- `App.tsx` (auth gate + sign-in page):
+  - Subscribes to the session with `onAuthStateChange`; with a session it renders `<NalandaApp>`, otherwise the sign-in page.
+  - Sign-in page: **sign-in/sign-up segmented switch**, email **trim + lowercase normalization**, live validation (email format + password ≥ 6), password show/hide, loading/red error box, theme toggle, and an EN/中文 language toggle (English by default).
+  - Sign-up: first `POST /api/auth/register`, then on success **automatic sign-in** with `signInWithPassword`; error codes map to explicit messages.
+  - Sign-in: `signInWithPassword` (normalized email).
+  - Session initialization, sign-in, and sign-out all check Supabase `{ error }`; an account switch resets the submit loading state, and sign-out failures are shown in the signed-in UI.
 
-## 5. 端到端令牌流程（逻辑）
+## 5. End-to-end token flow (logic)
 
-1. 用户在登录页提交 → `supabase.auth.signInWithPassword({email,password})`。
-2. Supabase 校验 → 返回 session（含 ES256 `access_token`），supabase-js 存 localStorage 并广播 `onAuthStateChange`。
-3. 前端进入应用；任何 `/api/*` 请求经 `authedFetch` 带上 Bearer。
-4. NestJS `SupabaseAuthGuard` 用项目 JWKS 验签 → `req.user`。
-5. `/api/me` 回显身份；业务接口可据 `req.user.id` + RLS 取数据。
-6. 退出：`supabase.auth.signOut()` 清会话 → `onAuthStateChange` → 回到登录页。
+1. The user submits on the sign-in page → `supabase.auth.signInWithPassword({email,password})`.
+2. Supabase validates → returns a session (with an ES256 `access_token`); supabase-js stores it in localStorage and broadcasts `onAuthStateChange`.
+3. The frontend enters the app; every `/api/*` request carries the Bearer token through `authedFetch`.
+4. NestJS `SupabaseAuthGuard` verifies with the project JWKS → `req.user`.
+5. `/api/me` echoes the identity; business endpoints fetch data using `req.user.id` + RLS.
+6. Sign-out: `supabase.auth.signOut()` clears the session → `onAuthStateChange` → back to the sign-in page.
 
-## 6. 邮箱确认问题与「自建注册」
+## 6. The email confirmation problem and "custom sign-up"
 
-**现象**：注册后登录报 `Invalid login credentials`；同邮箱可重复「注册成功」；收不到验证码。
+**Symptoms**: signing in after sign-up returned `Invalid login credentials`; the same email could "sign up successfully" repeatedly; no verification code ever arrived.
 
-**根因**：项目 `mailer_autoconfirm=false`（邮箱确认开启），但 Supabase 默认邮件不可靠/被限流：
-- 网页注册建的是「未确认」账号 → 未确认不让登录。
-- Supabase **防枚举**：对已存在邮箱返回「假成功」→ 看起来能重复注册。
-- 它发的是确认**链接**不是验证码，且默认邮件发不出、Site URL 也没配。
+**Root cause**: the project had `mailer_autoconfirm=false` (email confirmation on), but Supabase's default email is unreliable/rate-limited:
+- Web sign-up created an "unconfirmed" account → unconfirmed accounts cannot sign in.
+- Supabase **anti-enumeration**: returns a "fake success" for an existing email → it looks like you can sign up repeatedly.
+- It sends a confirmation **link**, not a code, and the default email was never delivered and the Site URL was not configured.
 
-**解决**：自建 `POST /api/auth/register`（`apps/api/src/auth/auth.controller.ts`）
-- 校验邮箱格式、密码≥6（否则 400 `INVALID_EMAIL`/`WEAK_PASSWORD`）。
-- 用 **service_role** 调 `POST <URL>/auth/v1/admin/users`，`{ email, password, email_confirm:true }` → 直接创建**已确认**账号。
-- 重复邮箱 → `409 EMAIL_TAKEN`（前端提示「该邮箱已注册」，杜绝假成功）。
-- 前端注册成功后立即 `signInWithPassword` → 进入应用。
+**Solution**: a custom `POST /api/auth/register` (`apps/api/src/auth/auth.controller.ts`)
+- Validates the email format and password ≥ 6 (otherwise 400 `INVALID_EMAIL`/`WEAK_PASSWORD`).
+- Uses **service_role** to call `POST <URL>/auth/v1/admin/users` with `{ email, password, email_confirm:true }` → creates an **already-confirmed** account directly.
+- Duplicate email → `409 EMAIL_TAKEN` (the frontend says "This email is already registered", eliminating fake successes).
+- After a successful sign-up the frontend immediately calls `signInWithPassword` → enters the app.
 
-**权衡**：当前**不做邮箱验证**（任意邮箱可注册）。这是 MVP 取舍，保证可用。将来要真验证：接可发信的 SMTP（如 Resend）+ 配 Site URL（`https://nalanda.online`）+ 打开邮箱确认即可。
+**Trade-off**: there is currently **no email verification** (any email can sign up). This is an MVP trade-off to keep things usable. To verify for real later: connect an SMTP provider that can send (such as Resend) + configure the Site URL (`https://nalanda.online`) + turn on email confirmation.
 
-安全边界：该公开注册接口持有 service-role 能力。生产 0039 通过私有 Redis 同时限制每 IP 5 次/15 分钟、每个规范化邮箱 3 次/小时，key 只使用独立 secret 生成的 HMAC；Redis 不可用时注册返回 `503 RATE_LIMIT_UNAVAILABLE`，不会绕过保护继续创建用户。nginx 另叠加 1 次/秒、burst 3，但邮箱验证、CAPTCHA 和防枚举产品调整仍是后续工作。
+Security boundary: this public sign-up endpoint holds service-role capability. Production 0039 uses private Redis to limit each IP to 5 attempts per 15 minutes and each normalized email to 3 per hour, with keys built only from HMACs under a separate secret; when Redis is unavailable, sign-up returns `503 RATE_LIMIT_UNAVAILABLE` and never bypasses the protection to keep creating users. nginx adds 1 request/second with burst 3, but email verification, CAPTCHA, and anti-enumeration product changes are still future work.
 
-## 7. 配置与密钥（谁用哪把）
+## 7. Configuration and secrets (who uses which)
 
-| 变量 | 用处 | 机密 |
+| Variable | Used for | Secret |
 |---|---|---|
-| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | 前端（构建期注入，公开无碍） | 否 |
-| `SUPABASE_URL` | 后端 JWKS / admin 基址 | 否 |
-| `SUPABASE_JWT_SECRET` | 后端 HS256 回退验签 | 是 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 后端 admin 建用户（绕 RLS） | **绝密** |
-| `REDIS_URL` | 生产后端滑动窗口与 readiness；URL 内含独立 Redis 密码 | **绝密** |
-| `RATE_LIMIT_HMAC_SECRET` | 对 IP/规范化邮箱派生不可逆限流 actor | **绝密** |
+| `VITE_SUPABASE_URL` / `VITE_SUPABASE_ANON_KEY` | Frontend (injected at build time; safe to be public) | No |
+| `SUPABASE_URL` | Backend JWKS / admin base URL | No |
+| `SUPABASE_JWT_SECRET` | Backend HS256 fallback verification | Yes |
+| `SUPABASE_SERVICE_ROLE_KEY` | Backend admin user creation (bypasses RLS) | **Top secret** |
+| `REDIS_URL` | Production backend sliding windows and readiness; the URL contains a separate Redis password | **Top secret** |
+| `RATE_LIMIT_HMAC_SECRET` | Derives irreversible rate-limit actors from IP/normalized email | **Top secret** |
 
-- 前端密钥经 GitHub Secrets 在 CI 构建期注入；后端密钥只存服务器 `/opt/nalanda/.env`（不入库、不进 CI 日志）。
-- **service_role 切勿进前端**：它能绕过所有 RLS 读写整库。
+- Frontend keys are injected at CI build time from GitHub Secrets; backend secrets live only in the server's `/opt/nalanda/.env` (never committed, never in CI logs).
+- **Never ship service_role to the frontend**: it bypasses every RLS policy and can read and write the whole database.
 
-## 8. 验证
+## 8. Verification
 
-真实 CI Redis 已覆盖 0039 的原子窗口、429 headers、分级故障和 HMAC 脱敏；2026-08-10 公网 smoke 还确认空注册返回 400 并带 `RateLimit-Limit: 5`。mock 单测仍不算依赖证据。当前可复现测试、所需隔离 Supabase 项目和命令以 [测试指南](../guides/TESTING.md) 为准；不要用生产项目运行会创建/删除用户的 E2E。
+Real CI Redis covers 0039's atomic windows, 429 headers, tiered failure handling, and HMAC redaction; the 2026-08-10 public smoke test also confirmed that an empty sign-up returns 400 with `RateLimit-Limit: 5`. Mock unit tests still do not count as dependency evidence. The reproducible tests, the isolated Supabase project they need, and the commands are defined by the [testing guide](../guides/TESTING.md); never run E2E that creates/deletes users against the production project.
 
-## 9. 后续 TODO
+## 9. Follow-up TODO
 
-- `/api/me` 由「回显 JWT claims」升级为「用 service_role 读 `profiles` 返回完整档案」。
-- 角色/权限（user/creator/admin）守卫；points 已有账本，后续为 credits/VIP/支付建立独立事实账本和只读 Profile projection。
-- 真邮箱验证（SMTP）、OAuth、找回密码。
-- CAPTCHA、对外防枚举文案与注册安全事件运营流程；Redis 双限流只解决请求频率，不证明邮箱所有权。
+- Upgrade `/api/me` from "echo JWT claims" to "read `profiles` with service_role and return the full profile".
+- Role/permission (user/creator/admin) guards; points already have a ledger, and credits/VIP/payments next need separate ledgers of record and a read-only Profile projection.
+- Real email verification (SMTP), OAuth, password recovery.
+- CAPTCHA, public anti-enumeration copy, and an operating process for sign-up security events; the dual Redis rate limit only addresses request frequency and does not prove email ownership.

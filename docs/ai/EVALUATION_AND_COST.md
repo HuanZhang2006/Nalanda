@@ -1,270 +1,271 @@
-# AI 评测与成本治理
+# AI Evaluation and Cost Governance
 
-> **本文内容：**定义课件解析与四类 AI 产物的契约、离线/在线评测、安全测试、成本核算、预算控制、模型发布与回滚。  
-> **作用：**让 AI 质量、幻觉、安全、延迟和单位经济性可量化，防止“接口能返回”被误认为可收费、可公开的 AI 产品。  
-> **何时更新：**模型/供应商、prompt、parser/OCR、分块/RAG、schema、评测集、质量阈值、价格、credits 规则或发布流程变化时；发生质量/隐私/费用事故后立即更新。  
-> **状态基线：**2026-10-03。生产数据库已到 0055；应用候选在真实 DocumentIR DOCX 试卷门禁失败后自动回滚，当前应用仍为此前稳定 release，Materials AI/Luna 开关保持关闭。失败候选的题数与总分已正确，初始结构门为 `QUESTION_TYPE_COUNT`，结构 repair 后才暴露五类语义缺陷；本次 Unreleased 修复为 repair 提供完整来源并增加一次严格有界的后续语义修复，同时退役 Ox Alpha、把 Luna 升级为 GPT-6 Luna + Azure ZDR。真实 provider 与受保护切流尚未重新证明。Courses 文件 AI 导入仍未实现。
+> **About this document**
+> - **Contents**: Defines the contracts, offline/online evaluation, safety testing, cost accounting, budget controls, and model release and rollback for courseware parsing and the four kinds of AI artifacts.
+> - **Purpose**: Makes AI quality, hallucination, safety, latency, and unit economics measurable, so "the endpoint returns something" is never mistaken for an AI product that can be charged for or made public.
+> - **When to update**: When models/providers, prompts, parsers/OCR, chunking/RAG, schemas, evaluation sets, quality thresholds, prices, credits rules, or the release process change; immediately after any quality/privacy/cost incident.
+> - **Status baseline**: 2026-10-03. The production database is at 0055; the app candidate rolled back automatically after the real DocumentIR DOCX test-paper gate failed, the current app is still the earlier stable release, and the Materials AI/Luna switches stay off. The failed candidate's question counts and total marks were already correct, the initial structural gate was `QUESTION_TYPE_COUNT`, and five classes of semantic defects only surfaced after the structural repair; this Unreleased fix gives the repair the full source and adds one strictly bounded follow-up semantic repair, while retiring Ox Alpha and upgrading Luna to GPT-6 Luna + Azure ZDR. Real providers and a protected cutover have not been re-proven yet. Courses AI file import is still not implemented.
 
-## 1. 范围和非目标
+## 1. Scope and non-goals
 
-范围包括 PPT/PPTX、DOC/DOCX、PDF、JSON、Markdown、HTML、TXT、图片 OCR 的解析；Courses 按英语单词/知识点/阅读理解/题库训练选择 prompt 和结构化输出；以及知识清单、测验、知识图谱、模拟试卷。评测覆盖模型、parser/OCR、chunk/retrieval、schema validator、post-processing、人工确认和渲染。Azure Speech 与 OpenRouter 拼写翻译前测作为独立、窄用途的供应商适配层单列治理。
+The scope includes parsing PPT/PPTX, DOC/DOCX, PDF, JSON, Markdown, HTML, TXT, and image OCR; Courses choosing prompts and structured output by English vocabulary/knowledge points/reading comprehension/question bank training; and the knowledge list, quizzes, knowledge graphs, and mock exams. Evaluation covers models, parsers/OCR, chunk/retrieval, schema validators, post-processing, human confirmation, and rendering. Azure Speech and the OpenRouter spelling translation pre-test are governed separately as independent, narrow-purpose provider adapters.
 
-本文不承诺模型绝对正确，不用单一“准确率”掩盖不同错误，也不把供应商基准当 Nalanda 产品评测。费用数字来自运行时价格快照与账单，而不是写死在本文的易过期网页价格。
+This document does not promise models are absolutely correct, does not hide different errors behind a single "accuracy" number, and does not treat provider benchmarks as Nalanda product evaluation. Cost figures come from runtime price snapshots and bills, not from web prices hard-coded in this document that go stale easily.
 
-所有当前生产、测试和发布门禁 prompt 的完整原文、动态输入与 schema 统一维护在 [AI Prompt 统一目录](PROMPT_CATALOG.md)；本文只维护评测、成本和发布规则，不再复制 prompt 正文。
+The full text, dynamic inputs, and schemas of every current production, test, and release-gate prompt are maintained in the [unified AI prompt catalog](PROMPT_CATALOG.md); this document only maintains evaluation, cost, and release rules and no longer copies prompt text.
 
-## 2. 当前事实与启用限制
+## 2. Current facts and enablement limits
 
-当前生产实现：
+Current production implementation:
 
-- NestJS 已实现 owner-only job/quota/Notes/Exam API，Postgres durable job/reservation 和 BullMQ UUID 调度/reconciler；
-- FastAPI 只有内部 token 生成/评分路由，确定性解析 PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/图片，并以 `DocumentIR` 保留页/幻灯片/块/来源；
-- 首次 DeepSeek 审查与解析器诊断取失败范围并集，只把这些页/slide/region 的渲染图发送 MiMo，拼接完整 IR 后再次审查；
-- 模型固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`，强制 ZDR、拒绝 data collection、require parameters，关闭 reasoning/tool/Web/跨模型 fallback；同一模型按吞吐量优先、只在满足全部过滤器的 provider endpoint 间故障转移；
-- `GeneratedExamV1` 在共享 TS、Nest 和 Pydantic 统一为 camelCase strict schema；保存前先按服务端设置确定性规范元数据、重复 ID 和可行的 marks 分配，再验证题数、总分、答案、rubric 与 source block；来源引用只可规范到 DocumentIR allowlist，repair 全部丢失有效引用时仅可按相同稳定 question ID 恢复 repair 前引用，或在整份 IR 只有一个 block 时选取唯一 allowlisted block；repair 始终收到完整 allowlisted source blocks。初始结构或语义缺陷各有一次修复机会，只有当结构修复后首次发现新语义缺陷时才允许一次额外语义修复，之后仍必须重复同一归一化/结构/语义门禁；
-- `GeneratedKnowledgeGraphV1` 保存前把模型的相对 hierarchy levels 以最小值归零，并在 worker 与数据库两层一致验证 pipeline `sourceMode`、level-0 root、节点/边唯一 ID、端点、来源顺序和引用；该机械步骤不改标题、解释、关系、引用或相对层级；
-- 所有用户 Free，每本地日 10 次成功生成、10 次成功主观评分；失败/取消释放 reservation，不读 credits；全局月默认 US$20，单次生成/评分上限 US$0.50/US$0.05；
-- 生产 0043 每任务 0700 临时目录在 `finally` 删除并清理一小时 orphan；0046–0051 候选仅在可恢复故障下保留验证过的 checkpoint/usage spool 到配置 TTL，成功、不可恢复失败、Delete/Cancel 或过期清理；持久 parse cache、DB checkpoint 与布局是分开的私有产品数据；
-- 生产已有隔离 worker/Redis 拓扑，但最近失败候选回滚后 Materials AI/Luna flag 均保持关闭；fake 自动化不证明真实供应商质量，真实门禁也只是时点证据，不替代持续质量/成本监控。
-- Courses UI 虽列出 PDF/Word/JSON/Markdown/HTML/图片，但入口只显示“AI 解析即将推出”，不会选择/上传/解析文件或调用模型；当前词表只支持用户粘贴并人工编辑确认。
-- Azure Speech 的 Nest adapter、WAV 限制、配额/估算成本、熔断、持久队列和 private Storage 事实源已经在生产启用；生产 Web 已移除客户端 VAD/静音裁剪，fake tests 仍只证明代码路径。该能力只做 TTS/朗读反馈，不解析文件、不生成课程、不扣 credits。
-- 0019 增加 NestJS 翻译评判 adapter：规范化后完全等于服务端参考 translation 的答案由服务端确定性判对；非字面同义/改写才使用 OpenRouter structured JSON。输入正文不落库，服务端仍唯一写 spelling 错误事实。生产已取得真实 provider、候选 API 与不可变 release 证据。
-- 0046–0051 候选不再为长任务保持 API→worker HTTP：API 只等待短 202，worker 通过内部认证 callback 推进 durable job。provider usage 先写 UUID spool 再增量落账，validated artifact/answer 先 checkpoint；期限内新 lease 不重复已完成调用。active Delete 会取消 HTTPX/Office、阻止 terminal callback，usage 落账后 purge 全部残留；任务硬删不删除成本审计。该机制仍须真实故障注入证明后才能称生产。
+- NestJS implements the owner-only job/quota/Notes/Exam APIs, durable Postgres jobs/reservations, and BullMQ UUID scheduling/the reconciler;
+- FastAPI has only internal-token generation/grading routes, parses PDF/DOCX/PPTX/Markdown/HTML/TXT/JSON/CSV/images deterministically, and keeps pages/slides/blocks/sources in a `DocumentIR`;
+- The union of the first DeepSeek review and parser diagnostics gives the failure ranges, only the rendered images of those pages/slides/regions are sent to MiMo, and after the full IR is stitched together it is reviewed again;
+- The models are fixed to `deepseek/deepseek-v4-flash-0731` and `xiaomi/mimo-v2.5`, forcing ZDR, deny data collection, and require parameters, with reasoning/tools/Web/cross-model fallback off; the same model fails over, throughput-first, only among provider endpoints that satisfy every filter;
+- `GeneratedExamV1` is unified as a camelCase strict schema in shared TS, Nest, and Pydantic; before saving, metadata, duplicate IDs, and feasible marks allocation are normalized deterministically from server settings, then question counts, total marks, answers, rubrics, and source blocks are validated; source citations may only be normalized to the DocumentIR allowlist, and when a repair loses all valid citations, pre-repair citations may only be restored for the same stable question ID, or the single allowlisted block chosen when the whole IR has only one block; the repair always receives the full allowlisted source blocks. Initial structural or semantic defects each get one repair, and only when semantic defects are first found after the structural repair is one extra semantic repair allowed, after which the same normalization/structural/semantic gates must run again;
+- Before saving, `GeneratedKnowledgeGraphV1` shifts the model's relative hierarchy levels so the minimum is zero, and the pipeline `sourceMode`, level-0 root, unique node/edge IDs, endpoints, source order, and citations are validated consistently in both the worker and the database; this mechanical step does not change titles, explanations, relationships, citations, or relative hierarchy;
+- Every user is Free, with 10 successful generations and 10 successful subjective gradings per local day; failure/cancellation releases the reservation, and credits are never read; the global monthly default is US$20, with per-run caps of US$0.50/US$0.05 for generation/grading;
+- In production 0043, each job's 0700 temporary directory is deleted in `finally` and orphans older than an hour are cleaned; the 0046–0051 candidate only keeps validated checkpoints/the usage spool until the configured TTL on recoverable failures, cleaning up on success, unrecoverable failure, Delete/Cancel, or expiry; the durable parse cache, DB checkpoints, and layouts are separate private product data;
+- Production has the isolated worker/Redis topology, but after the latest failed candidate rolled back, the Materials AI/Luna flags both stay off; fake automation doesn't prove real provider quality, and real gates are also only point-in-time evidence that doesn't replace continuous quality/cost monitoring.
+- Although the Courses UI lists PDF/Word/JSON/Markdown/HTML/images, the entry point only shows "AI parsing coming soon" and never selects/uploads/parses files or calls a model; word lists currently only support user pasting with manual editing and confirmation.
+- Azure Speech's Nest adapter, WAV limits, quotas/estimated costs, circuit breaker, durable queue, and private Storage source of truth are enabled in production; the production Web app has removed client-side VAD/silence trimming, and fake tests still only prove the code path. This capability only does TTS/read-aloud feedback; it parses no files, generates no courses, and deducts no credits.
+- 0019 adds the NestJS translation judging adapter: answers that, after normalization, exactly equal a server-side reference translation are judged correct deterministically by the server; only non-literal synonyms/paraphrases use OpenRouter structured JSON. The input text is never persisted, and the server alone still writes spelling error facts. Production has real provider, candidate API, and immutable release evidence.
+- The 0046–0051 candidate no longer holds API→worker HTTP for long jobs: the API only waits for a short 202, and the worker advances the durable job through internally authenticated callbacks. Provider usage is written to a UUID spool first and then recorded incrementally, and validated artifacts/answers are checkpointed first; a new lease within the window does not repeat completed calls. An active Delete cancels HTTPX/Office, blocks the terminal callback, and purges all residue after usage is recorded; hard-deleting a job does not delete the cost audit. This mechanism still has to be proven with real fault injection before it can be called production.
 
-因此当前不得：收费扣 credits；把 Azure TTS 当成文件解析；把 health/key/fake 或一次发布 smoke 当作持续供应商可用率；用真实私有课件做非受控测试；公开承诺准确率/成本/延迟。
+Therefore, currently we must not: charge credits; treat Azure TTS as file parsing; treat health/key/fakes or a one-off release smoke as continuous provider availability; run uncontrolled tests on real private courseware; or publicly promise accuracy/cost/latency.
 
-### 2.1 Materials 试卷生成生产闭环
+### 2.1 The production Materials test-paper generation loop
 
-输入支持 PDF、DOCX、PPTX、Markdown、HTML、TXT、JSON、CSV、PNG/JPEG/WebP；旧 DOC/PPT/XLS、加密 PDF、损坏/压缩炸弹和超限文件拒绝。单文件 25MB、图片 10MB、250 页/slide、400k 规范化字符。
+Supported inputs are PDF, DOCX, PPTX, Markdown, HTML, TXT, JSON, CSV, PNG/JPEG/WebP; legacy DOC/PPT/XLS, encrypted PDFs, corrupt files/zip bombs, and over-limit files are rejected. A single file is limited to 25 MB, images to 10 MB, 250 pages/slides, and 400k normalized characters.
 
 ```text
-确定性 parser + 覆盖率诊断
-  → DeepSeek audit（连贯性、缺失范围、注入）
-  → 仅失败范围 MiMo visual_extract.v1
-  → 拼回完整 DocumentIR
-  → 第二次 DeepSeek safety audit
+Deterministic parser + coverage diagnostics
+  → DeepSeek audit (coherence, missing ranges, injection)
+  → MiMo visual_extract.v1 for failed ranges only
+  → stitch the full DocumentIR back together
+  → second DeepSeek safety audit
   → DeepSeek exam-generate.v4
-  → 服务端机械约束归一化
-  → schema/分数/答案/来源 validator + 语义复核 + 来源感知的有界分阶段 repair
-  → 私有 Notes + quota consume
+  → server-side mechanical constraint normalization
+  → schema/marks/answer/source validator + semantic review + source-aware bounded staged repair
+  → private Notes + quota consume
 ```
 
-MiMo prompt 把图像当不可信证据，按阅读顺序提取逐字文本、层级、表格、图表轴/图例/趋势、流程节点/边、公式、图标语义、视觉关系、不可读区和疑似嵌入指令，禁止执行图片命令或补造。`malicious`/`uncertain` 都拒绝；`benign_educational` 只用于明确教学/引用/安全分析。检测不能获得绝对保证，因此模型分类前有确定性限制，之后还有 schema/source 验证和 feature kill switch。
+The MiMo prompt treats images as untrusted evidence and extracts, in reading order, verbatim text, hierarchy, tables, chart axes/legends/trends, flow nodes/edges, formulas, icon semantics, visual relationships, unreadable areas, and suspected embedded instructions, forbidding following image commands or making things up. Both `malicious`/`uncertain` are rejected; `benign_educational` is only for clearly instructional/quoted/security-analysis content. Detection cannot give an absolute guarantee, so deterministic limits come before model classification, followed by schema/source validation and a feature kill switch.
 
-provider usage 只留 model、token、micro-USD、latency、request ID、用途、ZDR 和状态；不留 prompt、文件正文、回答正文或 raw response。网络错误、408/429/502/503/504，以及 200 响应的空内容、截断、坏 JSON/schema，会在完全相同的固定模型/ZDR/schema 请求上最多有界尝试 4 次，默认从 2 秒指数退避并尊重不超过 60 秒的数值型 `Retry-After`；所有尝试共享原 180 秒结构化操作总预算，单次 HTTP 只能使用剩余时间，重试不会把最坏等待放大为 `尝试次数 × 180 秒`。更长等待、认证/余额/ZDR/参数错误直接失败并释放产品额度。HTTP 失败通常没有 token/cost，200 但结构非法的失败可能已经产生费用；adapter 因而把成功前每次失败和最终成功都返回为独立脱敏 usage event，数据库成本硬门按全部事件求和，worker 在每条事件落本地 spool 后也累计本次剩余 micro-USD，超限后不再发起后续模型调用。最终成功事件的 duration 仍覆盖该结构化操作的总等待。真实 gate 必须用无个人数据固定 PDF/DOCX/PPTX/chart/injection/safety lesson/grading 样本证明 ZDR endpoint、失败范围、引用、拒绝/不误杀、token/cost 和评分；单次通过仍不代表持续质量，也不能把“重试后成功”解释为长期可用率达标。
+Provider usage only keeps the model, tokens, micro-USD, latency, request ID, purpose, ZDR, and status; never prompts, file content, answer content, or raw responses. Network errors, 408/429/502/503/504, and 200 responses with empty content, truncation, or bad JSON/schema are retried with at most 4 bounded attempts on exactly the same fixed model/ZDR/schema request, backing off exponentially from 2 seconds by default and honoring a numeric `Retry-After` of up to 60 seconds; all attempts share the original 180-second budget for the structured operation, a single HTTP call can only use the remaining time, and retries never inflate the worst-case wait to `attempts × 180 seconds`. Longer waits and authentication/credit/ZDR/parameter errors fail directly and release the product allowance. HTTP failures usually have no tokens/cost, but a 200 with invalid structure may already have incurred cost; the adapter therefore returns each failure before success and the final success as separate redacted usage events, the database cost hard gate sums all of them, and the worker also accumulates the remaining micro-USD for this run after each event lands in the local spool, making no further model calls once over the limit. The final success event's duration still covers the structured operation's total wait. The real gate must use fixed PDF/DOCX/PPTX/chart/injection/safety lesson/grading samples with no personal data to prove the ZDR endpoint, failure ranges, citations, rejection without false positives, tokens/cost, and grading; a single pass still does not mean continuous quality, and "succeeded after retries" must not be read as long-term availability meeting the target.
 
-2026-08-12 的原始故障在 301.896 秒触发 Node/Undici 响应头 timeout，旧 catch 又把它误报为 `AI_WORKER_UNREACHABLE`；worker 实际已进入试卷生成且没有 OOM/重启。候选显式区分 connect、accept、headers/body 和业务 timeout，并以 `AI_WORKER_TIMEOUT` 保留根因。更重要的是，transport timeout 不再决定长任务生死：已经完成的 provider 阶段与费用 UUID 可从 checkpoint/spool 恢复。评测必须包含“provider 成功、callback 失败、新 lease 恢复”的故障样本，断言 provider request 次数不增加、成本 event 只有一条、quota/Note 只完成一次。
+The original failure on 2026-08-12 hit the Node/Undici response-header timeout at 301.896 seconds, and the old catch misreported it as `AI_WORKER_UNREACHABLE`; the worker had actually entered test-paper generation with no OOM/restart. The candidate explicitly distinguishes connect, accept, headers/body, and business timeouts, keeping the root cause as `AI_WORKER_TIMEOUT`. More importantly, the transport timeout no longer decides the life of long jobs: completed provider stages and cost UUIDs can be recovered from the checkpoint/spool. Evaluation must include the fault sample "provider succeeds, callback fails, a new lease recovers", asserting that the number of provider requests does not increase, there is only one cost event, and the quota/Note completes exactly once.
 
-2026-08-11 生产 gate 处理固定 PDF/DOCX/PPTX/chart，chart 仅恢复 1 个视觉范围，确认恶意注入拒绝、安全教材放行、39 个进度事件和评分；220 页/366,412 字符 canary 的主/子进程峰值约 101.8/211.9 MiB。登录用户 smoke 完成生成、评分、双额度、usage、来源与结果删除及临时目录清理。该样本集不覆盖真实用户所有复杂课件或攻击方式，持续评测仍是必需项。
+On 2026-08-11 the production gate processed fixed PDF/DOCX/PPTX/chart samples, with the chart recovering only 1 visual range, confirming malicious injection rejection, safe teaching material passing, 39 progress events, and grading; the main/child process peaks of the 220-page/366,412-character canary were about 101.8/211.9 MiB. The signed-in user smoke completed generation, grading, both allowances, usage, sources, result deletion, and temporary directory cleanup. This sample set does not cover every complex real user courseware or attack, so continuous evaluation is still required.
 
-2026-08-14 的后续真实 chart 门禁暴露出首轮分类器会因纯图片尚未提取而返回 `uncertain`，旧执行顺序在 MiMo 前误报注入。`material-safety-audit.v2` 的回归集分别覆盖：解析器隔离范围可进入恢复、模型漏填 failed range 仍恢复、未知范围拒绝、正文/focus 确定性信号拒绝、恢复后严格复审。fake 单测只能证明控制流；发布仍必须用无个人数据 chart 和图片内恶意指令样本分别证明正常视觉可恢复、视觉注入在第二次审查被拒绝。
+The later real chart gate on 2026-08-14 exposed that the first-round classifier returns `uncertain` because pure images had not been extracted yet, and the old execution order misreported injection before MiMo. `material-safety-audit.v2`'s regression set separately covers: parser-quarantined ranges may enter recovery, recovery still happens when the model omits failed ranges, unknown ranges are rejected, deterministic signals in body/focus are rejected, and strict re-review after recovery. Fake unit tests can only prove control flow; releases must still use a chart with no personal data and a sample with a malicious instruction inside an image to prove separately that normal visual content can be recovered and visual injection is rejected in the second review.
 
-2026-08-15 的候选 run `31834895278` 已通过完整 CI 和 220 页资源 canary，但固定安全教材的真实试卷有一次以 `AI_EXAM_VALIDATION_FAILED` 阻断切流并回退。随后在相同无个人数据 fixture 上做三次脱敏阶段诊断：一次正常、一次复现 5 题各 5 分但请求总分为 20 且 repair 仍未改正、一次正常；另观察到一次 reviewer 同时返回 `valid=true` 与非空 issues。向前修复只确定性处理可证明的机械约束（请求元数据、重复 ID、marks 合计），不改题干/答案/引用；非空 reviewer issues 继续触发修复。真实重发通过前不能把这一修复称为生产上线。
+Candidate run `31834895278` on 2026-08-15 passed full CI and the 220-page resource canary, but the real test paper for the fixed safe teaching material once blocked cutover with `AI_EXAM_VALIDATION_FAILED` and rolled back. Three redacted stage diagnoses on the same fixture with no personal data then followed: once normal, once reproducing 5 questions of 5 marks each while 20 total marks were requested and the repair still not correcting it, and once normal; a reviewer was also observed returning `valid=true` together with non-empty issues. The forward fix only deterministically handles provable mechanical constraints (request metadata, duplicate IDs, marks totals) and never changes stems/answers/citations; non-empty reviewer issues still trigger a repair. Until a real rerun passes, this fix must not be called live in production.
 
-同日 main run `31838779292` 证明上述试卷归一化已通过真实 provider fixture，随后登录生产 smoke 的知识图在 `artifact_ready` 后被完成 RPC 拒绝为 SQLSTATE `22023`。脱敏 checkpoint 断言显示 artifact 为 3 nodes/2 valid edges、唯一 ID/端点/引用均正常，但 `roots=0`；worker 的 DocumentIR validator 漏掉了数据库已有的 root 约束。候选未切 Web并自动回退。向前修复将 graph 层级机械归零并补齐本地/数据库契约对照测试；完成回调的永久结构/路由拒绝也会进入明确终态，不再伪装成可恢复 callback outage。新的真实发布门禁通过前仍不能称为生产上线。
+The same day, main run `31838779292` proved the test-paper normalization above passes the real provider fixture, after which the knowledge graph in the signed-in production smoke was rejected by the completion RPC after `artifact_ready` with SQLSTATE `22023`. Redacted checkpoint assertions showed the artifact had 3 nodes/2 valid edges with unique IDs/endpoints/citations all fine, but `roots=0`; the worker's DocumentIR validator missed the root constraint the database already had. The candidate did not cut over the Web app and rolled back automatically. The forward fix mechanically shifts graph levels to zero and adds local/database contract comparison tests; permanent structural/routing rejections in the completion callback also enter an explicit terminal state instead of posing as a recoverable callback outage. Until a new real release gate passes, it still cannot be called live.
 
-2026-08-22 的 PR #70 run `32499521666` 与 main run `32540131549` 已通过完整 fake/local 门禁、0007→0051、空库、RLS/Storage、Chromium、镜像构建和 220 页资源 canary；真实 PDF 通过后，固定 DOCX 试卷在最终门禁返回 `AI_EXAM_VALIDATION_FAILED`，候选于 API/Web 切流前自动回退，生产仍运行旧稳定 release。旧响应只含这一总括 code，既无法判断是结构还是语义失败，也不应为诊断而泄露 provider 原文。向前修复仅输出 `initialGate/finalGate`、稳定结构 code、稳定语义 category 及预期/实际题数和总分；不输出课件、文件名、题目、答案、prompt、reviewer issue 或 provider body。固定材料同时由三条事实扩展为八个独立事实，以稳定支撑五道选择题；schema、答案、引用、语义复核、单次 repair 和失败关闭行为均未放宽。该修复必须由新的真实 run 证明后才能计作上线。
+PR #70 run `32499521666` and main run `32540131549` on 2026-08-22 passed the full fake/local gates, 0007→0051, the empty database, RLS/Storage, Chromium, image builds, and the 220-page resource canary; after the real PDF passed, the fixed DOCX test paper returned `AI_EXAM_VALIDATION_FAILED` at the final gate, the candidate rolled back automatically before the API/Web cutover, and production still ran the old stable release. The old response contained only this umbrella code, making it impossible to tell whether the failure was structural or semantic, and provider text should not be leaked for diagnosis. The forward fix only outputs `initialGate/finalGate`, a stable structural code, a stable semantic category, and the expected/actual question counts and total marks; never courseware, file names, questions, answers, prompts, reviewer issues, or provider bodies. The fixed material was also expanded from three facts to eight independent facts to stably support five multiple-choice questions; schema, answers, citations, semantic review, single repair, and fail-closed behavior were not loosened. This fix must be proven by a new real run before it counts as live.
 
-2026-08-23 重试 run `32543270581` 的 attempt 2 证明上述 content-free 诊断有效：初次生成在结构上满足 5 题/20 分，但语义复核返回五类质量缺陷；一次 repair 后这些语义类别不再作为最终门出现，最终结构门只剩 `SOURCE_REFERENCE`。这说明 repair 虚构/替换了 block ID，而不是队列、资源或题数/总分失败。向前修复只做可证明的引用 allowlist 规范化：丢弃与有效引用混合的虚构 ID、使用 DocumentIR 的规范 locator；若 repair 让同一稳定 question ID 丢失全部有效引用，可恢复该题 repair 前的有效引用。换题 ID、跨题引用或原本没有有效引用仍失败关闭，恢复后的题目必须重新经过语义复核，避免把机械修复误当 grounding 证明。
+Attempt 2 of retry run `32543270581` on 2026-08-23 proved the content-free diagnostics above work: the initial generation structurally met 5 questions/20 marks, but the semantic review returned five classes of quality defects; after one repair those semantic categories no longer appeared as the final gate, and the final structural gate only had `SOURCE_REFERENCE`. This showed the repair invented/replaced block IDs, rather than a queue, resource, or question count/total marks failure. The forward fix only does provable citation allowlist normalization: dropping invented IDs mixed with valid citations and using the DocumentIR's canonical locators; if a repair makes the same stable question ID lose all valid citations, that question's pre-repair valid citations may be restored. Changing question IDs, cross-question citations, or never having had valid citations still fails closed, and restored questions must pass the semantic review again, so a mechanical fix is never mistaken for proof of grounding.
 
-随后 PR #74 的 main run `32585659792` attempt 1 证明混合/repair 引用修复可通过真实 PDF/DOCX/PPTX/chart、注入、安全教材、评分和图谱门；Japan East Azure 也返回 accuracy 98、pronunciation 98.8，但独立 Gemma 翻译 smoke 持续 429 后回退。仅重跑失败 job 的 attempt 2 在单 block PDF 上同时出现初次与 repair 全无效引用，诊断为 initial/final `SOURCE_REFERENCE`；这不是多 block 的 grounding 歧义，因为服务端 allowlist 只有一个真实 block。新机械规则只在 `len(blocks)==1` 时选择这个唯一 block并进入语义复核；两个及以上 block 仍必须由模型提供有效 ID，否则失败关闭。它不能让语义复核不支持的题目通过，也不能消除独立 Gemma 429 门。
+Attempt 1 of PR #74's main run `32585659792` then proved the mixed/repair citation fix passes the real PDF/DOCX/PPTX/chart, injection, safe teaching material, grading, and graph gates; Japan East Azure also returned accuracy 98 and pronunciation 98.8, but the separate Gemma translation smoke kept hitting 429 and rolled back. Attempt 2, rerunning only the failed job, saw all-invalid citations in both the initial and repaired output on a single-block PDF, diagnosed as initial/final `SOURCE_REFERENCE`; this was not a multi-block grounding ambiguity, because the server allowlist had only one real block. The new mechanical rule only chooses that single block when `len(blocks)==1` and then runs the semantic review; with two or more blocks the model must still provide valid IDs or fail closed. It cannot let questions the semantic review doesn't support pass, nor can it remove the separate Gemma 429 gate.
 
-PR #75 的 main run `32587844503` attempt 1 通过本地完整门禁与 220 页 canary，但固定单 block PDF 的初次候选为 6 题，repair 后仍为 6 题，因设置要求 5 题而在最终结构门以 `QUESTION_TYPE_COUNT` 失败；这说明来源引用修复没有放宽题型数量。唯一一次失败 job 重跑的 attempt 2 随后通过 PDF/DOCX/PPTX/chart、注入拒绝、安全教材、评分和 9-node graph，证明单 block 引用会继续接受结构与语义复核；Luna 仍因 OpenAI-only ZDR 不可用而保持关闭，Japan East Azure 返回 accuracy 98、pronunciation 98.8。最终 Gemma 免费模型在 5/10/20/40 秒有界退避后仍连续 HTTP 429，候选再次回退。持续限流是独立供应商可用性硬门，不得以跳过 smoke、改模型或去掉失败关闭来冒充上线。
+Attempt 1 of PR #75's main run `32587844503` passed the full local gates and the 220-page canary, but the fixed single-block PDF's initial candidate had 6 questions, still 6 after repair, and failed the final structural gate with `QUESTION_TYPE_COUNT` because the settings required 5; this showed the citation fix did not loosen question-type counts. The single rerun of the failed job, attempt 2, then passed PDF/DOCX/PPTX/chart, injection rejection, safe teaching material, grading, and a 9-node graph, proving single-block citations still go through the structural and semantic reviews; Luna stayed off because OpenAI-only ZDR was unavailable, and Japan East Azure returned accuracy 98 and pronunciation 98.8. Finally, the free Gemma model still returned consecutive HTTP 429s after bounded backoff of 5/10/20/40 seconds, and the candidate rolled back again. Sustained rate limiting is a separate provider-availability hard gate, and must never be faked into a launch by skipping the smoke, switching models, or removing fail-closed behavior.
 
-2026-08-26 的 PR #78 main run `32931681321` 通过 quality、0007→0055、空库/lint、双用户 RLS/Storage、fake Chromium与生产镜像，且本次没有新 migration。候选 canary 通过后，固定 PDF 已完成，DOCX 的初次生成以 `QUESTION_TYPE_COUNT` 进入 repair；repair 后题数为 5、总分为 20、最终结构 code 为空，但最终语义门同时报告 `ANSWERABILITY`、`ANSWER_CORRECTNESS`、`DISTRACTOR_QUALITY`、`EXPLANATION_QUALITY` 与 `SOURCE_GROUNDING`，随后自动回滚。检查发现旧 repair payload 只有 `allowedBlockIds`、没有 block 正文，而且工作流在结构 repair 后首次发现语义问题时已经耗尽唯一 repair。`exam-generate.v4` 让 repair 收到完整 `sourceBlocks` 和明确 `repairGate`，要求最小修改与逐题来源支撑；仅对“结构 repair 后新发现语义缺陷”增加一次语义 repair，之后重新执行结构和语义双门并失败关闭。该本地修复不能替代新的真实 DOCX/PPTX gate。
+PR #78's main run `32931681321` on 2026-08-26 passed quality, 0007→0055, the empty database/lint, two-user RLS/Storage, fake Chromium, and the production images, and had no new migration this time. After the candidate canary passed, the fixed PDF completed, and the DOCX's initial generation entered repair with `QUESTION_TYPE_COUNT`; after repair the question count was 5, total marks 20, and the final structural code empty, but the final semantic gate reported `ANSWERABILITY`, `ANSWER_CORRECTNESS`, `DISTRACTOR_QUALITY`, `EXPLANATION_QUALITY`, and `SOURCE_GROUNDING` together, followed by an automatic rollback. Inspection found the old repair payload had only `allowedBlockIds` without block text, and the workflow had already used up its only repair when semantic problems were first found after the structural repair. `exam-generate.v4` gives the repair the full `sourceBlocks` and an explicit `repairGate`, requiring minimal changes and per-question source support; it adds one semantic repair only for "semantic defects newly found after the structural repair", then reruns both the structural and semantic gates and fails closed. This local fix cannot replace new real DOCX/PPTX gates.
 
-### 2.2 Luna 原文件候选闭环
+### 2.2 The Luna native-file candidate loop
 
-`luna_native_file_v1` 固定 `openai/gpt-6-luna`，并要求 `provider.only=["azure"]`、`allow_fallbacks=false`、ZDR、拒绝数据收集、strict schema 和 no tools/Web。worker 从 private Storage 下载后只校验 MIME、大小与 SHA-256；不得运行 parser/OCR/LibreOffice/DocumentIR/parse cache。PDF 使用 inline `type:file` 与 `file-parser.native`，图片使用 inline `image_url`；不使用会形成远端持久文件的 Files API。响应中的真实 upstream 必须为 Azure，usage 事件持久记录 provider/endpoint/pipeline；路由违规已发生的成本仍落账，但产物不得保存。GPT-6 Luna 目录价（Azure）约为输入 $0.10/M、输出 $0.50/M tokens，约为 GPT-5.6 Luna 的一半。
+`luna_native_file_v1` is fixed to `openai/gpt-6-luna` and requires `provider.only=["azure"]`, `allow_fallbacks=false`, ZDR, deny data collection, strict schema, and no tools/Web. After downloading from private Storage, the worker only validates MIME, size, and SHA-256; it must not run the parser/OCR/LibreOffice/DocumentIR/parse cache. PDFs use inline `type:file` with `file-parser.native`, and images use inline `image_url`; the Files API, which would create persistent remote files, is not used. The real upstream in the response must be Azure, and usage events durably record the provider/endpoint/pipeline; costs already incurred by routing violations are still recorded, but the artifact must not be saved. GPT-6 Luna's catalog price (Azure) is about $0.10/M input and $0.50/M output tokens, roughly half of GPT-5.6 Luna.
 
-Luna 顺序固定为原文件安全审查→原文件生成→本地 schema/题数/分值或节点/边/来源验证→至多一次携带同一原文件的 repair→保存。checkpoint 只保存审查结论或已验证 artifact，不保存 prompt/源文件正文；源文件仍在 private Storage。创建接口先读 capabilities，只有真实逐格式门禁通过的扩展名可选；不支持格式明确禁用并允许用户显式选择旧流水线，禁止转换或静默 fallback。
+The Luna order is fixed: native-file safety review → native-file generation → local schema/question count/marks or node/edge/source validation → at most one repair carrying the same original file → save. Checkpoints only store the review conclusion or validated artifacts, never prompts/source file content; the source file stays in private Storage. The create endpoint reads capabilities first, and only extensions that passed real per-format gates are selectable; unsupported formats are explicitly disabled, letting users explicitly choose the old pipeline, with conversion or silent fallback forbidden.
 
-真实 Luna 门禁至少按 PDF、图片和每个候选扩展名分别记录：原始 SHA-256、wire MIME/sourceMode、actual provider/endpoint、native parser、schema 通过率、注入拒绝/安全教材误杀、source locator 支持、token/费用、P50/P95、取消/超时残留。试卷与图谱要分开评测；图谱另测 250 节点层级/顺序/交叉边，考试只在整卷提交后批改，主观题一次合并评分。fake provider 不计入模型质量或格式支持证据。
+Real Luna gates must record, at least separately per PDF, image, and each candidate extension: the raw SHA-256, wire MIME/sourceMode, actual provider/endpoint, native parser, schema pass rate, injection rejection/false positives on safe teaching material, source locator support, tokens/cost, P50/P95, and cancellation/timeout residue. Test papers and graphs are evaluated separately; graphs also test 250-node hierarchy/order/cross edges, exams are graded only after the whole paper is submitted, and subjective questions are graded together in one run. Fake providers do not count as evidence of model quality or format support.
 
-2026-08-14 真实发布 run `31824832947` 的 2G canary 通过，但首个 GPT-5.6 Luna PDF 试卷在安全审查前即失败为 `OPENROUTER_ZDR_UNAVAILABLE`；应用自动回退且未启用 Luna。官方 `/api/v1/endpoints/zdr` 中同一模型只有 Azure/Azure EU，未包含 first-party OpenAI。2026-10-03 起（[ADR-0016](../adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)）Luna 改为 GPT-6 Luna 并锁定 Azure ZDR endpoint；后续发布每次重新读取 catalog，只有 Azure ZDR endpoint 存在并完成真实 PDF/图片全门禁后才开放，不能删去 ZDR 或把 `data_collection=deny` 冒充 ZDR。
+The 2 GB canary of real release run `31824832947` on 2026-08-14 passed, but the first GPT-5.6 Luna PDF test paper failed with `OPENROUTER_ZDR_UNAVAILABLE` before the safety review; the app rolled back automatically and Luna was not enabled. The official `/api/v1/endpoints/zdr` listed only Azure/Azure EU for that model, not first-party OpenAI. From 2026-10-03 ([ADR-0016](../adr/0016-retire-ox-alpha-and-gpt6-luna-on-azure-zdr.md)), Luna switches to GPT-6 Luna locked to the Azure ZDR endpoint; every later release re-reads the catalog and opens it only when the Azure ZDR endpoint exists and the full real PDF/image gates complete, never removing ZDR or passing `data_collection=deny` off as ZDR.
 
-### 2.3 Ox Alpha 原始图片候选（已退役）
+### 2.3 The Ox Alpha native-image candidate (retired)
 
-0054–0055 曾增加 `ox_alpha_native_file_v1`。实时 ZDR catalog 始终没有合规 endpoint，模型其后从 OpenRouter 下线；生产从未创建 Ox job。0056–0057 已移除该流水线的数据库值、RPC 分支、API/Web/worker 代码、环境变量和发布门禁。
+0054–0055 added `ox_alpha_native_file_v1`. The live ZDR catalog never had a compliant endpoint, and the model was later removed from OpenRouter; production never created an Ox job. 0056–0057 removed the pipeline's database values, RPC branches, API/Web/worker code, environment variables, and release gates.
 
 
-### 2.4 Courses 文件导入的目标闭环（未实现）
+### 2.4 Target loop for Courses file import (not implemented)
 
-目标输入：PDF、DOC/DOCX、JSON、Markdown、HTML 和受控图片。文件先进入按用户隔离的 quarantine，服务端检查扩展名、MIME、magic bytes、大小/页数/像素、压缩炸弹和恶意内容，再解析/OCR；浏览器不能把原文直接送供应商，也不能让模型使用 service-role 或任意网络工具。
+Target inputs: PDF, DOC/DOCX, JSON, Markdown, HTML, and controlled images. Files first enter a per-user quarantine, where the server checks the extension, MIME, magic bytes, size/pages/pixels, zip bombs, and malicious content before parsing/OCR; the browser cannot send the original directly to a provider, and the model cannot use service-role or arbitrary network tools.
 
-类别路由必须显式版本化，不能用一个含糊 prompt 兼容四类：
+Category routing must be versioned explicitly, never one vague prompt for all four:
 
-| 类别 | 首个结构化目标 | prompt/评测重点 |
+| Category | First structured target | Prompt/evaluation focus |
 |---|---|---|
-| `english_vocabulary` | units → `term/translations[]`，可选 source/confidence；IPA 仍优先由 CMUdict/人工补 | 不拆坏短语、多义翻译、单元边界、重复、来源忠实 |
-| `knowledge_points` | 知识点、定义、标签、顺序、来源 | groundedness、遗漏、依赖顺序 |
-| `reading_comprehension` | 原文段落、问题、答案/证据、难度 | 引文范围、答案唯一性、版权展示 |
-| `question_bank` | 题干、题型、选项、答案、解析、来源 | 答案一致、干扰项、重复与学术诚信 |
+| `english_vocabulary` | units → `term/translations[]`, optional source/confidence; IPA still preferably from CMUdict/manual entry | Don't break phrases, polysemous translations, unit boundaries, duplicates, source faithfulness |
+| `knowledge_points` | Knowledge points, definitions, tags, order, sources | Groundedness, omissions, dependency order |
+| `reading_comprehension` | Source passages, questions, answers/evidence, difficulty | Quote ranges, answer uniqueness, copyright display |
+| `question_bank` | Stems, question types, options, answers, explanations, sources | Answer consistency, distractors, duplicates, and academic integrity |
 
-英语词表建议的版本化 JSON Schema 至少包含：`schemaVersion,category,sourceFileId,units[{suggestedName,sourceRange,words[{term,translations,sourceRange,confidence,warnings[]}]}],parseWarnings`。模型不得生成数据库 ID、owner、progress、points、publication 或可执行 HTML。输出先通过 schema、产品上限、重复/Unicode/XSS、来源对齐检查，再进入与文本导入相同的结构化编辑器；用户逐项确认后才调用整课保存事务。无人工确认不得创建课程、排日程、发布市场或发成长奖励。
+The suggested versioned JSON Schema for English word lists contains at least: `schemaVersion,category,sourceFileId,units[{suggestedName,sourceRange,words[{term,translations,sourceRange,confidence,warnings[]}]}],parseWarnings`. The model must not generate database IDs, owners, progress, points, publications, or executable HTML. The output first passes the schema, product limits, duplicate/Unicode/XSS, and source alignment checks, then enters the same structured editor as text import; only after the user confirms item by item is the whole-course save transaction called. Without human confirmation, no course may be created, no schedule set, nothing published to the market, and no growth reward granted.
 
-文件原文、OCR 临时图、prompt 和模型输出按 job 使用最短留存；普通日志只留 hash/内部 ID/版本/计量。删除课程或账号时必须覆盖 quarantine、临时文件、OCR、模型 cache、job payload 和供应商副本。任何把用户文件加入 eval/golden set 的行为都需要单独、可撤回授权。
+Original files, temporary OCR images, prompts, and model output use the shortest retention per job; ordinary logs only keep hashes/internal IDs/versions/metering. Deleting a course or account must cover the quarantine, temporary files, OCR, model cache, job payloads, and provider copies. Adding any user file to an eval/golden set requires separate, revocable authorization.
 
-### 2.5 Courses 导入评测与成本门
+### 2.5 Courses import evaluation and cost gates
 
-固定评测集按格式、数字/扫描、单元有无、表格/多栏/图片、词/短语、多翻译、中英混排、坏格式和恶意提示词分层。核心指标：
+The fixed evaluation set is stratified by format, digital/scanned, with/without units, tables/multiple columns/images, words/phrases, multiple translations, mixed Chinese and English, bad formats, and malicious prompts. Core metrics:
 
-- term 精确率/召回率/F1、phrase 边界、translation 集合精确/召回、unit boundary F1；
-- source range 有效/支持率、无来源新增词/翻译率、规范化重复率、schema/产品上限通过率；
-- 人工接受/编辑/删除率、每百词严重错误、按格式失败率、XSS/提示词注入成功数；
-- 每成功导入文件/页/图片/千字/确认词的 token、OCR/vision、重试、存储/egress 成本和 P50/P95 延迟。
+- term precision/recall/F1, phrase boundaries, translation set precision/recall, unit boundary F1;
+- Source range validity/support rate, rate of new words/translations with no source, normalized duplicate rate, schema/product limit pass rate;
+- Human accept/edit/delete rates, severe errors per hundred words, failure rate by format, number of successful XSS/prompt injections;
+- Tokens, OCR/vision, retries, storage/egress cost, and P50/P95 latency per successfully imported file/page/image/thousand characters/confirmed word.
 
-初版上线门：schema 与安全边界 100%；跨用户/secret 泄露和成功 prompt injection 为 0；无来源新增严重词义为 0；term F1 与 translation F1 的正式阈值必须由授权 golden baseline 后写入版本化配置；成本估算需覆盖 token、OCR/vision 页和重试，P90 相对账单误差≤20%。未建立样本量/阈值前只能内部 alpha，不能通过“看起来不错”开放文件按钮。
+Initial launch gates: schema and safety boundaries 100%; zero cross-user/secret leaks and zero successful prompt injections; zero severe word meanings added with no source; formal thresholds for term F1 and translation F1 must be written into versioned configuration after an authorized golden baseline; cost estimates must cover tokens, OCR/vision pages, and retries, with a P90 relative billing error ≤20%. Until sample sizes/thresholds are established, it can only be an internal alpha, and the file button must never be opened because it "looks good".
 
-运行时先估算最大页/图片/token/费用，让用户确认；超限拒绝或缩小范围，不事后无限扣 credits。v1 文本手工导入免费，未来 AI 导入是否收费须先接 credits hold/commit/release 和失败退款，points 绝不用于支付。
+At runtime, estimate the maximum pages/images/tokens/cost first and let the user confirm; over the limit, reject or narrow the scope, never charging credits without limit after the fact. v1 manual text import is free; whether future AI import charges must first be wired into credits hold/commit/release with failure refunds, and points are never used for payment.
 
-### 2.6 Azure Speech 当前边界
+### 2.6 Current Azure Speech boundaries
 
-Speech 不是上述生成管线。TTS 仅发送当前英文 term，评分仅发送 server-derived reference text 与用户主动录制的 PCM WAV；客户端最多录制 6 秒，关闭 echo cancellation、noise suppression、auto gain control，不做 VAD、音量阈值、最短语音判断、首尾裁剪或内容截断，只执行 Azure 契约所需的 16 kHz/16-bit/单声道 PCM 格式转换。服务端继续限制 8 秒/2 MB，并把验证后的同一 WAV 字节转发 Azure。不发送课程名、翻译、邮箱或学校。录音在响应后丢弃，只有分数/错误类型/音素反馈保存；供应商失败不计学习错误。
+Speech is not part of the generation pipeline above. TTS only sends the current English term, and scoring only sends the server-derived reference text and the PCM WAV the user records voluntarily; the client records at most 6 seconds with echo cancellation, noise suppression, and auto gain control off, does no VAD, volume thresholds, minimum-speech checks, head/tail trimming, or content truncation, and only performs the 16 kHz/16-bit/mono PCM format conversion the Azure contract requires. The server keeps the 8-second/2 MB limit and forwards the same validated WAV bytes to Azure. Course names, translations, emails, and schools are never sent. Recordings are discarded after the response, and only scores/error types/phoneme feedback are stored; provider failures don't count as learning errors.
 
-评分的持久控制是每用户默认 30 次/分钟、300 次/本地日、全局月估算 budget 和 circuit flag；读音考试不会获得独立免费额度，每个实际提交的考试词都会占用同一 assessment 额度和预算，因此开放前必须用“活跃考生 × 单元词数 × 候补率”重新核算容量。`learning_speech_usage` 的 micro-USD 是配置价格乘用量的预算预留，不是 Azure 账单事实。TTS 队列按 `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)` 跨用户复用 private Storage 对象，默认单 worker、请求间隔至少 3.1 秒、20 次/分钟和 500,000 字符/月；租约、重试、字符预留和成本预算都由服务端数据库控制。浏览器只缓存可重建副本并预取当前加未来四词。
+Scoring's durable controls are per-user defaults of 30/minute and 300/local day, a global monthly estimated budget, and a circuit flag; the pronunciation exam gets no separate free allowance, and every exam word actually submitted uses the same assessment allowance and budget, so capacity must be recomputed as "active test takers × unit word count × retry rate" before opening. The micro-USD in `learning_speech_usage` is a budget reservation of configured price times usage, not an Azure billing fact. The TTS queue reuses private Storage objects across users by `SHA-256(normalizedTerm + locale + voice + format + synthesisVersion)`, with a single worker by default, at least 3.1 seconds between requests, 20/minute, and 500,000 characters/month; leases, retries, character reservations, and cost budgets are all controlled by the server database. The browser only caches rebuildable copies and prefetches the current word plus the next four.
 
-生产读音考试只把当前 owner session 的当前词作为 server-derived reference text；评分前拒绝非当前词和轮末等待状态，供应商失败不写错误。单词是否正确沿用 `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE`（默认 70），单元是否通过另用完整第一轮的整数正确率阈值（默认 90%）；两者不能混成同一个分数。自动化固定 WAV/fake provider 只验证工作流，发布前仍须用 Japan East 真实 Azure 独立验证评分、延迟、配额、错误降级和真实费用。
+The production pronunciation exam only uses the current owner session's current word as the server-derived reference text; before scoring, it rejects non-current words and end-of-round waiting states, and provider failures never write errors. Whether a word is correct follows `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` (default 70), and whether a unit passes uses the separate integer accuracy threshold of the full first round (default 90%); the two must never be merged into one score. Automated fixed WAVs/fake providers only verify the workflow; before release, scoring, latency, quotas, error degradation, and real cost must still be verified independently with real Azure in Japan East.
 
-必须分别观测 attempt/snapshot RPC 延迟、队列等待、Azure 合成、Storage hit、浏览器 Cache hit、评分总耗时与供应商耗时；配额暂停、失败重试和重复词命中不能混入“生成成功率”。2026-07-27 Japan East 真实发布 gate 已验证 4 个首次生成对象、private Storage 命中、第二用户复用同 4 个对象且不增加生成，以及 VAD 裁剪后评分 97。Azure fake 只验证代码路径，不参与质量或供应商可用率报告；单次 gate 也不是持续可用率或账单对账。
+Observe separately: attempt/snapshot RPC latency, queue wait, Azure synthesis, Storage hits, browser Cache hits, total scoring time, and provider time; quota pauses, failed retries, and repeated-word hits must not be mixed into "generation success rate". The real Japan East release gate on 2026-07-27 verified 4 first-time generated objects, private Storage hits, a second user reusing the same 4 objects without new generation, and a score of 97 after VAD trimming. The Azure fake only verifies the code path and does not count toward quality or provider availability reports; a single gate is not continuous availability or billing reconciliation either.
 
-### 2.7 OpenRouter 翻译语义前测当前边界
+### 2.7 Current OpenRouter translation semantic pre-test boundaries
 
-用途只限拼写前的可选教学判定。NestJS 从 owner/session/当前 word 取得 `term/translations`。用户答案经 NFKC、空白和大小写规范化后若完全等于任一参考项，以版本化 `nalanda-normalized-exact/normalized-exact-v1` 确定性判对且不产生供应商请求；只有非字面答案才连同 `term/translations` 发送 OpenRouter，指定免费 `nvidia/nemotron-3-super-120b-a12b:free`、temperature 0、`reasoning.enabled=false` 和 JSON Object 模式，并锁定 Nvidia 上游且禁止 fallback。免费 endpoint 不承诺 deny collection，因此请求只含最小词义上下文、不含账号标识。Nalanda 随后在本地严格验证对象只含 boolean `correct`，缺失、额外字段、错误类型或无效 JSON 都失败关闭并可在同一预算内重试一次。客户端不能提供参考答案、model 或 provider 参数。模型只决定非字面语义 boolean；API 使用固定、非权威教学文案补齐 feedback。任何输出都不能直接发 points/徽章或改 progress；错误判定只能由数据库事务转换成一次幂等 spelling attempt。
+The purpose is limited to an optional teaching judgement before spelling. NestJS takes `term/translations` from the owner/session/current word. If the user's answer, after NFKC, whitespace, and case normalization, exactly equals any reference item, it is judged correct deterministically as the versioned `nalanda-normalized-exact/normalized-exact-v1` with no provider request; only non-literal answers are sent to OpenRouter together with `term/translations`, specifying the free `nvidia/nemotron-3-super-120b-a12b:free`, temperature 0, `reasoning.enabled=false`, and JSON Object mode, locked to the Nvidia upstream with fallback forbidden. The free endpoint does not promise deny collection, so requests contain only minimal word-meaning context and no account identifiers. Nalanda then strictly validates locally that the object contains only the boolean `correct`; missing or extra fields, wrong types, or invalid JSON fail closed and may be retried once within the same budget. Clients cannot provide reference answers, the model, or provider parameters. The model only decides the non-literal semantic boolean; the API fills in feedback with fixed, non-authoritative teaching copy. No output can directly award points/badges or change progress; a wrong judgement can only be turned into one idempotent spelling attempt by a database transaction.
 
-最低固定评测集需包含：
+The minimum fixed evaluation set must include:
 
-- 完全一致、同义改写、上/下位表达、语序变化、一个/多个合法词义；
-- 只回答相关但不完整词义、反义词、无关词、把英文复述成英文、空白/超长输入；
-- 中英文混排、标点/格式变化、提示词注入、要求泄露 system prompt/参考答案；
-- 同 UUID 重放、租约并发、超时、5xx、429、非法 JSON/schema 和 revision 冲突。
+- Exact matches, synonymous paraphrases, hypernym/hyponym expressions, word-order changes, one/multiple legitimate meanings;
+- Answers giving only a related but incomplete meaning, antonyms, unrelated words, restating the English in English, blank/overlong input;
+- Mixed Chinese and English, punctuation/format changes, prompt injection, requests to leak the system prompt/reference answers;
+- Same-UUID replays, concurrent leases, timeouts, 5xx, 429, invalid JSON/schema, and revision conflicts.
 
-语义质量门仍须用授权合成/专家标注集计算 precision、recall、false-accept/false-reject，并按单义/多义、词/短语和中英文分层。高风险错误是把无关翻译判对；当前真实 gate 的两条样本（同义为 true、无关为 false）只证明 endpoint/schema/key 当前可用，不代表质量 baseline，因此功能必须保留独立紧急 flag，不能对外承诺准确率。
+The semantic quality gate must still compute precision, recall, and false-accept/false-reject on an authorized synthetic/expert-labeled set, stratified by single/multiple meanings, words/phrases, and Chinese/English. The high-risk error is judging an unrelated translation correct; the current real gate's two samples (synonym true, unrelated false) only prove the endpoint/schema/key work right now and are not a quality baseline, so the feature must keep a separate emergency flag and must not publicly promise accuracy.
 
-运行时记录脱敏 provider/model、duration、correct 与 prompt/completion/total tokens；不记录用户答案、完整 prompt、reasoning 或供应商响应。0027 把幂等 claim 与 provider-backed assessment reservation 分开：确定性完全匹配、已完成重放和未发出外部请求的租约都保持 `quota_counted=false/quota_counted_at=null`，仅在真实 OpenRouter 请求发出前按用户原子写入 true/当前时间；滚动窗口不再误用较早的 assessment 创建时间。同一 UUID 的网络/供应商重试不重复占产品额度。默认 20 次/用户/分钟、滚动 24 小时 500 次；429 携带精确恢复秒数。整个 provider 调用预算为 12 秒；若第一次 HTTP 200 缺少合法 boolean，可在同一总预算内重试一次，不另计产品配额。真实请求超时/供应商错误仍保留该次额度事实，但不记学习错误。当前模型目录价格为 0，但仍必须按“价格/额度/模型身份可变化”的供应商依赖处理：发布前核对当前路由、额度和隐私条款，设置 usage 告警与紧急 feature flag，不在产品规则承诺永久免费，也不把 points/credits 与该调用绑定。
+At runtime, record the redacted provider/model, duration, correct, and prompt/completion/total tokens; never the user's answer, the full prompt, reasoning, or provider responses. 0027 separates the idempotent claim from the provider-backed assessment reservation: deterministic exact matches, completed replays, and leases that never sent an external request all keep `quota_counted=false/quota_counted_at=null`, and true/the current time is written atomically per user only right before a real OpenRouter request; the rolling window no longer mistakenly uses an earlier assessment creation time. Network/provider retries of the same UUID don't consume the product allowance twice. The defaults are 20 per user per minute and 500 in a rolling 24 hours; 429s carry the exact seconds until recovery. The whole provider call budget is 12 seconds; if the first HTTP 200 lacks a valid boolean, one retry within the same total budget is allowed without counting another product allowance. Real request timeouts/provider errors still keep that allowance fact but don't record a learning error. The current model catalog price is 0, but it must still be treated as a provider dependency whose "price/credit/model identity can change": check the current routing, credit, and privacy terms before release, set usage alerts and an emergency feature flag, never promise it is permanently free in product rules, and never tie points/credits to this call.
 
-### 2.8 Fish Audio 中文 STT 生产边界
+### 2.8 Fish Audio Chinese STT production boundaries
 
-0037 只在 translation-first spelling 的翻译输入框中启用 OpenRouter `fish-audio/transcribe-1`。请求固定走 `/api/v1/audio/transcriptions`，使用 `language=zh`，模型、语言和 Bearer key 只由 NestJS 配置；识别文本只填入输入框，不自动发送，也不能直接形成 attempt、retry pool、进度、积分或徽章。用户编辑并明确提交后，才进入上节既有语义判分链。
+0037 enables OpenRouter `fish-audio/transcribe-1` only in the translation input of translation-first spelling. Requests always go to `/api/v1/audio/transcriptions` with `language=zh`, and the model, language, and Bearer key are configured only by NestJS; the recognized text only fills the input and is never sent automatically, nor can it directly create attempts, the retry pool, progress, points, or badges. Only after the user edits and explicitly submits does it enter the existing semantic grading chain from the previous section.
 
-当前公开标价按 `$0.0001/秒` 估算，数据库以 100 micro-USD/秒保守预留，默认每用户 20 次/分钟、300 次/本地日和全局 5,000,000 micro-USD/月。`learning_speech_usage` 只保存 kind/cost/date，不保存音频或 transcript；日志只保存 provider/model/language、音频秒数、耗时和供应商 usage/cost 数字。持续评测集仍应覆盖普通话男女声、轻声、口音、短词/短句、背景噪声、静音、断句、同音词、数字、英文夹杂和 1–6 秒时长，并按 CER、关键含义保留率、空结果率、p50/p95 延迟及每成功 transcript 成本分层。自动化 fake 只证明契约；真实发布 gate 使用 Azure 合成“苹果”的固定中文 WAV 通过候选 API，并要求 Fish Audio transcript 含“苹果”，仍不能代替真实用户口音评测或持续质量监控。[OpenRouter 模型页](https://openrouter.ai/fish-audio/transcribe-1)列出的价格与能力可能变化，发布时必须重新核对。
+The current published price is estimated at `$0.0001/second`, the database conservatively reserves 100 micro-USD/second, and the defaults are 20 per user per minute, 300 per local day, and a global 5,000,000 micro-USD/month. `learning_speech_usage` only stores kind/cost/date, never audio or transcripts; logs only keep provider/model/language, audio seconds, durations, and provider usage/cost numbers. The continuous evaluation set should still cover Mandarin male and female voices, quiet speech, accents, short words/sentences, background noise, silence, segmentation, homophones, numbers, mixed-in English, and 1–6 second durations, stratified by CER, key-meaning retention, empty result rate, p50/p95 latency, and cost per successful transcript. Automated fakes only prove the contract; the real release gate sends a fixed Chinese WAV of "apple" synthesized by Azure through the candidate API and requires the Fish Audio transcript to contain that word, which still cannot replace real user accent evaluation or continuous quality monitoring. The price and capabilities listed on the [OpenRouter model page](https://openrouter.ai/fish-audio/transcribe-1) may change and must be re-checked at release.
 
-2026-08-04 的首次直连真实 smoke 因账户余额不足返回 HTTP 402，证明了该 key 能调用 `:free` 文本模型不等于计费 STT 可用；代码按设计映射 `TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED` 并保留键盘输入。充值后用 0.526 秒、16 kHz 单声道合成中文 WAV 重测成功，直连 smoke 记录约 3.27 秒端到端耗时、1 秒 provider usage、约 `$0.0001` cost 且命中预期关键词；受保护生产 gate 随后经候选 Nalanda API 返回 `transcriptionMatched=true` 并激活 release。该固定样本仍不是多口音质量基线。
+The first direct real smoke on 2026-08-04 returned HTTP 402 because the account balance was insufficient, proving that a key able to call `:free` text models does not mean billed STT works; the code maps this to `TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED` by design and keeps keyboard input. After topping up, a retest with a 0.526-second 16 kHz mono synthetic Chinese WAV succeeded, and the direct smoke recorded about 3.27 seconds end to end, 1 second of provider usage, a cost of about `$0.0001`, and a hit on the expected keyword; the protected production gate then returned `transcriptionMatched=true` through the candidate Nalanda API and activated the release. That fixed sample is still not a multi-accent quality baseline.
 
-2026-07-28 的最终真实 gate 使用固定 `google/gemma-4-26b-a4b-it:free` 返回 1,365 ms、253 prompt tokens、27 completion tokens、280 total tokens；同一发布中的真实 Courses API 完全匹配路径持久记录 `nalanda-normalized-exact/normalized-exact-v1`、0 token 与 `replayed=true`。此前同一发布链有一次 12 秒 provider timeout 并按设计阻止候选激活，重试成功不能替代持续延迟/可用率或语义质量统计。
+The final real gate on 2026-07-28 used the fixed `google/gemma-4-26b-a4b-it:free` and returned 1,365 ms, 253 prompt tokens, 27 completion tokens, and 280 total tokens; in the same release, the real Courses API exact-match path durably recorded `nalanda-normalized-exact/normalized-exact-v1`, 0 tokens, and `replayed=true`. Earlier in the same release chain there was one 12-second provider timeout that blocked candidate activation by design; a successful retry cannot replace continuous latency/availability or semantic quality statistics.
 
-## 3. 可追溯生成记录
+## 3. Traceable generation records
 
-每个解析/生成 job 必须记录以下非秘密元数据：
+Every parse/generation job must record the following non-secret metadata:
 
-- `job_id`、用户/资料内部 ID、请求幂等键、产物种类/语言/深度与 pipeline；
-- 输入文件 hash、格式、大小、页数；不得在普通日志记录原文；
-- parser/OCR/chunker/retriever 版本和配置 hash；
-- configured provider/model、实际 upstream endpoint、model revision（若提供）、region；
-- system/prompt/template/tool schema 版本与 hash，不记录 secret；
-- 输入/输出/cache/reasoning/image/page等供应商计量；
-- 召回 chunk IDs/引用映射和权限快照；
-- schema validation、质量门、安全门结果；
-- queue/start/end 时间、尝试次数、终止原因；
-- provider price snapshot、估算/实际成本、hold/commit credits；
-- 结果版本、人工编辑派生关系、删除状态。
+- `job_id`, internal user/material IDs, the request idempotency key, artifact kind/language/depth, and pipeline;
+- Input file hash, format, size, page count; the original text must never be logged in ordinary logs;
+- Parser/OCR/chunker/retriever versions and configuration hash;
+- Configured provider/model, actual upstream endpoint, model revision (if provided), region;
+- system/prompt/template/tool schema version and hash, never secrets;
+- Provider metering for input/output/cache/reasoning/image/pages and so on;
+- Retrieved chunk IDs/citation mapping and the permission snapshot;
+- Schema validation, quality gate, and safety gate results;
+- Queue/start/end times, attempt counts, termination reason;
+- Provider price snapshot, estimated/actual cost, hold/commit credits;
+- Result version, derivation from human edits, deletion status.
 
-同一结果必须能在不泄露正文的前提下回答“哪个资料、哪套流水线、哪个模型、花了多少、通过了哪些门”。不能保证模型 bit-for-bit 可复现时，应明确为 traceable，而不是 reproducible。
+The same result must be able to answer "which material, which pipeline, which model, how much it cost, and which gates it passed" without leaking content. When models cannot be guaranteed to be bit-for-bit reproducible, describe results as traceable, not reproducible.
 
-## 4. 评测集治理
+## 4. Evaluation set governance
 
-### 4.1 数据集分层
+### 4.1 Dataset tiers
 
-| 集合 | 用途 | 是否进入日常 CI | 数据要求 |
+| Set | Purpose | In daily CI | Data requirements |
 |---|---|---:|---|
-| Contract fixtures | schema、边界、错误语义 | 是 | 合成、很小、可提交 |
-| Golden regression | 质量/解析回归 | 是（可分 nightly） | 授权、去标识、版本化、专家答案 |
-| Safety/red-team | 提示词注入、隐私、有害内容 | 是 | 合成/许可，严格访问 |
-| Cost/latency benchmark | token、页面、时延、重试 | Nightly/发布前 | 固定输入和 provider 模式 |
-| Shadow/online sample | 真实分布漂移 | 目标阶段 | 单独审批、最小化、优先仅指标/用户反馈 |
+| Contract fixtures | Schemas, boundaries, error semantics | Yes | Synthetic, very small, committable |
+| Golden regression | Quality/parsing regressions | Yes (may be nightly) | Authorized, de-identified, versioned, expert answers |
+| Safety/red-team | Prompt injection, privacy, harmful content | Yes | Synthetic/licensed, strict access |
+| Cost/latency benchmark | Tokens, pages, latency, retries | Nightly/pre-release | Fixed inputs and provider modes |
+| Shadow/online sample | Real distribution drift | Target phase | Separately approved, minimized, metrics/user feedback only by preference |
 
-至少覆盖中/英文，文本 PDF/扫描 PDF/PPTX/DOCX/MD/HTML/TXT，公式/表格/图片/页眉页脚，短/长文档，多学科，不同质量和恶意内嵌指令。每个样本记录来源、许可证/同意、可用范围、PII 检查、保留和删除日期。
+Cover at least Chinese/English, text PDFs/scanned PDFs/PPTX/DOCX/MD/HTML/TXT, formulas/tables/images/headers and footers, short/long documents, multiple subjects, different quality levels, and malicious embedded instructions. Each sample records its source, license/consent, allowed scope, PII check, retention, and deletion date.
 
-禁止把用户课件自动加入训练或 golden set。用户报告问题时，默认只记录错误类型和 trace ID；需要保留原文做评测必须单独、可撤回地同意，并限制访问/期限。测试集与 prompt 开发集分开，防止为已知答案过拟合。
+User courseware must never be added to training or golden sets automatically. When a user reports a problem, record only the error type and trace ID by default; keeping the original text for evaluation requires separate, revocable consent with restricted access/duration. Keep the test set separate from the prompt development set to avoid overfitting to known answers.
 
-### 4.2 版本与防污染
+### 4.2 Versioning and contamination prevention
 
-数据集使用不可变版本与 hash；变更记录新增/删除原因、标注者、仲裁和指标重算。模型供应商可能训练过公开材料，因此“公开测试高分”不作为唯一证据。Golden 答案至少经过一名领域审阅，高风险/争议样本双人仲裁。
+Datasets use immutable versions and hashes; changes record the reasons for additions/removals, the annotators, arbitration, and metric recomputation. Model providers may have trained on public materials, so "high scores on public tests" is never the only evidence. Golden answers are reviewed by at least one domain reviewer, and high-risk/disputed samples get two-person arbitration.
 
-## 5. 评测维度与指标
+## 5. Evaluation dimensions and metrics
 
-### 5.1 通用契约
+### 5.1 General contract
 
-- HTTP 状态、错误码、超时、取消、重试与幂等符合 API 契约；
-- JSON/Pydantic/共享 TS schema 100% 通过；未知字段/版本按兼容策略处理；
-- 中/英文遵从、空输入、超长、损坏/加密文件、恶意内容均有确定结果；
-- 所有用户可见事实能关联 source chunk/page；无法支持的内容标注不确定或不生成；
-- 重试不重复扣费、写结果或泄露其他用户 chunk。
+- HTTP status, error codes, timeouts, cancellation, retries, and idempotency match the API contract;
+- JSON/Pydantic/shared TS schemas pass 100%; unknown fields/versions are handled per the compatibility policy;
+- Chinese/English compliance, empty input, overlong input, corrupt/encrypted files, and malicious content all have deterministic results;
+- Every user-visible fact can be linked to a source chunk/page; unsupported content is labeled uncertain or not generated;
+- Retries never double-charge, write duplicate results, or leak other users' chunks.
 
-### 5.2 解析/OCR
+### 5.2 Parsing/OCR
 
-指标按格式和页面类型拆分：页/块召回、规范化字符/词 F1、标题层级、阅读顺序、表格单元格结构、公式/图片说明、页码映射、重复/页眉噪声、语言识别、失败页比例。扫描件单独报告 OCR，不与数字文本平均掩盖。
+Metrics are split by format and page type: page/block recall, normalized character/word F1, heading hierarchy, reading order, table cell structure, formula/image descriptions, page mapping, duplicate/header noise, language detection, and failed page ratio. Scans report OCR separately and are never averaged with digital text to hide problems.
 
-### 5.3 知识清单
+### 5.3 Knowledge list
 
-覆盖核心概念、定义正确/完整、依赖排序、去重、术语一致、引用支持、粒度适合、语言遵从。记录 unsupported claim rate、source coverage、专家 1–5 分和关键遗漏率。
+Coverage of core concepts, correct/complete definitions, dependency ordering, deduplication, consistent terminology, citation support, suitable granularity, and language compliance. Record the unsupported claim rate, source coverage, expert 1–5 scores, and the key omission rate.
 
-### 5.4 测验
+### 5.4 Quizzes
 
-题干清楚；答案可由资料支持；`answerIndex`/多选与选项一致；干扰项合理且不含第二正确答案；解释引用资料；难度/知识点覆盖；重复率与答案位置偏差。用 solver + 专家抽样验证，不因模型“自评正确”而通过。
+Clear stems; answers supported by the material; `answerIndex`/multiple choice consistent with the options; plausible distractors with no second correct answer; explanations citing the material; difficulty/knowledge-point coverage; duplicate rate and answer position bias. Verify with a solver + expert sampling, and never pass because the model "self-assessed as correct".
 
-### 5.5 知识图谱
+### 5.5 Knowledge graph
 
-节点 ID 唯一、边端点存在、无孤立/重复（除非合理）、标签可读、关系有来源、层级/依赖符合课程语义。候选 `GeneratedKnowledgeGraphV1` 还必须验证：sourceOrder 尽量遵循材料阅读顺序；每个节点有 self-contained explanation、key details、可用时的 examples/formulas、常见误区、自测题、keywords 和至少一个有效 source block；edge 只用受限 relation 且 explanation 可解释。若产品声明 DAG，才把环作为错误；否则记录环与关系类型，不能凭视觉漂亮判断质量。
+Unique node IDs, existing edge endpoints, no isolated/duplicate nodes (unless reasonable), readable labels, sourced relationships, and hierarchy/dependencies matching the course semantics. The candidate `GeneratedKnowledgeGraphV1` must also verify: sourceOrder follows the material's reading order as closely as possible; every node has a self-contained explanation, key details, examples/formulas when available, common misconceptions, self-check questions, keywords, and at least one valid source block; edges only use restricted relations with explainable explanations. Cycles count as errors only if the product declares a DAG; otherwise, record cycles and relationship types, and never judge quality by how pretty it looks.
 
-节点问答单独报告 groundedness、问题覆盖、source insufficiency 诚实度、引用 precision/recall、相邻节点越界率、prompt injection 成功率和用户可理解度。输入上下文只能包含所选节点、最多 20 个相邻节点和所选节点 sourceRefs 允许的 DocumentIR blocks；回答引用越界为 0 容忍结构失败。hover/click 能显示详情只证明渲染，不证明语义质量。
+Node Q&A reports separately: groundedness, question coverage, honesty about source insufficiency, citation precision/recall, the rate of going beyond neighboring nodes, prompt-injection success rate, and user comprehensibility. The input context may only contain the selected node, at most 20 neighboring nodes, and the DocumentIR blocks allowed by the selected node's sourceRefs; citations beyond that are a zero-tolerance structural failure. Being able to show details on hover/click only proves rendering, not semantic quality.
 
-### 5.6 模拟试卷
+### 5.6 Mock exams
 
-总分与 section/题目 marks 一致；题型/知识点/难度分布符合用户选择；题目可解、答案与评分标准正确；无资料外关键假设；无重复/泄题；预计时长合理。language/difficulty/duration/totalMarks、重复 ID、可行的 marks 合计、引用是否属于服务端 block allowlist 及其 locator 元数据属于可确定的机械约束，可稳定归一化；同一稳定 question ID 可在 repair 后继承该题此前有效引用，整份 IR 只有一个 block 时也可选取唯一来源。多 block 不猜测。题数、题意、答案、引用是否实际支持题目、难度匹配和教学质量不得用归一化伪造，仍须 validator、语义复核和真实样本门禁。
+Total marks consistent with section/question marks; question type/knowledge point/difficulty distribution matching the user's choices; answerable questions with correct answers and rubrics; no key assumptions outside the material; no duplicates/question leaks; reasonable estimated time. language/difficulty/duration/totalMarks, duplicate IDs, feasible marks totals, whether citations belong to the server block allowlist, and their locator metadata are determinable mechanical constraints that can be normalized stably; the same stable question ID may inherit that question's earlier valid citations after repair, and the single source may be chosen when the whole IR has only one block. With multiple blocks there is no guessing. Question counts, meaning, answers, whether citations actually support the question, difficulty match, and teaching quality must never be faked through normalization and still need the validator, semantic review, and real-sample gates.
 
-### 5.7 人工评审量表
+### 5.7 Human review rubric
 
-盲评维度：groundedness、correctness、coverage、pedagogy、clarity、difficulty fit、safety，1–5 分并给证据。对不同模型随机化顺序，至少记录评审者背景和一致性；低一致项仲裁。人工偏好不替代可验证契约。
+Blind-review dimensions: groundedness, correctness, coverage, pedagogy, clarity, difficulty fit, safety, scored 1–5 with evidence. Randomize the order across models, record at least the reviewers' backgrounds and agreement, and arbitrate low-agreement items. Human preference does not replace verifiable contracts.
 
-## 6. 初始发布门禁
+## 6. Initial release gates
 
-阈值是首版目标，首个真实 baseline 后可以经评审调整，但不得为让失败模型上线而静默降低。
+The thresholds are first-version targets and may be adjusted through review after the first real baseline, but must never be lowered silently to let a failing model launch.
 
-| 门禁 | 目标 |
+| Gate | Target |
 |---|---:|
-| Schema/引用结构有效 | 100% release set |
-| 跨用户 chunk/PII/secret 泄露 | 0 个 P0/P1 |
-| 恶意文档指令改变系统规则/取密钥/越权 | 0 个成功攻击 |
-| 关键 unsupported claim | 0 个；普通 claims 支持率 ≥ 95% |
-| 引用指向真实且支持对应 claim | ≥ 98% |
-| Quiz 答案/选项/解释一致 | ≥ 99% |
-| Graph 结构完整性 | 100%（语义质量另计） |
-| Exam marks/结构一致 | 100% |
-| 目标语言遵从 | ≥ 99% |
-| 专家综合评分 ≥ 4/5 | ≥ 90% 样本，且无学科低于 80% |
-| 重复同一 job 的经济/结果副作用 | 0 |
-| 成本估算相对实际误差 | P90 ≤ 20%，且绝不超过用户确认 credits 上限 |
+| Schema/citation structure valid | 100% of the release set |
+| Cross-user chunk/PII/secret leaks | 0 P0/P1 |
+| Malicious document instructions changing system rules/extracting secrets/overreaching | 0 successful attacks |
+| Key unsupported claims | 0; support rate for ordinary claims ≥ 95% |
+| Citations pointing to real sources that support the claim | ≥ 98% |
+| Quiz answer/option/explanation consistency | ≥ 99% |
+| Graph structural integrity | 100% (semantic quality counted separately) |
+| Exam marks/structure consistency | 100% |
+| Target language compliance | ≥ 99% |
+| Overall expert score ≥ 4/5 | ≥ 90% of samples, with no subject below 80% |
+| Economic/result side effects of repeating the same job | 0 |
+| Relative error of cost estimates vs. actual | P90 ≤ 20%, and never above the user-confirmed credits ceiling |
 
-解析门禁应在建立按格式 baseline 后填写到版本化 eval config；在此之前，任何格式只能标 beta，不把跨格式平均值作为发布证据。样本量、置信区间和各 slice 必须随 release report 公布，不能只给百分比。
+Parsing gates should be written into the versioned eval config once per-format baselines exist; until then, any format can only be labeled beta, and cross-format averages are never release evidence. Sample sizes, confidence intervals, and each slice must be published with the release report, not just percentages.
 
-## 7. 安全、隐私与提示词注入
+## 7. Safety, privacy, and prompt injection
 
-测试至少包含：文档内“忽略系统指令”、要求输出密钥/其他用户资料、HTML/Markdown XSS、外链/像素追踪、数据 URI、恶意文件、超大/压缩炸弹、Unicode 欺骗、OCR 隐藏文本、错误引用、模型 prompt 泄露、工具参数注入、跨 job/cache 检索污染。
+Tests include at least: "ignore the system instructions" inside documents, requests to output secrets/other users' materials, HTML/Markdown XSS, external links/tracking pixels, data URIs, malicious files, oversized files/zip bombs, Unicode spoofing, hidden OCR text, wrong citations, model prompt leaks, tool parameter injection, and cross-job/cache retrieval contamination.
 
-核心规则：上传资料是数据，不是指令；检索必须先按 user/material 授权过滤再向量召回；模型没有 service-role/Stripe/任意网络/数据库工具；输出渲染净化；供应商调用只传最小片段；日志/trace 不存原文；删除 job 覆盖 prompt/cache/embedding/供应商副本。
+Core rules: uploaded materials are data, not instructions; retrieval must filter by user/material authorization before vector recall; models have no service-role/Stripe/arbitrary network/database tools; output rendering is sanitized; provider calls only carry minimal fragments; logs/traces never store the original text; deleting a job covers prompts/caches/embeddings/provider copies.
 
-有害/违规内容按 [内容审核规范](../governance/CONTENT_MODERATION.md) 分流。高影响学术、医疗、法律、财务内容需明确非权威提示和来源，不得用流畅度掩盖不确定性。
+Harmful/violating content is routed per the [content moderation standard](../governance/CONTENT_MODERATION.md). High-impact academic, medical, legal, and financial content needs explicit non-authoritative notices and sources, and fluency must never mask uncertainty.
 
-## 8. 成本核算
+## 8. Cost accounting
 
-### 8.1 价格快照
+### 8.1 Price snapshots
 
-供应商价格放在版本化、受审批的配置/price catalog，包含 provider、model、region、currency、effective_at、input/output/cache/image/page/tool 等单位价格和来源。每个 job 绑定创建时/实际调用时约定的 snapshot；供应商改价不重写历史。
+Provider prices live in a versioned, approved configuration/price catalog that includes provider, model, region, currency, effective_at, unit prices for input/output/cache/image/page/tools, and their source. Each job is bound to the snapshot agreed at creation/actual call time; provider price changes never rewrite history.
 
-### 8.2 逐 job 成本
+### 8.2 Per-job cost
 
-以货币最小单位或更高精度 decimal 计算，最后按财务规则取整：
+Compute in the smallest currency unit or a higher-precision decimal, rounding at the end per finance rules:
 
 ```text
 provider_cost = input_tokens × input_rate
@@ -280,108 +281,108 @@ total_variable_cost = provider_cost
                     + retry cost not waived by provider
 ```
 
-共享基础设施另做按 job/活跃用户分摊，不伪装成精确供应商成本。记录 estimated upper bound、actual、currency、pricing snapshot、attempt breakdown、谁承担失败/重试成本。credits 售价由产品价格决定，不能直接把 token 数暴露成事后无限扣款。
+Shared infrastructure is allocated separately per job/active user and never presented as an exact provider cost. Record the estimated upper bound, actual, currency, pricing snapshot, attempt breakdown, and who bears failure/retry costs. The credits price is decided by product pricing, and token counts must never be exposed as unlimited after-the-fact charges.
 
-### 8.3 单位经济指标
+### 8.3 Unit economics
 
-按产物、语言、格式、页数、模型和 plan 分层观察：每成功 job 可变成本；每输入页/千字成本；每有效知识点/题目成本；缓存命中率；失败/重试浪费率；P50/P95 延迟；credits 收入标准价值；毛利率；退款/质量补偿率。
+Observe by artifact, language, format, page count, model, and plan: variable cost per successful job; cost per input page/thousand characters; cost per valid knowledge point/question; cache hit rate; failure/retry waste rate; P50/P95 latency; the standard value of credits revenue; gross margin; refund/quality compensation rate.
 
-初始目标：稳定阶段 P50 贡献毛利 ≥ 60%，P95 请求仍非负；失败/重试浪费 ≤ AI 供应商成本的 10%；实际成本不得超过 job 预算上限。若目标未达到，应优化/调价/限制尺寸，不得隐藏成本或追扣超出确认上限的 credits。
+Initial targets: in the stable phase, P50 contribution margin ≥ 60% while P95 requests stay non-negative; failure/retry waste ≤ 10% of AI provider cost; actual cost never above the job budget cap. If the targets are not met, optimize/reprice/limit sizes; never hide cost or charge credits beyond the confirmed ceiling.
 
-## 9. 预算与运行时控制
+## 9. Budgets and runtime controls
 
-必须同时有：
+All of these are required at the same time:
 
-- **请求预算：**最大页数/字节/token/图片、最大输出、超时、重试次数、允许模型/工具；
-- **用户预算：**按 plan 的并发、日/月 jobs 和 included credits；
-- **系统预算：**供应商每小时/日/月软硬上限、模型/地区熔断、异常费用告警；
-- **任务预算：**estimated upper bound 对应 credit hold；实际超预算取消或降级，不自动扩大；
-- **队列背压：**达到容量/预算时排队或拒绝，不能无限堆积和过期扣费；
-- **kill switch：**按 provider/model/产物/地区关闭，保留已有资料访问。
-- **入口频率保护：**生产 0039 的 Redis 滑动窗口限制 Courses 写入和可能排队/消耗供应商成本的读取；它只吸收突发并提供 `Retry-After`，不能替代数据库中的 Azure/OpenRouter/Fish 用量、月预算、幂等租约或熔断。Redis 不可用时成本相关请求返回 `503 RATE_LIMIT_UNAVAILABLE`，私有无成本读取才允许降级。
+- **Request budget:** maximum pages/bytes/tokens/images, maximum output, timeouts, retry counts, allowed models/tools;
+- **User budget:** per-plan concurrency, daily/monthly jobs, and included credits;
+- **System budget:** provider hourly/daily/monthly soft and hard caps, model/region circuit breakers, anomalous cost alerts;
+- **Job budget:** the estimated upper bound corresponds to a credit hold; going over budget cancels or degrades, never expanding automatically;
+- **Queue backpressure:** queue or reject when capacity/budget is reached, never piling up indefinitely and charging for expired work;
+- **Kill switch:** turn off by provider/model/artifact/region while keeping access to existing materials.
+- **Entry frequency protection:** production 0039's Redis sliding windows limit Courses writes and reads that might queue/consume provider cost; they only absorb bursts and provide `Retry-After`, and cannot replace the Azure/OpenRouter/Fish usage, monthly budgets, idempotent leases, or circuit breakers in the database. When Redis is unavailable, cost-related requests return `503 RATE_LIMIT_UNAVAILABLE`, and only private no-cost reads may degrade.
 
-阈值作为受控环境配置，不在前端；变更有审计。降级顺序可为：减少上下文/输出 → 更便宜且已评测模型 → 只解析/保存草稿 → 延后/拒绝并释放 hold。不得在未告知时用质量显著不同的模型冒充原产品。
+Thresholds are controlled environment configuration, never in the frontend, and changes are audited. The degradation order can be: reduce context/output → a cheaper, already evaluated model → parse/save a draft only → defer/reject and release the hold. Never pass off a model of noticeably different quality as the original product without telling users.
 
-## 10. 延迟和可靠性
+## 10. Latency and reliability
 
-记录 queue wait、HTTP accept、callback wait、provider execution、resume wait 分开。首个 baseline 前的暂定目标：202 accept P95<2 秒；≤20 页标准文本资料的单一产物 P95 在 120 秒内完成；组合/试卷/详细图谱 P95 在 300 秒内；更大资料在确认页展示分档预估。目标需由真实 staging benchmark 校准，长任务超过 300 秒本身不能再被 transport 误杀。
+Record queue wait, HTTP accept, callback wait, provider execution, and resume wait separately. Provisional targets before the first baseline: 202 accept P95<2 seconds; a single artifact from standard text material of ≤20 pages completes within a P95 of 120 seconds; combined/test-paper/detailed graph P95 within 300 seconds; larger materials show tiered estimates on the confirmation page. The targets must be calibrated with real staging benchmarks, and a long job exceeding 300 seconds must no longer be killed by the transport.
 
-job 状态至少：`queued/processing/validating/.../succeeded/failed/cancelled`，可恢复错误另带 `retryable/resumeUntil/checkpointStage`。用户可安全轮询；Resume 必须重用同一 job/idempotency/quota reservation，不能新建任务绕过额度。取消只在确认终止后释放资源；worker/callback 崩溃可从已验证 checkpoint 幂等续跑；partial result 默认不收费且不公开，除非产品明确提供可接受的部分交付选项。超过 TTL 应持久记录稳定终态并删除 DB/local checkpoint，不能 RAISE 回滚掉清理。
+Job states include at least `queued/processing/validating/.../succeeded/failed/cancelled`, with recoverable errors also carrying `retryable/resumeUntil/checkpointStage`. Users can poll safely; Resume must reuse the same job/idempotency/quota reservation and never create a new job that bypasses the allowance. Cancellation only releases resources after termination is confirmed; worker/callback crashes can resume idempotently from a validated checkpoint; partial results are not charged and not made public by default, unless the product explicitly offers an acceptable partial delivery option. Past the TTL, record a stable terminal state durably and delete the DB/local checkpoint; a RAISE must never roll back the cleanup.
 
-## 11. 发布、灰度与回滚
+## 11. Release, gradual rollout, and rollback
 
-每次模型、prompt、parser、retriever、schema 或关键参数变化：
+For every change to a model, prompt, parser, retriever, schema, or key parameter:
 
-1. 生成变更说明和预期收益/风险；
-2. 运行 contract、golden、安全、成本/延迟基准，保存版本化 report；
-3. 由 AI/产品评审质量，安全/隐私评审新增数据/工具，财务评审价格显著变化；
-4. staging dogfood 使用授权数据；
-5. 小流量 canary，与旧版本按 slice 对比；
-6. 监控质量反馈、失败、成本、延迟、退款和安全；
-7. 达门禁后逐步扩大，保留可立即回退的前一 pipeline version。
+1. Produce a change description with expected benefits/risks;
+2. Run the contract, golden, safety, and cost/latency benchmarks, and save a versioned report;
+3. AI/product reviews quality, security/privacy reviews new data/tools, and finance reviews significant price changes;
+4. Staging dogfooding uses authorized data;
+5. A low-traffic canary, compared slice by slice with the old version;
+6. Monitor quality feedback, failures, cost, latency, refunds, and safety;
+7. Expand gradually once the gates are met, keeping the previous pipeline version ready for immediate rollback.
 
-回滚必须恢复 pipeline 路由与价格/credits 行为，不删除已经生成的历史结果；结果保留其原版本标识。schema 不兼容采用双读/双写/迁移，不让旧客户端崩溃。
+Rollback must restore pipeline routing and price/credits behavior without deleting already generated historical results; results keep their original version identifiers. Schema incompatibilities use dual read/dual write/migration so old clients don't crash.
 
-## 12. 在线监控与用户反馈
+## 12. Online monitoring and user feedback
 
-目标在线指标：成功/各错误码、schema/quality gate fail、queue/执行 P50/P95、token/页/成本、hold release/commit、重试、取消、用户编辑/重生成/删除、显式好评/差评、退款、引用点击和安全 flags。反馈与质量 trace 关联，但普通分析系统只保存内部 ID 和聚合，不自动复制课件/输出。
+Target online metrics: success/each error code, schema/quality gate failures, queue/execution P50/P95, tokens/pages/cost, hold release/commit, retries, cancellations, user edits/regenerations/deletions, explicit likes/dislikes, refunds, citation clicks, and safety flags. Feedback is linked to quality traces, but ordinary analytics only keep internal IDs and aggregates and never automatically copy courseware/output.
 
-监控漂移按格式/语言/学科/模型/plan 分层。用户群差异只能用于质量公平性诊断，不用于基于学校/专业的敏感定价或歧视性限制。
+Monitor drift stratified by format/language/subject/model/plan. Differences between user groups may only be used for quality fairness diagnosis, never for sensitive pricing or discriminatory restrictions based on school/major.
 
-## 13. 事故等级
+## 13. Incident levels
 
-- **P0：**跨用户资料/密钥泄露、模型工具造成真实资金/数据操作、大规模错误扣费；立即 kill switch、事件响应和密钥/会话处理。
-- **P1：**系统性严重幻觉、恶意内容绕过、大规模超预算/重复扣费、删除未生效；停止受影响 pipeline、释放/退款、保全最小证据。
-- **P2：**某格式/语言显著退化、延迟/成本 SLO 持续失败；降级/回滚并发布状态说明。
+- **P0:** cross-user material/secret leaks, model tools causing real money/data operations, large-scale erroneous charges; immediate kill switch, incident response, and secret/session handling.
+- **P1:** systematic severe hallucination, malicious content bypassing defenses, large-scale over-budget/duplicate charges, deletion not taking effect; stop the affected pipeline, release/refund, and preserve minimal evidence.
+- **P2:** significant regression for a format/language, sustained latency/cost SLO failures; degrade/roll back and publish a status note.
 
-复盘记录触发、检测、用户影响、数据/费用、补偿、根因和防复发评测。未经隐私审批，不把事故中的用户原文长期变成测试夹具。
+Retrospectives record the trigger, detection, user impact, data/cost, compensation, root cause, and recurrence-prevention evaluations. Without privacy approval, user content from an incident must never become a long-term test fixture.
 
-## 14. 分阶段实现清单
+## 14. Phased implementation checklist
 
-### Phase 0：契约与安全底座
+### Phase 0: contract and safety foundation
 
-- 统一 TS/Python/OpenAPI schema 和字段命名/版本；
-- 固定合成 contract fixtures 与 CI；
-- 服务间鉴权、输入限制、净化、trace/usage schema；
-- 明确第三方许可证，只使用商业兼容实现。
+- Unify the TS/Python/OpenAPI schemas and field naming/versions;
+- Fixed synthetic contract fixtures and CI;
+- Service-to-service authentication, input limits, sanitization, trace/usage schemas;
+- Clarify third-party licenses and only use commercially compatible implementations.
 
-生产 Materials 试卷已完成；其它产物与 Courses 文件导入尚未复用。
+Production Materials test papers have completed this; other artifacts and Courses file import do not reuse it yet.
 
-### Phase 1：真实解析
+### Phase 1: real parsing
 
-- 每种格式独立 parser、页/块来源、错误语义；
-- golden parse set 和按格式 baseline；
-- Storage 授权下载、临时文件清理和删除联动。
-- Courses 按四类选择版本化 prompt/schema；先实现英语词表的 PDF/DOCX/JSON/MD/HTML/图片 OCR，强制进入人工确认编辑器，其他类别继续禁用。
+- A separate parser per format, page/block sources, error semantics;
+- A golden parse set and per-format baselines;
+- Storage-authorized downloads, temporary file cleanup, and deletion linkage.
+- Courses chooses versioned prompts/schemas by the four categories; implement PDF/DOCX/JSON/MD/HTML/image OCR for English word lists first, forced through the human confirmation editor, with the other categories still disabled.
 
-生产 Materials 试卷已完成所列 parser/来源/临时清理；真正质量达标仍以持续真实 release/eval set 为准。Courses 导入未实现。
+Production Materials test papers have completed the listed parsers/sources/temporary cleanup; real quality is still judged by continuous real releases/eval sets. Courses import is not implemented.
 
-### Phase 2：单产物模型生成（不收费 beta）
+### Phase 2: single-artifact model generation (free beta)
 
-- 模型/prompt/schema、grounded citations、质量/安全门；
-- price snapshot、usage/cost ledger、预算/kill switch；
-- staging/canary，仅授权测试账户。
+- Models/prompts/schemas, grounded citations, quality/safety gates;
+- Price snapshots, a usage/cost ledger, budgets/kill switch;
+- Staging/canary, authorized test accounts only.
 
-Materials 试卷当前处于本阶段：Free quota，不销售 credits；最近候选回滚后生产 flag 保持关闭，只有新的真实 gate、2G canary、候选切流和独立公网复核全部通过后才能重新开启。
+Materials test papers are currently in this phase: Free quota, no credits sales; after the latest candidate rolled back, the production flag stays off, and it can only be turned on again after new real gates, the 2 GB canary, the candidate cutover, and independent public review all pass.
 
-### Phase 3：其它 AI 产物与未来 credits
+### Phase 3: other AI artifacts and future credits
 
-- Materials 已有持久 job/队列、幂等、取消、重试和免费 quota reservation；未来收费必须另建 credit hold/commit/release，不得复用 quota 假装钱包；
-- 经 [经济规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md) 的并发/退款测试；
-- 达成本估算与质量门后才收费。
+- Materials already has durable jobs/queues, idempotency, cancellation, retries, and free quota reservations; future charging must build a separate credit hold/commit/release and must not reuse the quota to pretend to be a wallet;
+- Concurrency/refund tests per the [economy rules](../product/POINTS_CREDITS_VIP_PAYMENTS.md);
+- Charge only after the cost estimates and quality gates are met.
 
-### Phase 4：公开/Market
+### Phase 4: public/Market
 
-- 组合产物、RAG/embedding 删除、在线漂移；
-- AI 标识、公开前额外审核、版权/引用和申诉；
-- 定期模型卡、透明度与单位经济复审。
+- Combined artifacts, RAG/embedding deletion, online drift;
+- AI labeling, extra moderation before publishing, copyright/citations, and appeals;
+- Regular model cards, transparency, and unit economics reviews.
 
-## 15. 相关文档
+## 15. Related documents
 
-- [ADR-0004：核心 API 与 AI 分离](../adr/0004-core-api-and-ai-service-split.md)
-- [ADR-0007：第三方 AI 许可证](../adr/0007-third-party-ai-reference-licensing.md)
-- [ADR-0008：独立学习课程与 Azure Speech](../adr/0008-independent-learning-courses-and-azure-speech.md)
-- [安全策略](../../SECURITY.md)
-- [隐私与数据删除](../governance/PRIVACY_AND_DATA_DELETION.md)
-- [内容审核](../governance/CONTENT_MODERATION.md)
-- [points/credits/VIP/支付规则](../product/POINTS_CREDITS_VIP_PAYMENTS.md)
+- [ADR-0004: Separate the core API and AI](../adr/0004-core-api-and-ai-service-split.md)
+- [ADR-0007: Third-party AI licensing](../adr/0007-third-party-ai-reference-licensing.md)
+- [ADR-0008: Independent learning courses and Azure Speech](../adr/0008-independent-learning-courses-and-azure-speech.md)
+- [Security policy](../../SECURITY.md)
+- [Privacy and data deletion](../governance/PRIVACY_AND_DATA_DELETION.md)
+- [Content moderation](../governance/CONTENT_MODERATION.md)
+- [Points/credits/VIP/payment rules](../product/POINTS_CREDITS_VIP_PAYMENTS.md)

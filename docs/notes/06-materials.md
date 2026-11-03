@@ -1,103 +1,104 @@
-# 06 · Materials 资料库（第一个真后端模块）
+# 06 · Materials library (the first real-backend module)
 
-> **文档定位**
-> - **内容**：记录 Materials 的表、Storage、RLS、上传/预览/删除流程和外键权限复盘。
-> - **作用**：作为 Supabase owner-only 文件模块的实现案例。
-> - **何时更新**：课程/资料字段、Storage 策略、支持格式、预览、配额或清理流程变化时。
+> **About this document**
+> - **Contents**: Records the Materials tables, Storage, RLS, the upload/preview/delete flows, and a retrospective on a foreign-key permission issue.
+> - **Purpose**: Serves as the reference implementation of a Supabase owner-only file module.
+> - **When to update**: When course/material fields, Storage policies, supported formats, preview, quotas, or the cleanup flow change.
 
-> 目标：Materials 是第一个从「假数据」升级到「真后端」的业务模块，是后续模块的范本。讲清楚数据怎么建、文件怎么存、权限怎么隔离、前端各功能怎么实现，以及发现并修掉的一个越权漏洞。前置：[05 数据库/RLS](05-database-and-rls.md)、[04 前端与原型复现](04-frontend-and-prototype-port.md)。
+> Goal: Materials is the first business module upgraded from "mock data" to "real backend" and the template for later modules. This note explains how the data is modeled, how files are stored, how permissions are isolated, how each frontend feature works, and an authorization bug that was found and fixed. Prerequisites: [05 Database/RLS](05-database-and-rls.md), [04 Frontend and prototype port](04-frontend-and-prototype-port.md).
 
-## 1. 需求
-按课程上传 / 查看 / 下载学习资料；每份归属一个课程；用户只能管理自己的；支持 PDF/PPT/Word/Markdown/HTML/TXT。
+## 1. Requirements
+Upload / view / download study materials per course; each material belongs to one course; users can only manage their own; supports PDF/PPT/Word/Markdown/HTML/TXT.
 
-## 2. 关键设计：基础 CRUD 直连 Supabase，AI 经服务端
-和登录读 profiles 一样，Materials 的基础增删查**前端直连 Supabase**：表数据走 `supabase.from(...)`，文件走 `supabase.storage`，安全靠 **RLS + 存储策略**在数据层强制。0041–0043 新增的 AI 生成不沿用这条写路径，必须经过 NestJS owner 校验、service-role 事务、durable queue 和隔离 worker。
+## 2. Key design: basic CRUD talks to Supabase directly, AI goes through the server
+Like reading profiles at sign-in, basic Materials create/read/delete **talks to Supabase directly from the frontend**: table data uses `supabase.from(...)` and files use `supabase.storage`, with security enforced in the data layer by **RLS + storage policies**. The AI generation added in 0041–0043 does not reuse this write path; it must go through NestJS owner checks, service-role transactions, a durable queue, and an isolated worker.
 
-为什么基础 CRUD 不走 NestJS：这些是「用户自有数据 CRUD」，RLS 已保证安全。后端留给需要服务端密钥/特权事务的注册、已上线 Materials AI，以及未来支付。
+Why basic CRUD does not go through NestJS: these are "user-owned data CRUD" operations, already secured by RLS. The backend is reserved for things that need server secrets/privileged transactions: sign-up, the live Materials AI, and future payments.
 
-## 3. 数据模型（迁移 0002）
+## 3. Data model (migration 0002)
 ```
 courses(id, user_id=auth.uid(), code, name, color, term, instructor, created_at)
 materials(id, user_id=auth.uid(),
-          course_id → courses(id) on delete cascade,   -- 删课程级联删资料
-          name 原始文件名, type 扩展名识别, size_bytes,
-          storage_path 文件在桶里的路径, created_at, index(course_id))
+          course_id → courses(id) on delete cascade,   -- deleting a course cascades to its materials
+          name original file name, type detected from the extension, size_bytes,
+          storage_path the file's path in the bucket, created_at, index(course_id))
 ```
-两表都 `enable RLS` + owner-only（见 [05](05-database-and-rls.md)）。
+Both tables `enable RLS` + owner-only (see [05](05-database-and-rls.md)).
 
-## 4. 文件存储（Storage）
-- 私有桶 `materials`（`public=false`，外部不能直链，必须签名 URL）。
-- 对象路径约定 **`{user_id}/{随机uuid}.{ext}`**——第一层文件夹是用户 id。
-- `storage.objects` 上三条策略按「第一层文件夹 = 当前用户」放行：
+## 4. File storage (Storage)
+- Private bucket `materials` (`public=false`; no direct external links, signed URLs required).
+- Object path convention **`{user_id}/{random uuid}.{ext}`** — the first folder level is the user id.
+- Three policies on `storage.objects` allow access when "first folder = current user":
 ```sql
 using (bucket_id='materials' and (storage.foldername(name))[1] = auth.uid()::text)
 ```
-于是「张三只能读写 `materials/张三id/...`」，存储层就隔离了。
+So "Alice can only read and write `materials/<alice id>/...`", and the storage layer is isolated.
 
-## 5. ⚠️ 发现并修复的越权（迁移 0003）
-两用户端到端测试时发现：**B 能插入一条「自己的」materials 行，但 `course_id` 指向 A 的课程**。
-- 为什么：0002 的策略只校验资料的 `user_id`，没校验被引用课程的归属；外键只查「课程存在」不查归属。
-- 影响：B 读不到 A 的课程数据（RLS 仍拦），但能造指向别人课程的脏数据——不干净、潜在完整性问题。
-- 修复（0003）：`with check` 追加「课程必须属于本人」：
+## 5. ⚠️ Authorization bug found and fixed (migration 0003)
+A two-user end-to-end test found that **B could insert a materials row "of their own" whose `course_id` pointed at A's course**.
+- Why: 0002's policy only checked the material's `user_id`, not the ownership of the referenced course; the foreign key only checks that "the course exists", not who owns it.
+- Impact: B still cannot read A's course data (RLS still blocks it), but can create dirty data pointing at someone else's course — unclean, and a potential integrity problem.
+- Fix (0003): add "the course must belong to me" to `with check`:
 ```sql
 and exists (select 1 from public.courses c
             where c.id = materials.course_id and c.user_id = auth.uid())
 ```
-- 验证：修复后 B 再挂到 A 的课程 → **403 被拒**。
+- Verification: after the fix, B attaching a material to A's course → **403 rejected**.
 
-> 教训：**外键不等于权限**。RLS 表通过外键引用另一张「属于用户」的表时，要在 `with check` 里显式校验被引用行也归本人。
+> Lesson: **a foreign key is not a permission**. When an RLS table references another "user-owned" table through a foreign key, explicitly check in `with check` that the referenced row also belongs to the current user.
 
-## 6. 前端实现（`apps/web/src/legacy/materials.ts`）
-一个**自管容器**的小应用，挂到应用壳给的 `#mat-root`（集成方式见 [04](04-frontend-and-prototype-port.md)）。
+## 6. Frontend implementation (`apps/web/src/legacy/materials.ts`)
+A small app that **manages its own container**, mounted into the `#mat-root` provided by the app shell (integration described in [04](04-frontend-and-prototype-port.md)).
 
-### 结构
-- `initMaterials(supabase, user, toast)`：注入依赖。
-- `mountMaterials(el)`：记容器 → `render()`（先出加载态）→ `load()`。
-- `state = { loading, error, courses[], materials[], course }`。
-- `load()`：并发拉 courses + materials → 写 state → 重渲染；出错写 `state.error`（迁移没应用时显示「出错了」而非崩溃）。
-- `render()`：用原型同款 class 拼 HTML 塞进 `#mat-root`；**用户数据逐字段 `esc()` 转义防 XSS**。
-- `wire()`：给 `[data-mat]` 绑点击；拖拽区绑 dragover/drop。
+### Structure
+- `initMaterials(supabase, user, toast)`: inject dependencies.
+- `mountMaterials(el)`: remember the container → `render()` (loading state first) → `load()`.
+- `state = { loading, error, courses[], materials[], course }`.
+- `load()`: fetch courses + materials concurrently → write state → re-render; on error write `state.error` (shows "Error" instead of crashing when a migration hasn't been applied).
+- `render()`: builds HTML with the same classes as the prototype and puts it into `#mat-root`; **every user-data field is escaped with `esc()` to prevent XSS**.
+- `wire()`: binds clicks on `[data-mat]`; binds dragover/drop on the drop zone.
 
-### 各功能逻辑
-- **新建课程** `newCourse()`：弹 `.scrim/.modal` 小表单 → `insert(...).select().single()` → 刷新并切到该课程。`user_id` 由数据库默认填。
-- **上传** `pickFiles()`→`doUpload()`：守卫（没课程先建、选 All 时提示先选课程）；支持点选 + 拖拽；每个文件 → 路径 `${user.id}/${crypto.randomUUID()}.${ext}` → `storage.upload` → `materials.insert`；**入库失败回滚**已传对象（删孤儿文件）；完成后刷新 + toast。
-- **预览 / 下载**：下载签名 URL 当前 120 秒；应用内预览签名 URL 600 秒。PDF/图片/HTML/Markdown/文本在应用内展示，Office 可选择交给 Microsoft 在线预览，其他格式下载查看。
-- **删除** `delMaterial()`：`confirm` → `storage.remove` 删文件 → `delete().eq('id')` 删记录 → 刷新。
-- **筛选**：顶部 chips 改 `state.course` 重渲染（前端过滤仅体验；安全仍靠 RLS）。
+### Feature logic
+- **New course** `newCourse()`: opens a small `.scrim/.modal` form → `insert(...).select().single()` → refresh and switch to that course. `user_id` is filled in by the database default.
+- **Upload** `pickFiles()`→`doUpload()`: guards (create a course first if none; prompt to choose a course when All is selected); supports click-to-pick + drag-and-drop; each file → path `${user.id}/${crypto.randomUUID()}.${ext}` → `storage.upload` → `materials.insert`; **if the insert fails, the uploaded object is rolled back** (orphan file deleted); refresh + toast when done.
+- **Preview / download**: download signed URLs currently last 120 seconds; in-app preview signed URLs last 600 seconds. PDF/images/HTML/Markdown/text are shown in the app, Office files can optionally go to Microsoft's online viewer, and other formats are downloaded.
+- **Delete** `delMaterial()`: `confirm` → `storage.remove` deletes the file → `delete().eq('id')` deletes the record → refresh.
+- **Filter**: the top chips change `state.course` and re-render (frontend filtering is only for UX; security still relies on RLS).
+- **Language**: copy goes through `l(english, chinese)` and follows the global EN/中文 toggle.
 
-### 与应用壳的集成（3 处，见 [04](04-frontend-and-prototype-port.md)）
-1. `mountNalanda` 把 `supabase` / `user` 透传 → `initMaterials(...)`。
-2. `VIEWS.materials = () => '<div id="mat-root"></div>'`（覆盖原 mock 视图）。
-3. `go()` 钩子：进 `materials` 路由时 `mountMaterials(#mat-root)`。
+### Integration with the app shell (3 places, see [04](04-frontend-and-prototype-port.md))
+1. `mountNalanda` passes `supabase` / `user` through → `initMaterials(...)`.
+2. `VIEWS.materials = () => '<div id="mat-root"></div>'` (replaces the original mock view).
+3. `go()` hook: on the `materials` route, `mountMaterials(#mat-root)`.
 
-## 7. 端到端验证
-两用户 RLS 套件包含以下真实 Supabase 断言：
-- A：建课程、资料入库/列表、上传并下载自己的文件、创建签名 URL、显式删除文件/资料/课程。
-- B：看不到 A 的课程/资料、不能下载或签名 A 的文件、不能写入 A 的路径、不能把资料挂到 A 的课程。
-- 清理：用 owner 验证正常删除路径；`afterAll` 再由 service-role 清 Storage 并删除测试用户兜底。
+## 7. End-to-end verification
+The two-user RLS suite includes these real Supabase assertions:
+- A: create a course, insert/list materials, upload and download their own file, create a signed URL, explicitly delete the file/material/course.
+- B: cannot see A's courses/materials, cannot download or sign A's files, cannot write into A's path, cannot attach a material to A's course.
+- Cleanup: the owner verifies the normal delete path; `afterAll` then uses the service role to clean Storage and delete the test users as a fallback.
 
-默认 `pnpm test` 会跳过外部用例；PR/main deploy workflow 会启动一次性本地 Supabase 并显式执行 `pnpm test:rls`，证明仓库迁移在本地基线的实际策略。它仍不能替代托管 staging/生产配置漂移检查。
+The default `pnpm test` skips external cases; the PR/main deploy workflow starts a throwaway local Supabase and explicitly runs `pnpm test:rls`, proving the actual policies of the repository migrations on the local baseline. It still cannot replace configuration-drift checks on hosted staging/production.
 
-> 这套「两用户互相验证 RLS」是检验任何 owner-only 模块的标准做法。可执行命令、环境保护和清理逻辑见 [测试指南](../guides/TESTING.md)，禁止默认对生产项目运行。
+> This "two users verify RLS against each other" suite is the standard way to check any owner-only module. See the [testing guide](../guides/TESTING.md) for runnable commands, environment protection, and cleanup logic; never run it against the production project by default.
 
-## 8. 扩展点
-- 列表分页 / 搜索 / 排序；更稳定的 PDF.js / Office 服务端转图。
-- 上传大小限制、类型白名单、进度条。
+## 8. Extension points
+- List pagination / search / sorting; more robust PDF.js / server-side Office-to-image conversion.
+- Upload size limits, a type allowlist, progress bars.
 
-### 8.1 Materials AI 试卷（生产 0041–0043）
+### 8.1 Materials AI test papers (production 0041–0043)
 
-每行新增 “Use AI” 二级菜单；生产 Generate test paper 可配置语言、难度、15–240 分钟、20–200 分、六类题型、答案详略和 focus；生产 Knowledge list/Quiz/Knowledge graph 仍显示 Coming soon。0046–0051 候选已把 “Organize knowledge points” 接为真实知识图谱入口并增加 Luna pipeline，受保护发布完成后才可更新本段生产状态。首次按用户记录第三方/ZDR/私有 parse cache 同意。
+Each row gains a "Use AI" submenu; production Generate test paper can configure language, difficulty, 15–240 minutes, 20–200 marks, six question types, answer detail, and focus; production Knowledge list/Quiz/Knowledge graph still show Coming soon. The 0046–0051 candidate has wired "Organize knowledge points" as a real knowledge-graph entry and added the Luna pipeline; this section's production status can only be updated after the protected release completes. Consent to third-party/ZDR/private parse cache is recorded per user the first time.
 
-API 不把永久 Storage 权限交给 worker：先校验 owner、格式和 25MB/图片10MB，再创建短期 signed URL与 Postgres job/quota reservation；BullMQ 只投 UUID，FastAPI 解析并回调进度。页面每2秒轮询，后台退避到10秒，离开/刷新不取消。成功试卷落在同一 `courses.id` 的 My Notes；删除材料/科目可保留到 Unfiled 或同时删除 AI 结果，两者都取消任务、清 parse cache和过程文件。
+The API never gives the worker permanent Storage access: it first checks owner, format, and 25 MB/10 MB for images, then creates a short-lived signed URL and a Postgres job/quota reservation; BullMQ only enqueues the UUID, and FastAPI parses and calls back progress. The page polls every 2 seconds and backs off to 10 seconds in the background; leaving/refreshing does not cancel. A successful test paper lands in My Notes under the same `courses.id`; deleting a material/course can either keep the AI results under Unfiled or delete them too, and both cancel jobs and clear the parse cache and process files.
 
-生产数据库已到 0053，但后续候选应用在真实供应商门禁失败后回退到此前稳定 release。2026-08-11 的 0041–0043 受保护发布曾通过真实 DeepSeek/MiMo、220 页 Office canary、登录用户生成/评分/删除、临时目录清理和独立公网 readiness 后开启 `FEATURE_MATERIAL_AI`；2026-08-22 的最新候选又连续两次在真实 PPTX 试卷 gate 返回 `AI_EXAM_VALIDATION_FAILED`，没有切流。数据库版本与应用能力仍须分别核对。Storage 文件删除仍是 immediate best effort，完整孤儿重试/账号 DSAR 仍属运维缺口。
+The production database is at 0053, but a later candidate app rolled back to the earlier stable release after real provider gates failed. The 2026-08-11 protected release of 0041–0043 turned on `FEATURE_MATERIAL_AI` after passing real DeepSeek/MiMo, a 220-page Office canary, a signed-in user generate/grade/delete, temporary directory cleanup, and independent public readiness; the latest candidate on 2026-08-22 then twice returned `AI_EXAM_VALIDATION_FAILED` on the real PPTX test-paper gate and was not cut over. Database version and app capability must still be checked separately. Storage file deletion is still immediate best effort; full orphan retries/account DSAR remain an operations gap.
 
-### 8.2 可恢复长任务、知识图谱与 Luna（0046–0051 候选，尚未上线）
+### 8.2 Resumable long jobs, knowledge graph, and Luna (0046–0051 candidate, not yet live)
 
-候选 API 只等待 worker 202 接收，后续由内部认证 callback 持久化 progress、usage、checkpoint 与 terminal result，避免单个生成占用五分钟以上 HTTP。显式 Undici Agent 将 connect/accept/headers/body timeout 分开，响应头超时映射 `AI_WORKER_TIMEOUT`；用户可在 `resumeUntil` 前点击 Resume 继续同一 job。数据库 checkpoint 与 worker 0700 local checkpoint/usage spool 合并最高有效阶段，已完成 provider 阶段不重复调用，usage event UUID 不重复计费；终态或默认 24 小时 TTL 清理残留。
+The candidate API only waits for the worker's 202 acceptance; afterwards internally authenticated callbacks persist progress, usage, checkpoints, and the terminal result, so a single generation never holds an HTTP request for more than five minutes. An explicit Undici Agent separates connect/accept/headers/body timeouts, and a response-header timeout maps to `AI_WORKER_TIMEOUT`; users can click Resume before `resumeUntil` to continue the same job. The database checkpoint and the worker's 0700 local checkpoint/usage spool merge to the highest valid stage, completed provider stages are not called again, and usage event UUIDs are never billed twice; terminal states or the default 24-hour TTL clean up leftovers.
 
-“Organize knowledge points” 的旧 pipeline 与试卷共用解析/审查/失败范围视觉恢复；Luna pipeline 直接校验并 inline 发送原始文件，不运行 parser/OCR/DocumentIR、不使用 Files API，固定 GPT-6 Luna + Azure-only ZDR/no fallback。两者都生成 `GeneratedKnowledgeGraphV1`，节点按 sourceOrder 与 level 排列并包含详细解释、关键点、例子、公式、误区、自测和来源。
+The old pipeline for "Organize knowledge points" shares parsing/review/failed-region visual recovery with test papers; the Luna pipeline validates the native file and sends it inline directly, without running parser/OCR/DocumentIR or using the Files API, fixed to GPT-6 Luna + Azure-only ZDR/no fallback. Both produce `GeneratedKnowledgeGraphV1`, with nodes ordered by sourceOrder and level, each including a detailed explanation, key points, examples, formulas, misconceptions, self-checks, and sources.
 
-My Notes 动态加载 React Flow + ELK：支持画布 pan/zoom、节点拖动、fit/auto arrange、键盘移动、250 节点与移动端；初始布局和拖动保存都做碰撞消解。图中只显示类型/标题，hover/聚焦临时在画布外 inspector 显示详情，点击固定并允许 node Q&A，`Esc` 取消；坐标/viewport 按 user/note/artifact version/revision 跨设备保存。整个 Materials/My Notes 候选 UI 固定英文并复用原有字体/token。
+My Notes loads React Flow + ELK dynamically: it supports canvas pan/zoom, node dragging, fit/auto arrange, keyboard movement, 250 nodes, and mobile; the initial layout and saved drags both run collision resolution. The graph only shows type/title; hover/focus temporarily shows details in an off-canvas inspector, clicking pins it and allows node Q&A, and `Esc` cancels; coordinates/viewport are saved across devices per user/note/artifact version/revision. The Materials/My Notes candidate UI reuses the existing fonts/tokens and follows the global language toggle.
 
-队列每行可 Delete，标题区可 Clear history；两者应用内二次确认。queued 删除释放额度，worker accepted 后删除/兼容 Cancel 消费一次；活动行保持 “Cleaning up…” 到 worker 确认 HTTPX/Office/checkpoint/spool/0700 目录均清理。Clear 只删 terminal，不删 active、既有 Notes 或 provider usage。在线考试选择/输入只保存草稿且 `results=[]`，整卷 Submit 二次确认后统一批改，主观题合并一次 AI 评分；到期交卷走相同路径。
+Each queue row can be deleted, and the header has Clear history; both use an in-app confirmation. Deleting a queued job releases its allowance, while deleting/compatible Cancel after the worker accepted consumes one run; an active row stays "Cleaning up…" until the worker confirms HTTPX/Office/checkpoint/spool/0700 directory are all cleaned. Clear only removes terminal jobs, never active jobs, existing Notes, or provider usage. In online exams, selections/input are saved as drafts only with `results=[]`; after a confirmed whole-paper Submit everything is graded together, with subjective questions merged into one AI grading run; submission at the deadline uses the same path.

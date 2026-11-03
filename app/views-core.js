@@ -312,7 +312,7 @@ VIEWS.create = function(){
             <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Depth</div>
               <div class="row gap-6">${["Concise","Balanced","Exhaustive"].map((d,i)=>`<span class="chip ${i===1?'chip-accent':'chip-outline'}">${d}</span>`).join("")}</div></div>
             <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Language</div>
-              <div class="row gap-6"><span class="chip chip-accent">English</span><span class="chip chip-outline">中文</span></div></div>
+              <div class="row gap-6"><span class="chip chip-accent">English</span><span class="chip chip-outline">Chinese</span></div></div>
             <div><div style="font-size:12px;font-weight:600;color:var(--ink-faint);text-transform:uppercase;letter-spacing:.08em;margin-bottom:8px">Cost</div>
               <span class="chip chip-accent">${ICON("coin")} 25 credits</span></div>
           </div>

@@ -1,79 +1,79 @@
-# 数据库发布、失败处置与恢复
+# Database release, failure handling, and recovery
 
-> **本文内容：** 规定 Supabase/PostgreSQL 迁移的编写、CI 重建、生产 dry-run、发布前恢复点、受保护发布、验证和失败处置流程。
-> **作用：** 保证数据库失败时阻断应用发布，并为不可逆迁移提供真实可执行的 forward-fix 或隔离恢复路径。
-> **何时更新：** 迁移工具、GitHub Actions、Supabase 项目/方案、备份格式、审批人、应用部署拓扑或恢复策略变化时；每次数据库事故后必须更新。
+> **Contents:** Defines the process for writing Supabase/PostgreSQL migrations, CI rebuilds, production dry-runs, pre-release recovery points, protected releases, verification, and failure handling.
+> **Purpose:** Ensures database failures block application releases, and gives irreversible migrations a real, executable forward-fix or isolated recovery path.
+> **When to update:** When the migration tooling, GitHub Actions, Supabase project/plan, backup format, approvers, application deployment topology, or recovery strategy changes; it must be updated after every database incident.
 
-## 1. 当前可执行能力
+## 1. What can be executed today
 
-权威迁移目录是 `supabase/migrations/`，本地 Supabase 基线是 `supabase/config.toml`。`.github/workflows/deploy.yml` 现在按以下顺序执行：
+The authoritative migration directory is `supabase/migrations/`, and the local Supabase baseline is `supabase/config.toml`. `.github/workflows/deploy.yml` now runs in this order:
 
-1. 文档检查、TypeScript typecheck、默认测试和全部 workspace 构建；
-2. 启动完整本地 Supabase，自动暂存全部 0008+ 文件，先停在 0007 建立历史 points 夹具，再应用至最新迁移验证回填、opening 归零、Courses 增量与发布断言；随后从空库应用全部迁移；
-3. 运行 `db lint`，执行双用户 RLS/Storage/points/Courses E2E，再以 Azure/OpenRouter fake 启动 Web/API 运行 Playwright Courses 主流程；
-4. 若 push 新增了迁移，质量与本地数据库门禁继续执行，但生产数据库和应用发布保持跳过；数据库 owner 必须先在该 `main` commit 上人工发起 `workflow_dispatch` 并选中 `plan_database_migrations`，核对 history/dry-run 后再另起一次执行选中 `apply_database_migrations`；
-5. 核对生产 Project Ref，显示远端 migration history 和 `db push --dry-run`；
-6. 生成 roles/schema/data/migration-history 加密恢复点并成功上传；
-7. 若远端 history 为空，临时只保留 0001–0007 迁移，通过 public schema 零差异和 Storage policy/bucket 核验后才将这 7 个已存在版本标记为 applied；已建立的远端 history 必须是至少包含 0001–0007 的连续本地前缀；
-8. 执行 `supabase db push --linked`，再次 dry-run、检查 history 并 lint；
-9. 只有手动数据库 job 成功，或本次执行明确没有迁移时，才构建应用。上传前生产主机定向清理同 SHA/过期 incoming 与未被容器或当前 `.deploy.env` 引用的 Nalanda image，并要求至少 6 GiB 可用空间；不满足时保持当前应用不动。
-10. 生产主机以自身 mode-600 `.env` 先运行真实 Azure 基础 TTS/评分 gate 与真实 OpenRouter structured semantic gate，再在待激活 API 上验证持久队列、private Storage、跨用户重复词复用、未经 VAD/静音裁剪的 WAV 原字节评分和翻译评判幂等。0037 起还必须以 Azure 合成“苹果”中文 WAV 调用真实 Fish Audio STT，验证 owner/revision/word 绑定和中文 transcript 后才激活 Web release。
-11. 任一激活门禁失败时，EXIT trap 清除失败候选制品；上一 API 使用上一 `.deploy.env`/compose 的不可变镜像以 `--no-deps` 恢复并独立验证，不能因可选 AI unhealthy 把应用回滚扩大为公网 502。
+1. Docs checks, TypeScript typecheck, default tests, and all workspace builds;
+2. Starts a full local Supabase, automatically stages all 0008+ files, first stops at 0007 to build historical points fixtures, then applies up to the latest migration to verify backfills, opening resets, Courses increments, and release assertions; then applies all migrations from an empty database;
+3. Runs `db lint`, executes two-user RLS/Storage/points/Courses E2E, then starts the Web/API with Azure/OpenRouter fakes to run the Playwright Courses main flow;
+4. If the push added migrations, the quality and local database gates still run, but the production database and application release stay skipped; the database owner must first manually start `workflow_dispatch` on that `main` commit with `plan_database_migrations` selected, check the history/dry-run, and then start another run with `apply_database_migrations` selected;
+5. Checks the production Project Ref and shows the remote migration history and `db push --dry-run`;
+6. Generates an encrypted roles/schema/data/migration-history recovery point and uploads it successfully;
+7. If the remote history is empty, temporarily keeps only the 0001–0007 migrations, and only marks those 7 existing versions as applied after a zero public schema diff and Storage policy/bucket checks; an established remote history must be a contiguous local prefix containing at least 0001–0007;
+8. Runs `supabase db push --linked`, then dry-runs again, checks the history, and lints;
+9. The application is only built when the manual database job succeeded or this run clearly has no migrations. Before upload, the production host does targeted cleanup of same-SHA/expired incoming items and Nalanda images not referenced by any container or the current `.deploy.env`, and requires at least 6 GiB of free space; otherwise the current application is left untouched.
+10. The production host uses its own mode-600 `.env` to first run the real Azure basic TTS/scoring gate and the real OpenRouter structured semantic gate, then on the pending API verifies the durable queue, private Storage, cross-user reuse of duplicate words, scoring on raw WAV bytes with no VAD/silence trimming, and translation judgement idempotency. Since 0037 it must also call real Fish Audio STT with an Azure-synthesized Chinese WAV of the word "apple", verifying owner/revision/word binding and the Chinese transcript before activating the Web release.
+11. When any activation gate fails, the EXIT trap clears the failed candidate artifacts; the previous API is restored with `--no-deps` from the immutable image of the previous `.deploy.env`/compose and verified independently, so an unhealthy optional AI can't escalate an application rollback into a public 502.
 
-生产 0039–0040 进一步要求：用独立 secret 启动无宿主机端口的 Redis，验证认证 PING、AOF `everysec`、`noeviction` 和 private network；API readiness 必须同时返回 `deps.supabase=ok`、`deps.redis=ok`，并验证标准限流 headers 与未认证 points admin 401。Redis/nginx 可在应用回退后继续运行；它们不能代替数据库恢复点或 provider gates。
+Production 0039–0040 further require: start Redis with no host port using an independent secret, and verify authenticated PING, AOF `everysec`, `noeviction`, and the private network; API readiness must return both `deps.supabase=ok` and `deps.redis=ok`, and the standard rate-limit headers and unauthenticated points admin 401 must be verified. Redis/nginx can keep running after an application rollback; they don't replace database recovery points or provider gates.
 
-0037–0038 的历史发布 plan 只出现 `20260804000037_learning_translation_voice_input.sql` 与 `20260804000038_verify_learning_translation_voice_input.sql`。恢复点之后 apply 扩展 `learning_speech_usage.kind` 并增加 service-role-only reservation RPC；应用回滚仍可忽略新增 kind/RPC，数据库只 forward-fix。发布已确认普通 `authenticated` 不能执行 RPC/读取 usage、待激活 API 的 STT 真实 gate 通过且公网 health `deps.supabase=ok`；后续发布仍不得把本地 fake Playwright 当真实供应商证据。
+The historical 0037–0038 release plan only showed `20260804000037_learning_translation_voice_input.sql` and `20260804000038_verify_learning_translation_voice_input.sql`. After the recovery point, apply extended `learning_speech_usage.kind` and added a service-role-only reservation RPC; an application rollback can still ignore the new kind/RPC, and the database is forward-fixed only. The release confirmed that ordinary `authenticated` can't execute the RPC/read usage, the pending API's real STT gate passed, and public health showed `deps.supabase=ok`; later releases still must not treat local fake Playwright as real provider evidence.
 
-已有迁移文件被修改、重命名或删除会在 CI 直接失败；修正必须新增向前迁移。迁移文件或数据库发布控制 workflow/脚本发生变化，都会把普通 main push 保持在“只验证、不部署”状态，避免发布工具修复绕过尚未完成的数据库 release。普通 push 永不直接修改生产数据库；`plan_database_migrations` 只读且不部署应用，只有单独选中 `apply_database_migrations` 才创建恢复点并执行数据库发布，两者同时选中会失败。
+Modifying, renaming, or deleting an existing migration file fails CI immediately; corrections must add a new forward migration. Changes to migration files or to the database release control workflow/scripts keep ordinary main pushes in a "verify only, don't deploy" state, so fixes to the release tooling can't bypass an unfinished database release. Ordinary pushes never modify the production database directly; `plan_database_migrations` is read-only and doesn't deploy the application, only selecting `apply_database_migrations` on its own creates a recovery point and runs the database release, and selecting both fails.
 
-`scripts/db-push.mjs` 是不维护 migration history 的旧版应急工具，现已：
+`scripts/db-push.mjs` is a legacy emergency tool that doesn't maintain migration history, and it now:
 
-- 移除默认生产 Project Ref；
-- 强制显式设置 `SUPABASE_PROJECT_REF`；
-- 强制设置 `ALLOW_LEGACY_DB_PUSH=YES`；
-- 不再属于正常发布路径。
+- Has the default production Project Ref removed;
+- Requires `SUPABASE_PROJECT_REF` to be set explicitly;
+- Requires `ALLOW_LEGACY_DB_PUSH=YES`;
+- Is no longer part of the normal release path.
 
-## 2. 为什么不自动逆向数据库
+## 2. Why the database is never reversed automatically
 
-PostgreSQL schema/data 迁移通常没有安全通用的逆操作。自动 `DROP`、恢复旧 dump 或 PITR 都可能覆盖迁移之后的新写入，并且数据库、Auth、Storage metadata 和 Storage 文件字节并不是同一恢复面。
+PostgreSQL schema/data migrations usually have no safe general inverse. An automatic `DROP`, restoring an old dump, or PITR can all overwrite new writes made after the migration, and the database, Auth, Storage metadata, and Storage file bytes are not one recovery surface.
 
-因此当前保证是：
+So the current guarantees are:
 
-- 迁移失败：不部署新应用；保留旧应用，人工判断部分生效状态并 forward-fix；
-- 迁移成功而应用失败：自动回退上一 Web/API 不可变 release，数据库保持向后兼容的新 schema；
-- 数据被破坏：停止写入，先用加密恢复点恢复到**新的隔离 Supabase 项目**验证，再经审批决定切换或差异合并；
-- CI 永不自动把生产数据库恢复到旧快照。
+- Migration fails: don't deploy the new application; keep the old application, assess the partially applied state manually, and forward-fix;
+- Migration succeeds but the application fails: automatically roll back to the previous immutable Web/API release, and the database keeps the backward-compatible new schema;
+- Data is corrupted: stop writes, first restore the encrypted recovery point into a **new isolated Supabase project** to verify, then decide on a switchover or differential merge with approval;
+- CI never automatically restores the production database to an old snapshot.
 
-这要求每个迁移遵循 expand → backfill → switch → contract。删除列、缩窄类型或破坏旧应用契约的 contract 必须在独立维护窗口和观察期之后发布。
+This requires every migration to follow expand → backfill → switch → contract. Contracts that drop columns, narrow types, or break the old application's contract must be released after a separate maintenance window and observation period.
 
-## 3. 迁移文件约定
+## 3. Migration file conventions
 
-命名：
+Naming:
 
 ```text
 supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
 ```
 
-每个新迁移必须说明：目的、依赖、锁/耗时、兼容窗口、验证查询、forward-fix 和不可逆点，并满足：
+Every new migration must state its purpose, dependencies, locks/duration, compatibility window, verification queries, forward-fix, and irreversible points, and must:
 
-- 不编辑任何已进入共享环境的迁移；
-- schema 变更和大数据回填分开；回填必须分批、可重入；
-- 新表启用 RLS 并补齐正反策略；
-- `SECURITY DEFINER` 固定 `search_path`，撤销 `PUBLIC/anon/authenticated` 的默认 EXECUTE，只授权受控角色或仅供 trigger；
-- points/credits/支付等副作用必须有不可变事件和唯一幂等键；
-- 外键、删除语义、约束和访问路径索引一起评审；
-- 不把 `IF NOT EXISTS` 当作 schema 漂移或可回滚证明。
+- Never edit a migration that has reached a shared environment;
+- Separate schema changes from large data backfills; backfills must be batched and re-entrant;
+- Enable RLS on new tables with both positive and negative policies;
+- Pin `search_path` for `SECURITY DEFINER`, revoke the default EXECUTE from `PUBLIC/anon/authenticated`, and grant only to controlled roles or use only from triggers;
+- Give side effects such as points/credits/payments immutable events and unique idempotency keys;
+- Review foreign keys, deletion semantics, constraints, and access-path indexes together;
+- Never treat `IF NOT EXISTS` as proof against schema drift or of reversibility.
 
-`CREATE INDEX CONCURRENTLY` 不能放在普通事务块内，必须独立设计、验证执行通道并记录重试行为。
+`CREATE INDEX CONCURRENTLY` can't be inside an ordinary transaction block; it must be designed separately, its execution channel verified, and its retry behavior recorded.
 
-## 4. 首次启用 Supabase CLI migration history
+## 4. Enabling Supabase CLI migration history for the first time
 
-生产曾通过 SQL Editor/Management API 应用过旧文件时，不能直接让 CI 猜测历史，也不能盲目 `--include-all`。当前受保护 apply 通过 `scripts/prepare-production-migration-baseline.sh` 自动执行一次性 baseline，但只接受两类远端状态：history 完全为空，或 history 是至少包含完整 0001–0007 的连续本地前缀。partial baseline、gap、远端未知版本一律停止。首次启用必须在维护窗口完成：
+When production previously had old files applied through the SQL Editor/Management API, CI must not guess the history, and `--include-all` must not be used blindly. The current protected apply runs a one-time baseline automatically through `scripts/prepare-production-migration-baseline.sh`, but only accepts two kinds of remote state: an entirely empty history, or a history that is a contiguous local prefix containing at least the full 0001–0007. A partial baseline, gaps, or unknown remote versions all stop. First enablement must be done in a maintenance window:
 
-1. 创建生产恢复点，并记录 Git SHA、所有现有迁移 checksum 和生产 Ref；
-2. 在 disposable/staging 从空库应用仓库全部迁移并运行 RLS E2E；
-3. 对空 history，脚本临时移出 0008 及之后文件，用 `db diff --linked --schema public` 要求生产 public schema 与 0001–0007 **零差异**；由于 CLI schema diff 不可靠比较 Storage bucket，另行 dump 并核对 5 条 Storage policy、`materials` 私有桶和 `community-media` 公开桶；
-4. 链接生产并查看差异：
+1. Create a production recovery point and record the Git SHA, the checksums of all existing migrations, and the production Ref;
+2. On a disposable/staging project, apply all of the repository's migrations from an empty database and run the RLS E2E;
+3. For an empty history, the script temporarily moves out 0008 and later files and uses `db diff --linked --schema public` to require **zero diff** between the production public schema and 0001–0007; since the CLI schema diff doesn't reliably compare Storage buckets, it separately dumps and checks the 5 Storage policies, the private `materials` bucket, and the public `community-media` bucket;
+4. Link production and review the diff:
 
    ```bash
    SUPABASE_ACCESS_TOKEN=... \
@@ -83,316 +83,316 @@ supabase/migrations/<YYYYMMDDHHMMSS>_<short_snake_case_description>.sql
    supabase db push --linked --dry-run
    ```
 
-5. 只有上述检查全通过且加密恢复点 artifact 已成功上传，脚本才将 0001–0007 一次标记 applied；人工故障处置时的单条命令示例为：
+5. Only when all of the checks above pass and the encrypted recovery point artifact has been uploaded successfully does the script mark 0001–0007 applied in one go; a single-command example for manual incident handling is:
 
    ```bash
    supabase migration repair 20260620000001 --status applied
    ```
 
-6. 再次运行 `migration list` 和 `db push --dry-run`，预期只显示真正尚未发布的新迁移；
-7. 保存 baseline 的 history、零差异、Storage 检查、artifact、operator 和 Git SHA 记录；套餐支持 required reviewer 时再要求两人复核。
+6. Run `migration list` and `db push --dry-run` again, expecting only the genuinely unreleased new migrations;
+7. Save the baseline's history, zero diff, Storage checks, artifact, operator, and Git SHA records; when the plan supports required reviewers, require two-person review.
 
-若 CLI 提示 local/remote history 不一致，停止发布并审计；不要为了让 job 变绿而批量 repair。
+If the CLI reports a local/remote history mismatch, stop the release and audit; don't bulk repair just to make the job green.
 
-## 5. GitHub 环境与 Secrets
+## 5. GitHub environments and Secrets
 
-仓库必须建立两个 environment：
+The repository must have two environments:
 
-- `production-database`：只允许 `main`；支持 environment reviewer 的套餐还必须配置至少一名数据库 owner 审批；
-- `production`：应用发布审批可按团队风险级别设置。
+- `production-database`: `main` only; plans that support environment reviewers must also require approval from at least one database owner;
+- `production`: application release approval can be set according to the team's risk level.
 
-当前私有仓库套餐不支持 required reviewer。现有 `production-database` 已启用 `main` 分支限制；在套餐升级前，数据库发布不得由普通 push 自动授权，必须由数据库 owner 先运行 plan、复核结果，再人工发起带 `apply_database_migrations=true` 的独立 `workflow_dispatch`，并在发布记录中保存 Ref、Git SHA、迁移列表、dry-run 与复核人。GitHub Environment 的存在不是审批证据。
+The current private-repository plan doesn't support required reviewers. The existing `production-database` has the `main` branch restriction enabled; until the plan is upgraded, database releases must not be authorized automatically by ordinary pushes; the database owner must first run plan, review the result, then manually start a separate `workflow_dispatch` with `apply_database_migrations=true`, and save the Ref, Git SHA, migration list, dry-run, and reviewer in the release record. The existence of a GitHub Environment is not evidence of approval.
 
-数据库 environment 需要：
+The database environment needs:
 
-| Secret | 用途 |
+| Secret | Purpose |
 |---|---|
-| `SUPABASE_ACCESS_TOKEN` | CLI 链接项目；使用专用最小权限发布身份 |
-| `SUPABASE_DB_PASSWORD` | 生产数据库连接；禁止输出到日志 |
-| `SUPABASE_PROJECT_REF` | 明确目标项目；CI 会与 Web 生产 URL 交叉核对 |
-| `VITE_SUPABASE_URL` | 仅用来确认 Ref 与当前 Web 生产项目一致 |
-| `DB_BACKUP_ENCRYPTION_KEY` | AES-256/PBKDF2 加密发布恢复点；必须离线另存恢复副本 |
+| `SUPABASE_ACCESS_TOKEN` | CLI project linking; use a dedicated least-privilege release identity |
+| `SUPABASE_DB_PASSWORD` | Production database connection; must never be printed to logs |
+| `SUPABASE_PROJECT_REF` | Explicit target project; CI cross-checks it against the Web production URL |
+| `VITE_SUPABASE_URL` | Only used to confirm the Ref matches the current Web production project |
+| `DB_BACKUP_ENCRYPTION_KEY` | AES-256/PBKDF2 encryption of release recovery points; a recovery copy must be stored separately offline |
 
-应用 environment 的 SSH/Web secrets 见[环境变量矩阵](../guides/ENVIRONMENT_VARIABLES.md)。0039 第一阶段还必须有彼此独立的 64 位 hex `REDIS_PASSWORD` 和 `RATE_LIMIT_HMAC_SECRET`；workflow 只通过 SSH 标准输入安装，前者只进入服务器 `.redis.env`/API Redis URL，后者只进入 API `.env`。Actions 中只保留加密的数据库 artifact 14 天；artifact 权限不替代密码学加密，也不替代异地长期备份。
+The application environment's SSH/Web secrets are in the [environment variable matrix](../guides/ENVIRONMENT_VARIABLES.md). Stage one of 0039 also requires independent 64-character hex `REDIS_PASSWORD` and `RATE_LIMIT_HMAC_SECRET`; the workflow only installs them over SSH standard input, the former only goes into the server's `.redis.env`/API Redis URL, and the latter only into the API `.env`. Actions only keeps the encrypted database artifact for 14 days; artifact permissions replace neither cryptographic encryption nor long-term off-site backups.
 
-## 6. 发布前门禁
+## 6. Pre-release gates
 
-- [ ] 新迁移文件名晚于仓库现有版本，旧文件无变化。
-- [ ] 老应用在新 schema 上仍能读写；contract 不在本次执行。
-- [x] 2026-07-22 Courses 发布：RLS、Storage policy、function EXECUTE、trigger 幂等有双用户测试。
-- [x] 0008/0009 首次生产发布审计：2026-07-21 只读聚合确认 1 个 Profile，points=11、credits=0、streak=0、无 VIP；owner 决定 points 归零，0009 以 append-only reversal 实施，credits/VIP/streak 不改。
-- [ ] 估算表规模、锁、statement timeout 和 backfill 时间。
-- [x] 0039 第一阶段 PR/plan 只包含 0039–0040；Stage B 随后以顺序追加的 0052–0053 把生产 history 推进到 0053，原预留 0044–0045 没有补插历史。
-- [x] Redis/HMAC secrets 已安装；compose/nginx config、真实 Redis Lua、PING/AOF/no-port、429 JSON/headers 与 fail-open/closed 已验证。
-- [x] 0039 应用于 `2026-08-10T09:35:34Z` 激活；24 小时观察截止不早于 `2026-08-11T09:35:34Z`，contract go/no-go 已于 2026-08-22 完成。
-- [x] 2026-07-22 Courses 发布：[ERD](../guides/ERD.md)、[API](../guides/API.md)及产品规则已同步。
-- [x] 2026-07-22 Courses 发布：owner 核对 Ref、Git SHA、0001–0013 history 和只读 dry-run；人工 plan/apply 分开执行。
-- [x] 2026-07-22 Courses 发布：新的加密恢复点创建、验证并保留；解密 key 仍由 Actions 外受控保管。
-- [ ] Storage 文件变更另有对象备份；数据库 dump 不含文件字节。
-- [x] 2026-07-22 Courses 发布：应用 flags/降级、验证 SQL、上一 release 回退和数据库 forward-fix 边界已准备并经过 workflow。
-- [x] Courses 发布：确认 0011–0013 的 15 张新表、`profiles.timezone`、`vocabulary-audio` bucket、全部 service-only RPC 和九个 badge 定义；remote history 已到 0013。
-- [x] Courses 大词表入口：生产 nginx `/api/ client_max_body_size 10m` 已同步并通过 `nginx -t`；Nest JSON 10 MB 与评分 multipart 2 MB 分层不变。
-- [x] Azure key/region 只在 API 环境，fake=false；月预算、用户限额、熔断和 Japan East 真实合成/评分 smoke 已确认。
+- [ ] New migration filenames are later than the repository's existing versions, and old files are unchanged.
+- [ ] The old application can still read and write on the new schema; contracts are not executed in this release.
+- [x] 2026-07-22 Courses release: RLS, Storage policies, function EXECUTE, and trigger idempotency have two-user tests.
+- [x] 0008/0009 first production release audit: on 2026-07-21 a read-only aggregate confirmed 1 Profile, points=11, credits=0, streak=0, no VIP; the owner decided to reset points to zero, which 0009 implements as an append-only reversal, leaving credits/VIP/streak unchanged.
+- [ ] Estimate table size, locks, statement timeout, and backfill time.
+- [x] The 0039 stage-one PR/plan only contains 0039–0040; Stage B later advanced production history to 0053 with the sequentially appended 0052–0053, and the originally reserved 0044–0045 were not back-filled into history.
+- [x] Redis/HMAC secrets are installed; compose/nginx config, real Redis Lua, PING/AOF/no-port, 429 JSON/headers, and fail-open/closed are verified.
+- [x] The 0039 application was activated at `2026-08-10T09:35:34Z`; the 24-hour observation ended no earlier than `2026-08-11T09:35:34Z`, and the contract go/no-go was completed on 2026-08-22.
+- [x] 2026-07-22 Courses release: the [ERD](../guides/ERD.md), [API](../guides/API.md), and product rules are in sync.
+- [x] 2026-07-22 Courses release: the owner checked the Ref, Git SHA, 0001–0013 history, and the read-only dry-run; manual plan/apply ran separately.
+- [x] 2026-07-22 Courses release: a new encrypted recovery point was created, verified, and kept; the decryption key is still held under control outside Actions.
+- [ ] Storage file changes have a separate object backup; database dumps don't contain file bytes.
+- [x] 2026-07-22 Courses release: application flags/degradation, verification SQL, rollback to the previous release, and the database forward-fix boundary were prepared and exercised through the workflow.
+- [x] Courses release: confirmed the 15 new tables of 0011–0013, `profiles.timezone`, the `vocabulary-audio` bucket, all service-only RPCs, and the nine badge definitions; remote history reached 0013.
+- [x] Courses large word list entry: production nginx `/api/ client_max_body_size 10m` is in sync and passed `nginx -t`; the layering of Nest JSON 10 MB and scoring multipart 2 MB is unchanged.
+- [x] The Azure key/region are only in the API environment, fake=false; the monthly budget, per-user limits, circuit breaker, and Japan East real synthesis/scoring smoke are confirmed.
 
-## 7. 本地与 staging 验证
+## 7. Local and staging verification
 
-本地和 CI 使用同一基线：
+Local and CI use the same baseline:
 
 ```bash
 supabase start
-# 先按测试指南执行 0007→latest seed / migration up / assert
+# First run the 0007→latest seed / migration up / assert per the testing guide
 supabase db reset --local --no-seed
 supabase db lint --local --schema public --level error --fail-on error
 ```
 
-取得 `supabase status -o env` 的本地 `API_URL`、`ANON_KEY` 和 `SERVICE_ROLE_KEY` 后，按 CI 方式运行升级夹具与 `pnpm test:rls`。完整命令见[测试指南](../guides/TESTING.md)。完成后：
+After getting the local `API_URL`, `ANON_KEY`, and `SERVICE_ROLE_KEY` from `supabase status -o env`, run the upgrade fixtures and `pnpm test:rls` the same way as CI. Full commands are in the [testing guide](../guides/TESTING.md). When done:
 
 ```bash
 supabase stop --no-backup
 ```
 
-除空库重建外，还必须在含近似生产规模数据的 staging 演练锁、耗时、回填、旧应用兼容和失败重试。
+Beyond empty-database rebuilds, locks, duration, backfills, old-application compatibility, and failure retries must also be rehearsed on staging with near-production-scale data.
 
-### 7.1 0008 首次生产发布的历史值门禁
+### 7.1 Historical value gate for the first 0008 production release
 
-0001–0007 曾允许 owner 改写 Profile 的 points、credits、level、VIP 和 streak；仓库没有逐笔旧账，0008 无法自动区分合法值与伪造值。首次生产应用 0008–0010 前必须：
+0001–0007 allowed owners to rewrite Profile points, credits, level, VIP, and streak; the repository had no per-entry legacy ledger, so 0008 couldn't automatically tell legitimate values from forged ones. Before applying 0008–0010 to production for the first time, you must:
 
-1. 在变更窗口冻结相关写入，保存加密恢复点，并导出 `id,points,credits,level,level_name,vip_until,streak,streak_date,updated_at` 到受限审计位置；
-2. 用可用的产品规则、发布时间、访问/安全日志和异常分布审查非零余额、未来 VIP、极端 streak/level；不要把原始用户数据贴入 PR/Actions 日志；
-3. 对每类无法证明来源的值作出“保留、归零、限制权益或通知用户”的书面产品/安全决定；若需改值，使用独立、评审过、可记录影响行数的维护 SQL/前向迁移，并在 0008 创建 opening 前完成；
-4. 保存审批人、时间、聚合结果、修正脚本 checksum、影响行数与复核查询。无法完成时不得批准 `production-database` environment。
+1. Freeze related writes in the change window, save an encrypted recovery point, and export `id,points,credits,level,level_name,vip_until,streak,streak_date,updated_at` to a restricted audit location;
+2. Review non-zero balances, future VIP, and extreme streak/level using the available product rules, release times, access/security logs, and anomaly distributions; don't paste raw user data into PRs/Actions logs;
+3. Make a written product/security decision of "keep, reset to zero, restrict entitlement, or notify the user" for each class of values whose origin can't be proven; if values need changing, use separate, reviewed maintenance SQL/forward migrations that record the affected row count, completed before 0008 creates the opening;
+4. Save the approver, time, aggregate results, correction script checksum, affected row count, and verification query. If this can't be completed, the `production-database` environment must not be approved.
 
-本次生产审计与决定记录：2026-07-21，1 个 Profile；points=11、credits=0、streak=0、无 VIP。owner 决定旧 points 全部归零。0008 仍保留 `legacy_opening=11` 的审计事实，0009 追加 `legacy_opening_reset=-11` 并重建 Profile 投影；不删除或改写 opening。credits/VIP/streak 被锁写但仍没有商业事实账本。后续纠错必须设计显式调整事件/审批流程，不能重新开放 Profile 客户端写权限。
+Production audit and decision record: 2026-07-21, 1 Profile; points=11, credits=0, streak=0, no VIP. The owner decided to reset all legacy points to zero. 0008 still keeps the audit fact `legacy_opening=11`, and 0009 appends `legacy_opening_reset=-11` and rebuilds the Profile projection; the opening is never deleted or rewritten. Credits/VIP/streak are write-locked but still have no commercial fact ledger. Later corrections must design explicit adjustment events/an approval process and must never reopen client write access to Profile.
 
-## 8. 生产发布与验证
+## 8. Production release and verification
 
-正常操作是合并只新增迁移的 PR 并由 `deploy.yml` 执行。不要同时在 SQL Editor 手工执行。数据库 job 应留下：
+The normal operation is to merge a PR that only adds migrations and let `deploy.yml` run it. Don't run anything manually in the SQL Editor at the same time. The database job should leave:
 
-- Git SHA、migration list、dry-run 和实际 push 结果；
-- 加密恢复 artifact 名和 checksum 验证结果；
-- remote lint 和第二次 dry-run；
-- environment 审批记录。
+- The Git SHA, migration list, dry-run, and actual push result;
+- The encrypted recovery artifact name and checksum verification result;
+- Remote lint and a second dry-run;
+- The environment approval record.
 
-迁移后至少核对：
+After migrating, check at least:
 
-- 新表/列/约束/索引存在；
-- RLS、Storage policies 和 function grants 与预期一致；
-- 数据行数、NULL、唯一性、FK orphan 和 backfill 进度；
-- trigger 重试不重复积分/通知/计数；
-- Supabase Auth/PostgREST/Storage 错误率；
-- 应用登录、`/api/me` 和本次变更的最小业务路径。
+- New tables/columns/constraints/indexes exist;
+- RLS, Storage policies, and function grants match expectations;
+- Data row counts, NULLs, uniqueness, FK orphans, and backfill progress;
+- Trigger retries don't duplicate points/notifications/counts;
+- Supabase Auth/PostgREST/Storage error rates;
+- Application sign-in, `/api/me`, and the minimal business path of this change.
 
-Courses 0011–0013 还必须核对：owner 读/客户端写拒绝、匿名分享/市场只能经 API、publication 快照更新被拒、四阶段会话恢复、两次不同本地日期熟练、Schedule 不生成 `study_tasks`、同词集合只出现一条 +20 分录、课程删除保留分录/徽章历史，以及 `learning_speech_usage` 不含音频或参考文本。
+Courses 0011–0013 must also check: owner reads/client write rejection, anonymous share/market only through the API, publication snapshot updates rejected, four-stage session resuming, mastery on two different local dates, Schedule not creating `study_tasks`, only one +20 entry per word set, course deletion keeping entries/badge history, and `learning_speech_usage` containing no audio or reference text.
 
-0015–0016 还必须核对：生产 plan 只列这两个新增文件；旧五参数 attempt RPC 在数据库先行后仍可用且会推进 revision；七参数 attempt 的重复 UUID 只记一次、并发旧 revision 返回 409；`learning_audio_assets` 对客户端无表/RPC 权限；全局 queue lease 同时只发一个 Azure 请求；Storage 对象缺失可重建、网络错误不伪装 miss；应用回退到旧 release 仍能运行。当前应用 gate 必须用 Japan East 真实账号证明首个词生成、Storage 命中、另一用户相同词不增加 attempt_count、未经 VAD/静音裁剪的固定 WAV 评分与最终 `deps.supabase=ok`。
+0015–0016 must also check: the production plan only lists these two new files; the old five-parameter attempt RPC still works after the database goes first and advances the revision; duplicate UUIDs of the seven-parameter attempt are recorded only once, and concurrent stale revisions return 409; `learning_audio_assets` has no table/RPC permissions for clients; the global queue lease only sends one Azure request at a time; missing Storage objects can be rebuilt and network errors don't masquerade as misses; rolling the application back to the old release still works. The current application gate must use the Japan East real account to prove first-word generation, Storage hits, no increase in attempt_count for another user's identical word, scoring of a fixed WAV with no VAD/silence trimming, and a final `deps.supabase=ok`.
 
-### 0039–0040 Stage A、后续 Materials AI 与 0052–0053 撤权门禁
+### 0039–0040 Stage A, later Materials AI, and the 0052–0053 revocation gate
 
-兼容应用必须继续适配 0039–0040；0041–0043 已作为独立 additive Materials AI 发布，但不改变时间列 grant：
+Compatible applications must continue to support 0039–0040; 0041–0043 were released as a separate additive Materials AI release, but don't change the time-column grants:
 
-1. Stage A 已通过 0007→0040、空库、lint、精确 column/table/function grants、双用户 RLS、真实 Redis Lua、nginx/compose、jsdom/Playwright/build；fake provider 没有被描述为真实 Azure/OpenRouter/Fish 证据。
-2. 独立 plan 已证明生产原先停在 0038且唯一待办为 0039–0040。创建恢复点后 apply，并检查 posts/Feedback/Schedule trigger、历史 claim grandfather、ledger/Profile projection 和客户端/service-role 负向权限；grandfather 实际金额必须能由该 business key 的 transition 1 正向分录证明，0008/0009 零金额占位不得因删除、restore 或审核产生负分。若数据中已有这类占位负 transition，0039 只以 `grandfather-zero-reset-v1` append-only 补偿，不能删除历史分录。
-3. Stage A 已先安装 Redis/HMAC，再启动 Redis，并确认 password PING、AOF、noeviction、持久 volume、无 host port；nginx rate zones 通过 `nginx -t`，429 使用标准 JSON/headers。
-4. 候选 API 已验证 `deps.supabase=ok/deps.redis=ok`、匿名 `/api/me` 与 points admin 401、注册限流 headers、Redis 分级 fail-open/closed，并通过既有三类真实供应商 gates 后原子切换 Web/API。
-5. 当前从 `2026-08-10T09:35:34Z` 起观察至少 24 小时：Redis error/restart/AOF/memory、`rate_limit_degraded`、合法请求误 429/503、cap claim/ledger/Profile 差异、signal 只待审，以及任何旧客户端仍提交 `posts.updated_at`/`study_tasks.done_at` 的证据。任一异常均 no-go，应用恢复上一兼容 release，数据库/Redis/nginx保持并 forward-fix。
+1. Stage A passed 0007→0040, empty database, lint, exact column/table/function grants, two-user RLS, real Redis Lua, nginx/compose, and jsdom/Playwright/build; fake providers were never described as real Azure/OpenRouter/Fish evidence.
+2. A separate plan proved production was previously at 0038 with 0039–0040 as the only pending items. Apply ran after creating a recovery point, and checked the posts/Feedback/Schedule triggers, historical claim grandfathering, the ledger/Profile projection, and client/service-role negative permissions; the grandfathered actual amount must be provable from the positive transition-1 entry of that business key, and 0008/0009 zero-amount placeholders must not go negative because of deletion, restore, or moderation. If the data already has such placeholder negative transitions, 0039 only compensates append-only with `grandfather-zero-reset-v1` and must not delete historical entries.
+3. Stage A first installed Redis/HMAC, then started Redis and confirmed password PING, AOF, noeviction, a persistent volume, and no host port; the nginx rate zones passed `nginx -t`, and 429s use the standard JSON/headers.
+4. The candidate API verified `deps.supabase=ok/deps.redis=ok`, anonymous `/api/me` and points admin 401, sign-up rate-limit headers, and Redis tiered fail-open/closed, and passed the existing three kinds of real provider gates before atomically switching the Web/API.
+5. Observe for at least 24 hours from `2026-08-10T09:35:34Z`: Redis errors/restarts/AOF/memory, `rate_limit_degraded`, legitimate requests wrongly getting 429/503, cap claim/ledger/Profile differences, signals only pending review, and any evidence of old clients still submitting `posts.updated_at`/`study_tasks.done_at`. Any anomaly is a no-go: the application restores the previous compatible release, and the database/Redis/nginx stay and are forward-fixed.
 
-2026-08-22 go/no-go 记录：兼容期已超过 24 小时；部署 release `3c095a55ced21cee11a1b3131dd2889ec1f70733` 与最新 main 的 Community/Schedule 均不提交两个时间字段；生产 Redis PING/AOF/noeviction 正常、`evicted_keys=0`、`total_error_replies=0`；脱敏数据库汇总显示 2 个 Profile、2 条 ledger entry 且 projection 差异为 0，没有 signal 或 API abuse bucket。样本量很小，不把“无命中”写成反滥用效果证明，但足以和代码审计共同关闭旧客户端 contract 门禁。
+2026-08-22 go/no-go record: the compatibility period exceeded 24 hours; neither the deployed release `3c095a55ced21cee11a1b3131dd2889ec1f70733` nor the latest main's Community/Schedule submit the two time fields; production Redis PING/AOF/noeviction are normal, `evicted_keys=0`, `total_error_replies=0`; a redacted database summary showed 2 Profiles, 2 ledger entries, a projection difference of 0, and no signals or API abuse buckets. The sample is very small, so "no hits" is not written up as proof of anti-abuse effectiveness, but together with the code audit it was enough to close the old-client contract gate.
 
-最终撤权已在新的 PR 中按严格追加顺序实现，并将生产数据库应用到 0053：0052 只撤销 authenticated 对 `posts.updated_at`、`study_tasks.done_at` 的 UPDATE 列权限；0053 断言最终精确 grant、合法内容/Schedule 写入、service-role 与时间 trigger。0044–0045 保持历史空号，没有使用 `--include-all` 补插已经越过 0051 的生产 history。独立 plan、恢复点、apply、RLS/权限和公网 smoke 证据见 8.14。
+The final revocation was implemented in a new PR in strict append order, and the production database was applied to 0053: 0052 only revokes authenticated's UPDATE column permission on `posts.updated_at` and `study_tasks.done_at`; 0053 asserts the final exact grants, valid content/Schedule writes, the service role, and the time triggers. 0044–0045 remain historically empty numbers, and `--include-all` was not used to back-fill into production history that had already passed 0051. The separate plan, recovery point, apply, RLS/permission, and public smoke evidence are in 8.14.
 
-2026-08-23 的 run `32628757656` 先保留加密恢复点，再只应用 0054–0055；远端 history、本地/远端一致性、dry-run 无待迁移和 public schema lint 均通过。随后应用候选因 Courses Ox Alpha 输出契约收到 OpenRouter HTTP 404而自动恢复上一 Web/API；数据库没有倒退，继续采用 0055 向前兼容 contract。修复只涉及应用/真实门，不追加无意义回滚迁移。
+On 2026-08-23, run `32628757656` first kept an encrypted recovery point, then only applied 0054–0055; remote history, local/remote consistency, a dry-run with nothing pending, and the public schema lint all passed. The application candidate then received OpenRouter HTTP 404 because of the Courses Ox Alpha output contract and automatically restored the previous Web/API; the database didn't go backwards and continues with the 0055 forward-compatible contract. The fix only involves the application/real gates and adds no pointless rollback migration.
 
-#### 0041–0043 Materials AI 专项顺序
+#### 0041–0043 Materials AI specific order
 
-1. plan 必须只列生产尚未应用的 0041–0043；0043 逐表/RLS/grant/RPC/FK 断言必须在空库与 0007 升级两条路径通过。
-2. 恢复点成功上传并离线保存后才能 apply；检查 Free plan 回填数量等于 Auth 用户数、`reserved+consumed<=limit`、单用户 active job 唯一和所有 AI RPC 无 authenticated EXECUTE。
-3. 部署不可变 API/AI/Web image，安装隔离 `.ai.env`，保持 `FEATURE_MATERIAL_AI=false`。验证 Redis password/AOF/noeviction/私网、FastAPI OpenRouter/LibreOffice/temp disk/internal auth 与 API `/api/health/ai`。
-4. 运行近上限 Office canary及固定真实 DeepSeek/MiMo suite；任一 ZDR、schema、引用、注入/安全教材、费用、OOM、swap 或邻站门失败，都调用应用 rollback 并保持 flag false。
-5. gate 通过后才原子开启 flag、重建 API，并用公网真实登录临时用户完成 upload→job progress→Notes→exam→主观评分→删除；确认 quota、provider usage、临时目录和测试用户/对象清理。
-6. 数据库失败只 forward-fix。应用回退不会删除 0041–0043 表；旧应用忽略新增表，rollback 显式关闭 flag。不得回滚到会把 job/额度重放成二次消费的构建。
+1. The plan must only list 0041–0043, not yet applied in production; the 0043 per-table/RLS/grant/RPC/FK assertions must pass on both the empty-database and the 0007-upgrade paths.
+2. Apply only after the recovery point is uploaded successfully and stored offline; check that the Free plan backfill count equals the number of Auth users, `reserved+consumed<=limit`, one unique active job per user, and no authenticated EXECUTE on any AI RPC.
+3. Deploy the immutable API/AI/Web images, install the isolated `.ai.env`, and keep `FEATURE_MATERIAL_AI=false`. Verify Redis password/AOF/noeviction/private network, FastAPI OpenRouter/LibreOffice/temp disk/internal auth, and the API `/api/health/ai`.
+4. Run the near-limit Office canary and the fixed real DeepSeek/MiMo suite; if any ZDR, schema, citation, injection/safe material, cost, OOM, swap, or neighbor-site gate fails, call the application rollback and keep the flag false.
+5. Only after the gates pass, atomically turn the flag on, rebuild the API, and use a temporary real signed-in public user to complete upload→job progress→Notes→exam→subjective grading→deletion; confirm quota, provider usage, temporary directories, and cleanup of test users/objects.
+6. Database failures are forward-fixed only. An application rollback doesn't delete the 0041–0043 tables; the old application ignores the new tables, and rollback explicitly turns the flag off. Never roll back to a build that would replay jobs/quota as a second consumption.
 
-2026-08-11 实际记录：只读 plan `31465816321` 确认生产已到 0043且 dry-run 为空；受保护 run `31467153739` 仍先创建 artifact `9092230348`，再验证 history/lint/空 dry-run。220 页 canary、真实 DeepSeek/MiMo、两次临时目录清理和登录用户生成/评分/删除均通过后，release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` 才启用 flag。此前 `31463661987` 的绿色状态因 SSH heredoc stdin 被 `compose exec` 消耗而未真正切流，独立服务器/公网核验识别出假绿；当前 workflow 用显式 `</dev/null` helper 和回归测试防止复发。
+2026-08-11 actual record: read-only plan `31465816321` confirmed production was at 0043 with an empty dry-run; protected run `31467153739` still first created artifact `9092230348`, then verified history/lint/an empty dry-run. Only after the 220-page canary, real DeepSeek/MiMo, two temporary-directory cleanups, and signed-in user generation/grading/deletion all passed did release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1` enable the flag. The earlier green status of `31463661987` never really cut over because the SSH heredoc stdin was consumed by `compose exec`, and independent server/public verification caught the false green; the current workflow prevents recurrence with an explicit `</dev/null` helper and regression tests.
 
-#### 0046–0051 可恢复任务、知识图谱、生命周期与 Luna 候选顺序
+#### 0046–0051 resumable jobs, knowledge graph, lifecycle, and Luna candidate order
 
-本节是尚未发布候选的门禁，不是生产记录：
+This section is the gate for an unreleased candidate, not a production record:
 
-1. 该历史发布的独立 plan 必须证明远端仍停在 0043，唯一待应用迁移为 0046–0051；当时的 0044–0045 空号不是漂移。Stage B 后续改用 0052–0053，不改写这段既有发布历史。0048 与 0051 必须在 0007→latest 和空库两条路径断言表、constraint、RLS、trigger、精确 RPC signature/grant。
-2. 恢复点成功上传并完成解密/SHA 校验后才 apply。应用后核对旧 0041–0043 同步 worker RPC 仍存在，新应用可用 202 回调协议，上一不可变应用 release 仍可忽略新增表运行。
-3. 先保持 `FEATURE_MATERIAL_AI=false` 启动候选 API/AI；验证 explicit Undici transport timeout、内部 callback token、数据库 checkpoint、worker 本地 checkpoint/usage spool、TTL sweep 和 terminal cleanup。不得通过把所有错误统一延长到 20 分钟来掩盖不可达、响应头 timeout 或无 callback。
-4. 人工注入 API callback 断线：provider 已返回后终止 callback，确认同一 job/新 lease 从 `artifact_ready` 或 `answer_ready` 恢复、不再次调用 provider、event UUID 只写一条费用记录，完成后 DB/local checkpoint 均清除。再验证超过 TTL 的 Resume 返回稳定终态、释放 reservation 且不复活旧产物。
-5. 真实 DeepSeek/MiMo gate 分开验证旧流水线试卷与知识图谱；Luna 子开关保持 false，先读取 OpenRouter 官方 ZDR catalog。若没有 `openai/gpt-6-luna` + Azure endpoint，则记录 `OPENROUTER_ZDR_UNAVAILABLE`、继续保持 Luna false，并只允许已经通过的 DocumentIR 发布；不得关闭 ZDR、改用非 ZDR provider 或静默降级。只有 catalog 合规后，才逐格式用无个人数据原文件证明实际 upstream 为 Azure、PDF `file-parser.native`、inline 原始 SHA-256 未转换、严格 schema、注入拒绝、取消后无残留。未过门禁格式不得加入 `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS`。（GPT-5.6 Luna/OpenAI-only 时期的规则见 ADR-0014，已由 ADR-0016 修订。）
-6. 验证任务生命周期：queued 删除释放 reservation；worker accepted 后 Delete/旧 Cancel 都消费一次；Clear 只删除 terminal；deleting 在 task、HTTPX/Office、checkpoint、spool 与 0700 目录全部 purge 前持续可见。usage ledger 在硬删 job 后仍存在且路由违规也计成本。
-7. 最后先开启 `FEATURE_MATERIAL_AI`，再仅对私有 gate 用户开启/验证 Luna，完成双 pipeline 的 exam/knowledge graph、250 节点桌面与移动图、布局保存、node Q&A、整卷交卷后统一批改、delete/clear 和同 job Resume。全部通过后才把 `FEATURE_MATERIAL_AI_LUNA=true` 设为默认，并独立核对公网 Web、health、401、release/image/Web symlink。
-8. 数据库仍只 forward-fix。应用异常先关闭 `FEATURE_MATERIAL_AI_LUNA`，必要时再关闭总开关并恢复上一不可变 release；0046–0051 表保留。不得 drop checkpoint/layout/usage rows，也不得手工修改额度或任务状态来“回滚”。
+1. That historical release's separate plan must prove the remote was still at 0043 with 0046–0051 as the only pending migrations; the empty 0044–0045 numbers at the time are not drift. Stage B later used 0052–0053 instead and doesn't rewrite this existing release history. 0048 and 0051 must assert tables, constraints, RLS, triggers, and exact RPC signatures/grants on both the 0007→latest and empty-database paths.
+2. Apply only after the recovery point is uploaded successfully and decryption/SHA verification is complete. After apply, check that the old 0041–0043 synchronous worker RPCs still exist, the new application can use the 202 callback protocol, and the previous immutable application release can still run while ignoring the new tables.
+3. First start the candidate API/AI with `FEATURE_MATERIAL_AI=false`; verify the explicit Undici transport timeout, the internal callback token, the database checkpoint, the worker local checkpoint/usage spool, the TTL sweep, and terminal cleanup. Don't mask unreachability, response-header timeouts, or missing callbacks by uniformly extending every error to 20 minutes.
+4. Manually inject an API callback disconnect: terminate the callback after the provider has returned, and confirm the same job/new lease resumes from `artifact_ready` or `answer_ready` without calling the provider again, the event UUID writes only one cost record, and both the DB/local checkpoints are cleared on completion. Then verify that Resume beyond the TTL returns a stable terminal state, releases the reservation, and doesn't revive old artifacts.
+5. The real DeepSeek/MiMo gate separately verifies old-pipeline exams and knowledge graphs; keep the Luna sub-switch false and first read OpenRouter's official ZDR catalog. If there is no `openai/gpt-6-luna` + Azure endpoint, record `OPENROUTER_ZDR_UNAVAILABLE`, keep Luna false, and only allow the DocumentIR release that already passed; never turn off ZDR, switch to a non-ZDR provider, or silently degrade. Only once the catalog is compliant, prove format by format with original files containing no personal data that the actual upstream is Azure, PDF `file-parser.native`, inline raw SHA-256 unconverted, strict schema, injection rejection, and no leftovers after cancellation. Formats that haven't passed the gate must not be added to `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS`. (The rules from the GPT-5.6 Luna/OpenAI-only period are in ADR-0014, revised by ADR-0016.)
+6. Verify the job lifecycle: deleting while queued releases the reservation; after the worker accepts, Delete/the old Cancel both consume once; Clear only deletes terminal jobs; deleting stays visible until the task, HTTPX/Office, checkpoint, spool, and 0700 directory are all purged. The usage ledger still exists after the job is hard-deleted, and routing violations are also counted as cost.
+7. Finally turn on `FEATURE_MATERIAL_AI` first, then enable/verify Luna only for the private gate user, completing exam/knowledge graph on both pipelines, the 250-node desktop and mobile graph, layout saving, node Q&A, unified grading after whole-paper submission, delete/clear, and same-job Resume. Only after everything passes is `FEATURE_MATERIAL_AI_LUNA=true` made the default, followed by independent checks of the public Web, health, 401, and release/image/Web symlink.
+8. The database is still forward-fixed only. On application anomalies, first turn off `FEATURE_MATERIAL_AI_LUNA`, then if necessary turn off the master switch and restore the previous immutable release; the 0046–0051 tables are kept. Never drop checkpoint/layout/usage rows, and never manually change quotas or job states to "roll back".
 
-#### 0054–0055 Ox Alpha 追加发布（历史；已由 0056–0057 退役）
+#### 0054–0055 Ox Alpha appended release (historical; retired by 0056–0057)
 
-1. 只读 plan 必须精确显示 0054–0055；任何其他待应用 migration 都是 stop rule。恢复点加密、上传、解密与 SHA 验证完成后才允许 apply。
-2. 空库和 0007→latest 要证明三张 pipeline constraint 接受 `ox_alpha_native_file_v1`，创建/完成/checkpoint RPC 固定 `stealth/ox-alpha` 与 Stealth usage，且 public/anon/authenticated 都不能执行新签名。
-3. 候选启动时 `FEATURE_MATERIAL_AI_OX_ALPHA=false`。实时 ZDR catalog 没有 Ox/Stealth endpoint 时记录 `OPENROUTER_ZDR_UNAVAILABLE` 并保持关闭；不得关闭 ZDR、允许 fallback 或把 Courses 文本 smoke 当 Materials 原图证据。
-4. 若未来 catalog 合规，只用无个人数据 PNG/JPEG/WebP 逐格式验证原始 SHA-256、Stealth upstream、mandatory reasoning、strict schema、注入拒绝、checkpoint/cancel/purge。PDF/Office 必须保持不可选。
-5. 独立 Ox 翻译 smoke 必须证明固定 `stealth/ox-alpha` 的双样本判定、Stealth-only 路由和结构化输出。该硬门失败时不得切流；应用回滚不会撤销已经应用的 0054–0055，数据库只 forward-fix。
+1. The read-only plan must show exactly 0054–0055; any other pending migration is a stop rule. Apply is only allowed after recovery point encryption, upload, decryption, and SHA verification are complete.
+2. Empty database and 0007→latest must prove that the three pipeline constraints accept `ox_alpha_native_file_v1`, that the create/complete/checkpoint RPCs pin `stealth/ox-alpha` and Stealth usage, and that public/anon/authenticated can't execute the new signatures.
+3. Start the candidate with `FEATURE_MATERIAL_AI_OX_ALPHA=false`. When the live ZDR catalog has no Ox/Stealth endpoint, record `OPENROUTER_ZDR_UNAVAILABLE` and keep it off; never turn off ZDR, allow fallback, or treat the Courses text smoke as Materials original-image evidence.
+4. If the catalog becomes compliant in the future, only verify format by format with PNG/JPEG/WebP containing no personal data: raw SHA-256, Stealth upstream, mandatory reasoning, strict schema, injection rejection, and checkpoint/cancel/purge. PDF/Office must stay unselectable.
+5. The separate Ox translation smoke must prove the pinned `stealth/ox-alpha`'s two-sample judgement, Stealth-only routing, and structured output. When this hard gate fails, don't cut over; an application rollback doesn't undo the already applied 0054–0055, and the database is forward-fixed only.
 
-#### 0056–0057 退役 Ox Alpha 与 GPT-6 Luna 追加发布
+#### 0056–0057 Ox Alpha retirement and GPT-6 Luna appended release
 
-1. 只读 plan 必须精确显示 0056–0057；任何其他待应用 migration 都是 stop rule。恢复点加密、上传、解密与 SHA 验证完成后才允许 apply。
-2. 0056 收紧三张 pipeline constraint；apply 前已确认生产没有任何 `ox_alpha_native_file_v1` job/Note/usage 行（2026-10-03 只读查询：3 个 DocumentIR job、2 个 DocumentIR Note、11 条 DocumentIR usage）。若 plan 前出现 Ox 行，必须停止并先 forward-fix 数据。
-3. 空库和 0007→latest 要证明 constraint 拒绝 Ox，`ai_create_generation_job` 为 Luna 写入 `openai/gpt-6-luna`，三个完成 RPC 要求 Azure usage 并拒绝 OpenAI/Stealth，且 public/anon/authenticated 都不能执行。0057 失败即整次 apply 失败。
-4. RPC 签名不变，上一不可变应用继续兼容；应用异常只关闭 `FEATURE_MATERIAL_AI_LUNA`/总开关并恢复上一 release，数据库只 forward-fix。
+1. The read-only plan must show exactly 0056–0057; any other pending migration is a stop rule. Apply is only allowed after recovery point encryption, upload, decryption, and SHA verification are complete.
+2. 0056 tightens the three pipeline constraints; before apply it was confirmed that production has no `ox_alpha_native_file_v1` job/Note/usage rows (2026-10-03 read-only query: 3 DocumentIR jobs, 2 DocumentIR Notes, 11 DocumentIR usage rows). If Ox rows appear before the plan, stop and forward-fix the data first.
+3. Empty database and 0007→latest must prove that the constraints reject Ox, that `ai_create_generation_job` writes `openai/gpt-6-luna` for Luna, that the three completion RPCs require Azure usage and reject OpenAI/Stealth, and that public/anon/authenticated can't execute them. If 0057 fails, the whole apply fails.
+4. The RPC signatures are unchanged, so the previous immutable application stays compatible; on application anomalies, only turn off `FEATURE_MATERIAL_AI_LUNA`/the master switch and restore the previous release, and the database is forward-fixed only.
 
-### 8.1 2026-07-21 安全与积分发布记录
+### 8.1 2026-07-21 security and points release record
 
-- 发布提交：`271137279aacb42454018d9e1b401ed41f2380b7`；只读 plan：GitHub Actions run `29832166947`；受保护 apply：run `29832551375`。
-- apply 前远端 migration history 为空。脚本确认 public schema 与 0001–0007 **No schema changes found**，5 条 Storage policy 及 `materials` 私有/`community-media` 公开 bucket 均匹配后，仅将 0001–0007 标记为 applied。
-- 加密恢复点 `db-recovery-271137279aacb42454018d9e1b401ed41f2380b7` 已上传为 artifact `8496067281`，GitHub artifact digest 为 `c13e40ecec4270cc31c1b87bccc0b69ec52107bef60a71ad7d3bc8aacc042ff1`，保留 14 天；manifest 记录发布前 `supabase_migrations` schema 不存在。该逻辑恢复点不含 Storage 对象字节。
-- 0008、0009、0010 随后成功应用。0009 保留 `legacy_opening=11` 并追加 `legacy_opening_reset=-11`；0010 强制验证该 opening 恰有一条等额冲正、所有 Profile points/level 投影等于账本，以及 Profile 敏感列和内部 RPC 不可由客户端写/执行。
-- 发布后 local/remote history 从 0001 到 0010 全部一致，第二次 dry-run 返回 **Remote database is up to date**，remote public lint 返回 **No schema errors found**。
-- 应用 release `271137279aacb42454018d9e1b401ed41f2380b7-29832551375-1` 已激活。流水线和独立公网复核均确认 Web root 正常、`/api/health` 的 `status=ok`、`service=nalanda-api`、`deps.supabase=ok`，`/api/me` 未认证返回 401，Supabase JWKS 可用。
+- Release commit: `271137279aacb42454018d9e1b401ed41f2380b7`; read-only plan: GitHub Actions run `29832166947`; protected apply: run `29832551375`.
+- Before apply, the remote migration history was empty. The script confirmed **No schema changes found** between the public schema and 0001–0007, and that the 5 Storage policies and the private `materials`/public `community-media` buckets matched, before marking only 0001–0007 as applied.
+- Encrypted recovery point `db-recovery-271137279aacb42454018d9e1b401ed41f2380b7` was uploaded as artifact `8496067281` with GitHub artifact digest `c13e40ecec4270cc31c1b87bccc0b69ec52107bef60a71ad7d3bc8aacc042ff1`, retained for 14 days; the manifest records that the `supabase_migrations` schema didn't exist before the release. This logical recovery point doesn't contain Storage object bytes.
+- 0008, 0009, and 0010 were then applied successfully. 0009 keeps `legacy_opening=11` and appends `legacy_opening_reset=-11`; 0010 enforces that the opening has exactly one equal reversal, that all Profile points/level projections equal the ledger, and that sensitive Profile columns and internal RPCs can't be written/executed by clients.
+- After the release, local/remote history matched entirely from 0001 to 0010, the second dry-run returned **Remote database is up to date**, and the remote public lint returned **No schema errors found**.
+- Application release `271137279aacb42454018d9e1b401ed41f2380b7-29832551375-1` is activated. Both the pipeline and an independent public re-check confirmed the Web root works, `/api/health` has `status=ok`, `service=nalanda-api`, `deps.supabase=ok`, unauthenticated `/api/me` returns 401, and Supabase JWKS is available.
 
-该记录证明本次安全迁移和旧 11 points 冲正已上线；它不等于 Storage bytes 已备份、托管 staging/恢复演练已完成，或 points 已具备每日上限与内容反滥用。
+This record proves the security migrations and the reversal of the legacy 11 points are live; it doesn't mean Storage bytes are backed up, hosted staging/recovery drills are done, or points have daily caps and content anti-abuse.
 
-### 8.2 2026-07-22 Courses 0011–0013 发布记录
-
-- 发布提交：`53d0eabf767725b6e9ca83367c0e17c47a479eca`。
-- [只读 plan run `29889201210`](https://github.com/1590703336/Nalanda/actions/runs/29889201210) 显示 local/remote 0001–0013 逐项一致，最终 dry-run 为 **Remote database is up to date**。
-- [受保护 apply/deploy run `29889669272`](https://github.com/1590703336/Nalanda/actions/runs/29889669272) 重新通过生产镜像启动、0007→0013 升级、空库重建、双用户 RLS/Storage/Courses E2E 和 Playwright，随后创建并保留加密恢复点、验证 remote history/functions，并发布不可变应用。
-- 生产主机从 mode-600 `.env` 向候选 image 注入 Azure 配置；`japaneast`、`en-US-JennyNeural`、fake=false 的真实 TTS/固定 WAV scripted assessment 成功，accuracy 98、pronunciation 98.8、4 个音素。密钥未进入仓库、Actions Secret 或日志。
-- 激活 release 为 `53d0eabf767725b6e9ca83367c0e17c47a479eca-29889669272-1`，API image 为同 SHA；本机和公网 `/api/health` 均要求 `deps.supabase=ok`，未认证 `/api/me` 与私有 Courses 返回 401，公开 Course Market 返回 200。
-- Courses、分享、免费市场与发音 flags 已开启；生产 nginx 10 MB 课程 JSON 上限已验证。文件 AI 导入和其他三类课程仍禁用。
-
-后续发布仍沿用相同失败边界：关闭最窄 flag；应用恢复上一 release；数据库不执行 down/drop，只新增 forward-fix。
-
-### 8.3 2026-07-23 Courses 0014 发布记录
-
-- 发布提交：`02ba1b682c104947aa0b80707c143b8e921870f0`。
-- [只读 plan run `29939798432`](https://github.com/1590703336/Nalanda/actions/runs/29939798432) 显示远端 0001–0013 与本地一致，唯一待应用迁移为 `20260723000014_learning_feedback_flow.sql`；所有恢复点、apply 和 deploy 步骤均跳过。
-- [受保护 apply/deploy run `29940292716`](https://github.com/1590703336/Nalanda/actions/runs/29940292716) 先重复通过 0007→0014、空库重建、database lint、真实 RLS/Storage 与 Courses Playwright，再创建 14 天加密恢复点 artifact `8538123165` 并应用 0014。
-- 迁移后 local/remote history 均到 0014，远端 dry-run 与 lint 通过；真实 Azure gate、API Supabase readiness、鉴权守卫和公网 Web/API smoke 通过，release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` 健康激活。
-- 数据库回退继续只允许 forward-fix；应用问题恢复上一不可变 release，语音问题优先关闭 `FEATURE_PRONUNCIATION_ENABLED`。
+### 8.2 2026-07-22 Courses 0011–0013 release record
+
+- Release commit: `53d0eabf767725b6e9ca83367c0e17c47a479eca`.
+- [Read-only plan run `29889201210`](https://github.com/1590703336/Nalanda/actions/runs/29889201210) showed local/remote 0001–0013 matching item by item, and the final dry-run was **Remote database is up to date**.
+- [Protected apply/deploy run `29889669272`](https://github.com/1590703336/Nalanda/actions/runs/29889669272) re-passed production image startup, the 0007→0013 upgrade, empty-database rebuild, two-user RLS/Storage/Courses E2E, and Playwright, then created and kept an encrypted recovery point, verified remote history/functions, and released the immutable application.
+- The production host injected the Azure configuration from its mode-600 `.env` into the candidate image; real TTS/fixed-WAV scripted assessment with `japaneast`, `en-US-JennyNeural`, fake=false succeeded with accuracy 98, pronunciation 98.8, and 4 phonemes. The key never entered the repository, Actions Secrets, or logs.
+- The activated release is `53d0eabf767725b6e9ca83367c0e17c47a479eca-29889669272-1`, with the API image at the same SHA; both local and public `/api/health` require `deps.supabase=ok`, unauthenticated `/api/me` and private Courses return 401, and the public Course Market returns 200.
+- The Courses, sharing, free market, and pronunciation flags are on; the production nginx 10 MB course JSON limit is verified. File AI import and the other three course categories are still disabled.
+
+Later releases keep the same failure boundary: turn off the narrowest flag; restore the previous application release; never run down/drop on the database, only add forward-fixes.
+
+### 8.3 2026-07-23 Courses 0014 release record
+
+- Release commit: `02ba1b682c104947aa0b80707c143b8e921870f0`.
+- [Read-only plan run `29939798432`](https://github.com/1590703336/Nalanda/actions/runs/29939798432) showed remote 0001–0013 matching local, with `20260723000014_learning_feedback_flow.sql` as the only pending migration; all recovery point, apply, and deploy steps were skipped.
+- [Protected apply/deploy run `29940292716`](https://github.com/1590703336/Nalanda/actions/runs/29940292716) first re-passed 0007→0014, empty-database rebuild, database lint, real RLS/Storage, and Courses Playwright, then created the 14-day encrypted recovery point artifact `8538123165` and applied 0014.
+- After migrating, local/remote history were both at 0014, and the remote dry-run and lint passed; the real Azure gate, API Supabase readiness, the auth guard, and public Web/API smoke passed, and release `02ba1b682c104947aa0b80707c143b8e921870f0-29940292716-1` activated healthily.
+- Database rollback continues to allow forward-fix only; application problems restore the previous immutable release, and speech problems first turn off `FEATURE_PRONUNCIATION_ENABLED`.
 
-### 8.4 2026-07-27 Courses 0015–0016 发布记录
+### 8.4 2026-07-27 Courses 0015–0016 release record
 
-- 发布提交：`6b6de0e985ad8b34c977f1bce3ba985b84eb82f2`；PR #21 run `30243998633` 与 main run `30244402278` 通过 quality、0007→0016、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 和 Chromium Playwright。Playwright 使用 Azure fake，只证明浏览器/API/一次性数据库协作。
-- [只读 plan run `30244967669`](https://github.com/1590703336/Nalanda/actions/runs/30244967669) 显示远端 0001–0014 与本地一致，dry-run 只列 `20260727000015_learning_performance_offline_audio.sql` 和 `20260727000016_verify_learning_performance_release.sql`；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30245430630`](https://github.com/1590703336/Nalanda/actions/runs/30245430630) 在 apply 前创建并保留加密恢复点 `db-recovery-6b6de0e985ad8b34c977f1bce3ba985b84eb82f2`，artifact `8644999285`，digest `sha256:09c37ba8755b1ffd95bea061fa5da49d961a85f3dd2d2694253cf16c4a6a10a7`，保留至 2026-08-10。
-- apply 后 local/remote history 均到 0016，新增结构/函数权限断言、远端 lint 与空 dry-run 通过。数据库继续只允许 forward-fix；旧答题签名暂时保留供应用兼容回退。
-- 切流前基础真实 Azure gate 在 `japaneast`/`en-US-JennyNeural` 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8 和 4 个音素。新 API 真实 gate 随后验证 4 个首次生成对象、private Storage 读取、第二用户复用同 4 个对象且不增加 Azure 生成、VAD 裁剪后评分 97；用户录音未落库或进入 Storage。
-- 不可变 release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` 健康激活。独立公网复核确认 Web `200`、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`，匿名 `/api/me` 为 `401 UNAUTHENTICATED`。
-- `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` 与默认 20 次/分钟、500,000 字符/月、3.1 秒间隔、synthesis version 1 已在 mode-600 生产 `.env` 启用。若后续队列或供应商异常，先关闭最窄 flag/熔断语音或恢复上一不可变应用 release；0015–0016 schema 不逆向。
+- Release commit: `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2`; PR #21 run `30243998633` and main run `30244402278` passed quality, 0007→0016, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Playwright uses the Azure fake and only proves browser/API/one-off database collaboration.
+- [Read-only plan run `30244967669`](https://github.com/1590703336/Nalanda/actions/runs/30244967669) showed remote 0001–0014 matching local, and the dry-run only listed `20260727000015_learning_performance_offline_audio.sql` and `20260727000016_verify_learning_performance_release.sql`; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30245430630`](https://github.com/1590703336/Nalanda/actions/runs/30245430630) created and kept encrypted recovery point `db-recovery-6b6de0e985ad8b34c977f1bce3ba985b84eb82f2` before apply: artifact `8644999285`, digest `sha256:09c37ba8755b1ffd95bea061fa5da49d961a85f3dd2d2694253cf16c4a6a10a7`, retained until 2026-08-10.
+- After apply, local/remote history were both at 0016, and the new structure/function permission assertions, remote lint, and an empty dry-run passed. The database continues to allow forward-fix only; the old answer signature is kept temporarily for compatible application rollback.
+- Before cutover, the basic real Azure gate with `japaneast`/`en-US-JennyNeural` returned a 10,656-byte MP3, accuracy 98, pronunciation 98.8, and 4 phonemes. The new API's real gate then verified 4 first-generated objects, private Storage reads, a second user reusing the same 4 objects without extra Azure generation, and a VAD-trimmed score of 97; user recordings were never stored or put in Storage.
+- Immutable release `6b6de0e985ad8b34c977f1bce3ba985b84eb82f2-30245430630-1` activated healthily. An independent public re-check confirmed Web `200`, `/api/health` `status=ok` with `deps.supabase=ok`, and anonymous `/api/me` `401 UNAUTHENTICATED`.
+- `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` and the defaults of 20 per minute, 500,000 characters per month, a 3.1-second interval, and synthesis version 1 are enabled in the mode-600 production `.env`. If the queue or provider misbehaves later, first turn off the narrowest flag/trip the speech circuit breaker or restore the previous immutable application release; the 0015–0016 schema is not reversed.
 
-### 8.5 2026-07-27 Courses 0017–0018 发布记录
+### 8.5 2026-07-27 Courses 0017–0018 release record
 
-- 发布提交：`99313bd3763ce5bf1f7ffb252f821f7b21a67eec`；PR #24 run `30263277807` 与 main run `30263794368` 通过 quality、0007→0018、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 和 Chromium Playwright。浏览器回归验证历史八词冷单元、前五词 pending 提权/ready 缓存替换，以及暂停首次学习与其他单元复习不会互相劫持；Azure 为 fake。
-- [只读 plan run `30264327821`](https://github.com/1590703336/Nalanda/actions/runs/30264327821) 显示远端 0001–0016 与本地一致，dry-run 只列 `20260727000017_learning_session_intent_resume.sql` 和 `20260727000018_verify_learning_audio_review_fix.sql`；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30264979509`](https://github.com/1590703336/Nalanda/actions/runs/30264979509) 在 apply 前创建并保留加密恢复点 `db-recovery-99313bd3763ce5bf1f7ffb252f821f7b21a67eec`，artifact `8652623403`，digest `sha256:22861e8f8ccba2d87fc673f468c75677d6df3a0e9d424111c66dc67d009d5ac3`。
-- apply 后 local/remote history 均到 0018，远端 dry-run 为空、database lint 无 error，`learning_start_session` 的客户端执行权和新意图唯一索引断言通过。数据库仍只做 forward-fix；0017 与旧应用兼容，不以 down migration 回退。
-- 切流前基础真实 Azure gate 在 `japaneast`/`en-US-JennyNeural` 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实队列/Storage/评分 gate 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`、`trimmedAssessmentBytes=65324`。
-- 不可变 release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` 健康激活。独立公网与服务器复核确认 Web `200`、`/api/health` 为 `status=ok` 且 `deps.supabase=ok`、匿名 `/api/me` 为 `401`，Web symlink 与 API image 都指向同一 release SHA。
+- Release commit: `99313bd3763ce5bf1f7ffb252f821f7b21a67eec`; PR #24 run `30263277807` and main run `30263794368` passed quality, 0007→0018, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Browser regressions verified the historical eight-word cold unit, pending priority boosts/ready cache replacement for the first five words, and that pausing initial learning and reviewing other units don't hijack each other; Azure is a fake.
+- [Read-only plan run `30264327821`](https://github.com/1590703336/Nalanda/actions/runs/30264327821) showed remote 0001–0016 matching local, and the dry-run only listed `20260727000017_learning_session_intent_resume.sql` and `20260727000018_verify_learning_audio_review_fix.sql`; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30264979509`](https://github.com/1590703336/Nalanda/actions/runs/30264979509) created and kept encrypted recovery point `db-recovery-99313bd3763ce5bf1f7ffb252f821f7b21a67eec` before apply: artifact `8652623403`, digest `sha256:22861e8f8ccba2d87fc673f468c75677d6df3a0e9d424111c66dc67d009d5ac3`.
+- After apply, local/remote history were both at 0018, the remote dry-run was empty, database lint had no errors, and the assertions on `learning_start_session`'s client execute permission and the new intent unique index passed. The database is still forward-fixed only; 0017 is compatible with the old application and is not rolled back with a down migration.
+- Before cutover, the basic real Azure gate with `japaneast`/`en-US-JennyNeural` returned a 10,656-byte MP3, accuracy 98, pronunciation 98.8; the real queue/Storage/scoring gate returned `generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=97`, `trimmedAssessmentBytes=65324`.
+- Immutable release `99313bd3763ce5bf1f7ffb252f821f7b21a67eec-30264979509-1` activated healthily. Independent public and server re-checks confirmed Web `200`, `/api/health` `status=ok` with `deps.supabase=ok`, anonymous `/api/me` `401`, and that the Web symlink and API image both point to the same release SHA.
 
-### 8.6 2026-07-28 Courses 0019–0020 发布记录
+### 8.6 2026-07-28 Courses 0019–0020 release record
 
-- PR #26–#29 完成功能与生产 gate 前向修复；最终发布提交为 `a4c230e1aa6f29abbd4fbe944a1b76c625107003`。PR/main CI 覆盖 quality、0007→0020、空库重建/database lint、真实本地双用户 RLS/Storage E2E 和 Chromium Playwright；浏览器供应商为 fake。
-- [只读 plan run `30366334157`](https://github.com/1590703336/Nalanda/actions/runs/30366334157) 显示生产 0001–0018 与本地一致，唯一待办是 `20260728000019_learning_spelling_timer_translation.sql` 和 `20260728000020_verify_learning_spelling_release.sql`；没有创建恢复点、写入数据库或部署应用。
-- [受保护 run `30367263486`](https://github.com/1590703336/Nalanda/actions/runs/30367263486) 在 apply 前创建并保留加密恢复点 `db-recovery-7c8b516ec4fc9086a6bae816966cb7f688c19746`，artifact `8691620673`、大小 318,626 bytes；apply 后远端 history 到 0020，lint 与 dry-run 通过。0019 保留旧签名供应用回退；数据库只 forward-fix。
-- 同一 run 的首个候选、随后 runs `30370419397` 和 `30372651419` 分别被真实 provider 契约、模型误判完全匹配合成答案和 replay 映射 gate 拦截，均自动恢复上一 Web/API，未逆向数据库。最终 main run `30374301472` 的一次真实 OpenRouter 12 秒超时也未激活候选，之后只重跑失败部署 job。
-- 最终真实 Azure 返回 10,656-byte MP3、accuracy 98、pronunciation 98.8；真实 OpenRouter 返回 1,365 ms、253/27/280 tokens；候选 API 返回 `generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=97`，并查询评判事实确认 provider/model 为 `nalanda-normalized-exact/normalized-exact-v1`、0 token、同 UUID replay true、revision 1。
-- 不可变 release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` 健康激活。独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root；生产 migration history 保持 0020。
+- PRs #26–#29 completed the feature and forward fixes for the production gate; the final release commit is `a4c230e1aa6f29abbd4fbe944a1b76c625107003`. PR/main CI covered quality, 0007→0020, empty-database rebuild/database lint, real local two-user RLS/Storage E2E, and Chromium Playwright; browser providers are fakes.
+- [Read-only plan run `30366334157`](https://github.com/1590703336/Nalanda/actions/runs/30366334157) showed production 0001–0018 matching local, with `20260728000019_learning_spelling_timer_translation.sql` and `20260728000020_verify_learning_spelling_release.sql` as the only pending items; no recovery point was created, the database wasn't written, and the application wasn't deployed.
+- [Protected run `30367263486`](https://github.com/1590703336/Nalanda/actions/runs/30367263486) created and kept encrypted recovery point `db-recovery-7c8b516ec4fc9086a6bae816966cb7f688c19746` before apply: artifact `8691620673`, 318,626 bytes; after apply, remote history reached 0020, and lint and the dry-run passed. 0019 keeps the old signature for application rollback; the database is forward-fixed only.
+- The first candidate of the same run, and later runs `30370419397` and `30372651419`, were stopped by gates for the real provider contract, the model misjudging an exact-match synthetic answer, and the replay mapping respectively, and each automatically restored the previous Web/API without reversing the database. A real 12-second OpenRouter timeout in final main run `30374301472` also didn't activate the candidate, after which only the failed deploy job was rerun.
+- Finally, real Azure returned a 10,656-byte MP3, accuracy 98, pronunciation 98.8; real OpenRouter returned 1,365 ms and 253/27/280 tokens; the candidate API returned `generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=97`, and a query of the judgement facts confirmed provider/model `nalanda-normalized-exact/normalized-exact-v1`, 0 tokens, same-UUID replay true, revision 1.
+- Immutable release `a4c230e1aa6f29abbd4fbe944a1b76c625107003-30374301472-3` activated healthily. An independent public re-check confirmed `deps.supabase=ok` from `/api/health`, anonymous `/api/me=401`, and the React root; the production migration history stays at 0020.
 
-### 8.7 2026-07-31 Courses 0021–0022 发布记录
+### 8.7 2026-07-31 Courses 0021–0022 release record
 
-- 发布提交：`fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`；PR #35 run `30615023445`、main run `30615555388` 和受保护 run `30616540480` 通过 quality、0007→0022、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。真实数据库用例验证全角/半角全大写均不增加错误或候补；Playwright 的外部供应商仍为 fake。
-- [只读 plan run `30616030488`](https://github.com/1590703336/Nalanda/actions/runs/30616030488) 显示生产 0001–0020 与本地一致，唯一待办为 0021–0022；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30616540480`](https://github.com/1590703336/Nalanda/actions/runs/30616540480) 在 apply 前创建并保留 `db-recovery-fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`，artifact `8787805291`、大小 362,385 bytes、digest `sha256:fd553ea9c4898d72928db64bcbd979e13dff50f6b50a2138ec7113958709c199`，保留至 2026-08-14。
-- apply 后远端 history 到 0022，0022 函数结果/权限断言、remote database lint 和空 dry-run 均通过。0021 保留旧五参数答题签名及 HTTP 契约供应用回退；数据库仍只采用 forward-fix。
-- 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。未使用真实用户会话在生产提交答案，因此不能把本次记录描述为生产用户流程 E2E。
+- Release commit: `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad`; PR #35 run `30615023445`, main run `30615555388`, and protected run `30616540480` passed quality, 0007→0022, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Real database cases verified that full-width/half-width all caps add no errors or retries; Playwright's external providers are still fakes.
+- [Read-only plan run `30616030488`](https://github.com/1590703336/Nalanda/actions/runs/30616030488) showed production 0001–0020 matching local, with 0021–0022 as the only pending items; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30616540480`](https://github.com/1590703336/Nalanda/actions/runs/30616540480) created and kept `db-recovery-fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad` before apply: artifact `8787805291`, 362,385 bytes, digest `sha256:fd553ea9c4898d72928db64bcbd979e13dff50f6b50a2138ec7113958709c199`, retained until 2026-08-14.
+- After apply, remote history reached 0022, and the 0022 function result/permission assertions, remote database lint, and an empty dry-run all passed. 0021 keeps the old five-parameter answer signature and HTTP contract for application rollback; the database still uses forward-fix only.
+- Before activation, real Japan East Azure, real OpenRouter, and the candidate Courses API/Storage gates all passed. Immutable release `fc1e106c53ea2e5222d6c2e4a6cbe9dabb3ab2ad-30616540480-1` activated healthily; an independent public re-check confirmed `deps.supabase=ok` from `/api/health`, anonymous `/api/me=401`, and the React root. No real user session was used to submit answers in production, so this record can't be described as production user-flow E2E.
 
-### 8.8 2026-07-31 Courses 0023–0024 发布记录
+### 8.8 2026-07-31 Courses 0023–0024 release record
 
-- 发布提交：`9b62951a8895aa6cf3ff0f9dce8395df239e6089`；PR #37 run `30620350644`、main run `30620879282` 和受保护 run `30624104943` 通过 quality、0007→0024、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。真实数据库用例验证仅标点差异不增加错误或候补；Playwright 的外部供应商仍为 fake。
-- [只读 plan run `30623522232`](https://github.com/1590703336/Nalanda/actions/runs/30623522232) 显示生产 0001–0022 与本地一致，唯一待办为 0023–0024；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30624104943`](https://github.com/1590703336/Nalanda/actions/runs/30624104943) 在 apply 前创建并保留 `db-recovery-9b62951a8895aa6cf3ff0f9dce8395df239e6089`，artifact `8790816378`、大小 366,417 bytes、digest `sha256:887b1ac42c267ca7bb1cde810920702dde64f8d74112b3b39def6254d5bf0fca`，保留至 2026-08-14。
-- apply 后远端 history 到 0024，0024 结果/函数定义/权限断言、remote database lint 和空 dry-run 均通过。0023 保留旧五参数答题签名及 HTTP 契约供应用回退；数据库仍只采用 forward-fix。
-- 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。未使用真实用户会话在生产提交答案，因此不能把本次记录描述为生产用户流程 E2E。
+- Release commit: `9b62951a8895aa6cf3ff0f9dce8395df239e6089`; PR #37 run `30620350644`, main run `30620879282`, and protected run `30624104943` passed quality, 0007→0024, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Real database cases verified that punctuation-only differences add no errors or retries; Playwright's external providers are still fakes.
+- [Read-only plan run `30623522232`](https://github.com/1590703336/Nalanda/actions/runs/30623522232) showed production 0001–0022 matching local, with 0023–0024 as the only pending items; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30624104943`](https://github.com/1590703336/Nalanda/actions/runs/30624104943) created and kept `db-recovery-9b62951a8895aa6cf3ff0f9dce8395df239e6089` before apply: artifact `8790816378`, 366,417 bytes, digest `sha256:887b1ac42c267ca7bb1cde810920702dde64f8d74112b3b39def6254d5bf0fca`, retained until 2026-08-14.
+- After apply, remote history reached 0024, and the 0024 result/function definition/permission assertions, remote database lint, and an empty dry-run all passed. 0023 keeps the old five-parameter answer signature and HTTP contract for application rollback; the database still uses forward-fix only.
+- Before activation, real Japan East Azure, real OpenRouter, and the candidate Courses API/Storage gates all passed. Immutable release `9b62951a8895aa6cf3ff0f9dce8395df239e6089-30624104943-1` activated healthily; an independent public re-check confirmed `deps.supabase=ok` from `/api/health`, anonymous `/api/me=401`, and the React root. No real user session was used to submit answers in production, so this record can't be described as production user-flow E2E.
 
-### 8.9 2026-08-01 Courses 0025–0028 发布记录
+### 8.9 2026-08-01 Courses 0025–0028 release record
 
-- 发布提交：`93354a56044470fb5d2b1fd6aeabcf82f459bb52`；PR #40 run `30705662543`、main run `30705946921` 和受保护 run `30706731292` 通过 quality、0007→0028、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。浏览器外部供应商仍为 fake。
-- [只读 plan run `30706279006`](https://github.com/1590703336/Nalanda/actions/runs/30706279006) 显示生产 0001–0024 与本地一致，唯一待办为 `20260801000025_learning_session_cancel.sql`、`20260801000026_verify_learning_session_cancel.sql`、`20260801000027_learning_exam_retry_quota.sql` 和 `20260801000028_verify_learning_exam_retry_quota.sql`；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30706731292`](https://github.com/1590703336/Nalanda/actions/runs/30706731292) 在 apply 前创建并保留 `db-recovery-93354a56044470fb5d2b1fd6aeabcf82f459bb52`，artifact `8820657507`、约 418 KB、digest `sha256:02ea6fef5481756b17f79fbbd82c023d9c9ba085accfc1e28f9a268d24645ad9`，保留 14 天。
-- apply 后远端 history 到 0028，0026/0028 的结构、函数定义和 service-role-only 权限断言、remote database lint 与空 dry-run 均通过。0025–0028 向后兼容已发布应用；数据库仍只采用 forward-fix，不执行 down migration。
-- 激活前真实 Japan East Azure、真实 OpenRouter 和候选 Courses API/Storage gate 均通过。不可变 release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和 React root。认证 UI 检查只打开考试配置而未提交答案，不能据此声称真实生产考试 E2E。
+- Release commit: `93354a56044470fb5d2b1fd6aeabcf82f459bb52`; PR #40 run `30705662543`, main run `30705946921`, and protected run `30706731292` passed quality, 0007→0028, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Browser external providers are still fakes.
+- [Read-only plan run `30706279006`](https://github.com/1590703336/Nalanda/actions/runs/30706279006) showed production 0001–0024 matching local, with `20260801000025_learning_session_cancel.sql`, `20260801000026_verify_learning_session_cancel.sql`, `20260801000027_learning_exam_retry_quota.sql`, and `20260801000028_verify_learning_exam_retry_quota.sql` as the only pending items; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30706731292`](https://github.com/1590703336/Nalanda/actions/runs/30706731292) created and kept `db-recovery-93354a56044470fb5d2b1fd6aeabcf82f459bb52` before apply: artifact `8820657507`, about 418 KB, digest `sha256:02ea6fef5481756b17f79fbbd82c023d9c9ba085accfc1e28f9a268d24645ad9`, retained for 14 days.
+- After apply, remote history reached 0028, and the 0026/0028 structure, function definition, and service-role-only permission assertions, remote database lint, and an empty dry-run all passed. 0025–0028 are backward compatible with the released application; the database still uses forward-fix only and never runs down migrations.
+- Before activation, real Japan East Azure, real OpenRouter, and the candidate Courses API/Storage gates all passed. Immutable release `93354a56044470fb5d2b1fd6aeabcf82f459bb52-30706731292-1` activated healthily; an independent public re-check confirmed `deps.supabase=ok` from `/api/health`, anonymous `/api/me=401`, and the React root. The authenticated UI check only opened the exam configuration without submitting answers, so it can't be claimed as real production exam E2E.
 
-### 8.10 2026-08-03 Courses 0029–0034 发布记录
+### 8.10 2026-08-03 Courses 0029–0034 release record
 
-- 发布提交：`1a58d2164f6d58feea4d3a2c8925211b8cc60dde`；PR [#45](https://github.com/1590703336/Nalanda/pull/45) run `30811283164`、main run `30811817461` 和受保护 run `30813047562` 通过 quality、0007→0034、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。真实数据库用例验证复习与单项考试均不 learned，只有拼写/发音考试事实都存在时才 learned；Playwright 的外部供应商仍为 fake。
-- [只读 plan run `30812467085`](https://github.com/1590703336/Nalanda/actions/runs/30812467085) 显示生产 0001–0028 与本地一致，唯一待办为 `20260803000029_learning_pronunciation_exam.sql` 至 `20260803000034_verify_learning_exam_only_mastery.sql`；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30813047562`](https://github.com/1590703336/Nalanda/actions/runs/30813047562) 在 apply 前创建并保留 `db-recovery-1a58d2164f6d58feea4d3a2c8925211b8cc60dde`，artifact `8855819351`、593,399 bytes、digest `sha256:5f36f770aab133f24e12d461e66b0c4b744303ca1dbfd1600215163e4ad14796`，保留 14 天。
-- apply 后远端 history 到 0034，0030/0032/0034 的字段、约束、函数定义和 service-role-only 权限断言、remote database lint 与空 dry-run 均通过。0029–0034 保留必要旧签名供应用回退；数据库仍只采用 forward-fix，不执行 down migration。
-- 激活前真实 Japan East Azure、真实 OpenRouter 和 Courses API/Storage gate 均通过。不可变 release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401`、React root 和 Course Market 200。未使用真实用户会话在生产提交完整拼写/读音考试，不能据此声称生产用户考试流程 E2E。
+- Release commit: `1a58d2164f6d58feea4d3a2c8925211b8cc60dde`; PR [#45](https://github.com/1590703336/Nalanda/pull/45) run `30811283164`, main run `30811817461`, and protected run `30813047562` passed quality, 0007→0034, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Real database cases verified that neither reviews nor a single exam make a word learned, and that it's learned only when both the spelling and pronunciation exam facts exist; Playwright's external providers are still fakes.
+- [Read-only plan run `30812467085`](https://github.com/1590703336/Nalanda/actions/runs/30812467085) showed production 0001–0028 matching local, with `20260803000029_learning_pronunciation_exam.sql` through `20260803000034_verify_learning_exam_only_mastery.sql` as the only pending items; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30813047562`](https://github.com/1590703336/Nalanda/actions/runs/30813047562) created and kept `db-recovery-1a58d2164f6d58feea4d3a2c8925211b8cc60dde` before apply: artifact `8855819351`, 593,399 bytes, digest `sha256:5f36f770aab133f24e12d461e66b0c4b744303ca1dbfd1600215163e4ad14796`, retained for 14 days.
+- After apply, remote history reached 0034, and the 0030/0032/0034 field, constraint, function definition, and service-role-only permission assertions, remote database lint, and an empty dry-run all passed. 0029–0034 keep the necessary old signatures for application rollback; the database still uses forward-fix only and never runs down migrations.
+- Before activation, real Japan East Azure, real OpenRouter, and the Courses API/Storage gates all passed. Immutable release `1a58d2164f6d58feea4d3a2c8925211b8cc60dde-30813047562-1` activated healthily; an independent public re-check confirmed `deps.supabase=ok` from `/api/health`, anonymous `/api/me=401`, the React root, and Course Market 200. No real user session was used to submit full spelling/pronunciation exams in production, so it can't be claimed as production user exam-flow E2E.
 
-### 8.11 2026-08-04 Courses 0035–0036 发布记录
+### 8.11 2026-08-04 Courses 0035–0036 release record
 
-- 发布提交：`51252527645d9438df0414f056c8a3b088b360d8`；PR [#47](https://github.com/1590703336/Nalanda/pull/47) run `30831319634`、main run `30831964846` 和受保护 run `30833228406` 通过 quality、0007→0036、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。真实数据库用例验证手工赋值、复习和单项考试都不能绕过精确投影；Playwright 的外部供应商仍为 fake。
-- [只读 plan run `30832581552`](https://github.com/1590703336/Nalanda/actions/runs/30832581552) 显示生产 0001–0034 与本地一致，唯一待办为 `20260803000035_learning_mastery_projection_guard.sql` 和 `20260803000036_verify_learning_mastery_projection_guard.sql`；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30833228406`](https://github.com/1590703336/Nalanda/actions/runs/30833228406) 在 apply 前创建并保留 `db-recovery-51252527645d9438df0414f056c8a3b088b360d8`，artifact `8864033351`、657,467 bytes、digest `sha256:36a9ec08516dff5cb198511d71b69bb63533727cad9826db050dff4a33025625`，保留至 2026-08-17。
-- apply 后远端 history 到 0036，0036 的当前数据、约束、trigger、考试/review 写入路径、客户端 progress 权限与 service-role helper 断言、remote database lint 和空 dry-run 均通过。数据库仍只采用 forward-fix，不执行 down migration。
-- 激活前真实 Japan East Azure、真实 OpenRouter 和 Courses API/Storage gate 均通过；后者验证未裁剪 WAV `assessmentBytes=88444`。不可变 release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` 健康激活；独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401`、新 React 资产和 Course Market 200。未使用真实用户会话在生产提交完整拼写/读音考试，不能据此声称生产用户考试流程 E2E。
+- Release commit: `51252527645d9438df0414f056c8a3b088b360d8`; PR [#47](https://github.com/1590703336/Nalanda/pull/47) run `30831319634`, main run `30831964846`, and protected run `30833228406` passed quality, 0007→0036, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Real database cases verified that manual assignment, reviews, and a single exam can't bypass the exact projection; Playwright's external providers are still fakes.
+- [Read-only plan run `30832581552`](https://github.com/1590703336/Nalanda/actions/runs/30832581552) showed production 0001–0034 matching local, with `20260803000035_learning_mastery_projection_guard.sql` and `20260803000036_verify_learning_mastery_projection_guard.sql` as the only pending items; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30833228406`](https://github.com/1590703336/Nalanda/actions/runs/30833228406) created and kept `db-recovery-51252527645d9438df0414f056c8a3b088b360d8` before apply: artifact `8864033351`, 657,467 bytes, digest `sha256:36a9ec08516dff5cb198511d71b69bb63533727cad9826db050dff4a33025625`, retained until 2026-08-17.
+- After apply, remote history reached 0036, and the 0036 assertions on current data, constraints, triggers, exam/review write paths, client progress permissions, and service-role helpers, plus remote database lint and an empty dry-run, all passed. The database still uses forward-fix only and never runs down migrations.
+- Before activation, real Japan East Azure, real OpenRouter, and the Courses API/Storage gates all passed; the latter verified the untrimmed WAV `assessmentBytes=88444`. Immutable release `51252527645d9438df0414f056c8a3b088b360d8-30833228406-1` activated healthily; an independent public re-check confirmed `deps.supabase=ok` from `/api/health`, anonymous `/api/me=401`, the new React assets, and Course Market 200. No real user session was used to submit full spelling/pronunciation exams in production, so it can't be claimed as production user exam-flow E2E.
 
-### 8.12 2026-08-04 Courses 0037–0038 发布记录
+### 8.12 2026-08-04 Courses 0037–0038 release record
 
-- 发布提交：`66c919833693971ba1bda4ea33a3fdf6717ef1ca`；PR [#49](https://github.com/1590703336/Nalanda/pull/49) run `30904901828` 通过 quality、0007→0038、空库重建/database lint、真实本地 Supabase 双用户 RLS/Storage E2E 与 Chromium Playwright。Playwright 的 Azure/OpenRouter/Fish Audio 仍为 fake。
-- [只读 plan run `30906629924`](https://github.com/1590703336/Nalanda/actions/runs/30906629924) 首次在一次性 Supabase 的首个课程 RPC 收到瞬时上游错误；同 SHA 仅重跑失败 job 后真实 RLS/Storage 和依赖 plan 均通过。最终远端 0001–0036 与本地一致，dry-run 唯一列出 0037–0038；恢复、apply 与 deploy 步骤全部跳过。
-- [受保护 apply/deploy run `30907716733`](https://github.com/1590703336/Nalanda/actions/runs/30907716733) 在 apply 前创建并保留 `db-recovery-66c919833693971ba1bda4ea33a3fdf6717ef1ca`，artifact `8892006761`、730,159 bytes。apply 后远端 history 到 0038，结构/权限断言、remote database lint 与空 dry-run 均通过；数据库仍只采用 forward-fix。
-- 激活前真实 Japan East Azure、真实 OpenRouter structured、Courses API/Storage 和 Azure 中文 WAV→Fish Audio gate 均通过；STT gate 返回 `transcriptionMatched=true`。不可变 release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` 健康激活。独立公网复核确认 `/api/health` 的 `deps.supabase=ok`、匿名 `/api/me=401` 和新 React 资产；生产主机只读复核确认 `/opt/nalanda/web` 与 API image 均指向同一 SHA。合成中文 WAV 只证明固定样本和当时供应商可用，不是物理麦克风或多口音 E2E。
+- Release commit: `66c919833693971ba1bda4ea33a3fdf6717ef1ca`; PR [#49](https://github.com/1590703336/Nalanda/pull/49) run `30904901828` passed quality, 0007→0038, empty-database rebuild/database lint, real local Supabase two-user RLS/Storage E2E, and Chromium Playwright. Playwright's Azure/OpenRouter/Fish Audio are still fakes.
+- [Read-only plan run `30906629924`](https://github.com/1590703336/Nalanda/actions/runs/30906629924) first received a transient upstream error at the first course RPC of the one-off Supabase; after rerunning only the failed job on the same SHA, real RLS/Storage and the dependent plan all passed. In the end remote 0001–0036 matched local, and the dry-run listed exactly 0037–0038; the recovery, apply, and deploy steps were all skipped.
+- [Protected apply/deploy run `30907716733`](https://github.com/1590703336/Nalanda/actions/runs/30907716733) created and kept `db-recovery-66c919833693971ba1bda4ea33a3fdf6717ef1ca` before apply: artifact `8892006761`, 730,159 bytes. After apply, remote history reached 0038, and the structure/permission assertions, remote database lint, and an empty dry-run all passed; the database still uses forward-fix only.
+- Before activation, real Japan East Azure, real OpenRouter structured, the Courses API/Storage, and Azure Chinese WAV→Fish Audio gates all passed; the STT gate returned `transcriptionMatched=true`. Immutable release `66c919833693971ba1bda4ea33a3fdf6717ef1ca-30907716733-1` activated healthily. An independent public re-check confirmed `deps.supabase=ok` from `/api/health`, anonymous `/api/me=401`, and the new React assets; a read-only check on the production host confirmed `/opt/nalanda/web` and the API image both point to the same SHA. The synthetic Chinese WAV only proves the fixed sample and that the provider worked at the time; it isn't physical-microphone or multi-accent E2E.
 
-### 8.13 2026-08-10 安全/限流 0039–0040 Stage A 发布记录
+### 8.13 2026-08-10 security/rate-limit 0039–0040 Stage A release record
 
-- 发布代码：PR [#51](https://github.com/1590703336/Nalanda/pull/51)，main merge `eb3c5a909a523f59d748a6ce01d4bd4f3abf909d`；部署 stdin 修复：PR [#52](https://github.com/1590703336/Nalanda/pull/52)，main merge `56100e6bc2a4c70aa289aaad4b43efa1267428bd`。对应 PR/main jobs 均通过 quality、真实 Redis、0007→0040、空库/lint、双用户 RLS/Storage 和 Chromium Playwright。
-- [plan run `31368447660`](https://github.com/1590703336/Nalanda/actions/runs/31368447660) 唯一列出 0039–0040。[apply run `31369657292`](https://github.com/1590703336/Nalanda/actions/runs/31369657292) 在写库前保留加密恢复 artifact `9055783205`（777,902 bytes，digest `6c06bc011b3d0dc436b9722b66206e6f7a12bd2ecf083f2266cbb6b529c4112f`），随后远端 history 到 0040，0040 结构/权限断言、lint 和空 dry-run 通过。
-- 该 apply run 的 Redis `docker compose exec` 未分离 stdin，消耗了剩余 SSH heredoc；job 错误标绿但未运行供应商、API 或公网激活步骤。独立公网 health 显示旧 API `deps.redis=unset`，因此没有把该 run 计作应用发布。PR #52 增加 `</dev/null`、明确成功标记和 workflow 回归测试，main CI `31371608883` 通过后才继续。
-- 修复后的 [plan run `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) 确认本地/远端均到 0040且无待办。[最终 protected run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) 再保留 artifact `9057062920`（800,819 bytes，zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`），并再次验证 history/lint/空 dry-run。
-- 应用切流前依次通过 Redis password PING、AOF、noeviction、无 host port，nginx `-t`，真实 Japan East Azure（10,656-byte MP3、accuracy 98、pronunciation 98.8），真实 OpenRouter Gemma（5,524 ms、253/27/280 tokens）和 Courses API/Storage/Fish gate（`generatedAssets=4`、`duplicateAssetsReused=4`、`assessmentScore=98.2`、`assessmentBytes=88444`、`transcriptionMatched=true`）。一次 OpenRouter 12 秒超时与三次 free-route 429 均在切流前阻断；同凭据额度状态正常且本机/生产主机相同请求恢复 HTTP 200 后才成功，未切换模型或绕过真实 gate。
-- 不可变 release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` 于 `2026-08-10T09:35:34Z` 健康激活。公网复核：health `deps.supabase=ok/deps.redis=ok`，匿名 `/api/me` 与 `/api/admin/points/abuse-signals` 为 401，空注册为 400 且带 `RateLimit-Limit: 5`，Web/Course Market 为 200；主机 Web 软链和 API image 指向同一 release，Redis healthy 且只暴露容器内 `6379/tcp`。
-- Stage B 观察最早截止为 `2026-08-11T09:35:34Z`，实际 go/no-go 于 2026-08-22 完成。0052–0053 随后在完整 CI、只读 plan 精确列出两个文件且恢复点上传成功后 apply；生产 history、空 dry-run 与 lint 已验证到 0053。
+- Release code: PR [#51](https://github.com/1590703336/Nalanda/pull/51), main merge `eb3c5a909a523f59d748a6ce01d4bd4f3abf909d`; deploy stdin fix: PR [#52](https://github.com/1590703336/Nalanda/pull/52), main merge `56100e6bc2a4c70aa289aaad4b43efa1267428bd`. The corresponding PR/main jobs all passed quality, real Redis, 0007→0040, empty database/lint, two-user RLS/Storage, and Chromium Playwright.
+- [Plan run `31368447660`](https://github.com/1590703336/Nalanda/actions/runs/31368447660) listed exactly 0039–0040. [Apply run `31369657292`](https://github.com/1590703336/Nalanda/actions/runs/31369657292) kept encrypted recovery artifact `9055783205` (777,902 bytes, digest `6c06bc011b3d0dc436b9722b66206e6f7a12bd2ecf083f2266cbb6b529c4112f`) before writing to the database, after which remote history reached 0040, and the 0040 structure/permission assertions, lint, and an empty dry-run passed.
+- That apply run's Redis `docker compose exec` didn't detach stdin and consumed the remaining SSH heredoc; the job was wrongly marked green without running the provider, API, or public activation steps. Independent public health showed the old API's `deps.redis=unset`, so the run was not counted as an application release. PR #52 added `</dev/null`, an explicit success marker, and workflow regression tests, and work only continued after main CI `31371608883` passed.
+- The post-fix [plan run `31372198037`](https://github.com/1590703336/Nalanda/actions/runs/31372198037) confirmed local/remote were both at 0040 with nothing pending. [Final protected run `31372888441`](https://github.com/1590703336/Nalanda/actions/runs/31372888441) kept another artifact `9057062920` (800,819 bytes, zip digest `81820da75dc4f0591ffd6f73ba3ac175a5b04f6995af8f8c508f60e56379a2f4`) and verified history/lint/an empty dry-run again.
+- Before the application cutover it passed, in order, Redis password PING, AOF, noeviction, no host port, nginx `-t`, real Japan East Azure (10,656-byte MP3, accuracy 98, pronunciation 98.8), real OpenRouter Gemma (5,524 ms, 253/27/280 tokens), and the Courses API/Storage/Fish gate (`generatedAssets=4`, `duplicateAssetsReused=4`, `assessmentScore=98.2`, `assessmentBytes=88444`, `transcriptionMatched=true`). One 12-second OpenRouter timeout and three free-route 429s were all blocked before cutover; it only succeeded after the same credential's quota status was normal and the same request from the local machine/production host returned HTTP 200 again, without switching models or bypassing real gates.
+- Immutable release `56100e6bc2a4c70aa289aaad4b43efa1267428bd-31372888441-5` activated healthily at `2026-08-10T09:35:34Z`. Public re-check: health `deps.supabase=ok/deps.redis=ok`, anonymous `/api/me` and `/api/admin/points/abuse-signals` are 401, an empty sign-up is 400 with `RateLimit-Limit: 5`, and Web/Course Market are 200; the host's Web symlink and API image point to the same release, and Redis is healthy and only exposes the in-container `6379/tcp`.
+- The earliest end of the Stage B observation was `2026-08-11T09:35:34Z`, and the actual go/no-go was completed on 2026-08-22. 0052–0053 were then applied after full CI, a read-only plan listing exactly the two files, and a successful recovery point upload; production history, an empty dry-run, and lint were verified at 0053.
 
-### 8.14 2026-08-22 安全 Stage B 0052–0053 发布记录
+### 8.14 2026-08-22 security Stage B 0052–0053 release record
 
-- PR [#72](https://github.com/1590703336/Nalanda/pull/72) 合并为 `4d1bc97888799417641fefdd507c026b274a2bab`。PR run `32579985463` 和 main run `32580594918` 均通过 quality、真实 CI Redis、0007→0053、空库/lint、双用户 RLS/Storage、Chromium Playwright与生产镜像启动；main push 因 migration 变化正确保持数据库/应用跳过。
-- [plan run `32581192318`](https://github.com/1590703336/Nalanda/actions/runs/32581192318) 只读确认远端到 0051，唯一待办为 0052–0053。[protected run `32581805613`](https://github.com/1590703336/Nalanda/actions/runs/32581805613) 在写库前上传 artifact [`9478168126`](https://github.com/1590703336/Nalanda/actions/runs/32581805613/artifacts/9478168126)：885,857 bytes、digest `0e4425b7098b4b352b5a7f6e81e87861d9c98b535970f9f20592641653a41274`、14 天保留；数据库 dump 不包含 Storage object bytes。
-- apply 仅执行 `20260822000052_security_integrity_time_column_contract.sql` 与 `20260822000053_verify_security_integrity_time_column_contract.sql`。最终远端 migration list 本地/远端均到 0053，dry-run 返回 `Remote database is up to date`，public schema lint job 成功；0053 的失败关闭断言保证 authenticated 已失去两个派生列 UPDATE、合法业务列与 service-role/trigger 保持。
-- 同一 run 的不可变应用 attempt 1/2 均在真实 Materials AI PPTX gate 返回 `AI_EXAM_VALIDATION_FAILED`，分别停在 repair 后引用门和语义门；两次都在公开切流前恢复 `3c095a55ced21cee11a1b3131dd2889ec1f70733`。独立公网 health 为 Supabase/Redis ok、AI worker/queue ok、匿名 me 401，服务器 Web 软链/API/AI image 也指向旧稳定 release。数据库按 forward-fix 保持 0053；应用失败不能回退或伪装数据库 contract，也不能被记录为最新 main 已部署。
+- PR [#72](https://github.com/1590703336/Nalanda/pull/72) was merged as `4d1bc97888799417641fefdd507c026b274a2bab`. PR run `32579985463` and main run `32580594918` both passed quality, real CI Redis, 0007→0053, empty database/lint, two-user RLS/Storage, Chromium Playwright, and production image startup; the main push correctly kept the database/application skipped because of the migration change.
+- [Plan run `32581192318`](https://github.com/1590703336/Nalanda/actions/runs/32581192318) confirmed read-only that the remote was at 0051 with 0052–0053 as the only pending items. [Protected run `32581805613`](https://github.com/1590703336/Nalanda/actions/runs/32581805613) uploaded artifact [`9478168126`](https://github.com/1590703336/Nalanda/actions/runs/32581805613/artifacts/9478168126) before writing to the database: 885,857 bytes, digest `0e4425b7098b4b352b5a7f6e81e87861d9c98b535970f9f20592641653a41274`, 14-day retention; the database dump doesn't contain Storage object bytes.
+- Apply only ran `20260822000052_security_integrity_time_column_contract.sql` and `20260822000053_verify_security_integrity_time_column_contract.sql`. The final remote migration list had local/remote both at 0053, the dry-run returned `Remote database is up to date`, and the public schema lint job succeeded; 0053's fail-closed assertions guarantee authenticated has lost UPDATE on the two derived columns while the valid business columns and service-role/triggers are kept.
+- The same run's immutable application attempts 1/2 both returned `AI_EXAM_VALIDATION_FAILED` at the real Materials AI PPTX gate, stopping at the post-repair citation gate and the semantic gate respectively; both restored `3c095a55ced21cee11a1b3131dd2889ec1f70733` before the public cutover. Independent public health showed Supabase/Redis ok, AI worker/queue ok, and anonymous me 401, and the server's Web symlink/API/AI images also pointed to the old stable release. The database stays at 0053 per forward-fix; an application failure can't roll back or fake the database contract, and can't be recorded as the latest main being deployed.
 
-## 9. 失败处置
+## 9. Failure handling
 
-### 9.1 本地重建、lint 或 RLS E2E 失败
+### 9.1 Local rebuild, lint, or RLS E2E fails
 
-生产数据库和应用均不变。修复新迁移或测试；禁止跳过 job。
+The production database and application are unchanged. Fix the new migration or tests; skipping the job is forbidden.
 
-### 9.2 dry-run 或发布前备份失败
+### 9.2 Dry-run or pre-release backup fails
 
-生产数据库尚未改变，应用不部署。解决 history、连接、dump 或加密问题后重新审批。禁止通过删除备份步骤绕过。
+The production database hasn't changed yet, and the application isn't deployed. Resolve the history, connection, dump, or encryption problem and get approval again. Bypassing by removing the backup step is forbidden.
 
-### 9.3 `db push` 中途失败
+### 9.3 `db push` fails partway
 
-1. 不自动重跑、不执行猜测的 down SQL；
-2. 保存最后成功版本、失败 SQL 和脱敏错误；
-3. 用 `migration list` 和只读查询确认实际部分生效状态；
-4. 保持旧应用，必要时关闭相关新写入口；
-5. 在 staging 重现并新增 forward-fix migration；
-6. 只有确认数据已破坏且 forward-fix 不足时，进入隔离恢复流程。
+1. Don't rerun automatically, and don't run guessed down SQL;
+2. Save the last successful version, the failing SQL, and the redacted error;
+3. Use `migration list` and read-only queries to confirm the actual partially applied state;
+4. Keep the old application and, if necessary, close the related new write entry points;
+5. Reproduce on staging and add a forward-fix migration;
+6. Only enter the isolated recovery process when data is confirmed corrupted and a forward-fix isn't enough.
 
-单个迁移通常在事务中执行，但并发索引、外部副作用或多迁移批次不能据此假定整体原子。
+Individual migrations usually run in a transaction, but concurrent indexes, external side effects, or multi-migration batches mean the whole can't be assumed atomic.
 
-### 9.4 数据库成功、应用失败
+### 9.4 Database succeeds, application fails
 
-服务器会使用上一运行容器的镜像 tag 和上一 Web symlink 自动回退，并重新验证旧 API。数据库保持新 schema，所以新迁移必须向后兼容。workflow 失败后仍需人工确认外部站点、旧业务路径和数据库指标。
+The server automatically rolls back using the previous running container's image tag and the previous Web symlink, and re-verifies the old API. The database keeps the new schema, so new migrations must be backward compatible. After a workflow failure, external sites, old business paths, and database metrics still need manual confirmation.
 
-若失败只影响 Courses/Azure/分享/市场，优先关闭最窄子 flag；不得为了恢复入口而把客户端表写权限或内部 RPC EXECUTE 重新开放。
+If the failure only affects Courses/Azure/sharing/market, first turn off the narrowest sub-flag; never reopen client table write permissions or internal RPC EXECUTE just to restore an entry point.
 
-### 9.5 数据损坏
+### 9.5 Data corruption
 
-停止受影响写入，下载对应 `db-recovery-<git-sha>` artifact，在安全终端先验证：
+Stop the affected writes, download the corresponding `db-recovery-<git-sha>` artifact, and first verify it in a secure terminal:
 
 ```bash
 BACKUP_ARCHIVE=/secure/path/nalanda-db-<sha>.tar.gz.enc \
@@ -400,22 +400,22 @@ BACKUP_ENCRYPTION_KEY=... \
 bash scripts/restore-db-release.sh verify
 ```
 
-随后按[备份与恢复](./BACKUP_RECOVERY.md)恢复到新的隔离项目。脚本拒绝源项目 Ref 与目标 Ref 相同，也拒绝已有 public 表/Auth 用户/Storage 对象的目标。验证完成前不得切流量。
+Then restore into a new isolated project per [Backup and recovery](./BACKUP_RECOVERY.md). The script refuses a target Ref equal to the source project Ref, and refuses targets that already have public tables/Auth users/Storage objects. Don't switch traffic until verification is complete.
 
-## 10. 恢复与切换原则
+## 10. Recovery and switchover principles
 
-优先级：保持旧应用 → feature flag/停止新写 → forward-fix → 隔离恢复与差异重放 → 经审批切换。只有已演练、无数据损失、锁可控的 down migration 才允许对生产执行；当前 CI 不提供自动 down。
+Priority: keep the old application → feature flags/stop new writes → forward-fix → isolated recovery and differential replay → approved switchover. Only rehearsed down migrations with no data loss and controllable locks may run against production; CI currently provides no automatic down.
 
-逻辑恢复点包含 roles、应用 schema、Auth/Storage metadata/业务数据和 migration history，但**不包含 Storage 对象字节**。完整恢复必须同时满足对象 manifest/备份、Auth、邮件/Provider 配置、URL/keys、RLS 和应用验证。恢复点之后的新写入需要审计后重放；不能用旧快照静默覆盖。
+The logical recovery point contains roles, the application schema, Auth/Storage metadata/business data, and migration history, but **not Storage object bytes**. A full recovery must also cover the object manifest/backups, Auth, email/provider configuration, URLs/keys, RLS, and application verification. New writes after the recovery point need to be audited and replayed; they must never be silently overwritten by an old snapshot.
 
-## 11. 发布记录最低字段
+## 11. Minimum fields of a release record
 
-- PR/ticket、Git SHA、新迁移文件与 checksum；
-- 环境、脱敏 Project Ref、operator/reviewer；
-- baseline/history 状态、dry-run；
-- 恢复 artifact、Storage 恢复点和验证结果；
-- 开始/结束时间、每个 migration 状态；
-- 数据/RLS/API/E2E 验证；
-- application rollback、forward-fix、恢复或事故链接。
+- PR/ticket, Git SHA, new migration files and checksums;
+- Environment, redacted Project Ref, operator/reviewer;
+- Baseline/history state, dry-run;
+- Recovery artifact, Storage recovery point, and verification results;
+- Start/end times and each migration's status;
+- Data/RLS/API/E2E verification;
+- Links to application rollback, forward-fix, recovery, or incidents.
 
-记录中不得包含 access token、数据库密码、service-role key、备份加密 key 或用户 token。
+Records must never contain access tokens, database passwords, service-role keys, backup encryption keys, or user tokens.

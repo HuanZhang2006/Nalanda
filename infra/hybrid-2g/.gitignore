@@ -1,4 +1,4 @@
-# 真实密钥与构建产物不入库
+# Real secrets and build artifacts stay out of the repository
 .env
 web-dist/*
 !web-dist/.gitkeep
