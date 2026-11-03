@@ -1,47 +1,47 @@
-# 07 · 原型模块（剩余仍用假数据的）
+# 07 · Prototype modules (those still on mock data)
 
-> **文档定位**
-> - **内容**：列出仍为 mock 的 Home、Notes/Create、Note Market 及其接真数据的依赖，并区分已经真实的 Course Market。
-> - **作用**：防止把高保真交互误当成已实现业务，并给迁移工作提供入口。
-> - **何时更新**：任一 mock 模块接入真实数据、AI 或支付，或迁移优先级变化时。
+> **About this document**
+> - **Contents**: Lists the Home, Notes/Create, and Note Market modules that are still mocks, their dependencies for real data, and distinguishes the already-real Course Market.
+> - **Purpose**: Prevents high-fidelity interactions from being mistaken for implemented business logic, and gives migration work an entry point.
+> - **When to update**: When any mock module is wired to real data, AI, or payments, or migration priorities change.
 
-> 目标：记录**仍跑在假数据上**的模块（Home / Notes 详情 / Create / Note Market）及接真后端要补什么。已接真后端的模块另包括 Materials、社区、Schedule 和 [Courses](11-learning-courses.md)；Course Market 是免费真实快照，不能与 Note Market Demo 混为一谈。
+> Goal: record the modules **still running on mock data** (Home / Notes detail / Create / Note Market) and what they need for a real backend. Modules already on a real backend include Materials, Community, Schedule, and [Courses](11-learning-courses.md); Course Market is a free real snapshot and must not be confused with the Note Market demo.
 
-## 1. 现在怎么工作
-全部来自 `apps/web/src/legacy/`：
-- **数据**：`legacy/data.ts` 的 `DB`（mock：user、courses、notes、knowledge、quiz、graph、exam、market、community、comments、badges、schedule、activity…）。
-- **视图**：`legacy/app.ts` 的 `VIEWS` 表，每路由一个返回 HTML 字符串的函数；`go(route)` 塞进 `#content`。
-- **交互**：事件委托读 `data-go`（跳路由）/ `data-act`（执行 `ACTIONS[...]`），改前端状态 `S` 后重渲染。
-- **本页所列 mock 模块的“写”操作**：购买、导出、生成等只弹 toast，不落后端。发帖已由真实 Community 模块覆盖，不属于此结论。
+## 1. How it works today
+Everything comes from `apps/web/src/legacy/`:
+- **Data**: `DB` in `legacy/data.ts` (mock: user, courses, notes, knowledge, quiz, graph, exam, market, community, comments, badges, schedule, activity…).
+- **Views**: the `VIEWS` table in `legacy/app.ts`, one function per route returning an HTML string; `go(route)` puts it into `#content`.
+- **Interaction**: event delegation reads `data-go` (route change) / `data-act` (runs `ACTIONS[...]`), mutates the frontend state `S`, and re-renders.
+- **"Write" operations in the mock modules listed here**: buying, exporting, generating, and so on only show a toast and never reach a backend. Posting is covered by the real Community module and is not part of this statement.
 
-> 注意：`materials` 在 `DB` 里虽还有 mock，但运行时已被真实模块覆盖（见 [06](06-materials.md)），所以 Materials 是真的；其余仍是 mock。
+> Note: `materials` still has mock data in `DB`, but at runtime it is replaced by the real module (see [06](06-materials.md)), so Materials is real; the rest are still mocks.
 
-## 2. 各模块现状
-| 模块 | 状态 | 说明 / 接真后端要补 |
+## 2. Module status
+| Module | Status | Notes / what a real backend needs |
 |---|---|---|
-| **Home 首页** | 🟡 mock | 仪表盘（欢迎语/统计卡/课程进度/最近笔记/动态）；可接真实「今日任务 + 积分 + 最近活动」 |
-| **Notes 笔记库 + 详情** | 🟡 混合 | 生产 0041–0043 已有 Materials 试卷、在线考试和历史；旧硬数据保留为 Demo。知识清单/独立测验仍 mock；0046–0051 候选已接 source-ordered React Flow/ELK graph、外置详情、布局保存与 node Q&A，尚未生产发布 |
-| **Create 创作流** | 🟡 mock | 选资料 → 勾产物 → 生成；接 Materials 资料 → AI 微服务异步生成 → 落库 |
-| **Market / Note Market** | 🟡 mock | 笔记卡片/购买弹窗；未来依赖上架/购买、credits 账本和创作者分成 |
-| **Market / Course Market** | ✅ 生产真后端 | 英语词表不可变版本、举报、免费克隆；不接 credits/支付，见 [11](11-learning-courses.md) |
-| Courses 英语单词学习 | ✅ 生产真后端 | 文本创建/编辑/学习/复习/分享已上线；文件 AI 导入和其余类别仍禁用 |
-| Materials 资料库 | ✅ 真后端 | 见 [06](06-materials.md) |
-| Community 社区 | ✅ 真后端 | 见 [09](09-community.md) |
-| Schedule 学习计划 | ✅ 真后端 | 见 [10](10-schedule.md) |
-| Profile / 通知 / 反馈 | ✅ 真后端 | 见 [08](08-notifications-feedback-profile.md) |
+| **Home** | 🟡 mock | Dashboard (greeting/stat cards/course progress/recent notes/activity); could use real "today's tasks + points + recent activity" |
+| **Notes library + detail** | 🟡 mixed | Production 0041–0043 has Materials test papers, online exams, and history; the old hard-coded data stays as a demo. The knowledge list and standalone quiz are still mocks; the 0046–0051 candidate wires a source-ordered React Flow/ELK graph, external details, saved layouts, and node Q&A, not yet released to production |
+| **Create flow** | 🟡 mock | Choose material → pick outputs → generate; needs Materials material → async AI microservice generation → persistence |
+| **Market / Note Market** | 🟡 mock | Note cards/purchase modal; will depend on listing/purchase, a credits ledger, and creator revenue share |
+| **Market / Course Market** | ✅ real production backend | Immutable English word-list versions, reporting, free clones; no credits/payments, see [11](11-learning-courses.md) |
+| Courses English vocabulary learning | ✅ real production backend | Text create/edit/learn/review/share is live; AI file import and the other categories are still disabled |
+| Materials library | ✅ real backend | See [06](06-materials.md) |
+| Community | ✅ real backend | See [09](09-community.md) |
+| Schedule (study plan) | ✅ real backend | See [10](10-schedule.md) |
+| Profile / notifications / feedback | ✅ real backend | See [08](08-notifications-feedback-profile.md) |
 
-## 3. 数据形状已为接入铺路
-Courses 与 `GeneratedExamV1`/job/quota/Notes/Exam 契约已由 `packages/types` 在 Web/API 共用，并与 FastAPI strict camelCase 对齐。`legacy/data.ts` 的 Knowledge/Quiz/Graph mock 仍是独立 Demo 短字段；接真时必须另定契约和布局，不能复用试卷结果冒充完成。
+## 3. Data shapes already pave the way
+The Courses and `GeneratedExamV1`/job/quota/Notes/Exam contracts are shared between Web and API through `packages/types` and aligned with FastAPI's strict camelCase. The Knowledge/Quiz/Graph mocks in `legacy/data.ts` are still separate demo short fields; wiring them up requires a separate contract and layout and must not reuse test-paper results to pretend they are done.
 
-## 4. 升级范式（照 Materials 做）
-每个模块从 mock → 真后端走同一套路（详见 [06](06-materials.md) 与 [04](04-frontend-and-prototype-port.md)）：
-1. 写迁移：建表 + owner-only RLS（+ 需要的存储/外键归属校验），用本地 Supabase reset/E2E 验证并经 CLI history 发布（[05](05-database-and-rls.md)）。
-2. 选择访问边界：普通 owner CRUD 可直连 Supabase；progress、经济、AI 成本、公开传播或审核必须像 Courses 一样走 NestJS + 受限 RPC。
-3. 在 `app.ts`：`VIEWS.xxx = () => '<div id="xxx-root"></div>'` + `go()` 钩子挂载 + 透传依赖。
-4. 两用户验证 RLS/存储隔离，关键主流程再补真浏览器 E2E。
-5. push → 自动部署。
+## 4. Upgrade pattern (follow Materials)
+Every module goes from mock → real backend the same way (see [06](06-materials.md) and [04](04-frontend-and-prototype-port.md)):
+1. Write a migration: tables + owner-only RLS (+ any needed storage/foreign-key ownership checks), verify with a local Supabase reset/E2E, and release through the CLI history ([05](05-database-and-rls.md)).
+2. Choose the access boundary: ordinary owner CRUD may talk to Supabase directly; progress, economy, AI cost, public distribution, or moderation must go through NestJS + restricted RPCs like Courses.
+3. In `app.ts`: `VIEWS.xxx = () => '<div id="xxx-root"></div>'` + mount in a `go()` hook + pass dependencies through.
+4. Verify RLS/storage isolation with two users, and add real-browser E2E for key flows.
+5. Push → automatic deployment.
 
-## 5. 剩余优先级
-1. **完成 Materials 试卷候选发布与质量观察**；随后开放知识清单/Quiz/知识图谱和 Notes 编辑/导出。当前实现为干净自研，不复制 CC BY-NC 参考代码。
-2. **Home 首页**接真数据（今日任务 / 积分 / 最近活动），把各模块串到首屏。
-3. **笔记市场 + 钱包/支付**（依赖 Stripe，放最后）。
+## 5. Remaining priorities
+1. **Finish releasing and observing the quality of the Materials test-paper candidate**; then open the knowledge list/quiz/knowledge graph and Notes editing/export. The current implementation is a clean in-house build that copies no CC BY-NC reference code.
+2. **Home** on real data (today's tasks / points / recent activity), tying every module into the first screen.
+3. **Note market + wallet/payments** (depends on Stripe; last).

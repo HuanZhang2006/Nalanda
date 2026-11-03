@@ -1,10 +1,10 @@
-// Nalanda 共享类型 —— 与原型 app/data.js 及 AI 微服务输出 schema 对齐
+// Nalanda shared types — aligned with the prototype app/data.js and the AI microservice output schema
 
 export type Language = "zh" | "en";
 export type GenerationKind = "knowledge-list" | "quiz" | "graph" | "exam";
 export type MaterialType = "pdf" | "ppt" | "doc" | "md" | "html" | "txt";
 
-// ── AI 生成产物（= DB.knowledge / quiz / graph / exam）──
+// ── AI-generated artifacts (= DB.knowledge / quiz / graph / exam) ──
 export interface KnowledgePoint {
   title: string;
   definition: string;
@@ -44,7 +44,7 @@ export interface MockExam {
   sections: ExamSection[];
 }
 
-// ── 生成请求 ──
+// ── Generation requests ──
 export interface GenerateRequest {
   materialId: string;
   text?: string;

@@ -1,46 +1,45 @@
-# ADR-0012：Materials AI 持久队列、OpenRouter ZDR 与 2G Office 渲染
+# ADR-0012: Materials AI durable queue, OpenRouter ZDR, and 2 GB Office rendering
 
-> **本文内容：**记录 Materials 文件生成试卷采用 PostgreSQL 持久任务、BullMQ 调度、隔离 FastAPI、OpenRouter ZDR 和受限 LibreOffice 全量渲染的决定。
->
-> **作用：**固定任务事实、模型/隐私、安全解析、资源故障和 Free quota 的服务边界，避免把 Redis、客户端进度或临时文件当权威。
->
-> **何时更新：**队列/worker 拓扑、parser、模型/provider/ZDR、资源上限、配额/收费、临时或持久数据生命周期、发布门禁变化时。
+> **About this document**
+> - **Contents**: Records the decision that Materials file-to-test-paper generation uses durable PostgreSQL jobs, BullMQ scheduling, an isolated FastAPI, OpenRouter ZDR, and restricted full LibreOffice rendering.
+> - **Purpose**: Fixes the service boundaries for job facts, models/privacy, safe parsing, resource failures, and the Free quota, so Redis, client progress, or temporary files are never treated as authoritative.
+> - **When to update**: When the queue/worker topology, parser, model/provider/ZDR, resource limits, quotas/charging, temporary or durable data lifecycle, or release gates change.
 
-- **状态：**Accepted / deployed；0041–0043 与不可变应用已于 2026-08-11 进入生产，真实 provider、2G canary、登录用户 smoke 与独立公网核验均通过。
-- **日期：**2026-08-10
-- **修订：**2026-08-11 明确启用同一固定模型的合规 provider failover、不增加跨模型 fallback，并记录受保护生产激活。
-- **决策者：**Nalanda owner
+- **Status:** Accepted / deployed; 0041–0043 and the immutable app went to production on 2026-08-11, and real providers, the 2 GB canary, the signed-in user smoke, and independent public verification all passed.
+- **Date:** 2026-08-10
+- **Revision:** 2026-08-11 explicitly enables compliant provider failover for the same fixed model, adds no cross-model fallback, and records the protected production activation.
+- **Deciders:** Nalanda owner
 
-## 背景
+## Context
 
-Materials 已保存用户私有课程文件，但历史 FastAPI 只返回固定 mock。第一阶段只需“Generate test paper”，同时要求多格式确定性解析、仅失败范围视觉恢复、prompt injection 拒绝、任务进度、在线考试、成功才消耗的每日免费额度，以及 2G 同机服务器上严格清理和资源隔离。
+Materials already stores users' private course files, but the historical FastAPI only returned fixed mocks. Phase one only needs "Generate test paper", while requiring deterministic multi-format parsing, visual recovery only for failed regions, prompt-injection rejection, job progress, online exams, a daily free allowance consumed only on success, and strict cleanup and resource isolation on a shared 2 GB server.
 
-Redis 可能重启或丢队列项；模型可能超时、返回坏 JSON或没有满足 ZDR 的端点；LibreOffice 全量渲染可能接近主机内存上限。因此这些依赖都不能直接成为任务、额度或结果事实源。
+Redis may restart or lose queue entries; models may time out, return bad JSON, or have no endpoint that satisfies ZDR; full LibreOffice rendering may approach the host's memory limit. None of these dependencies can therefore be the source of truth for jobs, allowances, or results.
 
-## 决策
+## Decision
 
-1. PostgreSQL 保存 `generation_jobs/events`、quota reservation、Notes、答卷、幂等 operation 和 provider usage；BullMQ 只保存 job UUID。reconciler 重投 DB 中缺失的 queued/过期 lease，同一个 idempotency key 不重复预留、生成或保存。
-2. NestJS 从已验证 JWT 派生 user ID、校验 material owner/格式/大小、创建短期 private Storage signed URL，并只通过独立 internal token 调用 FastAPI。所有状态写入经 service-role-only事务 RPC；浏览器不能调用内部 RPC、决定分数或提供模型/key。
-3. FastAPI 先生成 `DocumentIR`。DeepSeek 审查文本完整性与注入，解析器失败与审查失败范围取并集；只把这些渲染区域交给 MiMo。拼接后再次安全审查，再由 DeepSeek 生成/最多修复一次严格 `GeneratedExamV1`。
-4. 固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`。所有请求要求 ZDR、deny data collection、require parameters，关闭 reasoning/tool/Web 且不提供跨模型 `models` fallback；禁用可选 reasoning 确保 completion 预算用于 strict JSON，而非返回/隐藏思维链。同一固定模型按吞吐量优先在仍满足所有隐私与参数过滤器的 provider endpoint 间故障转移；没有合规 endpoint 即失败，不静默路由到留存 provider或不同模型。
-5. `malicious` 或 `uncertain` 注入都拒绝；`benign_educational` 仅用于明确教学/引用/安全分析。模型分类不是唯一边界，前后仍有格式/资源、strict schema、source refs 和产品约束。
-6. DOCX/PPTX 全量低优先级渲染，以保留任意失败范围恢复能力；MiMo 仍只接收失败范围。生产 worker 单并发、640MiB RAM/896MiB mem+swap、0.75 CPU、128 pids，LibreOffice 120秒硬超时；触发 OOM/邻站影响时保持 flag 关闭。
-7. 每任务使用 0700 临时目录，成功、失败、取消、超时均在 `finally` 删除；启动/定时清理超过一小时 orphan，并设置单 job 1GiB 与最小空闲 512MiB。私有版本化 `ai_material_parse_cache` 是明确的持久产品数据，不混入临时目录。
-8. 第一阶段所有用户 Free，每个 Profile 本地日分别 10 次成功生成和评分。reservation 只在成功时 consume；失败/拒绝/取消 release。全局默认 US$20/月，单生成 US$0.50、评分 US$0.05；不使用 credits、points、VIP 或支付。
+1. PostgreSQL stores `generation_jobs/events`, quota reservations, Notes, answer sheets, idempotent operations, and provider usage; BullMQ only stores job UUIDs. A reconciler re-enqueues queued jobs/expired leases missing from the queue, and the same idempotency key never reserves, generates, or saves twice.
+2. NestJS derives the user ID from the verified JWT, checks material owner/format/size, creates a short-lived private Storage signed URL, and calls FastAPI only with a separate internal token. All state writes go through service-role-only transaction RPCs; the browser cannot call internal RPCs, decide scores, or supply models/keys.
+3. FastAPI first produces a `DocumentIR`. DeepSeek reviews text completeness and injection, and the union of parser-failed and review-failed regions is taken; only those rendered regions go to MiMo. After stitching, safety review runs again, then DeepSeek generates/repairs at most once a strict `GeneratedExamV1`.
+4. `deepseek/deepseek-v4-flash-0731` and `xiaomi/mimo-v2.5` are fixed. Every request requires ZDR, deny data collection, and require parameters, disables reasoning/tools/Web, and provides no cross-model `models` fallback; disabling optional reasoning ensures the completion budget goes to strict JSON rather than returning/hiding chain-of-thought. The same fixed model fails over, throughput-first, among provider endpoints that still satisfy every privacy and parameter filter; if no compliant endpoint exists, it fails rather than silently routing to a retaining provider or a different model.
+5. Both `malicious` and `uncertain` injection classifications are rejected; `benign_educational` is only for clearly instructional/quoted/security-analysis content. Model classification is not the only boundary; format/resource checks, strict schema, source refs, and product constraints apply before and after.
+6. DOCX/PPTX are fully rendered at low priority to keep the ability to recover any failed region; MiMo still only receives failed regions. The production worker has single concurrency, 640 MiB RAM/896 MiB mem+swap, 0.75 CPU, 128 pids, and a 120-second LibreOffice hard timeout; if OOM or impact on neighboring sites occurs, the flag stays off.
+7. Each job uses a 0700 temporary directory deleted in `finally` on success, failure, cancellation, and timeout; startup/periodic cleanup removes orphans older than an hour, with a 1 GiB per-job limit and a 512 MiB minimum free space. The private versioned `ai_material_parse_cache` is explicit durable product data and is not mixed into temporary directories.
+8. In phase one every user is Free, with 10 successful generations and 10 gradings per Profile local day. Reservations are consumed only on success; failure/rejection/cancellation releases them. The global default is US$20/month, US$0.50 per generation, and US$0.05 per grading; credits, points, VIP, and payments are not used.
 
-## 结果与取舍
+## Results and trade-offs
 
-- Redis 故障不会丢任务/额度，但恢复可能增加队列等待；PostgreSQL lease 与 reconciler 增加实现复杂度。
-- 只视觉恢复失败范围降低隐私、成本和延迟；Office 全量渲染仍是用户接受的 2G 高风险选择，必须以 canary 而非配置文件宣称可用。
-- ZDR/strict schema/双审查显著收窄风险，却不能保证绝对消除注入、幻觉或供应商行为变化；必须保留 kill switch、固定 eval 和人工问题反馈。
-- 同模型 provider failover 避免单一 endpoint 的 429/5xx 直接阻断任务；量化方式、延迟和价格仍可能因 endpoint 不同而变化，因此每次都受 strict schema、ZDR、参数过滤及单 job/月成本硬门约束。
-- owner 可以在自己的 Notes detail 查看完整答案。考试 session 隐藏 answer key 只防止正常 UI 提前泄题，不是对资料所有者的防作弊安全系统。
+- A Redis failure does not lose jobs/allowances, but recovery may add queue wait; PostgreSQL leases and the reconciler add implementation complexity.
+- Visual recovery of failed regions only lowers privacy exposure, cost, and latency; full Office rendering remains a high-risk choice the user accepted for 2 GB, and must be proven by a canary rather than claimed by a config file.
+- ZDR/strict schema/double review greatly narrow the risk but cannot guarantee eliminating injection, hallucination, or provider behavior changes; a kill switch, fixed evals, and human issue feedback must be kept.
+- Same-model provider failover keeps a single endpoint's 429/5xx from blocking jobs; quantization, latency, and price may still differ across endpoints, so every call stays bound by strict schema, ZDR, parameter filters, and per-job/monthly cost hard gates.
+- Owners can see the full answers in their own Notes detail. Hiding the answer key during an exam session only prevents the normal UI from leaking questions early; it is not an anti-cheating security system against the material's owner.
 
-## 验证与发布
+## Verification and release
 
-- CI：Python ruff/pytest、Nest API/真实 Redis BullMQ、0041–0043 空库/升级/lint/双用户 RLS、Web jsdom、fake-provider Playwright、AI Docker 与发布脚本测试。
-- 真实 gate：无个人数据 PDF/DOCX/PPTX/chart/injection/safe lesson/grading，验证失败范围、ZDR、strict JSON、source refs、token/cost和注入拒绝/正常教材不误杀。
-- 资源 gate：近上限 Office fixture 记录 RSS、swap、队列、临时盘及邻站健康；kernel OOM、邻站失败或持续不可接受 swap 即 no-go。
-- 生产：只读 plan → 加密恢复点 → apply 0041–0043 → `FEATURE_MATERIAL_AI=false` 启动 Redis/AI/API → readiness/清理/canary/真实 provider → 开 flag → 登录用户公网 smoke。应用异常恢复不可变 release并关 flag；数据库只 forward-fix。
+- CI: Python ruff/pytest, Nest API/real Redis BullMQ, 0041–0043 empty-database/upgrade/lint/two-user RLS, Web jsdom, fake-provider Playwright, AI Docker, and release-script tests.
+- Real gate: PDF/DOCX/PPTX/chart/injection/safe lesson/grading with no personal data, verifying failed regions, ZDR, strict JSON, source refs, tokens/cost, and injection rejection without false positives on normal teaching material.
+- Resource gate: a near-limit Office fixture records RSS, swap, queue, temporary disk, and neighboring-site health; kernel OOM, neighboring-site failures, or sustained unacceptable swap is a no-go.
+- Production: read-only plan → encrypted recovery point → apply 0041–0043 → start Redis/AI/API with `FEATURE_MATERIAL_AI=false` → readiness/cleanup/canary/real providers → turn on the flag → public signed-in user smoke. On app anomalies, restore the immutable release and turn the flag off; the database is only fixed forward.
 
-实际发布证据：plan `31465816321`；apply/deploy `31467153739`；加密恢复 artifact `9092230348`；release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`。此前真实 provider 429 和远端 heredoc stdin 假绿均未计作上线；最终 workflow 及服务器/公网独立核验一致后才将状态改为 deployed。
+Actual release evidence: plan `31465816321`; apply/deploy `31467153739`; encrypted recovery artifact `9092230348`; release `e6ce0cb246d9fc1ecc1c4869b6e63d09d3256bd4-31467153739-1`. Earlier real-provider 429s and a false green from remote heredoc stdin were not counted as the launch; the status was changed to deployed only after the final workflow and independent server/public verification agreed.

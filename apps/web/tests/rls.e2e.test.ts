@@ -25,7 +25,7 @@ const clientOptions = {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false },
 };
 
-describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
+describe.runIf(enabled).sequential("Supabase two-user RLS E2E", () => {
   let admin: SupabaseClient;
   let a: SupabaseClient;
   let b: SupabaseClient;
@@ -37,11 +37,11 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
   beforeAll(async () => {
     if (!url || !anonKey || !serviceRoleKey || !confirmedProjectRef) {
-      throw new Error("RUN_SUPABASE_RLS_E2E=1 时必须设置 SUPABASE_URL、SUPABASE_ANON_KEY、SUPABASE_SERVICE_ROLE_KEY、SUPABASE_RLS_E2E_CONFIRM_REF");
+      throw new Error("RUN_SUPABASE_RLS_E2E=1 requires SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_ROLE_KEY, and SUPABASE_RLS_E2E_CONFIRM_REF");
     }
     const actualProjectRef = new URL(url).hostname.split(".")[0];
     if (!actualProjectRef || confirmedProjectRef !== actualProjectRef) {
-      throw new Error(`SUPABASE_RLS_E2E_CONFIRM_REF 与 SUPABASE_URL 的 project ref 不匹配（实际为 ${actualProjectRef || "无法识别"}）`);
+      throw new Error(`SUPABASE_RLS_E2E_CONFIRM_REF does not match the SUPABASE_URL project ref (actual: ${actualProjectRef || "unrecognized"})`);
     }
 
     admin = createClient(url, serviceRoleKey, clientOptions);
@@ -55,8 +55,8 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     ]);
     aId = createdA.data.user?.id || "";
     bId = createdB.data.user?.id || "";
-    if (createdA.error || !createdA.data.user) throw createdA.error || new Error("无法创建测试用户 A");
-    if (createdB.error || !createdB.data.user) throw createdB.error || new Error("无法创建测试用户 B");
+    if (createdA.error || !createdA.data.user) throw createdA.error || new Error("Could not create test user A");
+    if (createdB.error || !createdB.data.user) throw createdB.error || new Error("Could not create test user B");
     aName = emailA.split("@")[0];
 
     a = createClient(url, anonKey, clientOptions);
@@ -71,7 +71,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
   afterAll(async () => {
     const cleanupErrors: string[] = [];
-    // auth 级联不保证清理 Storage，因此先用 service role 删除测试对象。
+    // The auth cascade does not guarantee Storage cleanup, so delete test objects with the service role first.
     if (admin && storagePaths.length) {
       const removed = await admin.storage.from("materials").remove(storagePaths);
       if (removed.error) cleanupErrors.push(`Storage cleanup: ${removed.error.message}`);
@@ -83,7 +83,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     // Moderation actions and abuse signals intentionally reject direct
     // service-role DELETE. This disposable Supabase stack is destroyed after
     // the suite, so test audit facts deliberately remain append-only here.
-    // 删除 auth 用户会通过外键级联删除本套件产生的业务表数据。
+    // Deleting the auth users cascades through foreign keys and removes this suite's business-table rows.
     if (admin && aId) {
       const deleted = await admin.auth.admin.deleteUser(aId);
       if (deleted.error) cleanupErrors.push(`User A cleanup: ${deleted.error.message}`);
@@ -131,7 +131,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     if (cleanupErrors.length) throw new Error(cleanupErrors.join("; "));
   }, 30_000);
 
-  it("隔离 profile、通知、反馈、课程、资料和存储归属", async () => {
+  it("isolates profile, notifications, feedback, courses, materials, and storage ownership", async () => {
     const ownProfile = await a.from("profiles").select("id,username").eq("id", aId).single();
     expect(ownProfile.error).toBeNull();
     expect(ownProfile.data?.id).toBe(aId);
@@ -158,7 +158,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     ];
     for (const patch of protectedPatches) {
       const result = await a.from("profiles").update(patch).eq("id", aId);
-      expect(result.error, `profile 受保护字段不应允许客户端更新：${Object.keys(patch)[0]}`).not.toBeNull();
+      expect(result.error, `protected profile fields must not be client-updatable: ${Object.keys(patch)[0]}`).not.toBeNull();
     }
     const protectedAfter = await a.from("profiles")
       .select("points,credits,level,level_name,vip_until,streak,streak_date")
@@ -284,7 +284,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     storagePaths.push(forbiddenStoragePath);
     expect((await b.storage.from("materials").upload(forbiddenStoragePath, new Blob(["forbidden"]))).error).not.toBeNull();
 
-    // 验证正常的显式清理路径；afterAll 仍为测试中途失败提供兜底。
+    // Exercise the normal explicit cleanup path; afterAll still covers a mid-test failure.
     expect((await a.storage.from("materials").remove([storagePath])).error).toBeNull();
     expect((await a.from("materials").delete().eq("id", material.data!.id)).error).not.toBeNull();
     expect((await a.from("courses").delete().eq("id", course.data!.id)).error).not.toBeNull();
@@ -294,7 +294,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(deletedCourse.error).toBeNull();
   }, 30_000);
 
-  it("验证社区公共读、四类计数、作者防伪造、关注和作者权限", async () => {
+  it("verifies community public reads, the four counters, author anti-spoofing, follows, and author permissions", async () => {
     const forgedPostInserts = [
       { title: "forged owner", user_id: bId },
       { title: "forged author", author_name: "HACKER", author_university: "FAKE" },
@@ -412,7 +412,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await admin.from("point_abuse_signals")
       .update({ status: "dismissed" }).eq("id", randomUUID())).error).not.toBeNull();
 
-    // like：actor + 原帖不可变内容键为永久业务键；取消会冲正，重赞只恢复同一净额。
+    // like: actor + the original post's immutable content key is the permanent business key; unliking reverses, re-liking only restores the same net amount.
     const bPointsAfterInteractions = await b.from("profiles").select("points").eq("id", bId).single();
     expect((await b.from("post_likes").delete().eq("post_id", post.data!.id)).error).toBeNull();
     expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
@@ -421,7 +421,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
       .toBe(bPointsAfterInteractions.data!.points);
 
-    // comment：同一用户在同一逻辑帖子只有一个净奖励；仍有另一条时删除不冲正。
+    // comment: one user earns one net reward per logical post; deleting while another comment remains does not reverse it.
     const secondComment = await b.from("comments")
       .insert({ post_id: post.data!.id, body: "second comment" })
       .select("id")
@@ -443,7 +443,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
       .toBe(bPointsAfterInteractions.data!.points);
 
-    // 并发删除同一 actor/post 的最后两条评论也只能做一次冲正，不能遗留 active。
+    // Concurrently deleting the same actor/post's last two comments must reverse exactly once and leave nothing active.
     const concurrentComment = await b.from("comments")
       .insert({ post_id: post.data!.id, body: "concurrent delete" })
       .select("id")
@@ -465,7 +465,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
       .toBe(bPointsAfterInteractions.data!.points);
 
-    // repost：actor + original 为永久业务键；重复转发不加分，最后一个删除才冲正。
+    // repost: actor + original is the permanent business key; repeat reposts earn nothing, and only deleting the last one reverses.
     const duplicateRepost = await b.from("posts")
       .insert({ repost_of: post.data!.id, kind: "experience", tags: [], body: "another caption" })
       .select("id")
@@ -487,7 +487,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await b.from("profiles").select("points").eq("id", bId).single()).data!.points)
       .toBe(bPointsAfterInteractions.data!.points);
 
-    // 原创帖使用规范化内容指纹；删除/重建反复执行后净 points 回到原值。
+    // Original posts use a normalized content fingerprint; repeated delete/recreate returns net points to the original value.
     const beforeDisposablePost = bPointsAfterInteractions.data!.points;
     const disposablePost = await b.from("posts").insert({
       title: "Stable fingerprint post",
@@ -593,7 +593,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(repeatedRestore.data).toMatchObject({ affectedEventCount: 0, affectedAmount: 0 });
     expect((await admin.from("point_moderation_actions").select("id").eq("admin_user_id", aId)).data).toHaveLength(3);
 
-    // 删除原帖会级联删除 like/comment/repost；每个 actor 的净奖励都必须各冲正一次。
+    // Deleting the original cascades to like/comment/repost; every actor's net reward must be reversed exactly once.
     const aBeforeCascade = await a.from("profiles").select("points").eq("id", aId).single();
     const bBeforeCascade = await b.from("profiles").select("points").eq("id", bId).single();
     expect((await a.from("posts").delete().eq("id", post.data!.id)).error).toBeNull();
@@ -614,7 +614,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(bLedgerAfterCascade.data!.reduce((sum, entry) => sum + entry.amount, 0))
       .toBe((await b.from("profiles").select("points").eq("id", bId).single()).data!.points);
 
-    // 相同原创内容重建只恢复原来的 +10，不增加历史净额。
+    // Recreating identical original content only restores the original +10 and does not grow the historical net.
     const restoredOriginal = await a.from("posts").insert({
       title: "RLS community post",
       body: "body",
@@ -626,8 +626,8 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points)
       .toBe(aBeforeCascade.data!.points);
 
-    // 原创每日只有前 3 个不同 business key 领奖；超额帖子仍然发布。
-    // 本日已有 originalPostKey，因此以下四帖只有两帖加分。
+    // Only the first 3 distinct original-post business keys per day earn rewards; posts over the cap are still published.
+    // originalPostKey already exists today, so only two of the following four posts earn points.
     const beforeCap = (await a.from("profiles").select("points").eq("id", aId).single()).data!.points;
     const capPosts: Array<{ id: string; points_business_key: string; title: string }> = [];
     for (let index = 0; index < 4; index += 1) {
@@ -734,7 +734,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(finalLedger.data!.reduce((sum, entry) => sum + entry.amount, 0)).toBe(finalProfile.data!.points);
   }, 60_000);
 
-  it("验证计划 RLS、跨用户课程校验、完成积分和同日 streak 去重", async () => {
+  it("verifies study-plan RLS, cross-user course checks, completion points, and same-day streak dedupe", async () => {
     const course = await a.from("courses").insert({ code: "PLAN 101", name: "Plan Course" }).select("id").single();
     expect(course.error).toBeNull();
     const material = await a.from("materials").insert({
@@ -794,7 +794,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(afterFirst.data!.streak).toBeGreaterThanOrEqual(1);
     expect(afterSecond.data!.streak).toBe(afterFirst.data!.streak);
 
-    // 同一任务反复取消/完成只在 +5/-5 间切换，且不会再次推进 streak。
+    // Repeatedly un-completing/completing one task only toggles between +5/-5 and never advances the streak again.
     expect((await a.from("study_tasks").update({ done: false }).eq("id", tasks.data![0].id)).error).toBeNull();
     expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(before.data!.points + 5);
     expect((await a.from("study_tasks").update({ done: true }).eq("id", tasks.data![0].id)).error).toBeNull();
@@ -804,7 +804,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(afterRedo.data!.points).toBe(before.data!.points + 10);
     expect(afterRedo.data!.streak).toBe(afterFirst.data!.streak);
 
-    // 删除已完成任务会冲正；相同业务指纹的重建仅恢复净 +5。
+    // Deleting a completed task reverses its reward; recreating the same business fingerprint only restores a net +5.
     expect((await a.from("study_tasks").delete().eq("id", tasks.data![0].id)).error).toBeNull();
     expect((await a.from("profiles").select("points").eq("id", aId).single()).data!.points).toBe(before.data!.points + 5);
     const recreatedTask = await a.from("study_tasks").insert({
@@ -892,7 +892,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     expect(allEntries.data!.reduce((sum, entry) => sum + entry.amount, 0)).toBe(projectedProfile.data!.points);
   }, 60_000);
 
-  it("验证 Materials AI 额度、任务幂等、私有结果和考试 revision", async () => {
+  it("verifies Materials AI quota, job idempotency, private results, and exam revisions", async () => {
     const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
       const result = await admin.rpc(name, args);
       expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
@@ -1370,7 +1370,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     }))).toEqual([]);
   }, 60_000);
 
-  it("验证 Luna 路由门禁、跨设备图布局和删除清理的额度/审计原子性", async () => {
+  it("verifies the Luna routing gate, cross-device graph layout, and quota/audit atomicity of delete cleanup", async () => {
     const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
       const result = await admin.rpc(name, args);
       expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
@@ -1522,7 +1522,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     await rpc("ai_finalize_generation_job_cleanup", { p_job_id: activeDuringClear.id });
   }, 60_000);
 
-  it("拒绝已退役的 Ox Alpha 流水线，并要求 Luna 使用 Azure ZDR 上游", async () => {
+  it("rejects the retired Ox Alpha pipeline and requires Luna to use the Azure ZDR upstream", async () => {
     const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
       const result = await admin.rpc(name, args);
       expect(result.error, `${name}: ${result.error?.message || "unknown"}`).toBeNull();
@@ -1600,15 +1600,15 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     await rpc("ai_finalize_generation_job_cleanup", { p_job_id: job.id });
   }, 60_000);
 
-  it("验证学习课程隔离、候补池、跨日熟练、复习日程、徽章和 +20 指纹幂等", async () => {
+  it("verifies learning-course isolation, retry pool, cross-day mastery, review schedules, badges, and +20 fingerprint idempotency", async () => {
     const courseId = randomUUID();
     const unitId = randomUUID();
     const terms = Array.from({ length: 20 }, (_, index) => ({
-      id: randomUUID(), term: `word-${String(index + 1).padStart(2, "0")}`, translations: [`翻译${index + 1}`], ipa: null,
+      id: randomUUID(), term: `word-${String(index + 1).padStart(2, "0")}`, translations: [`translation ${index + 1}`], ipa: null,
     }));
     const payload = {
       id: courseId, title: "RLS Vocabulary", category: "english_vocabulary", hasUnits: false, locale: "en-US",
-      units: [{ id: unitId, name: "默认单元", isSystem: true, words: terms }],
+      units: [{ id: unitId, name: "Default unit", isSystem: true, words: terms }],
     };
     const rpc = async <T = any>(name: string, args: Record<string, unknown>) => {
       const result = await admin.rpc(name, args);
@@ -1622,7 +1622,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const answer = (sessionId: string, word: { id: string; term: string; translations: string[] }, skill: string, correct = true) => rpc("learning_record_attempt", {
       p_user_id: aId, p_session_id: sessionId, p_word_id: word.id, p_skill: skill,
       p_answer: skill === "pronunciation" ? { wordId: correct ? word.id : terms.find((entry) => entry.id !== word.id)!.id }
-        : skill === "translation" ? { translations: correct ? word.translations : ["错误"] }
+        : skill === "translation" ? { translations: correct ? word.translations : ["wrong"] }
           : { text: correct ? word.term : "wrong" },
     });
     const finishReview = async (sessionId: string, words: typeof terms, skills: string[], firstWrong = false) => {
@@ -2094,7 +2094,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     const semanticAttemptId = randomUUID();
     const semanticLease = randomUUID();
-    const semanticAnswerHash = createHash("sha256").update("一种水果").digest("hex");
+    const semanticAnswerHash = createHash("sha256").update("a kind of fruit").digest("hex");
     const semanticClaimArgs = {
       p_user_id: aId,
       p_session_id: semanticSession,
@@ -2167,7 +2167,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     const wrongTranslationId = randomUUID();
     const wrongLease = randomUUID();
-    const wrongHash = createHash("sha256").update("完全错误").digest("hex");
+    const wrongHash = createHash("sha256").update("completely wrong").digest("hex");
     await rpc("learning_claim_spelling_translation_assessment_v2", {
       ...semanticClaimArgs,
       p_word_id: terms[1].id,
@@ -2246,7 +2246,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
 
     const limitedAssessmentId = randomUUID();
     const limitedLease = randomUUID();
-    const limitedHash = createHash("sha256").update("需要模型评判的另一个回答").digest("hex");
+    const limitedHash = createHash("sha256").update("another answer that needs model judgement").digest("hex");
     await rpc("learning_claim_spelling_translation_assessment_v2", {
       ...semanticClaimArgs,
       p_word_id: terms[2].id,
@@ -2448,7 +2448,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const examTerms = Array.from({ length: 4 }, (_, index) => ({
       id: randomUUID(),
       term: `exam-${index + 1}`,
-      translations: [`考试翻译${index + 1}`],
+      translations: [`exam translation ${index + 1}`],
       ipa: null,
     }));
     await rpc("learning_upsert_course", {
@@ -2459,7 +2459,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
         category: "english_vocabulary",
         hasUnits: false,
         locale: "en-US",
-        units: [{ id: examUnitId, name: "默认单元", isSystem: true, words: examTerms }],
+        units: [{ id: examUnitId, name: "Default unit", isSystem: true, words: examTerms }],
       },
     });
     const examById = new Map(examTerms.map((entry) => [entry.id, entry]));
@@ -2483,7 +2483,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
       const examWord = examById.get(wordId)!;
       const assessmentId = randomUUID();
       const lease = randomUUID();
-      const hash = createHash("sha256").update(correct ? examWord.translations[0] : "错误翻译").digest("hex");
+      const hash = createHash("sha256").update(correct ? examWord.translations[0] : "wrong translation").digest("hex");
       await rpc("learning_claim_spelling_translation_assessment_v2", {
         p_user_id: aId,
         p_session_id: sessionId,
@@ -2669,10 +2669,10 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const pronunciationCourseId = randomUUID();
     const pronunciationUnitId = randomUUID();
     const pronunciationTerms = [
-      { id: randomUUID(), term: "pronunciation-alpha", translations: ["发音甲"], ipa: null },
-      { id: randomUUID(), term: "pronunciation-beta", translations: ["发音乙"], ipa: null },
-      { id: randomUUID(), term: "pronunciation-gamma", translations: ["发音丙"], ipa: null },
-      { id: randomUUID(), term: "pronunciation-delta", translations: ["发音丁"], ipa: null },
+      { id: randomUUID(), term: "pronunciation-alpha", translations: ["pronunciation A"], ipa: null },
+      { id: randomUUID(), term: "pronunciation-beta", translations: ["pronunciation B"], ipa: null },
+      { id: randomUUID(), term: "pronunciation-gamma", translations: ["pronunciation C"], ipa: null },
+      { id: randomUUID(), term: "pronunciation-delta", translations: ["pronunciation D"], ipa: null },
     ];
     await rpc("learning_upsert_course", {
       p_user_id: aId,
@@ -2684,7 +2684,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
         locale: "en-US",
         units: [{
           id: pronunciationUnitId,
-          name: "默认单元",
+          name: "Default unit",
           isSystem: true,
           words: pronunciationTerms,
         }],
@@ -2798,7 +2798,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
         category: "english_vocabulary",
         hasUnits: false,
         locale: "en-US",
-        units: [{ id: remediationUnitId, name: "默认单元", isSystem: true, words: remediationTerms }],
+        units: [{ id: remediationUnitId, name: "Default unit", isSystem: true, words: remediationTerms }],
       },
     });
     const selectedExamTerms = remediationTerms.slice(0, 2);
@@ -2878,7 +2878,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
         locale: "en-US",
         units: [{
           id: remediationUnitId,
-          name: "默认单元",
+          name: "Default unit",
           isSystem: true,
           words: remediationTerms.filter((_, index) => index !== 1).map((entry, index) => ({
             ...entry,
@@ -3024,7 +3024,7 @@ describe.runIf(enabled).sequential("Supabase 双用户 RLS E2E", () => {
     const activeForEdit = await startReview(courseId, unitId, ["spelling"]);
     await answer(activeForEdit, terms[0], "spelling");
     const translationEdited: any = structuredClone(payload);
-    translationEdited.units[0].words[0].translations = ["新翻译"];
+    translationEdited.units[0].words[0].translations = ["new translation"];
     await rpc("learning_upsert_course", { p_user_id: aId, p_payload: translationEdited });
     expect((await admin.from("learning_sessions").select("active,state").eq("id", activeForEdit).single()).data)
       .toMatchObject({ active: false, state: { abortedReason: "course_content_updated" } });

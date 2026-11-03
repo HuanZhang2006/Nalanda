@@ -1,76 +1,76 @@
-# 生产部署（nalanda.online）
+# Production Deployment (nalanda.online)
 
-> **文档定位**
-> - **内容**：记录当前生产服务器上的 Web/API/nginx 拓扑、部署依赖和维护入口。
-> - **作用**：帮助理解现网布局；正式发布、数据库变更、备份与恢复应按 operations 手册执行。
-> - **何时更新**：域名、服务器、CI、compose、nginx/TLS、部署账号或密钥位置变化时。
-> - **状态基线**：2026-08-23。生产数据库已到 0053，Web+API+内网 AI+私有 Redis 拓扑健康；nginx 分层限流和独立 secret 已发布。时间列撤权 0052–0053 已生效；最新 main 应用候选被真实 Materials AI gate 拦截后恢复 `3c095a55ced21cee11a1b3131dd2889ec1f70733`。
+> **About this document**
+> - **Contents**: Records the Web/API/nginx topology on the current production server, deployment dependencies, and maintenance entry points.
+> - **Purpose**: Helps understand the live layout; formal releases, database changes, backups, and recovery must follow the operations runbooks.
+> - **When to update**: When the domain, server, CI, compose file, nginx/TLS, deployment account, or secret locations change.
+> - **Status baseline**: 2026-08-23. The production database is at 0053 and the Web + API + internal AI + private Redis topology is healthy; nginx layered rate limiting and separate secrets are released. The timestamp-column revocation 0052–0053 is in effect; the latest main app candidate was stopped by the real Materials AI gate and `3c095a55ced21cee11a1b3131dd2889ec1f70733` was restored.
 
-服务器已运行多个项目（共用 nginx + uofa.ink）。Nalanda 以**隔离、可叠加**的方式接入，不影响既有服务。
+The server already runs several projects (sharing nginx + uofa.ink). Nalanda is added in an **isolated, stackable** way that does not affect existing services.
 
-## 拓扑
+## Topology
 
 ```
-GitHub push → Actions（在 runner 上构建，不占服务器内存）
-  ├─ check + Python pytest/ruff + 真实测试 Redis + 0007→最新迁移夹具 + 本地 Supabase 重建/lint/RLS E2E
-  ├─ FastAPI 契约/AI image + fake provider Playwright（只作自动化证据）
-  ├─ 新迁移：dry-run → 加密恢复点 → protected DB push → 验证
-  ├─ 前端 vite build → Git SHA release/web
+GitHub push → Actions (builds on the runner, using no server memory)
+  ├─ check + Python pytest/ruff + real test Redis + 0007→latest migration fixture + local Supabase rebuild/lint/RLS E2E
+  ├─ FastAPI contract/AI image + fake-provider Playwright (automation evidence only)
+  ├─ New migrations: dry-run → encrypted recovery point → protected DB push → verification
+  ├─ Frontend vite build → Git SHA release/web
   └─ API/AI docker build → nalanda-api:<git-sha> / nalanda-ai:<git-sha> → docker save
         │ scp / ssh
         ▼
-服务器 /opt/nalanda/
-  ├─ 新 images + 分离 .env/.ai.env/.redis.env → 真实 Azure/OpenRouter gates
-  ├─ Courses API → 队列首次生成/Storage hit/重复词/裁剪评分 gate
-  ├─ docker compose（.deploy.env 选择不可变 API/AI images + 私有 Redis）
-  ├─ releases/<release-id>/web + web 原子 symlink
-  ├─ .env（API secrets，含 password URL；mode 600）
-  ├─ .ai.env（仅 OpenRouter/内部 token/非秘密 worker 配置；mode 600）
-  └─ .redis.env（仅 Redis password；mode 600）
-宿主机 nginx: nalanda.online → 静态 + /api 反代 127.0.0.1:8411（certbot 管 TLS）
+Server /opt/nalanda/
+  ├─ New images + separate .env/.ai.env/.redis.env → real Azure/OpenRouter gates
+  ├─ Courses API → queued first generation/Storage hit/repeated word/trimmed scoring gate
+  ├─ docker compose (.deploy.env selects immutable API/AI images + private Redis)
+  ├─ releases/<release-id>/web + atomic web symlink
+  ├─ .env (API secrets, including the password URL; mode 600)
+  ├─ .ai.env (only OpenRouter/internal token/non-secret worker config; mode 600)
+  └─ .redis.env (only the Redis password; mode 600)
+Host nginx: nalanda.online → static files + /api reverse proxy to 127.0.0.1:8411 (certbot manages TLS)
 ```
 
-为什么不在服务器上构建：该机仅约 300MB 空闲内存，Vite/Nest 构建会 OOM 并波及其他服务，故全部构建放在 GitHub Actions。
+Why not build on the server: the machine has only about 300 MB of free memory, and Vite/Nest builds would OOM and affect other services, so all builds run in GitHub Actions.
 
-## 一次性服务器引导（已完成）
+## One-time server bootstrap (done)
 
-- `/opt/nalanda/{web,.env,docker-compose.yml}`；`.env` 权限 600。
-- nginx 站点 `/etc/nginx/sites-available/nalanda`（+ sites-enabled 软链）。
-- `certbot --nginx -d nalanda.online`（自动续期）。
-- CI 专用 SSH deploy key 已加入服务器 `authorized_keys`。
+- `/opt/nalanda/{web,.env,docker-compose.yml}`; `.env` has permission 600.
+- nginx site `/etc/nginx/sites-available/nalanda` (+ sites-enabled symlink).
+- `certbot --nginx -d nalanda.online` (auto-renewal).
+- A CI-only SSH deploy key has been added to the server's `authorized_keys`.
 
-## GitHub Secrets（仓库 Settings → Secrets → Actions）
+## GitHub Secrets (repository Settings → Secrets → Actions)
 
-| 名称 | 值 |
+| Name | Value |
 |---|---|
-| `SERVER_HOST` | 154.50.110.239 |
-| `SERVER_USER` | root |
-| `SERVER_SSH_KEY` | CI 部署私钥（ed25519） |
-| `SERVER_SSH_KNOWN_HOSTS` | 管理员在可信网络核验的目标 SSH host key 行 |
-| `VITE_SUPABASE_URL` | `https://<active-project-ref>.supabase.co`；必须与当前可解析、可用的生产项目一致 |
-| `VITE_SUPABASE_ANON_KEY` | Supabase anon 公钥 |
+| `SERVER_HOST` | The production server's public IP or hostname |
+| `SERVER_USER` | The deployment SSH user (currently root; see the security to-do below) |
+| `SERVER_SSH_KEY` | The CI deployment private key (ed25519) |
+| `SERVER_SSH_KNOWN_HOSTS` | The target SSH host key line, verified by an administrator on a trusted network |
+| `VITE_SUPABASE_URL` | `https://<active-project-ref>.supabase.co`; must match the current, resolvable, working production project |
+| `VITE_SUPABASE_ANON_KEY` | The Supabase anon public key |
 
-`production-database` environment 还需 `SUPABASE_ACCESS_TOKEN`、`SUPABASE_DB_PASSWORD`、`SUPABASE_PROJECT_REF` 和 `DB_BACKUP_ENCRYPTION_KEY`。该 environment 已创建并只允许 `main`；当前私有仓库套餐不支持 required reviewer，升级套餐前必须只通过人工发起的 `workflow_dispatch` 发布数据库，并按[数据库发布手册](../../docs/operations/DATABASE_RELEASE_ROLLBACK.md)保存 owner 复核记录。数据库 migration history 的首次 baseline 不能由 CI 猜测。
+The `production-database` environment also needs `SUPABASE_ACCESS_TOKEN`, `SUPABASE_DB_PASSWORD`, `SUPABASE_PROJECT_REF`, and `DB_BACKUP_ENCRYPTION_KEY`. That environment exists and only allows `main`; the current private-repository plan does not support required reviewers, so until the plan is upgraded, databases must only be released through a manually triggered `workflow_dispatch`, keeping an owner review record per the [database release runbook](../../docs/operations/DATABASE_RELEASE_ROLLBACK.md). The first baseline of the database migration history must not be guessed by CI.
 
-0039–0040 第一阶段要求且生产已设置两个彼此独立的随机 secret：`REDIS_PASSWORD`（32-byte hex）与 `RATE_LIMIT_HMAC_SECRET`（至少 32 bytes）。0041–0043 另要求 `AI_INTERNAL_TOKEN`（至少 32 bytes）和 `OPENROUTER_API_KEY`。workflow 通过 stdin 安装脚本原子写入 mode-600 API/AI/Redis env，不打印值；AI 不获得 service-role/Redis/Azure，Redis 不获得 Supabase/provider secrets。Materials AI 的 `OPENROUTER_API_KEY` 与既有 Courses OpenRouter 使用同一生产 secret，但只注入确有需要的 API/AI 消费者。
+Phase one of 0039–0040 requires, and production has set, two independent random secrets: `REDIS_PASSWORD` (32-byte hex) and `RATE_LIMIT_HMAC_SECRET` (at least 32 bytes). 0041–0043 additionally require `AI_INTERNAL_TOKEN` (at least 32 bytes) and `OPENROUTER_API_KEY`. The workflow atomically writes mode-600 API/AI/Redis env files through stdin install scripts without printing values; AI gets no service-role/Redis/Azure secrets, and Redis gets no Supabase/provider secrets. Materials AI's `OPENROUTER_API_KEY` is the same production secret as the existing Courses OpenRouter key, but is injected only into the API/AI consumers that actually need it.
 
-> **2026-07-21 Supabase 暂停事故与恢复：** 项目暂停期间，生产 Ref 在公共 DNS 返回 `NXDOMAIN`，严格 readiness 正确阻止了新版本激活；恢复后 DNS、JWKS 和服务器 service-role PostgREST 探针恢复。0008–0010 随后发布，0011–0013 又于 2026-07-22 按受保护流程发布。不得因依赖暂停而降低 health 门禁。
+> **2026-07-21 Supabase pause incident and recovery:** While the project was paused, the production ref returned `NXDOMAIN` on public DNS, and the strict readiness check correctly prevented the new version from activating; after recovery, DNS, JWKS, and the server's service-role PostgREST probe recovered. 0008–0010 were then released, and 0011–0013 followed on 2026-07-22 through the protected process. Never weaken the health gate because a dependency is paused.
 
-首次增加 `SERVER_SSH_KNOWN_HOSTS` 时，在可信网络取得 host key，用 `ssh-keygen -lf` 查看 fingerprint，并通过服务器控制台/云厂商记录进行第二通道核对后，才把完整 known_hosts 行写入 Secret。不要直接把未经核验的 `ssh-keyscan` 输出当作信任根。`DB_BACKUP_ENCRYPTION_KEY` 应使用密码学随机值生成，并在 GitHub 之外的受控恢复保管中保存副本。
+When first adding `SERVER_SSH_KNOWN_HOSTS`, obtain the host key on a trusted network, view the fingerprint with `ssh-keygen -lf`, and cross-check it through a second channel (the server console/cloud provider records) before writing the full known_hosts line into the secret. Never treat unverified `ssh-keyscan` output as a root of trust. `DB_BACKUP_ENCRYPTION_KEY` should be generated from cryptographically random values, with a copy kept in controlled recovery custody outside GitHub.
 
-## 流程
+## Flow
 
-推送非纯文档变更到 `main` 即触发 [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml)：check + Python/AI image + 真实 Redis/BullMQ → 自动暂存 0008 及以后迁移并验证 0007→最新升级 → 空库重建 → db lint → 本地真实 RLS/Storage/points/Courses/AI E2E → nginx `-t` → fake-provider Playwright。无新 migration 时继续不可变应用部署；有新 migration 时普通 push 在验证后停止。owner 先手动执行只读 plan，再单独 apply；数据库发布成功后才继续。服务器先以 `FEATURE_MATERIAL_AI=false` 安装 secrets 并启动 Redis/FastAPI，验证 `deps.supabase=ok`、`deps.redis=ok` 和 AI readiness/清理器/资源 canary，再执行固定无个人数据的真实 DeepSeek/MiMo ZDR 生成与评分 smoke。任一 gate 失败都不启用功能或切换 Web；应用 smoke 失败恢复上一 Web symlink/API/AI images，数据库只向前修复。
+Pushing a non-docs-only change to `main` triggers [`.github/workflows/deploy.yml`](../../.github/workflows/deploy.yml): check + Python/AI image + real Redis/BullMQ → automatically stage migrations 0008 and later and verify the 0007→latest upgrade → empty-database rebuild → db lint → local real RLS/Storage/points/Courses/AI E2E → nginx `-t` → fake-provider Playwright. Without new migrations it continues to the immutable app deployment; with new migrations, an ordinary push stops after verification. The owner first manually runs a read-only plan, then applies separately; the app continues only after the database release succeeds. The server first installs secrets with `FEATURE_MATERIAL_AI=false` and starts Redis/FastAPI, verifies `deps.supabase=ok`, `deps.redis=ok`, and AI readiness/cleaner/resource canary, then runs fixed real DeepSeek/MiMo ZDR generation and grading smoke tests with no personal data. If any gate fails, the feature is not enabled and the Web is not switched; an app smoke failure restores the previous Web symlink/API/AI images, and the database is only fixed forward.
 
-手动 `workflow_dispatch` 默认只重发应用；`plan_database_migrations` 只展示远端计划且不改库/不部署，`apply_database_migrations` 才创建恢复点、迁移并继续应用部署，两者不能同时选择。部署要求真实供应商 gates 成功、API JSON 的 `status/service/deps.supabase=ok/deps.redis=ok`、AI 专用 readiness 为 ok，并从公网检查注册/普通 API RateLimit headers、管理拒绝、Web/API root 与登录用户完整 Materials→Notes→考试链。Playwright fake、mock Redis、固定假 provider 或本地构建不能替代生产证据。
+A manual `workflow_dispatch` only redeploys the app by default; `plan_database_migrations` only shows the remote plan without changing the database or deploying, and only `apply_database_migrations` creates a recovery point, migrates, and continues to the app deployment; the two cannot be selected together. Deployment requires the real provider gates to succeed, the API JSON to report `status/service/deps.supabase=ok/deps.redis=ok`, the AI-specific readiness to be ok, and public checks of sign-up/ordinary API RateLimit headers, admin denial, the Web/API root, and the signed-in user's full Materials → Notes → exam chain. Playwright fakes, mock Redis, fixed fake providers, or local builds cannot replace production evidence.
 
-仓库 nginx 参考配置为 `/api/` 设置 `client_max_body_size 10m`，与 Nest 的课程 JSON 上限一致。生产 0039 由受限安装脚本在同一 Nalanda server block 叠加 API 20 r/s burst 40、注册 1 r/s burst 3，以及标准 JSON 429、`Retry-After`/RateLimit headers；只在 `nginx -t` 通过后 reload，不修改其它站点。朗读 WAV 仍由 API 的 2 MB multipart 限制收口。
+The repository's reference nginx configuration sets `client_max_body_size 10m` for `/api/`, matching Nest's course JSON limit. Production 0039 uses a restricted install script to add, in the same Nalanda server block, API 20 r/s burst 40, sign-up 1 r/s burst 3, plus standard JSON 429s and `Retry-After`/RateLimit headers; it reloads only after `nginx -t` passes and does not modify other sites. Read-aloud WAV uploads are still capped by the API's 2 MB multipart limit.
 
-纯 Markdown 变更由 [docs workflow](../../.github/workflows/docs.yml) 校验文档定位字段和相对链接，不重新部署应用。
+Pure Markdown changes are validated by the [docs workflow](../../.github/workflows/docs.yml) for the document opening fields and relative links, and do not redeploy the app.
 
-> 安全待办：当前记录的部署用户是 root。应迁移为最小权限 deploy 用户，只授予 `/opt/nalanda`、受控 Docker/服务操作和 nginx reload 能力，并轮换现有部署密钥。
+> Security to-do: the recorded deployment user is root. It should be migrated to a least-privilege deploy user granted only `/opt/nalanda`, controlled Docker/service operations, and nginx reload, and the existing deployment key should be rotated.
 
-## 服务器维护速查
+## Server maintenance cheat sheet
 
 ```bash
 cd /opt/nalanda
@@ -85,4 +85,4 @@ readlink -f web
 cat .deploy.env
 ```
 
-不要手工把 `nalanda-api:latest` 覆盖成新版本；当前 release 使用 Git SHA tag。手动回退时应按失败 workflow 保存的上一 image/web release 双人复核，并确认新数据库 schema 仍兼容旧应用。Redis 是限流/锁的可重建运行依赖，不是 points 或课程事实源；应用回退后可继续运行，不能用删除 AOF 代替数据库恢复。
+Do not manually overwrite `nalanda-api:latest` with a new version; current releases use Git SHA tags. A manual rollback should use the previous image/web release saved by the failed workflow, with two-person review, after confirming the new database schema is still compatible with the old app. Redis is a rebuildable runtime dependency for rate limiting/locks, not the source of truth for points or courses; the app can keep running after a rollback, and deleting the AOF must never be used in place of a database recovery.

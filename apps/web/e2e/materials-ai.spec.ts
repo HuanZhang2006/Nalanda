@@ -8,10 +8,10 @@ async function signUp(page: Page, email: string, password: string) {
   // into an unrelated auth-page migration.
   await page.addInitScript(() => localStorage.setItem("nalanda-locale", "en"));
   await page.goto("/");
-  await page.getByRole("button", { name: "注册", exact: true }).click();
+  await page.getByRole("button", { name: "Sign up", exact: true }).click();
   await page.getByPlaceholder("you@school.edu").fill(email);
-  await page.getByPlaceholder("至少 6 位").fill(password);
-  await page.getByRole("button", { name: "注册并进入" }).click();
+  await page.getByPlaceholder("At least 6 characters").fill(password);
+  await page.getByRole("button", { name: "Sign up and continue" }).click();
   await expect(page.locator(".brand-name")).toHaveText("Nalanda");
 }
 

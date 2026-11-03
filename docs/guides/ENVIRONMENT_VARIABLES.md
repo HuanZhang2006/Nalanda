@@ -1,245 +1,248 @@
-# 环境变量矩阵
+# Environment Variable Matrix
 
-> **本文内容：** 汇总仓库中已读取、仅由部署配置注入、只供运维脚本使用以及仍属蓝图的环境变量，并标明作用域、阶段和敏感级别。  
-> **作用：** 防止变量放错服务、把服务端密钥打进前端、因遗漏配置导致部署或轮换失败。  
-> **何时更新：** 新增、删除、重命名变量，改变默认值/消费者/敏感级别，修改 CI、Docker、域名、第三方供应商或密钥轮换流程时立即更新。
+> **About this document**
+> - **Contents**: Collects the environment variables read by the repository, injected only by deployment configuration, used only by ops scripts, or still part of the blueprint, with their scope, stage, and sensitivity.
+> - **Purpose**: Prevents variables from going to the wrong service, server secrets from being compiled into the frontend, and deployments or rotations from failing because configuration is missing.
+> - **When to update**: Immediately when variables are added, removed, or renamed, when defaults/consumers/sensitivity change, or when CI, Docker, domains, third-party providers, or the secret rotation process change.
 
-## 1. 阅读约定
+## 1. Reading conventions
 
-- **当前必需**：现有某条用户链路要正常工作时必须提供。
-- **当前可选**：代码已读取，但可省略或仅影响状态展示。
-- **目标占位**：示例或目标部署已经预留，当前业务代码尚未使用。
-- **公开**不等于可以随意修改；它仅表示值会出现在浏览器包或公开请求中。
-- 任何 service-role、私钥、个人访问令牌和供应商 secret 都不能使用 `VITE_*` 前缀。
+- **Currently required**: must be provided for some existing user path to work.
+- **Currently optional**: read by the code, but can be omitted or only affects status display.
+- **Target placeholder**: reserved in examples or the target deployment, but not used by current business code.
+- **Public** does not mean it can be changed freely; it only means the value appears in the browser bundle or in public requests.
+- No service-role key, private key, personal access token, or provider secret may use the `VITE_*` prefix.
 
-## 2. Web 构建期变量
+## 2. Web build-time variables
 
-来源模板：`apps/web/.env.example`。本地文件是 `apps/web/.env.local`；生产由 `.github/workflows/deploy.yml` 从 GitHub Actions Secrets 注入。Vite 会把这些值编译进静态文件，修改后必须重建 Web。
+Template: `apps/web/.env.example`. The local file is `apps/web/.env.local`; production injects them from GitHub Actions Secrets via `.github/workflows/deploy.yml`. Vite compiles these values into the static files, so the Web app must be rebuilt after changes.
 
-| 变量 | 状态 | 敏感级别 | 消费者 | 用途与缺省行为 |
+| Variable | Status | Sensitivity | Consumer | Purpose and default behavior |
 |---|---|---|---|---|
-| `VITE_SUPABASE_URL` | 当前必需 | 公开配置 | `apps/web/src/lib/supabase.ts` | Supabase 项目 URL；缺失时客户端为 `null`，登录页显示未配置提示。 |
-| `VITE_SUPABASE_ANON_KEY` | 当前必需 | 公开凭据 | `apps/web/src/lib/supabase.ts` | 浏览器 anon/publishable key；安全边界依赖 Auth + RLS，绝不能换成 service-role key。 |
+| `VITE_SUPABASE_URL` | Currently required | Public config | `apps/web/src/lib/supabase.ts` | Supabase project URL; when missing, the client is `null` and the sign-in page shows a not-configured hint. |
+| `VITE_SUPABASE_ANON_KEY` | Currently required | Public credential | `apps/web/src/lib/supabase.ts` | Browser anon/publishable key; the security boundary depends on Auth + RLS, and it must never be replaced with the service-role key. |
 
-当前 Web 没有 `VITE_API_URL`。浏览器使用相对路径 `/api`：本地由 Vite 代理到 `localhost:3000`，生产由 nginx 反代。
+The Web app currently has no `VITE_API_URL`. The browser uses the relative path `/api`: locally Vite proxies it to `localhost:3000`, and in production nginx reverse-proxies it.
 
-## 3. NestJS API 运行时变量
+The UI language is not an environment variable: it defaults to English and the user's choice is stored in the browser's `localStorage` under `nalanda-locale`.
 
-来源模板：`apps/api/.env.example`。本地文件是 `apps/api/.env`；当前生产文件是服务器 `/opt/nalanda/.env`，由 `infra/deploy/docker-compose.yml` 的 `env_file` 载入。
+## 3. NestJS API runtime variables
 
-| 变量 | 状态 | 敏感级别 | 消费者 | 用途与缺省行为 |
+Template: `apps/api/.env.example`. The local file is `apps/api/.env`; the current production file is the server's `/opt/nalanda/.env`, loaded through `env_file` in `infra/deploy/docker-compose.yml`.
+
+| Variable | Status | Sensitivity | Consumer | Purpose and default behavior |
 |---|---|---|---|---|
-| `PORT` | 当前可选 | 公开配置 | `apps/api/src/main.ts` | 监听端口；无效或缺失时为 `3000`。生产 compose 显式设置 `3000`。 |
-| `SUPABASE_URL` | 当前必需（认证/注册） | 公开配置 | Auth controller、JWT guard、health | Admin Auth 基址、JWKS/issuer 基址；缺失时注册报 `SERVER_MISCONFIG`，受保护接口无法通过 JWKS 验签。 |
-| `SUPABASE_REQUEST_TIMEOUT_MS` | 可选，20,000 | 受限配置 | NestJS service-role REST/Storage transport（含响应正文读取）超时，限制 1–60 秒；超时返回脱敏 `UPSTREAM_TIMEOUT`，不自动重放非幂等业务 RPC。Courses 音频 prepare/manifest 因数据库幂等而另有局部三次重试。 |
-| `SUPABASE_SERVICE_ROLE_KEY` | 当前必需（注册/readiness/Courses） | **最高机密** | Auth controller、health、Courses services | 调用 Admin Auth/PostgREST/Storage 与 service-only RPC；绕过 RLS，只能存在于后端且绝不进入响应/日志。 |
-| `SUPABASE_JWT_SECRET` | 当前可选 | **最高机密** | `apps/api/src/auth/supabase.guard.ts` | 旧 HS256 令牌的回退验签。当前守卫优先使用 JWKS；非对称签名项目不应无理由复制此值。 |
-| `REDIS_URL` | 生产 0039–0040 必需 | **机密连接串** | Redis service、health、全局限流、扫描器 | API 建立真实连接；生产为 `redis://:<64-hex>@redis:6379/0`。缺失/不可达使 readiness 503，受保护写入 fail-closed。 |
-| `RATE_LIMIT_HMAC_SECRET` | 生产 0039–0040 必需 | **最高机密** | Redis service/health | 至少 32 bytes；只对 IP/email 派生 HMAC，不得与 Redis、JWT、备份或供应商 secret 复用。 |
-| `POINT_ABUSE_SCANNER_ENABLED` | 可选，默认启用（除显式 `false`） | 受限配置 | points scanner | Redis 已配置时是否周期扫描协同信号；CI Playwright 显式 false 避免后台不确定性。 |
-| `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | 可选，默认 300，最小 60 | 公开运维配置 | points scanner | 扫描周期；当前 Redis lock TTL 为 240 秒。 |
-| `AI_SERVICE_URL` | 生产 0041–0043 必需 | 内部配置 | AI internal client/health | FastAPI 内网基址，生产为 `http://ai:8000`；不可指向公网。 |
-| `AI_CALLBACK_BASE_URL` | 生产必需 | 内部配置 | generation/grading processor | worker 的 progress/usage/checkpoint/complete/fail 回调 API 内网基址，生产为 `http://api:3000/api`。 |
-| `AI_INTERNAL_TOKEN` | 生产必需 | **最高机密** | Nest/FastAPI 内部认证 | 两端相同的独立 32-byte hex；不得等于 Redis/HMAC/provider key，不进入 Web/日志。 |
-| `FEATURE_MATERIAL_AI` | 安装默认 false；当前生产 true | 公开配置 | Materials AI API/Web | 总开关；部署安装后先保持 false，只在 readiness/canary/真实 gate 通过后开启。 |
-| `FEATURE_MATERIAL_AI_LUNA` | 安装/回滚默认 false | 公开配置 | Materials AI API/Web | `luna_native_file_v1` 独立开关；只有实时 ZDR catalog 和真实原文件 gate 都证明 GPT-6 Luna 的 Azure ZDR endpoint 可用后才开启，不影响显式旧流水线。 |
-| `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` | 候选，`pdf,png` | 受限配置 | API capabilities/create + AI worker validation | 真实逐格式门禁通过的 Luna 原文件扩展名 allowlist；API 与 worker 必须一致，不能为“让 UI 可选”而加入未经验证的格式。 |
-| `MATERIAL_AI_LUNA_DISABLED_REASON_CODE` | `AI_LUNA_DISABLED`；生产门禁可设 `OPENROUTER_ZDR_UNAVAILABLE` | 公开运维配置 | Materials AI capabilities/create | 子开关关闭时给前端的稳定原因；只接受这两个值，不能由客户端设置，也不能替代 feature flag。 |
-| `FEATURE_MATERIAL_AI_OX_ALPHA` 及 `MATERIAL_AI_OX_ALPHA_*` | 已退役（0056–0057） | — | — | 安装、激活与回滚脚本只剥离旧键、不再写入；应用不再读取。 |
-| `MATERIAL_AI_MONTHLY_BUDGET_USD` | 可选，20 | 受限配置 | AI processor | provider usage 成功费用达到全局月预算后停止新调用。 |
-| `MATERIAL_AI_GENERATION_MAX_COST_USD` | 可选，0.50 | 受限配置 | generation processor | 单次生成费用硬门；超限不保存结果并释放用户 quota reservation。 |
-| `MATERIAL_AI_GRADING_MAX_COST_USD` | 可选，0.05 | 受限配置 | grading processor | 单次主观题评分费用硬门。 |
-| `MATERIAL_AI_RESUME_TTL_SECONDS` | **0046 候选**，86400 | 受限配置 | API/AI worker | retry/checkpoint/本地恢复目录保留秒数；允许 300–604800，API 与 worker 必须相同。 |
-| `NODE_ENV` | 部署配置 | 公开配置 | Node/Nest、Courses flags | `production` 时未设置的 Courses/分享/市场 flag 默认关闭；非生产时前三者默认开，语音始终默认关。 |
+| `PORT` | Currently optional | Public config | `apps/api/src/main.ts` | Listening port; `3000` when invalid or missing. The production compose sets `3000` explicitly. |
+| `SUPABASE_URL` | Currently required (auth/sign-up) | Public config | Auth controller, JWT guard, health | Admin Auth base URL and JWKS/issuer base; when missing, sign-up returns `SERVER_MISCONFIG` and protected endpoints cannot verify via JWKS. |
+| `SUPABASE_REQUEST_TIMEOUT_MS` | Optional, 20,000 | Restricted config | Timeout for NestJS service-role REST/Storage transport (including reading the response body), limited to 1–60 seconds; a timeout returns a redacted `UPSTREAM_TIMEOUT` and non-idempotent business RPCs are not replayed automatically. Courses audio prepare/manifest have a separate local three-attempt retry because the database is idempotent. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Currently required (sign-up/readiness/Courses) | **Top secret** | Auth controller, health, Courses services | Calls Admin Auth/PostgREST/Storage and service-only RPCs; bypasses RLS, may only exist on the backend, and never enters responses/logs. |
+| `SUPABASE_JWT_SECRET` | Currently optional | **Top secret** | `apps/api/src/auth/supabase.guard.ts` | Fallback verification for legacy HS256 tokens. The current guard prefers JWKS; projects with asymmetric signing should not copy this value without reason. |
+| `REDIS_URL` | Required by production 0039–0040 | **Secret connection string** | Redis service, health, global rate limiting, scanner | The API opens a real connection; production uses `redis://:<64-hex>@redis:6379/0`. Missing/unreachable makes readiness 503 and protected writes fail closed. |
+| `RATE_LIMIT_HMAC_SECRET` | Required by production 0039–0040 | **Top secret** | Redis service/health | At least 32 bytes; only used to derive HMACs of IPs/emails, and never reused as the Redis, JWT, backup, or provider secret. |
+| `POINT_ABUSE_SCANNER_ENABLED` | Optional, enabled by default (unless explicitly `false`) | Restricted config | points scanner | Whether to periodically scan for coordination signals when Redis is configured; CI Playwright sets it false explicitly to avoid background nondeterminism. |
+| `POINT_ABUSE_SCAN_INTERVAL_SECONDS` | Optional, default 300, minimum 60 | Public ops config | points scanner | Scan interval; the current Redis lock TTL is 240 seconds. |
+| `AI_SERVICE_URL` | Required by production 0041–0043 | Internal config | AI internal client/health | The FastAPI internal base URL, `http://ai:8000` in production; must never point at the public internet. |
+| `AI_CALLBACK_BASE_URL` | Required in production | Internal config | generation/grading processor | The internal API base URL for the worker's progress/usage/checkpoint/complete/fail callbacks, `http://api:3000/api` in production. |
+| `AI_INTERNAL_TOKEN` | Required in production | **Top secret** | Nest/FastAPI internal authentication | A separate 32-byte hex value identical on both ends; must not equal the Redis/HMAC/provider key and never enters the Web app/logs. |
+| `FEATURE_MATERIAL_AI` | Install default false; currently true in production | Public config | Materials AI API/Web | Master switch; keep it false after deployment install, and turn it on only after readiness/canary/real gates pass. |
+| `FEATURE_MATERIAL_AI_LUNA` | Install/rollback default false | Public config | Materials AI API/Web | Separate switch for `luna_native_file_v1`; only turned on after both the live ZDR catalog and the real native-file gate prove GPT-6 Luna's Azure ZDR endpoint is usable; does not affect the explicit old pipeline. |
+| `MATERIAL_AI_LUNA_ALLOWED_EXTENSIONS` | Candidate, `pdf,png` | Restricted config | API capabilities/create + AI worker validation | Allowlist of Luna native-file extensions that passed real per-format gates; the API and worker must match, and unverified formats must never be added just "to make them selectable in the UI". |
+| `MATERIAL_AI_LUNA_DISABLED_REASON_CODE` | `AI_LUNA_DISABLED`; the production gate may set `OPENROUTER_ZDR_UNAVAILABLE` | Public ops config | Materials AI capabilities/create | The stable reason given to the frontend when the sub-switch is off; only these two values are accepted, clients cannot set it, and it does not replace the feature flag. |
+| `FEATURE_MATERIAL_AI_OX_ALPHA` and `MATERIAL_AI_OX_ALPHA_*` | Retired (0056–0057) | — | — | Install, activation, and rollback scripts only strip the old keys and no longer write them; the app no longer reads them. |
+| `MATERIAL_AI_MONTHLY_BUDGET_USD` | Optional, 20 | Restricted config | AI processor | Stops new calls once successful provider usage cost reaches the global monthly budget. |
+| `MATERIAL_AI_GENERATION_MAX_COST_USD` | Optional, 0.50 | Restricted config | generation processor | Hard cost gate per generation; over the limit, the result is not saved and the user's quota reservation is released. |
+| `MATERIAL_AI_GRADING_MAX_COST_USD` | Optional, 0.05 | Restricted config | grading processor | Hard cost gate per subjective grading run. |
+| `MATERIAL_AI_RESUME_TTL_SECONDS` | **0046 candidate**, 86400 | Restricted config | API/AI worker | Seconds to keep retries/checkpoints/the local recovery directory; allows 300–604800, and the API and worker must match. |
+| `NODE_ENV` | Deployment config | Public config | Node/Nest, Courses flags | With `production`, unset Courses/sharing/market flags default to off; outside production the first three default to on, and speech always defaults to off. |
 
-### 3.1 Courses、市场、Azure Speech 与 OpenRouter
+### 3.1 Courses, market, Azure Speech, and OpenRouter
 
-这些变量只允许进入 API 运行环境，不得使用 `VITE_*`。生产 `/opt/nalanda/.env` 由运维维护；既有 Supabase/Azure/Courses 值不由 workflow 重建。0019–0020 发布新增的部署步骤只通过标准输入原子更新 OpenRouter 相关键并保持文件 mode 600，不打印 secret；2026-07-28 已用该路径完成真实 gate 和生产激活。
+These variables may only enter the API runtime environment and must not use `VITE_*`. The production `/opt/nalanda/.env` is maintained by operations; the existing Supabase/Azure/Courses values are not rebuilt by the workflow. The deployment step added with the 0019–0020 release only atomically updates OpenRouter-related keys through standard input and keeps the file at mode 600 without printing secrets; on 2026-07-28 this path completed the real gate and production activation.
 
-| 变量 | 状态/默认 | 敏感级别 | 用途 |
+| Variable | Status/default | Sensitivity | Purpose |
 |---|---|---|---|
-| `PUBLIC_ORIGIN` | 当前必需；本地 `http://localhost:5173` | 公开配置 | 生成课程分享 URL；生产应为规范 HTTPS origin，无结尾 `/`。 |
-| `CORS_ALLOWED_ORIGINS` | 可选，默认复用 `PUBLIC_ORIGIN` | 公开配置 | 逗号分隔的浏览器跨域 allowlist；生产两者都缺失时不发 CORS 许可，同源 nginx 路径仍可用。 |
-| `FEATURE_LEARNING_COURSES_ENABLED` | flag；production 默认 false | 公开配置 | Courses 总开关；关闭返回 503。 |
-| `FEATURE_COURSE_SHARING_ENABLED` | flag；production 默认 false | 公开配置 | 公开分享创建/读取/克隆；关闭伪装 404。 |
-| `FEATURE_COURSE_MARKET_ENABLED` | flag；production 默认 false | 公开配置 | Course Market、发布、克隆、举报/审核；关闭伪装 404。 |
-| `FEATURE_PRONUNCIATION_ENABLED` | flag；任何环境默认 false | 公开配置 | Azure TTS/评分入口；只有显式 true 才可调用。 |
-| `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` | flag；production 默认 false；当前生产 true | 公开配置 | 持久音频队列、manifest、未来五词预取与整单元离线音频；依赖 Courses/Pronunciation 同时开启。 |
-| `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` | flag；production 默认 false；当前生产 true | 公开配置 | 拼写阶段的可选语义翻译前测；关闭时启动请求若要求 `translationFirst=true` 返回 503，普通拼写和限时功能不受影响。 |
-| `AZURE_SPEECH_CIRCUIT_OPEN` | 可选，默认 false | 受限配置 | 紧急熔断；true 时语音统一 503，不影响文本学习。 |
-| `AZURE_SPEECH_KEY` | 语音启用时必需 | **最高机密** | Azure Speech subscription key，只在 API 容器。 |
-| `AZURE_SPEECH_REGION` | 语音启用时必需 | 受限配置 | Azure region，同时组成 TTS/STT endpoint。 |
-| `AZURE_SPEECH_VOICE` | 可选，`en-US-JennyNeural` | 公开配置 | en-US TTS voice 名称。 |
-| `AZURE_SPEECH_TIMEOUT_MS` | 可选，10,000 | 公开配置 | 单次 Azure TTS/评分硬超时；实现限制在 1,000–60,000 ms，超时降级且不记学习错误。 |
-| `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` | 可选，70 | 公开产品配置 | 整体 `PronScore` 达标线，允许 1–100；生产认词阶段和 0029 起的读音考试都用它判定每道题正误，但单元考试总通过率仍由用户选择的 `examPassPercent`（默认 90）独立决定。API 必须把实际值返回给 UI。 |
-| `AZURE_SPEECH_ASSESSMENTS_PER_MINUTE` | 可选，30 | 公开配置 | 单用户评分每分钟持久限额。 |
-| `AZURE_SPEECH_ASSESSMENTS_PER_DAY` | 可选，300 | 公开配置 | 按用户 IANA 时区本地日期的每日评分限额。 |
-| `AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD` | 可选，5,000,000 | 受限配置 | 所有 API 实例共享的月度估算预算，单位 micro-USD。 |
-| `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE` | 可选，20 | 受限配置 | 全局 TTS 生成 reservation 每分钟上限；数据库在所有 API 副本间共享。 |
-| `AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT` | 可选，500,000 | 受限配置 | 全局 TTS 每月字符 reservation 上限；跨用户复用缓存不重复计字符。 |
-| `AZURE_SPEECH_TTS_MICRO_USD_PER_1000_CHARS` | 可选，16,000 | 受限配置 | TTS 每千字符估算成本，用于预算预留，不是账单事实。 |
-| `AZURE_SPEECH_ASSESSMENT_MICRO_USD` | 可选，2,500 | 受限配置 | 每次评分估算成本。 |
-| `LEARNING_AUDIO_PREWARM_INTERVAL_MS` | 可选，3,100 | 受限配置 | worker 启动两次 Azure TTS 的最小间隔；实现拒绝小于 3,100 ms，默认配合全局单租约。 |
-| `LEARNING_AUDIO_SYNTHESIS_VERSION` | 可选，`1` | 受限配置 | 进入全局 SHA-256 缓存键；更换 voice/SSML/后处理语义时递增以安全重建，不原地覆盖旧键。 |
-| `AZURE_SPEECH_FAKE` | **仅测试**，默认 false | 测试配置 | 生成固定 WAV/评分；任何共享、staging 供应商 smoke 或生产必须未设置/false，API 在 `NODE_ENV=production` 时显式拒绝 true。 |
-| `OPENROUTER_API_KEY` | 翻译前测、语音输入或 Materials AI 启用时必需 | **最高机密** | 服务端能力复用同一 secret；Materials AI worker 在隔离 `.ai.env` 获得副本。绝不能进入 Web bundle、数据库、日志或提交。 |
-| `OPENROUTER_MODEL` | 可选，`nvidia/nemotron-3-super-120b-a12b:free` | 受限配置 | 语义评判模型；请求固定 Nvidia-only、无 fallback、关闭 reasoning，生产 gate 验证模型、路由和 schema。免费 endpoint 不承诺 deny collection。 |
-| `OPENROUTER_BASE_URL` | 可选，`https://openrouter.ai/api/v1` | 公开配置 | OpenRouter API 基址；只允许 API 读取。 |
-| `OPENROUTER_TIMEOUT_MS` | 可选，12,000 | 公开配置 | 单次评判硬超时，实现限制 1,000–30,000 ms；超时释放数据库租约且不记学习错误。 |
-| `OPENROUTER_SMOKE_MAX_ATTEMPTS` | 可选，5 | 受限发布配置 | 只控制受保护发布的真实翻译判定 gate，限制 1–6 次；不改变用户请求重试或产品额度。仅网络错误及 408/425/429/5xx 可重试，持续失败仍阻断发布。 |
-| `OPENROUTER_SMOKE_ATTEMPT_TIMEOUT_MS` | 可选，30000 | 受限发布配置 | 真实翻译判定发布门禁单次请求（含响应正文读取）的超时，限制 5–60 秒；与交互 API 的 `OPENROUTER_TIMEOUT_MS` 分离。 |
-| `OPENROUTER_SMOKE_TOTAL_BUDGET_MS` | 可选，180000 | 受限发布配置 | 真实翻译判定发布门禁全部尝试与退避共享的 wall-clock 硬预算，限制不低于单次超时且不超过 300 秒；耗尽后失败关闭。 |
-| `OPENROUTER_SMOKE_RETRY_BASE_MS` | 可选，5,000 | 受限发布配置 | 真实翻译 gate 的指数退避起点，限制 1,000–30,000 ms。 |
-| `OPENROUTER_SMOKE_RETRY_MAX_MS` | 可选，60,000 | 受限发布配置 | 单次 gate 退避及可接受 `Retry-After` 上限，限制至 120,000 ms；供应商要求等待更久时失败关闭。 |
-| `OPENROUTER_ASSESSMENTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户一分钟真实 provider 评判上限；确定性完全匹配、UUID 幂等重放和仅领取租约都不计数。 |
-| `OPENROUTER_ASSESSMENTS_PER_DAY` | 可选，500 | 受限配置 | 每用户滚动 24 小时真实 provider 评判上限；达到上限时响应包含预计恢复秒数。 |
-| `OPENROUTER_STT_MODEL` | 可选，`fish-audio/transcribe-1` | 受限配置 | 只用于拼写前翻译语音输入的 STT 模型；客户端不可覆盖。 |
-| `OPENROUTER_STT_LANGUAGE` | 可选，`zh` | 公开产品配置 | STT ISO 语言提示，默认识别中文；当前 UI 不提供语言选择。 |
-| `OPENROUTER_STT_TIMEOUT_MS` | 可选，15,000 | 公开配置 | 单次 STT 硬超时，实现限制 1,000–30,000 ms；失败不会提交翻译答案。 |
-| `OPENROUTER_STT_REQUESTS_PER_MINUTE` | 可选，20 | 受限配置 | 每用户持久 STT 分钟上限。 |
-| `OPENROUTER_STT_REQUESTS_PER_DAY` | 可选，300 | 受限配置 | 按 Profile IANA 时区本地日期计算的用户 STT 日上限。 |
-| `OPENROUTER_STT_MONTHLY_BUDGET_MICRO_USD` | 可选，5,000,000 | 受限配置 | 仅 `translation_stt` 的全局月估算预算；不与 Azure 预算混用。 |
-| `OPENROUTER_STT_MICRO_USD_PER_SECOND` | 可选，100 | 受限配置 | 按当前 `$0.0001/秒` 折算的预算预留单价；只是保护性估算，供应商价格变化时必须同步复核。 |
-| `OPENROUTER_FAKE` | **仅测试**，默认 false | 测试配置 | 自动化用确定性 exact-match adapter；production 进程显式拒绝 true，不能作为真实供应商证据。 |
-| `COURSE_MARKET_DAILY_PUBLISH_LIMIT` | 可选，5 | 公开配置 | 每用户本地日期上架次数限制。 |
-| `COURSE_REPORT_DAILY_LIMIT` | 可选，20 | 公开配置 | 每用户本地日期举报次数限制。 |
-| `COURSE_REPORT_ALERT_THRESHOLD` | 可选，3 | 受限配置 | 同一目标 open 举报达到该值写结构化告警；不会自动下架。 |
-| `COURSE_MARKET_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | 逗号分隔的 Supabase user UUID；授权隐藏/恢复/撤回市场版本，应纳入审批与轮换。 |
-| `MODERATION_ADMIN_USER_IDS` | 默认空 | **敏感授权配置** | points signal/reward 审核管理员 UUID；新值优先，兼容期仅在为空时回退 Course Market allowlist。 |
+| `PUBLIC_ORIGIN` | Currently required; locally `http://localhost:5173` | Public config | Builds course share URLs; production should be the canonical HTTPS origin with no trailing `/`. |
+| `CORS_ALLOWED_ORIGINS` | Optional, defaults to `PUBLIC_ORIGIN` | Public config | Comma-separated browser CORS allowlist; when both are missing in production, no CORS permission is sent, and the same-origin nginx path still works. |
+| `FEATURE_LEARNING_COURSES_ENABLED` | Flag; production default false | Public config | Courses master switch; off returns 503. |
+| `FEATURE_COURSE_SHARING_ENABLED` | Flag; production default false | Public config | Creating/reading/cloning public shares; off disguises as 404. |
+| `FEATURE_COURSE_MARKET_ENABLED` | Flag; production default false | Public config | Course Market, publishing, cloning, reporting/moderation; off disguises as 404. |
+| `FEATURE_PRONUNCIATION_ENABLED` | Flag; default false in every environment | Public config | Azure TTS/scoring entry points; callable only when explicitly true. |
+| `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` | Flag; production default false; currently true in production | Public config | Durable audio queue, manifest, next-five-word prefetch, and whole-unit offline audio; requires Courses/Pronunciation to be on too. |
+| `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` | Flag; production default false; currently true in production | Public config | The optional semantic translation pre-test in the spelling stage; when off, start requests requiring `translationFirst=true` return 503, while ordinary spelling and the time limit are unaffected. |
+| `AZURE_SPEECH_CIRCUIT_OPEN` | Optional, default false | Restricted config | Emergency circuit breaker; when true, speech returns 503 everywhere without affecting text learning. |
+| `AZURE_SPEECH_KEY` | Required when speech is enabled | **Top secret** | Azure Speech subscription key, only in the API container. |
+| `AZURE_SPEECH_REGION` | Required when speech is enabled | Restricted config | Azure region, also forming the TTS/STT endpoint. |
+| `AZURE_SPEECH_VOICE` | Optional, `en-US-JennyNeural` | Public config | en-US TTS voice name. |
+| `AZURE_SPEECH_TIMEOUT_MS` | Optional, 10,000 | Public config | Hard timeout per Azure TTS/scoring call; limited to 1,000–60,000 ms in the implementation, and a timeout degrades without recording a learning error. |
+| `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` | Optional, 70 | Public product config | The overall `PronScore` pass mark, allowed 1–100; production's recognition stage and, since 0029, the pronunciation exam use it to judge each question, but the overall unit exam pass rate is still decided independently by the user-chosen `examPassPercent` (default 90). The API must return the actual value to the UI. |
+| `AZURE_SPEECH_ASSESSMENTS_PER_MINUTE` | Optional, 30 | Public config | Durable per-user scoring limit per minute. |
+| `AZURE_SPEECH_ASSESSMENTS_PER_DAY` | Optional, 300 | Public config | Daily scoring limit by the local date in the user's IANA time zone. |
+| `AZURE_SPEECH_MONTHLY_BUDGET_MICRO_USD` | Optional, 5,000,000 | Restricted config | Monthly estimated budget shared by all API instances, in micro-USD. |
+| `AZURE_SPEECH_TTS_REQUESTS_PER_MINUTE` | Optional, 20 | Restricted config | Global per-minute cap on TTS generation reservations; shared in the database across all API replicas. |
+| `AZURE_SPEECH_TTS_MONTHLY_CHAR_LIMIT` | Optional, 500,000 | Restricted config | Global monthly TTS character reservation cap; cache reuse across users does not count characters twice. |
+| `AZURE_SPEECH_TTS_MICRO_USD_PER_1000_CHARS` | Optional, 16,000 | Restricted config | Estimated TTS cost per thousand characters, used for budget reservations, not a billing fact. |
+| `AZURE_SPEECH_ASSESSMENT_MICRO_USD` | Optional, 2,500 | Restricted config | Estimated cost per scoring call. |
+| `LEARNING_AUDIO_PREWARM_INTERVAL_MS` | Optional, 3,100 | Restricted config | Minimum interval between two Azure TTS starts by the worker; the implementation rejects values below 3,100 ms, combined by default with a single global lease. |
+| `LEARNING_AUDIO_SYNTHESIS_VERSION` | Optional, `1` | Restricted config | Part of the global SHA-256 cache key; increment it when changing voice/SSML/post-processing semantics to rebuild safely, never overwriting old keys in place. |
+| `AZURE_SPEECH_FAKE` | **Tests only**, default false | Test config | Produces fixed WAVs/scores; every shared, staging provider smoke, or production environment must leave it unset/false, and the API explicitly rejects true when `NODE_ENV=production`. |
+| `OPENROUTER_API_KEY` | Required when the translation pre-test, voice input, or Materials AI is enabled | **Top secret** | Server capabilities reuse the same secret; the Materials AI worker gets a copy in the isolated `.ai.env`. Must never enter the Web bundle, database, logs, or commits. |
+| `OPENROUTER_MODEL` | Optional, `nvidia/nemotron-3-super-120b-a12b:free` | Restricted config | The semantic judging model; requests are fixed to Nvidia-only, no fallback, reasoning off, and the production gate verifies the model, routing, and schema. The free endpoint does not promise deny collection. |
+| `OPENROUTER_BASE_URL` | Optional, `https://openrouter.ai/api/v1` | Public config | OpenRouter API base URL; only read by the API. |
+| `OPENROUTER_TIMEOUT_MS` | Optional, 12,000 | Public config | Hard timeout per judgement, limited to 1,000–30,000 ms in the implementation; a timeout releases the database lease without recording a learning error. |
+| `OPENROUTER_SMOKE_MAX_ATTEMPTS` | Optional, 5 | Restricted release config | Only controls the real translation judging gate of protected releases, limited to 1–6 attempts; does not change user request retries or product quotas. Only network errors and 408/425/429/5xx are retryable, and persistent failure still blocks the release. |
+| `OPENROUTER_SMOKE_ATTEMPT_TIMEOUT_MS` | Optional, 30000 | Restricted release config | Timeout per request (including reading the response body) of the real translation judging release gate, limited to 5–60 seconds; separate from the interactive API's `OPENROUTER_TIMEOUT_MS`. |
+| `OPENROUTER_SMOKE_TOTAL_BUDGET_MS` | Optional, 180000 | Restricted release config | Hard wall-clock budget shared by every attempt and backoff of the real translation judging release gate, at least the per-attempt timeout and at most 300 seconds; fails closed when exhausted. |
+| `OPENROUTER_SMOKE_RETRY_BASE_MS` | Optional, 5,000 | Restricted release config | Starting point of the real translation gate's exponential backoff, limited to 1,000–30,000 ms. |
+| `OPENROUTER_SMOKE_RETRY_MAX_MS` | Optional, 60,000 | Restricted release config | Upper limit of a single gate backoff and of an acceptable `Retry-After`, limited to 120,000 ms; fails closed when the provider asks to wait longer. |
+| `OPENROUTER_ASSESSMENTS_PER_MINUTE` | Optional, 20 | Restricted config | Per-user one-minute cap on real provider judgements; deterministic exact matches, UUID idempotent replays, and lease-only claims are not counted. |
+| `OPENROUTER_ASSESSMENTS_PER_DAY` | Optional, 500 | Restricted config | Per-user rolling 24-hour cap on real provider judgements; when reached, the response includes the estimated seconds until recovery. |
+| `OPENROUTER_STT_MODEL` | Optional, `fish-audio/transcribe-1` | Restricted config | The STT model used only for pre-spelling translation voice input; clients cannot override it. |
+| `OPENROUTER_STT_LANGUAGE` | Optional, `zh` | Public product config | STT ISO language hint, recognizing Chinese by default; the current UI offers no language choice. |
+| `OPENROUTER_STT_TIMEOUT_MS` | Optional, 15,000 | Public config | Hard timeout per STT call, limited to 1,000–30,000 ms in the implementation; a failure never submits a translation answer. |
+| `OPENROUTER_STT_REQUESTS_PER_MINUTE` | Optional, 20 | Restricted config | Durable per-user STT per-minute cap. |
+| `OPENROUTER_STT_REQUESTS_PER_DAY` | Optional, 300 | Restricted config | Per-user STT daily cap computed by the local date in the Profile IANA time zone. |
+| `OPENROUTER_STT_MONTHLY_BUDGET_MICRO_USD` | Optional, 5,000,000 | Restricted config | Global monthly estimated budget for `translation_stt` only; not mixed with the Azure budget. |
+| `OPENROUTER_STT_MICRO_USD_PER_SECOND` | Optional, 100 | Restricted config | Budget reservation unit price converted from the current `$0.0001/second`; only a protective estimate that must be re-checked when the provider's price changes. |
+| `OPENROUTER_FAKE` | **Tests only**, default false | Test config | A deterministic exact-match adapter for automation; production processes explicitly reject true, and it is not real provider evidence. |
+| `COURSE_MARKET_DAILY_PUBLISH_LIMIT` | Optional, 5 | Public config | Per-user publishing limit per local date. |
+| `COURSE_REPORT_DAILY_LIMIT` | Optional, 20 | Public config | Per-user reporting limit per local date. |
+| `COURSE_REPORT_ALERT_THRESHOLD` | Optional, 3 | Restricted config | Writes a structured alert when open reports on the same target reach this value; never delists automatically. |
+| `COURSE_MARKET_ADMIN_USER_IDS` | Default empty | **Sensitive authorization config** | Comma-separated Supabase user UUIDs; authorizes hiding/restoring/withdrawing market versions and should be covered by approval and rotation. |
+| `MODERATION_ADMIN_USER_IDS` | Default empty | **Sensitive authorization config** | Administrator UUIDs for points signal/reward moderation; the new value takes precedence, and during the compatibility period it falls back to the Course Market allowlist only when empty. |
 
-所有 `*_LIMIT`、`*_BUDGET*`、`*_COST*`、timeout 和预热间隔必须是有限正数，其中次数、字符、毫秒和 micro-USD 预算必须是安全整数；`AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` 还必须在 1–100，合成版本只接受 1–32 位字母数字/点/下划线/连字符。缺失时使用表中默认值；显式填写非法值时 API 以 `503 SERVER_MISCONFIG` 失败关闭，不会把 `NaN/null` 传给数据库后绕过配额或候补规则。
+Every `*_LIMIT`, `*_BUDGET*`, `*_COST*`, timeout, and prewarm interval must be a finite positive number, and counts, characters, milliseconds, and micro-USD budgets must be safe integers; `AZURE_SPEECH_PRONUNCIATION_PASS_SCORE` must also be within 1–100, and the synthesis version only accepts 1–32 alphanumeric/dot/underscore/hyphen characters. When missing, the table's default applies; an explicitly invalid value makes the API fail closed with `503 SERVER_MISCONFIG`, rather than passing `NaN/null` to the database and bypassing quotas or retry rules.
 
-`OPENROUTER_ASSESSMENTS_PER_DAY=500` 是语义判分默认值；STT 独立使用 20/分钟、300/本地日和 5,000,000 micro-USD/月。修改本文或 `.env.example` 不会改写正在运行的服务器；0037–0038 已于 2026-08-04 通过受保护安装脚本原子写入 STT 非密钥配置并复用既有 secret。后续发布/轮换仍须单独核对容器内生效值且不得打印 key。
+`OPENROUTER_ASSESSMENTS_PER_DAY=500` is the semantic grading default; STT separately uses 20/minute, 300/local day, and 5,000,000 micro-USD/month. Changing this document or `.env.example` does not rewrite a running server; on 2026-08-04, 0037–0038 atomically wrote the STT non-secret configuration through the protected install script and reused the existing secret. Later releases/rotations must still separately check the effective values in the container without printing the key.
 
-## 4. FastAPI Materials AI 运行时变量（生产 0041–0043 + 0046–0051 候选）
+## 4. FastAPI Materials AI runtime variables (production 0041–0043 + the 0046–0051 candidate)
 
-来源模板：`apps/ai/.env.example`。本地使用进程私有环境；生产由受保护脚本生成 mode-600 `/opt/nalanda/.ai.env`。worker **不会**收到 service-role、Redis、Azure、JWT 或 Web key。
+Template: `apps/ai/.env.example`. Locally, use a process-private environment; production generates a mode-600 `/opt/nalanda/.ai.env` with a protected script. The worker **never** receives service-role, Redis, Azure, JWT, or Web keys.
 
-| 变量 | 状态/默认 | 敏感级别 | 用途 |
+| Variable | Status/default | Sensitivity | Purpose |
 |---|---|---|---|
-| `NODE_ENV` | production 必需 | 公开配置 | production 明确拒绝 fake provider readiness。 |
-| `AI_INTERNAL_TOKEN` | 必需 | **最高机密** | 与 API 相同的内部请求/回调认证 token。 |
-| `OPENROUTER_API_KEY` | 必需 | **最高机密** | DeepSeek/MiMo/Luna 服务端调用；不写数据库、日志、响应或 Web。 |
-| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | 公开配置 | 固定 provider 基址。 |
-| `SUPABASE_URL` | 必需 | 公开配置 | 只用于把允许下载的 signed URL host 限制到本项目；worker没有 service-role。 |
-| `MATERIAL_AI_ALLOWED_STORAGE_HOSTS` | 可选补充 | 受限配置 | 逗号分隔额外允许 host；生产通常为空，禁止宽泛通配。 |
-| `PUBLIC_APP_URL` | `https://nalanda.online` | 公开配置 | OpenRouter `HTTP-Referer` 标识。 |
-| `MATERIAL_AI_FAKE_PROVIDER` | false | 测试配置 | pytest/Playwright 的确定性 adapter；production true 会使 readiness 失败。 |
-| `MATERIAL_AI_TEMP_ROOT` | `/tmp/nalanda-material-ai` | 受限路径 | 0700 job 临时目录根；短期保存 usage spool 与验证后的 resume checkpoint；成功/失败/取消/删除或 TTL 清除，usage 未落账时不得提前删除 spool。 |
-| `MATERIAL_AI_TEMP_MIN_FREE_BYTES` | 536870912 | 受限配置 | 创建和解析过程中低于 512MiB 失败关闭。 |
-| `MATERIAL_AI_JOB_TEMP_LIMIT_BYTES` | 1073741824 | 受限配置 | 单任务临时空间 1GiB 硬上限。 |
-| `MATERIAL_AI_MAX_CHARACTERS` | 400000 | 受限配置 | 规范化 DocumentIR 文本上限。 |
-| `MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS` | 120 | 受限配置 | DOCX/PPTX 全量低优先级渲染硬超时。 |
-| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | 受限配置 | 一次结构化 OpenRouter 操作（包括全部重试与退避）的共享 wall-clock 上限；Nest 只等待短 202 接收，不等待完整任务。 |
-| `MATERIAL_AI_JOB_TIMEOUT_SECONDS` | **候选**，1200 | 受限配置 | 一次 Materials 生成/知识图任务的总执行预算；到期保存既有 durable checkpoint、释放运行槽并允许期限内续跑。 |
-| `MATERIAL_AI_GRADING_TIMEOUT_SECONDS` | **候选**，240 | 受限配置 | 一次主观题批量评分的总执行预算；防止后台任务无限占用单并发 worker。 |
-| `MATERIAL_AI_PROVIDER_MAX_ATTEMPTS` | 4 | 受限配置 | 同一固定模型请求的最大有界尝试次数，限制 1–10；仅网络错误及 408/429/502/503/504 可重试。 |
-| `MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS` | 2 | 受限配置 | 指数退避起点，限制 0–60 秒；不会改变 model、ZDR 或同模型 provider failover 策略。 |
-| `MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS` | 60 | 受限配置 | 单次退避上限，限制 0–300 秒；数值型 `Retry-After` 优先且不得提前请求，超过上限则该任务失败并释放额度。 |
-| `MATERIAL_AI_GENERATION_MAX_TOKENS` | 30000 | 成本配置 | 试卷生成/一次 repair 最大 completion tokens。 |
-| `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS` | **候选**，30000 | 成本配置 | 知识图谱生成/repair 最大 completion tokens，三条 pipeline 共用上限。 |
-| `MATERIAL_AI_RESUME_TTL_SECONDS` | **候选**，86400 | 受限配置 | worker orphan 与本地 checkpoint/spool 的保留期限；需和 API 一致。 |
+| `NODE_ENV` | Required in production | Public config | Production explicitly rejects fake-provider readiness. |
+| `AI_INTERNAL_TOKEN` | Required | **Top secret** | The same internal request/callback authentication token as the API. |
+| `OPENROUTER_API_KEY` | Required | **Top secret** | Server-side DeepSeek/MiMo/Luna calls; never written to the database, logs, responses, or the Web app. |
+| `OPENROUTER_BASE_URL` | `https://openrouter.ai/api/v1` | Public config | Fixed provider base URL. |
+| `SUPABASE_URL` | Required | Public config | Only used to restrict allowed signed-URL download hosts to this project; the worker has no service-role. |
+| `MATERIAL_AI_ALLOWED_STORAGE_HOSTS` | Optional addition | Restricted config | Comma-separated extra allowed hosts; usually empty in production, and broad wildcards are forbidden. |
+| `PUBLIC_APP_URL` | `https://nalanda.online` | Public config | The OpenRouter `HTTP-Referer` identifier. |
+| `MATERIAL_AI_FAKE_PROVIDER` | false | Test config | A deterministic adapter for pytest/Playwright; true in production makes readiness fail. |
+| `MATERIAL_AI_TEMP_ROOT` | `/tmp/nalanda-material-ai` | Restricted path | Root of the 0700 job temporary directories; briefly stores the usage spool and validated resume checkpoints; cleared on success/failure/cancellation/deletion or TTL, and the spool must not be deleted early while usage is not yet recorded. |
+| `MATERIAL_AI_TEMP_MIN_FREE_BYTES` | 536870912 | Restricted config | Fails closed when free space drops below 512 MiB during creation and parsing. |
+| `MATERIAL_AI_JOB_TEMP_LIMIT_BYTES` | 1073741824 | Restricted config | 1 GiB hard cap on temporary space per job. |
+| `MATERIAL_AI_MAX_CHARACTERS` | 400000 | Restricted config | Text limit for the normalized DocumentIR. |
+| `MATERIAL_AI_LIBREOFFICE_TIMEOUT_SECONDS` | 120 | Restricted config | Hard timeout for full low-priority DOCX/PPTX rendering. |
+| `MATERIAL_AI_PROVIDER_TIMEOUT_SECONDS` | 180 | Restricted config | Shared wall-clock limit for one structured OpenRouter operation (including every retry and backoff); Nest only waits for the short 202 acceptance, not the whole job. |
+| `MATERIAL_AI_JOB_TIMEOUT_SECONDS` | **Candidate**, 1200 | Restricted config | Total execution budget for one Materials generation/knowledge graph job; on expiry it saves the existing durable checkpoint, releases the run slot, and allows resuming within the window. |
+| `MATERIAL_AI_GRADING_TIMEOUT_SECONDS` | **Candidate**, 240 | Restricted config | Total execution budget for one batch of subjective grading; keeps background jobs from occupying the single-concurrency worker indefinitely. |
+| `MATERIAL_AI_PROVIDER_MAX_ATTEMPTS` | 4 | Restricted config | Maximum bounded attempts for a request to the same fixed model, limited to 1–10; only network errors and 408/429/502/503/504 are retryable. |
+| `MATERIAL_AI_PROVIDER_RETRY_BASE_SECONDS` | 2 | Restricted config | Starting point of the exponential backoff, limited to 0–60 seconds; does not change the model, ZDR, or the same-model provider failover policy. |
+| `MATERIAL_AI_PROVIDER_RETRY_MAX_SECONDS` | 60 | Restricted config | Upper limit of a single backoff, limited to 0–300 seconds; a numeric `Retry-After` takes precedence and requests are never sent early; beyond the limit the job fails and releases its allowance. |
+| `MATERIAL_AI_GENERATION_MAX_TOKENS` | 30000 | Cost config | Maximum completion tokens for test-paper generation/one repair. |
+| `MATERIAL_AI_KNOWLEDGE_MAX_TOKENS` | **Candidate**, 30000 | Cost config | Maximum completion tokens for knowledge-graph generation/repair, a cap shared by the pipelines. |
+| `MATERIAL_AI_RESUME_TTL_SECONDS` | **Candidate**, 86400 | Restricted config | Retention period for worker orphans and the local checkpoint/spool; must match the API. |
 
-模型 ID不是用户变量：旧流水线固定 `deepseek/deepseek-v4-flash-0731` 与 `xiaomi/mimo-v2.5`；Luna 固定 `openai/gpt-6-luna` 并锁 `provider.only=["azure"]`，禁止 fallback、要求 ZDR/拒绝数据收集/严格 schema/no tools，并核对响应真实 upstream；路由不符时即使已记 usage 也拒绝保存产物。Courses 翻译判定固定免费 `nvidia/nemotron-3-super-120b-a12b:free` + Nvidia-only。旧流水线的同模型 provider 故障转移语义保持不变。任何模型或路由变更均需 ADR、评测、成本和隐私复审。
+Model IDs are not user variables: the old pipeline is fixed to `deepseek/deepseek-v4-flash-0731` and `xiaomi/mimo-v2.5`; Luna is fixed to `openai/gpt-6-luna` locked to `provider.only=["azure"]`, with fallback forbidden, ZDR/deny data collection/strict schema/no tools required, and the response's real upstream checked; on a routing mismatch the artifact is rejected even though usage was recorded. Courses translation judging is fixed to the free `nvidia/nemotron-3-super-120b-a12b:free` + Nvidia-only. The old pipeline's same-model provider failover semantics are unchanged. Any model or routing change needs an ADR, evaluation, and cost and privacy review.
 
-## 5. 数据库迁移运维变量
+## 5. Database migration ops variables
 
-消费者：Supabase CLI、发布恢复点脚本，以及仅供应急的 `scripts/db-push.mjs`。只应临时注入受控终端或 GitHub protected environment，不应写进应用 `.env`。
+Consumers: the Supabase CLI, the release recovery-point scripts, and the emergency-only `scripts/db-push.mjs`. They should only be injected temporarily into a controlled terminal or a GitHub protected environment, never written into an application `.env`.
 
-| 变量 | 状态 | 敏感级别 | 用途与注意事项 |
+| Variable | Status | Sensitivity | Purpose and notes |
 |---|---|---|---|
-| `SUPABASE_ACCESS_TOKEN` | 执行脚本必需 | **最高机密** | Supabase 账号 Personal Access Token，可访问 Management API；使用最小权限账号并在离职/泄露时立即撤销。 |
-| `SUPABASE_PROJECT_REF` | 必需 | 项目标识 | 目标项目 Ref。脚本已移除默认值；CI 还会与 `VITE_SUPABASE_URL` 交叉核对。 |
-| `SUPABASE_DB_PASSWORD` | CLI 远端操作必需 | **最高机密** | `supabase link/db dump/db push/db lint` 的数据库密码；仅放 `production-database` environment。 |
-| `ALLOW_LEGACY_DB_PUSH` | 旧脚本显式开关 | 公开配置 | 只有值为 `YES` 才允许不维护 history 的 `db-push.mjs`；正常 CI 禁止使用。 |
-| `BACKUP_ENCRYPTION_KEY` | 本地备份/恢复脚本必需 | **最高机密** | 加密/验证 release archive；CI 对应 secret 名为 `DB_BACKUP_ENCRYPTION_KEY`。 |
-| `BACKUP_OUTPUT` | 创建恢复点必需 | 受限路径 | 加密输出路径，必须以 `.tar.gz.enc` 结尾。 |
-| `BACKUP_ARCHIVE` | 验证/恢复必需 | 受限路径 | 已下载的加密数据库 archive。 |
-| `RESTORE_DATABASE_URL` | 隔离恢复必需 | **最高机密** | 只能指向新建空白项目；恢复脚本拒绝源项目。 |
-| `RESTORE_TARGET_PROJECT_REF` / `RESTORE_CONFIRM_PROJECT_REF` | 隔离恢复必需 | 项目标识 | 两次 Ref 必须相同且连接串包含该 Ref。 |
-| `ALLOW_ISOLATED_RESTORE` | 隔离恢复开关 | 公开配置 | 必须显式为 `YES`；不允许原地生产恢复。 |
-| `DATABASE_URL` | 运维约定，应用未读取 | **最高机密** | 本文档体系在备份/恢复示例中使用的临时 PostgreSQL 连接串；不是当前应用运行变量。优先通过密码文件或 secret 注入，避免进入 shell history。 |
+| `SUPABASE_ACCESS_TOKEN` | Required to run the scripts | **Top secret** | A Supabase account Personal Access Token with Management API access; use a least-privilege account and revoke immediately on departure/leak. |
+| `SUPABASE_PROJECT_REF` | Required | Project identifier | The target project ref. The scripts no longer have a default; CI also cross-checks it against `VITE_SUPABASE_URL`. |
+| `SUPABASE_DB_PASSWORD` | Required for remote CLI operations | **Top secret** | The database password for `supabase link/db dump/db push/db lint`; only kept in the `production-database` environment. |
+| `ALLOW_LEGACY_DB_PUSH` | Explicit switch for the legacy script | Public config | Only the value `YES` allows `db-push.mjs`, which does not maintain history; normal CI must never use it. |
+| `BACKUP_ENCRYPTION_KEY` | Required by local backup/restore scripts | **Top secret** | Encrypts/verifies release archives; the corresponding CI secret is named `DB_BACKUP_ENCRYPTION_KEY`. |
+| `BACKUP_OUTPUT` | Required to create a recovery point | Restricted path | Encrypted output path; must end with `.tar.gz.enc`. |
+| `BACKUP_ARCHIVE` | Required to verify/restore | Restricted path | The downloaded encrypted database archive. |
+| `RESTORE_DATABASE_URL` | Required for isolated restore | **Top secret** | May only point to a newly created blank project; the restore script rejects the source project. |
+| `RESTORE_TARGET_PROJECT_REF` / `RESTORE_CONFIRM_PROJECT_REF` | Required for isolated restore | Project identifier | The two refs must be identical, and the connection string must contain that ref. |
+| `ALLOW_ISOLATED_RESTORE` | Isolated restore switch | Public config | Must be explicitly `YES`; in-place production restores are not allowed. |
+| `DATABASE_URL` | Ops convention, not read by the app | **Top secret** | A temporary PostgreSQL connection string used in this documentation's backup/restore examples; not a current application runtime variable. Prefer injecting it through a password file or secret to keep it out of shell history. |
 
-## 6. 当前生产 CI/CD 变量
+## 6. Current production CI/CD variables
 
-消费者：`.github/workflows/deploy.yml`。它们保存在 GitHub Actions Secrets，不在仓库文件中。
+Consumer: `.github/workflows/deploy.yml`. They are stored in GitHub Actions Secrets, not in repository files.
 
-| 变量 | 状态 | 敏感级别 | 用途 |
+| Variable | Status | Sensitivity | Purpose |
 |---|---|---|---|
-| `SERVER_HOST` | 当前必需 | 受限配置 | SSH/scp 目标主机。 |
-| `SERVER_USER` | 当前必需 | 受限配置 | 部署账号。当前文档描述为 `root`；目标应迁移到最小权限部署用户。 |
-| `SERVER_SSH_KEY` | 当前必需 | **最高机密** | CI 专用 SSH 私钥；公钥位于服务器 `authorized_keys`。 |
-| `SERVER_SSH_KNOWN_HOSTS` | 当前必需 | 受限配置 | 预先核验的服务器 SSH host key；CI 禁止运行时 `ssh-keyscan` 建立首次信任。 |
-| `VITE_SUPABASE_URL` | 当前必需 | 公开配置 | Web 构建期注入。 |
-| `VITE_SUPABASE_ANON_KEY` | 当前必需 | 公开凭据 | Web 构建期注入。 |
-| `SUPABASE_ACCESS_TOKEN` | 有新迁移时必需 | **最高机密** | Supabase CLI 发布身份，只放 `production-database` environment。 |
-| `SUPABASE_DB_PASSWORD` | 有新迁移时必需 | **最高机密** | 远端 dry-run/dump/push/lint。 |
-| `SUPABASE_PROJECT_REF` | 有新迁移时必需 | 项目标识 | 与生产 Web URL 交叉确认。 |
-| `DB_BACKUP_ENCRYPTION_KEY` | 有新迁移时必需 | **最高机密** | 加密 14 天保留的 release recovery artifact；副本须离线保存。 |
-| `OPENROUTER_API_KEY` | 启用翻译前测时必需 | **最高机密** | GitHub `production` environment secret；部署 job 只经 SSH 标准输入交给服务器安装脚本，随后执行真实 provider gate。不得作为普通 repository variable。 |
-| `AI_INTERNAL_TOKEN` | 0041–0043 发布必需 | **最高机密** | 独立 32-byte hex；部署只经 SSH stdin 原子写入 API/AI 两个 mode-600 env，不回显。 |
-| `REDIS_PASSWORD` | 0039–0040 第一阶段发布必需 | **最高机密** | GitHub `production` environment secret；独立 32-byte hex，经 SSH stdin 写入服务器 mode-600 `.redis.env` 和 API `REDIS_URL`，不打印。 |
-| `RATE_LIMIT_HMAC_SECRET` | 0039–0040 第一阶段发布必需 | **最高机密** | GitHub `production` environment secret；独立 32-byte hex，经 SSH stdin 原子安装；不得等于 Redis password。 |
-| `PUBLIC_ORIGIN` | workflow 非秘密 env | 公开配置 | 公网 smoke 的规范 origin；API 分享 URL 仍从服务器 `.env` 读取，二者必须一致。 |
+| `SERVER_HOST` | Currently required | Restricted config | SSH/scp target host. |
+| `SERVER_USER` | Currently required | Restricted config | Deployment account. The docs currently describe it as `root`; the target is to migrate to a least-privilege deploy user. |
+| `SERVER_SSH_KEY` | Currently required | **Top secret** | The CI-only SSH private key; its public key is in the server's `authorized_keys`. |
+| `SERVER_SSH_KNOWN_HOSTS` | Currently required | Restricted config | The pre-verified server SSH host key; CI must never use runtime `ssh-keyscan` to establish first trust. |
+| `VITE_SUPABASE_URL` | Currently required | Public config | Injected at Web build time. |
+| `VITE_SUPABASE_ANON_KEY` | Currently required | Public credential | Injected at Web build time. |
+| `SUPABASE_ACCESS_TOKEN` | Required when there are new migrations | **Top secret** | The Supabase CLI release identity, only kept in the `production-database` environment. |
+| `SUPABASE_DB_PASSWORD` | Required when there are new migrations | **Top secret** | Remote dry-run/dump/push/lint. |
+| `SUPABASE_PROJECT_REF` | Required when there are new migrations | Project identifier | Cross-checked against the production Web URL. |
+| `DB_BACKUP_ENCRYPTION_KEY` | Required when there are new migrations | **Top secret** | Encrypts the release recovery artifact kept for 14 days; a copy must be stored offline. |
+| `OPENROUTER_API_KEY` | Required when the translation pre-test is enabled | **Top secret** | A GitHub `production` environment secret; the deploy job only hands it to the server install script through SSH standard input, then runs the real provider gate. Must not be an ordinary repository variable. |
+| `AI_INTERNAL_TOKEN` | Required for the 0041–0043 release | **Top secret** | A separate 32-byte hex value; the deploy only writes it atomically through SSH stdin into the two mode-600 API/AI env files, never echoing it. |
+| `REDIS_PASSWORD` | Required for the 0039–0040 phase-one release | **Top secret** | A GitHub `production` environment secret; a separate 32-byte hex value written through SSH stdin into the server's mode-600 `.redis.env` and the API `REDIS_URL`, never printed. |
+| `RATE_LIMIT_HMAC_SECRET` | Required for the 0039–0040 phase-one release | **Top secret** | A GitHub `production` environment secret; a separate 32-byte hex value installed atomically through SSH stdin; must not equal the Redis password. |
+| `PUBLIC_ORIGIN` | Non-secret workflow env | Public config | The canonical origin for the public smoke test; the API's share URLs are still read from the server `.env`, and the two must match. |
 
-服务器 `/opt/nalanda/.env` 至少需要 Supabase、`REDIS_URL` 与 HMAC secret；`/opt/nalanda/.redis.env` 只含 Redis password，不能得到 Supabase/Azure/OpenRouter/HMAC。两文件均 mode 600。CI 不下载它们；安装脚本保留其它 API 行、原子替换本域变量且 stdout 不含 secret。API image Git SHA 位于非秘密 `.deploy.env`。
+The server's `/opt/nalanda/.env` needs at least Supabase, `REDIS_URL`, and the HMAC secret; `/opt/nalanda/.redis.env` contains only the Redis password and must not get Supabase/Azure/OpenRouter/HMAC. Both files are mode 600. CI does not download them; the install scripts keep other API lines, atomically replace their own variables, and print no secrets to stdout. The API image Git SHA lives in the non-secret `.deploy.env`.
 
-## 7. Supabase RLS E2E 变量
+## 7. Supabase RLS E2E variables
 
-消费者：`apps/web/tests/rls.e2e.test.ts`。这些变量只允许指向可销毁的专用测试项目；默认 `pnpm test` 不启用外部 E2E。
+Consumer: `apps/web/tests/rls.e2e.test.ts`. These variables may only point to a disposable dedicated test project; the default `pnpm test` does not enable external E2E.
 
-| 变量 | 状态 | 敏感级别 | 用途与保护 |
+| Variable | Status | Sensitivity | Purpose and protection |
 |---|---|---|---|
-| `RUN_SUPABASE_RLS_E2E` | 显式开关 | 公开配置 | 必须为 `1` 才运行；`pnpm test:rls` 会设置。 |
-| `SUPABASE_URL` | E2E 必需 | 公开配置 | 专用测试项目 URL，不得为生产。 |
-| `SUPABASE_ANON_KEY` | E2E 必需 | 公开凭据 | 以用户 A/B 登录并验证 RLS。 |
-| `SUPABASE_SERVICE_ROLE_KEY` | E2E 必需 | **最高机密** | 创建/删除测试用户和清理 Storage；只注入 Node 测试进程。 |
-| `SUPABASE_RLS_E2E_CONFIRM_REF` | E2E 必需 | 项目标识 | 必须与 URL hostname 的 project ref 精确相等，作为防误操作二次确认。 |
-| `RUN_REDIS_E2E` | 真实 Redis 集成开关 | 公开配置 | 必须为 `true` 才运行 Lua 原子窗口/过期/token lock 测试；普通本地 `pnpm test` 可跳过，CI 必须启用。 |
-| `REDIS_URL`, `RATE_LIMIT_HMAC_SECRET` | Redis E2E 必需 | 本地测试 secret | 只能指向测试 Redis DB；CI 使用 localhost 独立 DB 与固定非生产 HMAC。 |
+| `RUN_SUPABASE_RLS_E2E` | Explicit switch | Public config | Must be `1` to run; `pnpm test:rls` sets it. |
+| `SUPABASE_URL` | Required for E2E | Public config | The dedicated test project URL; never production. |
+| `SUPABASE_ANON_KEY` | Required for E2E | Public credential | Signs in as users A/B to verify RLS. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Required for E2E | **Top secret** | Creates/deletes test users and cleans up Storage; only injected into the Node test process. |
+| `SUPABASE_RLS_E2E_CONFIRM_REF` | Required for E2E | Project identifier | Must exactly equal the project ref in the URL hostname, as a second confirmation against mistakes. |
+| `RUN_REDIS_E2E` | Real Redis integration switch | Public config | Must be `true` to run the Lua atomic window/expiry/token lock tests; ordinary local `pnpm test` may skip them, and CI must enable them. |
+| `REDIS_URL`, `RATE_LIMIT_HMAC_SECRET` | Required for Redis E2E | Local test secrets | May only point to a test Redis DB; CI uses a separate localhost DB and a fixed non-production HMAC. |
 
-完整运行与清理流程见 [测试指南](./TESTING.md)。确认 ref 只防手滑，不授权在生产运行。
+See the [testing guide](./TESTING.md) for the full run and cleanup flow. The confirmation ref only guards against slips and does not authorize running against production.
 
-Playwright CI 同时从本地 `supabase status -o env` 注入 `SUPABASE_JWT_SECRET`、两项 `VITE_SUPABASE_*`，显式打开 Courses/分享/市场/发音/音频预热/翻译前测 flags，并设置 `AZURE_SPEECH_FAKE=true`、`OPENROUTER_FAKE=true` 与本地 `PUBLIC_ORIGIN`。这些都是一次性 job 环境，不能复制成生产供应商验证配置。
+Playwright CI also injects `SUPABASE_JWT_SECRET` and the two `VITE_SUPABASE_*` values from local `supabase status -o env`, explicitly turns on the Courses/sharing/market/pronunciation/audio prewarm/translation pre-test flags, and sets `AZURE_SPEECH_FAKE=true`, `OPENROUTER_FAKE=true`, and a local `PUBLIC_ORIGIN`. These are all one-off job environments and must not be copied into a production provider verification configuration.
 
-## 8. `infra/hybrid-2g` 目标部署变量
+## 8. `infra/hybrid-2g` target deployment variables
 
-来源模板：`infra/hybrid-2g/.env.example`。该目录是目标拓扑，不是 `nalanda.online` 当前实际编排。
+Template: `infra/hybrid-2g/.env.example`. This directory is a target topology, not the current actual orchestration of `nalanda.online`.
 
-| 变量 | 当前使用情况 | 敏感级别 | 说明 |
+| Variable | Current usage | Sensitivity | Notes |
 |---|---|---|---|
-| `DOMAIN` | Caddyfile 已使用 | 公开配置 | Caddy 站点域名。 |
-| `ACME_EMAIL` | Caddyfile 已使用 | 个人/受限配置 | ACME 账户联系邮箱。 |
-| `SUPABASE_URL` | API 已使用 | 公开配置 | 同上。 |
-| `SUPABASE_ANON_KEY` | 当前服务代码未读取 | 公开凭据 | 名称不带 `VITE_`，不会自动进入 Web 静态包；若 hybrid Web 需使用，仍须在构建阶段注入对应 `VITE_*`。 |
-| `SUPABASE_SERVICE_ROLE_KEY` | API 已使用 | **最高机密** | 同上。 |
-| `SUPABASE_JWT_SECRET` | API 可选读取 | **最高机密** | 同上。 |
-| `ANTHROPIC_API_KEY` | 历史变量；当前业务不读取 | **最高机密** | 不应再配置；迁移完成后删除旧 secret。 |
-| `STRIPE_SECRET_KEY` | 目标占位 | **最高机密** | 当前无支付模块、无消费者。 |
-| `STRIPE_WEBHOOK_SECRET` | 目标占位 | **最高机密** | 当前无 webhook endpoint、无消费者；Caddy 注释不是接口实现。 |
-| `REDIS_URL` | API 限流/health/scanner 已读取 | 内部配置 | hybrid 示例无密码且不满足生产基线；若复用必须补密码与独立 HMAC。BullMQ 仍未接入。 |
-| `AI_SERVICE_URL` | API health 读取，业务未连接 | 内部配置 | compose 中覆盖为 `http://ai:8000`。 |
-| `PUBLIC_ORIGIN`、`CORS_ALLOWED_ORIGINS`、`FEATURE_*` | API 已读取 | 公开配置 | Courses 分享 URL、浏览器跨域 allowlist 和分阶段开关；hybrid 示例默认全部 production flag 为 false。 |
-| `AZURE_SPEECH_KEY` | 语音启用时 API 读取 | **最高机密** | 只注入 API；不得注入 Web/AI。 |
-| `AZURE_SPEECH_REGION/VOICE/TIMEOUT_MS/PRONUNCIATION_PASS_SCORE/CIRCUIT_OPEN` | API 已读取 | 受限配置 | Azure endpoint、voice、单次硬超时、整体评分通过线与紧急熔断。 |
-| `AZURE_SPEECH_*LIMIT/BUDGET/COST*` | API 已读取 | 受限配置 | 持久配额与成本估算，实际变量名见 3.1。 |
-| `COURSE_MARKET_*`、`COURSE_REPORT_*` | API 已读取 | 管理 ID 为敏感授权，其余受限 | 市场发布、举报和管理员控制。 |
+| `DOMAIN` | Used by the Caddyfile | Public config | Caddy site domain. |
+| `ACME_EMAIL` | Used by the Caddyfile | Personal/restricted config | ACME account contact email. |
+| `SUPABASE_URL` | Used by the API | Public config | Same as above. |
+| `SUPABASE_ANON_KEY` | Not read by current service code | Public credential | Without a `VITE_` prefix it does not enter the Web static bundle automatically; if the hybrid Web needs it, the corresponding `VITE_*` must still be injected at build time. |
+| `SUPABASE_SERVICE_ROLE_KEY` | Used by the API | **Top secret** | Same as above. |
+| `SUPABASE_JWT_SECRET` | Optionally read by the API | **Top secret** | Same as above. |
+| `ANTHROPIC_API_KEY` | Historical variable; not read by current business code | **Top secret** | Should no longer be configured; delete the old secret once migration is complete. |
+| `STRIPE_SECRET_KEY` | Target placeholder | **Top secret** | No payment module and no consumer today. |
+| `STRIPE_WEBHOOK_SECRET` | Target placeholder | **Top secret** | No webhook endpoint and no consumer today; the Caddy comment is not an endpoint implementation. |
+| `REDIS_URL` | Read by API rate limiting/health/scanner | Internal config | The hybrid example has no password and does not meet the production baseline; if reused, a password and a separate HMAC must be added. BullMQ is still not wired in there. |
+| `AI_SERVICE_URL` | Read by API health, not connected for business | Internal config | Overridden to `http://ai:8000` in the compose file. |
+| `PUBLIC_ORIGIN`, `CORS_ALLOWED_ORIGINS`, `FEATURE_*` | Read by the API | Public config | Courses share URLs, the browser CORS allowlist, and staged switches; the hybrid example defaults every production flag to false. |
+| `AZURE_SPEECH_KEY` | Read by the API when speech is enabled | **Top secret** | Only injected into the API; must not be injected into the Web app/AI. |
+| `AZURE_SPEECH_REGION/VOICE/TIMEOUT_MS/PRONUNCIATION_PASS_SCORE/CIRCUIT_OPEN` | Read by the API | Restricted config | Azure endpoint, voice, per-call hard timeout, overall score pass mark, and emergency circuit breaker. |
+| `AZURE_SPEECH_*LIMIT/BUDGET/COST*` | Read by the API | Restricted config | Durable quotas and cost estimates; see 3.1 for the actual variable names. |
+| `COURSE_MARKET_*`, `COURSE_REPORT_*` | Read by the API | Admin IDs are sensitive authorization; the rest are restricted | Market publishing, reporting, and administrator controls. |
 
-## 9. 配置落点矩阵
+## 9. Where configuration lives
 
-| 环境 | Web 公开配置 | API/AI 服务端秘密 | 运维临时秘密 |
+| Environment | Web public config | API/AI server secrets | Temporary ops secrets |
 |---|---|---|---|
-| 本地 | `apps/web/.env.local` | `apps/api/.env`；AI 进程环境 | 当前 shell/安全密码文件 |
-| GitHub Actions | Actions Secrets 注入 Web 构建 | API 运行密钥仍只在服务器；DB 发布密钥在 protected environment | `SERVER_SSH_KEY`、已核验 host key、Supabase CLI 密钥、备份加密 key |
-| 当前生产/Materials AI | 已编译在 `/opt/nalanda/web` 静态包 | `/opt/nalanda/.env` + 隔离的 `/opt/nalanda/.redis.env` + `/opt/nalanda/.ai.env`。均 `0600`，AI env 无 service-role/Redis | 仅维护窗口临时注入，不落日志 |
-| hybrid 目标 | 构建 Web 时另行注入 `VITE_*` | `infra/hybrid-2g/.env` | 仅维护窗口临时注入 |
+| Local | `apps/web/.env.local` | `apps/api/.env`; the AI process environment | The current shell/a secure password file |
+| GitHub Actions | Actions Secrets injected into the Web build | API runtime keys stay only on the server; DB release keys live in the protected environment | `SERVER_SSH_KEY`, the verified host key, Supabase CLI keys, the backup encryption key |
+| Current production/Materials AI | Compiled into the `/opt/nalanda/web` static bundle | `/opt/nalanda/.env` + the isolated `/opt/nalanda/.redis.env` + `/opt/nalanda/.ai.env`. All `0600`, and the AI env has no service-role/Redis | Injected temporarily only during maintenance windows, never logged |
+| Hybrid target | Inject `VITE_*` separately when building the Web app | `infra/hybrid-2g/.env` | Injected temporarily only during maintenance windows |
 
-## 10. 新增变量检查清单
+## 10. Checklist for a new variable
 
-1. 明确消费者、阶段（build/runtime/operation）、默认行为和是否必需。
-2. 判断是否会进入浏览器；任何高权限凭据都禁止进入客户端。
-3. 更新对应 `.env.example`，只写占位值。
-4. 更新本矩阵、[本地开发手册](./LOCAL_DEVELOPMENT.md)和[密钥轮换](../operations/SECRET_ROTATION.md)。
-5. 为缺失/无效配置增加启动校验或明确错误；Supabase 与 Redis health 必须实际探测，不能把变量存在当 readiness。
-6. 更新 CI/compose 后验证变量确实被目标进程读取，避免“配置存在但代码未使用”。
-7. 若变量被移除，先确认生产、GitHub、个人环境和历史部署均不再依赖，再撤销对应秘密。
+1. Define the consumer, stage (build/runtime/operation), default behavior, and whether it is required.
+2. Decide whether it enters the browser; no high-privilege credential may ever enter the client.
+3. Update the corresponding `.env.example` with placeholder values only.
+4. Update this matrix, the [local development guide](./LOCAL_DEVELOPMENT.md), and [secret rotation](../operations/SECRET_ROTATION.md).
+5. Add startup validation or an explicit error for missing/invalid configuration; Supabase and Redis health must actually probe and never treat "the variable exists" as readiness.
+6. After updating CI/compose, verify the variable is actually read by the target process, avoiding "the configuration exists but the code doesn't use it".
+7. When removing a variable, first confirm production, GitHub, personal environments, and historical deployments no longer depend on it, then revoke the corresponding secret.

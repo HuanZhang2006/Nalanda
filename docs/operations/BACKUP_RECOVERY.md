@@ -1,138 +1,139 @@
-# 备份与恢复
+# Backup and Recovery
 
-> **本文内容：** 定义数据库、Auth、Storage、配置和应用产物的备份范围、发布恢复点、验证、隔离恢复及灾难切换步骤。
-> **作用：** 区分“存在某个 dump”和“完整可恢复”，并提供不会自动覆盖生产新写入的恢复路径。
-> **何时更新：** 数据模型、Supabase 备份能力/方案、Storage、CI artifact、加密、保留期、RPO/RTO 或恢复负责人变化时；每次演练和事故后必须更新。
+> **About this document**
+> - **Contents**: Defines the backup scope for the database, Auth, Storage, configuration, and application artifacts, plus release recovery points, verification, isolated recovery, and disaster failover steps.
+> - **Purpose**: Distinguishes "some dump exists" from "fully recoverable", and provides a recovery path that never automatically overwrites new production writes.
+> - **When to update**: When the data model, Supabase backup capability/plan, Storage, CI artifacts, encryption, retention, RPO/RTO, or recovery owner change; must be updated after every drill and incident.
 
-## 1. 当前状态
+## 1. Current state
 
-当前已实现的**发布级数据库恢复点**：
+Currently implemented **release-level database recovery points**:
 
-- 新迁移进入生产前，CI 调用 `scripts/create-db-release-backup.sh`；
-- 使用 Supabase CLI 官方恢复格式导出 `roles.sql`、`schema.sql`、`data.sql` 和 migration history；
-- `data.sql` 覆盖业务数据、Auth 用户和 Storage metadata，并排除不兼容的 vector bucket 内部表；
-- archive 用 AES-256-CBC + PBKDF2（200,000 iterations）加密，CI 会立即解密并核对全部 SHA-256；
-- 只有加密 artifact 成功上传，`db push` 才会执行；
-- artifact 名为 `db-recovery-<git-sha>`，Actions 保留 14 天；
-- `scripts/restore-db-release.sh` 可验证 archive，且只允许恢复到新的空白隔离 Supabase 项目。
-- 最新生产恢复点由 run `31467153739` 在 2026-08-11 创建：artifact `9092230348`，824,125 bytes，artifact zip SHA-256 `6939309024094791bb639112eaf73a1429d588a4800c42703e579185a0aa817f`，覆盖发布前 0043 roles/schema/data/migration history并保留 14 天。`pg_dump` 对循环外键给出的 data-only warning 需按本文“先 schema、再数据/必要时禁用 trigger”的隔离恢复顺序处理，不代表已完成恢复演练。
+- Before a new migration enters production, CI calls `scripts/create-db-release-backup.sh`;
+- It exports `roles.sql`, `schema.sql`, `data.sql`, and the migration history in the Supabase CLI's official recovery format;
+- `data.sql` covers business data, Auth users, and Storage metadata, excluding incompatible internal vector bucket tables;
+- The archive is encrypted with AES-256-CBC + PBKDF2 (200,000 iterations), and CI immediately decrypts it and checks every SHA-256;
+- `db push` only runs after the encrypted artifact is uploaded successfully;
+- The artifact is named `db-recovery-<git-sha>` and kept by Actions for 14 days;
+- `scripts/restore-db-release.sh` can verify an archive and only allows restoring into a new, blank, isolated Supabase project.
+- The latest production recovery point was created by run `31467153739` on 2026-08-11: artifact `9092230348`, 824,125 bytes, artifact zip SHA-256 `6939309024094791bb639112eaf73a1429d588a4800c42703e579185a0aa817f`, covering the pre-release 0043 roles/schema/data/migration history and kept for 14 days. The data-only warning `pg_dump` gives for circular foreign keys must be handled with this document's isolated recovery order of "schema first, then data/disable triggers if needed"; it does not mean a recovery drill has been completed.
 
-这仍不是完整灾难恢复：
+This is still not full disaster recovery:
 
-- dump 包含 Storage bucket/object **metadata，不包含文件字节**；
-- 没有每日定时异地 dump 和 Storage 对象复制；
-- 没有自动备份年龄/恢复演练告警；
-- GitHub artifact 的 14 天窗口不是长期保留；
-- Supabase 平台 daily backup/PITR 的可用窗口取决于生产项目方案和控制台实际状态；
-- CI 不会自动把生产恢复到旧 dump，因为那会覆盖恢复点之后的新写入。
+- The dump contains Storage bucket/object **metadata, not file bytes**;
+- There is no scheduled daily off-site dump or Storage object replication;
+- There are no automatic backup-age/recovery-drill alerts;
+- The GitHub artifact's 14-day window is not long-term retention;
+- The available window of Supabase's platform daily backup/PITR depends on the production project's plan and the actual dashboard state;
+- CI never automatically restores production to an old dump, because that would overwrite writes made after the recovery point.
 
-## 2. 资产与恢复边界
+## 2. Assets and recovery boundaries
 
-| 资产 | 发布 archive | 还需要什么 |
+| Asset | In the release archive | What else is needed |
 |---|---|---|
-| `public` schema、函数、RLS、业务行 | 是 | 数据一致性、grants、trigger 验证 |
-| Points 日窗口/永久 claim/审核 action/协同 signal/API 滥用桶 | 是 | ledger/Profile 投影、claim 不可变、审核链和 30 天审计保留专项对账 |
-| Courses 内容/会话/attempt/progress/日程/分享/出版/举报/徽章/语音用量/音频队列 metadata | 是 | append-only attempt/points、revision/幂等响应、熟练日期、publication 不可变性、queue lease 与 service-only RPC 专项对账 |
-| Materials AI plan/quota/job/events/parse cache/Notes/exam/provider usage（生产 0041–0043；候选 0046–0051 增加 checkpoint/graph/Q&A/Luna/layout/delete lifecycle） | 是 | reservation/consume、job lease/resume/delete、pipeline、checkpoint expiry、usage event/upstream、graph source refs、layout revision、Q&A owner、ZDR/cost metadata 和 RLS 专项对账；不得把 dump 中正文复制进开发 |
-| AI worker 本地 checkpoint/usage spool | 否，且禁止纳入常规备份 | 这是单机 0700、TTL 有界的传输恢复副本，不是长期事实源；数据库 checkpoint/usage ledger 才可恢复。主机丢失时允许从最近 DB checkpoint 重做尚未保存的模型阶段，但必须用 event UUID 防重复记费，并向用户保留稳定 retry 状态 |
-| Auth 用户 UUID/metadata | data dump 覆盖 | Provider、SMTP、URL、签名配置；密码/会话恢复能力需演练 |
-| Storage bucket/object metadata | data dump 覆盖 | **对象文件字节的异地复制和 manifest** |
-| migration history | 独立 schema/data dump | 与仓库 migration checksum 对账 |
-| Supabase 平台配置 | 否 | 控制台配置清单/基础设施记录 |
-| GitHub/服务器 secrets | 否 | 独立 secret manager；备份包禁止包含明文 secret |
-| Web/API/AI image | Git SHA image + release 目录 | 三者同一不可变 release；异地镜像/artifact 保留和服务器重建演练 |
-| nginx/TLS/DNS/compose | 仓库有参考配置 | 生产实际配置、证书和 DNS 切换记录 |
-| Redis AOF/滑动窗口/scanner lock | 否（本机 volume） | Redis 只承载可重建的短期保护状态；password/HMAC 由 secret 管理恢复，不能用 AOF 恢复 points 事实 |
-| BullMQ UUID 投递 | 否（Redis AOF） | `generation_jobs`/`exam_attempts` 是 durable 事实；恢复后 reconciler 从 PostgreSQL 重投，不从 Redis 推断额度/结果 |
+| `public` schema, functions, RLS, business rows | Yes | Data consistency, grants, trigger verification |
+| Points daily windows/permanent claims/moderation actions/coordination signals/API abuse buckets | Yes | Dedicated reconciliation of the ledger/Profile projection, claim immutability, the moderation chain, and 30-day audit retention |
+| Courses content/sessions/attempts/progress/schedules/shares/publications/reports/badges/speech usage/audio queue metadata | Yes | Dedicated reconciliation of append-only attempts/points, revisions/idempotent responses, mastery dates, publication immutability, queue leases, and service-only RPCs |
+| Materials AI plan/quota/job/events/parse cache/Notes/exam/provider usage (production 0041–0043; candidate 0046–0051 adds checkpoint/graph/Q&A/Luna/layout/delete lifecycle) | Yes | Dedicated reconciliation of reservation/consume, job lease/resume/delete, pipeline, checkpoint expiry, usage event/upstream, graph source refs, layout revision, Q&A owner, ZDR/cost metadata, and RLS; never copy content from the dump into development |
+| AI worker local checkpoint/usage spool | No, and it must never be included in regular backups | This is a single-host, 0700, TTL-bounded transport recovery copy, not a long-term source of truth; the database checkpoint/usage ledger is what is recoverable. If the host is lost, model stages not yet saved may be redone from the latest DB checkpoint, but event UUIDs must prevent double billing, and users keep a stable retry state |
+| Auth user UUIDs/metadata | Covered by the data dump | Provider, SMTP, URL, and signing configuration; password/session recovery needs a drill |
+| Storage bucket/object metadata | Covered by the data dump | **Off-site replication and a manifest of the object file bytes** |
+| Migration history | Separate schema/data dump | Reconcile with the repository migration checksums |
+| Supabase platform configuration | No | A dashboard configuration inventory/infrastructure record |
+| GitHub/server secrets | No | A separate secret manager; backup packages must never contain plaintext secrets |
+| Web/API/AI images | Git SHA images + release directory | All three in the same immutable release; off-site image/artifact retention and server rebuild drills |
+| nginx/TLS/DNS/compose | The repository has reference configuration | Records of the actual production configuration, certificates, and DNS switching |
+| Redis AOF/sliding windows/scanner lock | No (local volume) | Redis only holds rebuildable short-lived protection state; password/HMAC are restored from secret management, and AOF must never be used to restore points facts |
+| BullMQ UUID delivery | No (Redis AOF) | `generation_jobs`/`exam_attempts` are the durable facts; after recovery the reconciler re-enqueues from PostgreSQL, never inferring allowances/results from Redis |
 
-数据库 dump 不能恢复 Storage 文件，应用 artifact 不能恢复数据库，Supabase daily backup 也不能替代服务器和 secret 备份。Redis volume 当前没有异地副本；丢失会清空短期限流窗口和 scanner lock，但 daily claim、审核、signal 与 API 审计仍在 PostgreSQL，绝不能从 Redis 反推或改写。
+A database dump cannot restore Storage files, application artifacts cannot restore the database, and Supabase daily backups cannot replace server and secret backups. The Redis volume currently has no off-site copy; losing it clears short-lived rate-limit windows and the scanner lock, but daily claims, moderation, signals, and API audits stay in PostgreSQL and must never be inferred from or rewritten based on Redis.
 
-## 3. RPO/RTO 目标
+## 3. RPO/RTO targets
 
-以下是待业务 owner 批准的目标，不是现有 SLA：
+The following are targets awaiting approval by the business owner, not an existing SLA:
 
-| 等级 | 数据 | 目标 RPO | 目标 RTO | 目标机制 |
+| Tier | Data | Target RPO | Target RTO | Target mechanism |
 |---|---|---:|---:|---|
-| 核心 | Auth、课程/资料、未来钱包/支付 | ≤ 15 分钟 | ≤ 4 小时 | PITR/日志恢复 + 事件账本 + 异地副本 |
-| 重要 | 社区、计划、通知、反馈 | ≤ 24 小时 | ≤ 8 小时 | 每日备份 + 每次迁移恢复点 |
-| 对象 | 私有资料、社区媒体 | ≤ 24 小时 | ≤ 24 小时 | S3/对象增量复制 + checksum manifest |
-| 学习 | 私有词表、进度、复习日程、徽章 | ≤ 24 小时 | ≤ 8 小时 | 每日 DB 备份 + 每次迁移恢复点；attempt/points 对账 |
-| 部署 | Web/API/config | 每次发布 | ≤ 2 小时 | Git SHA artifact + config-as-code + secret manager |
-| AI 学习结果 | Notes、试卷、答卷、私有解析 cache | ≤ 24 小时 | ≤ 8 小时 | DB backup + job/operation 对账；过程临时目录不恢复 |
+| Core | Auth, courses/materials, future wallets/payments | ≤ 15 minutes | ≤ 4 hours | PITR/log recovery + event ledger + off-site copy |
+| Important | Community, schedule, notifications, feedback | ≤ 24 hours | ≤ 8 hours | Daily backups + a recovery point per migration |
+| Objects | Private materials, community media | ≤ 24 hours | ≤ 24 hours | S3/incremental object replication + checksum manifest |
+| Learning | Private word lists, progress, review schedules, badges | ≤ 24 hours | ≤ 8 hours | Daily DB backups + a recovery point per migration; attempt/points reconciliation |
+| Deployment | Web/API/config | Every release | ≤ 2 hours | Git SHA artifacts + config-as-code + secret manager |
+| AI learning results | Notes, test papers, answer sheets, private parse cache | ≤ 24 hours | ≤ 8 hours | DB backup + job/operation reconciliation; process temporary directories are not restored |
 
-points/credits/VIP/支付上线前必须有不可变事件账本、对账和 webhook 重放；否则恢复点之后的经济事件无法可靠重放。
+Before points/credits/VIP/payments go live, there must be an immutable event ledger, reconciliation, and webhook replay; otherwise economic events after the recovery point cannot be replayed reliably.
 
-## 4. 发布恢复点
+## 4. Release recovery points
 
-CI 使用以下 secrets：
+CI uses these secrets:
 
 - `SUPABASE_ACCESS_TOKEN`
 - `SUPABASE_DB_PASSWORD`
 - `SUPABASE_PROJECT_REF`
 - `DB_BACKUP_ENCRYPTION_KEY`
 
-等价的受控人工命令：
+The equivalent controlled manual command:
 
 ```bash
 SUPABASE_ACCESS_TOKEN=... \
 SUPABASE_DB_PASSWORD=... \
-SUPABASE_PROJECT_REF=<明确的项目-ref> \
+SUPABASE_PROJECT_REF=<explicit-project-ref> \
 BACKUP_ENCRYPTION_KEY=... \
 BACKUP_OUTPUT=/secure/offsite/nalanda-db-<git-sha>.tar.gz.enc \
 bash scripts/create-db-release-backup.sh
 ```
 
-脚本会：链接明确 Ref；按 Supabase 官方顺序导出 roles/schema/data/history；写入 manifest 和 SHA-256；加密；再解密核对全部文件。若尚未采用 CLI migration history、远端连 `supabase_migrations` schema 都不存在，只有 `pg_dump` 的精确 `no matching schemas were found` 结果会被记录为 `migration_history_state=absent`；其他 history dump 错误仍立即失败。临时明文位于权限 `0700` 的临时目录，并由 `trap` 清理。
+The script: links the explicit ref; exports roles/schema/data/history in Supabase's official order; writes a manifest and SHA-256s; encrypts; then decrypts and checks every file. If the CLI migration history has not been adopted and the remote doesn't even have a `supabase_migrations` schema, only `pg_dump`'s exact `no matching schemas were found` result is recorded as `migration_history_state=absent`; any other history dump error still fails immediately. Temporary plaintext lives in a `0700` temporary directory and is cleaned up by `trap`.
 
-最低成功标准：
+Minimum success criteria:
 
-- 脚本退出 0；
-- ciphertext 非空且能用离线保存的 key 验证；
-- manifest 的 source Ref、Git SHA、创建时间正确；
-- manifest 的 `migration_history_state` 与远端实际为 `present` 或 `absent` 一致；
-- artifact 已复制到不同故障域且访问受限；
-- Storage object manifest/副本有独立记录。
+- The script exits 0;
+- The ciphertext is non-empty and can be verified with the key kept offline;
+- The manifest's source ref, Git SHA, and creation time are correct;
+- The manifest's `migration_history_state` matches the remote's actual `present` or `absent`;
+- The artifact has been copied to a different failure domain with restricted access;
+- The Storage object manifest/copies have a separate record.
 
-`DB_BACKUP_ENCRYPTION_KEY` 至少 32 个字符，应由密码学安全随机源生成。它和 archive 不能只保存在同一个 GitHub 仓库/账号；否则账号故障时无法恢复。
+`DB_BACKUP_ENCRYPTION_KEY` must be at least 32 characters and generated from a cryptographically secure random source. It and the archive must not be kept only in the same GitHub repository/account; otherwise recovery is impossible if that account fails.
 
-## 5. Storage 对象备份
+## 5. Storage object backups
 
-Supabase 数据库备份只含 Storage metadata。正式方案应通过 S3-compatible API、Supabase Storage CLI 或受控 worker 把 `materials` 和 `community-media` 复制到不同故障域，并生成：
+Supabase database backups only contain Storage metadata. The formal approach should copy `materials` and `community-media` to a different failure domain through the S3-compatible API, the Supabase Storage CLI, or a controlled worker, and produce:
 
 ```text
 bucket,path,size,content_type,etag_or_sha256,version,backed_up_at
 ```
 
-要求：
+Requirements:
 
-- 私有资料在传输和静态状态均加密；
-- 备份 worker 使用独立、可轮换的最小权限凭据；
-- 增量复制后抽样下载校验；
-- 监控对象数、总字节和最近成功时间；
-- 恢复时先对齐数据库引用和 object path，不静默删除孤儿；
-- 隐私删除到期后同步清理备份，保留合规审计记录但不保留内容。
+- Private materials are encrypted in transit and at rest;
+- The backup worker uses separate, rotatable, least-privilege credentials;
+- Spot-check downloads after incremental replication;
+- Monitor object count, total bytes, and the last success time;
+- On recovery, align database references and object paths first, and never silently delete orphans;
+- When a privacy deletion comes due, clean up the backups too, keeping compliance audit records but not the content.
 
-`vocabulary-audio` 只含由规范化英文生成、可跨用户复用但仍保持 private 的 Azure TTS 缓存，可由 `learning_audio_assets.synthesis_text` 重新生成；它归类为**可丢失缓存**，不要求满足对象 RPO。若为了成本选择备份，也必须进入 manifest、保持 private 且不能混入用户录音。恢复时对 metadata=`ready` 但对象缺失的记录调用受控 requeue/懒生成，不能冒充完整；租约 token/过期 processing 状态可安全重领。用户朗读录音从不落库/Storage，因此不存在录音备份或恢复步骤。
+`vocabulary-audio` only contains private Azure TTS caches generated from normalized English and reusable across users, and can be regenerated from `learning_audio_assets.synthesis_text`; it is classified as a **losable cache** and does not need to meet the object RPO. If you choose to back it up for cost reasons, it must also enter the manifest, stay private, and never mix with user recordings. On recovery, records with metadata=`ready` but a missing object should go through a controlled requeue/lazy generation rather than being presented as complete; lease tokens/expired processing states can safely be reclaimed. User read-aloud recordings are never written to the database/Storage, so there is no recording backup or recovery step.
 
-浏览器 IndexedDB answer outbox 与 Cache Storage 不属于服务端备份：outbox 在登出时按账号清除，尚未同步的 provisional 答案不能由数据库恢复；本地音频是可回收副本，用户可删除。灾难恢复后客户端通过 session revision/snapshot 解决冲突，服务器确认前不得补发完成、points 或徽章。
+The browser IndexedDB answer outbox and Cache Storage are not part of server backups: the outbox is cleared per account at sign-out, and provisional answers not yet synced cannot be restored from the database; local audio is an evictable copy the user can delete. After disaster recovery, clients resolve conflicts through session revisions/snapshots, and completions, points, or badges must not be re-issued before the server confirms.
 
-Materials AI 的 `/tmp/nalanda-material-ai/job-*` 是短期过程/恢复目录，**不得进入长期备份或跨环境复制**。worker 可在其中短期保留已验证 checkpoint 与 usage spool，以承受 API callback 断线；成功、不可恢复失败、取消、Delete 完成或 `MATERIAL_AI_RESUME_TTL_SECONDS` 到期后清除。`ai_material_parse_cache`、`generation_job_checkpoints/exam_grading_checkpoints` 与 `knowledge_graph_layouts` 是私有持久数据，随数据库 archive 受同级加密/访问/删除规则约束。Luna checkpoint 不含 prompt 或源文件正文，原始材料仍以 private Storage 对象为事实源；没有 Storage 字节备份时不能仅靠 DB dump恢复原文件问答。恢复后由 reconciler 处理过期 lease/deleting，先重放唯一 usage event，再完成结果或 purge；相同 idempotency/operation/event UUID 必须返回既有事实，不能重复消耗 Free quota、重复记成本或重复生成 Notes。
+Materials AI's `/tmp/nalanda-material-ai/job-*` is a short-lived process/recovery directory and **must never enter long-term backups or be copied across environments**. The worker may briefly keep validated checkpoints and the usage spool there to survive API callback outages; they are cleared on success, unrecoverable failure, cancellation, Delete completion, or when `MATERIAL_AI_RESUME_TTL_SECONDS` expires. `ai_material_parse_cache`, `generation_job_checkpoints/exam_grading_checkpoints`, and `knowledge_graph_layouts` are private durable data, subject to the same encryption/access/deletion rules as the database archive. Luna checkpoints contain no prompt or source file content, and the original material's source of truth is still the private Storage object; without a backup of the Storage bytes, native-file Q&A cannot be restored from a DB dump alone. After recovery, the reconciler handles expired leases/deleting, first replaying unique usage events and then completing results or purging; the same idempotency/operation/event UUID must return the existing fact and never consume Free quota twice, record cost twice, or generate Notes twice.
 
-## 6. Supabase 平台恢复点
+## 6. Supabase platform recovery points
 
-每次生产数据库发布前，审批人还要在 Dashboard 的 Database → Backups 确认：
+Before every production database release, the approver must also confirm in the Dashboard under Database → Backups:
 
-- 最近 daily backup/PITR 状态；
-- 可恢复最早/最晚时间；
-- 当前方案、Postgres 版本和恢复限制；
-- 恢复是原地、克隆还是新项目；
-- Storage 文件不随数据库恢复的影响。
+- The latest daily backup/PITR status;
+- The earliest/latest recoverable time;
+- The current plan, Postgres version, and recovery limitations;
+- Whether recovery is in place, a clone, or a new project;
+- The impact of Storage files not being restored along with the database.
 
-若没有满足 RPO 的平台恢复点，发布必须依赖已验证的加密逻辑备份和 Storage 副本；两者都没有则停止发布。
+If no platform recovery point meets the RPO, the release must rely on a verified encrypted logical backup and Storage copies; if neither exists, stop the release.
 
-## 7. 验证 archive
+## 7. Verifying an archive
 
-下载 GitHub artifact 后在安全终端执行：
+After downloading the GitHub artifact, run in a secure terminal:
 
 ```bash
 BACKUP_ARCHIVE=/secure/path/nalanda-db-<sha>.tar.gz.enc \
@@ -140,21 +141,21 @@ BACKUP_ENCRYPTION_KEY=... \
 bash scripts/restore-db-release.sh verify
 ```
 
-脚本会解密到私有临时目录、验证全部 SHA-256，并打印非秘密 manifest 字段。只有“verify 通过”不算恢复演练。
+The script decrypts into a private temporary directory, verifies every SHA-256, and prints the non-secret manifest fields. A passing "verify" alone does not count as a recovery drill.
 
-## 8. 隔离恢复
+## 8. Isolated recovery
 
-必须创建**新的空白 Supabase 项目**。脚本安全条件：
+You must create a **new blank Supabase project**. The script's safety conditions:
 
-- `RESTORE_TARGET_PROJECT_REF` 必须与二次确认值完全相同；
-- 连接串必须包含该 Ref；
-- 目标 Ref 不得等于 archive 的源 Ref；
-- 目标必须没有 public 表、Auth 用户和 Storage objects；
-- 必须显式设置 `ALLOW_ISOLATED_RESTORE=YES`；
-- 全部 roles/schema/data/history 在 `ON_ERROR_STOP` 的单事务内恢复；
-- data 导入期间设置 `session_replication_role=replica`，避免积分、通知、计数和 streak trigger 二次触发。
+- `RESTORE_TARGET_PROJECT_REF` must exactly equal the confirmation value;
+- The connection string must contain that ref;
+- The target ref must not equal the archive's source ref;
+- The target must have no public tables, Auth users, or Storage objects;
+- `ALLOW_ISOLATED_RESTORE=YES` must be set explicitly;
+- All roles/schema/data/history are restored in a single `ON_ERROR_STOP` transaction;
+- During the data import, `session_replication_role=replica` is set so points, notification, counter, and streak triggers do not fire again.
 
-命令：
+Command:
 
 ```bash
 BACKUP_ARCHIVE=/secure/path/nalanda-db-<sha>.tar.gz.enc \
@@ -166,67 +167,67 @@ ALLOW_ISOLATED_RESTORE=YES \
 bash scripts/restore-db-release.sh restore-isolated
 ```
 
-若托管权限、扩展或平台 schema 令官方 SQL 恢复失败，停止并保存日志；不要添加超级权限绕过。改用 Supabase Dashboard 支持的恢复/克隆流程，并在事故记录中说明差异。
+If managed permissions, extensions, or platform schemas make the official SQL restore fail, stop and keep the logs; do not add superuser privileges to work around it. Use a recovery/clone flow the Supabase Dashboard supports instead, and record the differences in the incident record.
 
-## 9. 恢复后验证
+## 9. Post-recovery verification
 
-数据库：
+Database:
 
-- migration history 与仓库版本一致；
-- 表、RLS、policies、functions、triggers、indexes 存在；
-- 关键行数、FK orphan、unique/NULL 约束正常；
-- posts 冗余计数与关系聚合一致；
-- points/credits/VIP/streak 没有因恢复 trigger 改变；
-- 0039+ 的每个 `point_event_states.business_key` 都有唯一 claim；cap=0 只对应 `daily_cap`，moderation transition 总和与 append-only action 一致，Profile points/level 等于 ledger projection；
-- function owner/search_path/EXECUTE grants 正确。
-- learning course/unit/word owner 链无 orphan；active session 只在 `(user_id,resume_key)` 意图内唯一，同一课程允许不同单元/模式的未完成会话；revision 非负且与新增 attempt 时钟一致，非空 attempt UUID 在 user/session 内唯一且响应快照可重放，attempt 仍为追加事实；progress 若由正常复习熟练，则三组日期各至少两个，若由考试熟练，则存在已完成且 `examPassed=true` 的对应 exam session，不能错误地要求考试路径伪造复习日期；
-- `learning_audio_assets` 无客户端 grant、无过期 processing 永久卡住；ready metadata 对应 private Storage bytes，缺失项回到 pending 后可重建，相同缓存键不重复生成；
-- review schedule 未被复制成 `study_tasks`；publication snapshot/版本/指纹未改变，撤销 share 不会重新 active；
-- 课程完成 points 业务键按用户+词集合唯一、badge award PK 唯一，Profile 学习聚合可从事实重算；speech usage 不含音频/参考文本。
+- The migration history matches the repository version;
+- Tables, RLS, policies, functions, triggers, and indexes exist;
+- Key row counts, FK orphans, and unique/NULL constraints are normal;
+- Denormalized post counters match relationship aggregates;
+- points/credits/VIP/streak were not changed by triggers during recovery;
+- Every `point_event_states.business_key` from 0039+ has a unique claim; cap=0 only corresponds to `daily_cap`, moderation transition sums match the append-only actions, and Profile points/level equal the ledger projection;
+- Function owner/search_path/EXECUTE grants are correct.
+- The learning course/unit/word owner chain has no orphans; active sessions are unique only within the `(user_id,resume_key)` intent, and the same course allows unfinished sessions for different units/modes; revisions are non-negative and consistent with the added-attempt clock, non-null attempt UUIDs are unique within user/session with replayable response snapshots, and attempts are still append-only facts; for progress mastered through normal review, each of the three date groups has at least two entries, while for exam mastery there is a corresponding completed exam session with `examPassed=true`, and the exam path must not be wrongly required to fake review dates;
+- `learning_audio_assets` has no client grants and no expired processing stuck forever; ready metadata corresponds to private Storage bytes, missing items go back to pending and can be rebuilt, and the same cache key is not generated twice;
+- Review schedules were not copied into `study_tasks`; publication snapshots/versions/fingerprints are unchanged, and revoked shares do not become active again;
+- Course-completion points business keys are unique per user + word set, badge award PKs are unique, and Profile learning aggregates can be recomputed from facts; speech usage contains no audio/reference text.
 
-Auth/Storage：
+Auth/Storage:
 
-- 隔离用户可登录；UUID 与业务 FK 对齐；
-- Provider/SMTP/redirect URL 和签名配置已重建；
-- bucket 属性、RLS 和 object manifest 正确；
-- 文件字节从独立副本恢复，随机样本 checksum 一致；
-- 私有资料只能由 owner 签名读取。
+- Isolated users can sign in; UUIDs align with business FKs;
+- Provider/SMTP/redirect URLs and signing configuration have been rebuilt;
+- Bucket properties, RLS, and the object manifest are correct;
+- File bytes are restored from an independent copy, and random-sample checksums match;
+- Private materials can only be signed and read by their owner.
 
-Redis/应用：
+Redis/application:
 
-- 以新的独立 32-byte password/HMAC secret 启动 private Redis，确认无宿主机端口、PING、AOF `everysec`、`noeviction` 和持久 volume；不要把旧 HMAC actor 与新值强行关联；
-- `/api/health` 同时为 `deps.supabase=ok`、`deps.redis=ok`，再验证登录、`/api/me`；
-- 验证注册/IP/email、认证 user、Courses write/public read 的 429 headers，以及 Redis 停止时 private read fail-open、注册/写入/成本路径 fail-closed；
-- owner-only 课程/资料/任务/反馈；
-- Courses 列表/恢复会话/复习日程/Profile 聚合；分享撤销、市场免费克隆和客户端伪造 progress/points 失败；
-- 社区读写、计数、通知和幂等积分；
-- smoke 数据可完整清理；
-- 记录恢复耗时和实际 RPO/RTO。
+- Start a private Redis with a new, separate 32-byte password/HMAC secret, and confirm no host port, PING, AOF `everysec`, `noeviction`, and a persistent volume; do not force a link between old HMAC actors and new values;
+- `/api/health` reports both `deps.supabase=ok` and `deps.redis=ok`, then verify sign-in and `/api/me`;
+- Verify 429 headers for sign-up/IP/email, authenticated users, and Courses write/public read, and that with Redis stopped, private reads fail open while sign-up/writes/cost paths fail closed;
+- Owner-only courses/materials/tasks/feedback;
+- Courses list/session resume/review schedules/Profile aggregates; share revocation, free market clones, and failed client attempts to forge progress/points;
+- Community reads/writes, counters, notifications, and idempotent points;
+- Smoke data can be fully cleaned up;
+- Record recovery time and the actual RPO/RTO.
 
-## 10. 真实事故和切换
+## 10. Real incidents and failover
 
-1. 宣布事故，保存日志/审计证据，确定最后正常时间和受影响写入；
-2. 关闭受影响写入口；涉及泄露先轮换密钥；
-3. 选择满足 RPO 的平台点或加密 archive，并列出恢复点之后的新事件；
-4. 恢复到隔离项目并完成第 9 节；
-5. 对 Storage bytes、Supabase 配置和 secrets 分别恢复；
-6. 制定差异重放/对账方案，双人复核；
-7. 准备新 URL/keys、Web 重建、API `.env`、DNS/反代和回退窗口；
-   Redis 若从空状态启动，先限制公网写入并观察一个最长保护窗口，避免灾难切换瞬间把“所有窗口清空”误当作正常容量；数据库 points cap 不受此影响。
-8. 经事故负责人和数据库 owner 批准后切换；
-9. 监控 Auth、5xx、RLS、关键写入、对象读取和用户反馈；
-10. 保留旧环境只读证据至合规窗口结束，完成事故报告。
+1. Declare the incident, preserve logs/audit evidence, and determine the last good time and affected writes;
+2. Close the affected write entry points; if a leak is involved, rotate secrets first;
+3. Choose a platform point or encrypted archive that meets the RPO, and list the new events after the recovery point;
+4. Restore into an isolated project and complete section 9;
+5. Restore Storage bytes, Supabase configuration, and secrets separately;
+6. Plan the difference replay/reconciliation, with two-person review;
+7. Prepare the new URL/keys, a Web rebuild, the API `.env`, DNS/reverse proxy, and a rollback window;
+   If Redis starts from an empty state, limit public writes first and observe for one longest protection window, so "all windows cleared" at the moment of failover is not mistaken for normal capacity; the database points cap is unaffected.
+8. Fail over after approval by the incident owner and the database owner;
+9. Monitor Auth, 5xx, RLS, key writes, object reads, and user feedback;
+10. Keep the old environment as read-only evidence until the compliance window ends, and complete the incident report.
 
-严禁未经验证直接对生产运行 `pg_restore --clean`，也严禁因为应用发布失败而自动恢复数据库。
+Never run `pg_restore --clean` directly against production without verification, and never automatically restore the database because an application release failed.
 
-## 11. 后续自动化
+## 11. Future automation
 
-- 每日加密数据库备份、异地复制、备份年龄/大小异常告警和保留清理；
-- Storage 增量复制、checksum manifest 和季度抽样恢复；
-- Auth/平台配置的可恢复清单；
-- 定期自动创建隔离项目并执行完整 RLS/应用恢复演练；
-- 不可变镜像/artifact 的异地 registry 与保留策略；
-- 恢复演练面板，记录最近成功时间和实际 RPO/RTO；
-- credits/支付事件账本和可重放 webhook；points 已有账本/claim，但仍需自动化审核对账与跨恢复点差异报告。
-- Redis AOF 恢复演练、空窗口启动的受控流量方案和 volume 容量/损坏告警；AOF 不升级为业务事实备份。
-- Courses 数据/成长事实/revision/attempt snapshot 恢复对账脚本，以及 `vocabulary-audio` metadata/object 不一致、过期租约、缓存清空与持久队列重建演练。
+- Daily encrypted database backups, off-site replication, backup age/size anomaly alerts, and retention cleanup;
+- Incremental Storage replication, a checksum manifest, and quarterly spot recovery;
+- A recoverable inventory of Auth/platform configuration;
+- Periodically creating an isolated project automatically and running full RLS/application recovery drills;
+- An off-site registry and retention policy for immutable images/artifacts;
+- A recovery drill dashboard recording the last success time and actual RPO/RTO;
+- A credits/payment event ledger and replayable webhooks; points already have a ledger/claims but still need automated moderation reconciliation and difference reports across recovery points.
+- Redis AOF recovery drills, a controlled traffic plan for starting with empty windows, and volume capacity/corruption alerts; AOF is not promoted to a business fact backup.
+- Courses data/growth fact/revision/attempt snapshot recovery reconciliation scripts, plus drills for `vocabulary-audio` metadata/object inconsistency, expired leases, cache clearing, and durable queue rebuilds.

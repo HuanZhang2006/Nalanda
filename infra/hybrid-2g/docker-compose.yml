@@ -1,10 +1,10 @@
-# Nalanda — 2G 混合部署（架构文档 §12.3 变体 B）
-# 本机自托管：Caddy（入口+HTTPS） + NestJS + Python AI + Redis
-# 前端为「预构建静态文件」（在 CI/本地构建后放进 ./web-dist）
-# 外部服务（不在本文件内，联网调用）：Supabase 云 / Stripe / Claude
+# Nalanda — 2 GB hybrid deployment (architecture doc §12.3, variant B)
+# Self-hosted on this machine: Caddy (entry + HTTPS) + NestJS + Python AI + Redis
+# The frontend is prebuilt static files (built in CI/locally and copied into ./web-dist)
+# External services (not in this file, called over the network): hosted Supabase / Stripe / Claude
 #
-# 内存上限按 2G 机器设定：caddy128 + api400 + ai512 + redis160 ≈ 1.2G，留给系统/峰值约 0.8G。
-# 强烈建议先开 swap（见 README）。
+# Memory limits sized for a 2 GB host: caddy128 + api400 + ai512 + redis160 ≈ 1.2 GB, leaving about 0.8 GB for the system/peaks.
+# Enabling swap first is strongly recommended (see README).
 
 name: nalanda
 
@@ -18,7 +18,7 @@ services:
     env_file: .env
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./web-dist:/srv/web:ro          # apps/web 的构建产物（dist）
+      - ./web-dist:/srv/web:ro          # Build output (dist) of apps/web
       - caddy_data:/data
       - caddy_config:/config
     depends_on:
@@ -26,11 +26,11 @@ services:
     mem_limit: 128m
     mem_reservation: 64m
 
-  api:                                  # NestJS 核心后端
+  api:                                  # NestJS core backend
     build:
-      context: ../..                    # monorepo 根（pnpm workspace）
+      context: ../..                    # monorepo root (pnpm workspace)
       dockerfile: infra/hybrid-2g/api.Dockerfile
-    # 生产推荐改为 CI 构建好的镜像，省去在 2G 机器上构建：
+    # In production, prefer a CI-built image to avoid building on the 2 GB host:
     # image: ghcr.io/<your-org>/nalanda-api:latest
     restart: unless-stopped
     env_file: .env
@@ -43,11 +43,11 @@ services:
       - redis
       - ai
     expose:
-      - "3000"                          # 仅内网可见，不对外发布端口
+      - "3000"                          # Internal only; no published port
     mem_limit: 400m
     mem_reservation: 256m
 
-  ai:                                   # Python FastAPI AI 微服务（内部专用）
+  ai:                                   # Python FastAPI AI microservice (internal only)
     build:
       context: ../../apps/ai
       dockerfile: ../../infra/hybrid-2g/ai.Dockerfile
@@ -59,11 +59,11 @@ services:
     depends_on:
       - redis
     expose:
-      - "8000"                          # 只有 NestJS 调用，不对外
+      - "8000"                          # Called only by NestJS; not exposed
     mem_limit: 512m
     mem_reservation: 320m
 
-  redis:                                # BullMQ 队列 / 缓存
+  redis:                                # BullMQ queue / cache
     image: redis:7-alpine
     restart: unless-stopped
     command: ["redis-server", "--appendonly", "yes", "--maxmemory", "100mb", "--maxmemory-policy", "noeviction"]

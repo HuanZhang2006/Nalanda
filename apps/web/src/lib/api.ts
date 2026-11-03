@@ -111,7 +111,7 @@ function localizedHeaders(init: RequestInit, token?: string) {
   return headers;
 }
 
-// 带上 Supabase 登录令牌请求后端
+// Call the backend with the Supabase access token
 export async function authedFetch(path: string, init: RequestInit = {}) {
   const sessionResult = await supabase?.auth.getSession();
   if (sessionResult?.error) throw sessionResult.error;

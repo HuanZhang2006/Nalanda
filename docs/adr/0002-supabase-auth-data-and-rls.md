@@ -1,39 +1,40 @@
-# ADR-0002：Supabase 承担 Auth、Postgres 与 Storage，RLS 是数据授权边界
+# ADR-0002: Supabase provides Auth, Postgres, and Storage; RLS is the data authorization boundary
 
-> **本文内容：**记录认证、关系数据、文件存储和行级授权采用 Supabase 的决策。  
-> **作用：**明确浏览器直连场景下真正的安全边界，以及所有数据模型必须满足的 RLS/Storage 约束。  
-> **何时更新：**身份提供商、数据库/Storage、租户模型、JWT 验证或授权策略改变时；出现重大 RLS 事件时。  
-> **安全说明：**本文记录目标边界，不代表现有每条策略都安全；已知缺口见根 `SECURITY.md`。
+> **About this document**
+> - **Contents**: Records the decision to use Supabase for authentication, relational data, file storage, and row-level authorization.
+> - **Purpose**: Defines the real security boundary when the browser connects directly, and the RLS/Storage constraints every data model must satisfy.
+> - **When to update**: When the identity provider, database/Storage, tenancy model, JWT verification, or authorization policy changes, or after a major RLS incident.
+> - **Security note**: This document records the target boundary; it does not mean every existing policy is safe. Known gaps are in the root `SECURITY.md`.
 
-- **状态：**Accepted
-- **日期：**2026-06-20
-- **决策者：**项目维护者
-- **范围：**认证、PostgreSQL、PostgREST、Storage
+- **Status:** Accepted
+- **Date:** 2026-06-20
+- **Deciders:** Project maintainer
+- **Scope:** Authentication, PostgreSQL, PostgREST, Storage
 
-## 背景
+## Context
 
-产品需要邮箱登录、用户私有课程/课件、公共社区、文件上传和后续实时通知。早期团队希望降低自建认证、对象存储和数据库运维成本，同时允许简单 owner CRUD 直接从浏览器访问。
+The product needs email sign-in, private user courses/courseware, a public community, file uploads, and later real-time notifications. The early-stage team wanted to avoid the cost of running its own authentication, object storage, and database, while letting simple owner CRUD go straight from the browser.
 
-## 决策
+## Decision
 
-- Supabase Auth 是用户身份源，用户 ID 使用 `auth.users.id`。
-- Postgres 是业务事实源；Storage 保存文件对象，表中只存对象引用和元数据。
-- 用户请求携带 Supabase JWT；NestJS 优先通过项目 JWKS 校验 issuer/audience/签名，旧 HS256 secret 只作兼容回退并计划淘汰。
-- 对浏览器可访问的表和 bucket 默认启用 RLS/Storage policy；授权依据 `auth.uid()`、所有权和明确公共范围，而不是客户端过滤。
-- service-role 只存在于服务端受控环境，并视为 Restricted secret；它绕过 RLS，所有使用点需额外业务授权和审计。
-- schema 变更只通过可追踪迁移发布，并用至少两个普通用户做允许/拒绝测试。
+- Supabase Auth is the identity source; user IDs are `auth.users.id`.
+- Postgres is the business source of truth; Storage holds file objects, and tables store only object references and metadata.
+- User requests carry a Supabase JWT; NestJS verifies issuer/audience/signature through the project JWKS first, and the legacy HS256 secret is only a compatibility fallback scheduled for removal.
+- Tables and buckets reachable from the browser enable RLS/Storage policies by default; authorization is based on `auth.uid()`, ownership, and explicit public scopes, never on client-side filtering.
+- The service role exists only in controlled server environments and is treated as a Restricted secret; it bypasses RLS, so every use needs additional business authorization and auditing.
+- Schema changes ship only through traceable migrations and are tested for allow/deny with at least two ordinary users.
 
-## 后果
+## Consequences
 
-Supabase 减少基础设施工作并提供统一身份，但 RLS 错误会直接成为数据泄露/篡改；service-role 泄露影响极大。Auth 用户删除可以级联部分表，却不会自动证明所有 Storage、备份、第三方 AI、支付和审计记录已按政策处理。
+Supabase reduces infrastructure work and provides unified identity, but RLS mistakes turn directly into data leaks or tampering, and a leaked service role has a huge blast radius. Deleting an Auth user can cascade through some tables, but does not automatically prove that all Storage, backups, third-party AI, payment, and audit records were handled per policy.
 
-## 当前实现与目标差距
+## Gap between current implementation and target
 
-- **当前：**生产已有 Auth、profiles、Materials、通知/反馈、社区、Schedule、points，以及 Courses 私有模型、幂等学习会话、按意图独立续学、private TTS 队列/cache、service-only 翻译评判与中文 STT、拼写归一化、仅标点差异容错、显式取消、轮末错题复盘、拼写/读音考试、任意选词、考试历史与双考试精确掌握投影，以及 Materials AI/Notes/考试私有事实；migration history 已到 0043。
-- **已收口：**0008–0010 的 Profile/points 与 0011–0018 的 Courses 边界均已生产发布。Courses 私有表只给 owner SELECT，客户端写与工作流 RPC 被撤销，API 用 service-role 专用事务入口；CI 自动执行 0007→latest、空库 lint、双用户 RLS/Storage/Courses 和 Playwright。
-- **当前风险：**community-media 仍是 public；feedback/notifications/帖子部分服务端字段尚未全面列级收口；注册绕过邮箱确认且无滥用控制；旧 Profile 余额只能保留为待审计 opening，无法自动证明未被旧漏洞篡改。
-- **目标：**继续完成逐字段权限审计；把 Storage 生命周期、导出/删除、审计、Realtime channel 授权和 staging 演练纳入同一模型。
+- **Current:** Production has Auth, profiles, Materials, notifications/feedback, community, Schedule, points, plus the Courses private model, idempotent learning sessions, intent-specific resume, a private TTS queue/cache, service-only translation judging and Chinese STT, spelling normalization, punctuation-only tolerance, explicit cancel, end-of-round mistake review, spelling/pronunciation exams, arbitrary word selection, exam history and the dual-exam exact mastery projection, and private Materials AI/Notes/exam facts; migration history is at 0043.
+- **Closed:** The Profile/points boundary from 0008–0010 and the Courses boundary from 0011–0018 are released to production. Courses private tables grant owners SELECT only, client writes and workflow RPCs are revoked, and the API uses dedicated service-role transaction entry points; CI automatically runs 0007→latest, empty-database lint, two-user RLS/Storage/Courses, and Playwright.
+- **Current risks:** community-media is still public; some server-managed columns on feedback/notifications/posts are not fully locked down per column; sign-up bypasses email confirmation and has no abuse controls; legacy Profile balances can only be kept as an opening balance pending audit and cannot be automatically proven untouched by the old vulnerability.
+- **Target:** Finish the per-column permission audit; bring the Storage lifecycle, export/deletion, auditing, Realtime channel authorization, and staging drills into the same model.
 
-## 验证与复审
+## Verification and review
 
-每个资源验证匿名、用户 A、用户 B、后端服务角色的每个 CRUD 动作。任何“前端隐藏按钮即可安全”的实现直接违反本 ADR。
+For every resource, verify each CRUD action as anonymous, user A, user B, and the backend service role. Any implementation that treats "hiding a button in the frontend" as security directly violates this ADR.

@@ -1,13 +1,13 @@
-# Python AI 微服务 —— FastAPI
-# 构建上下文 = apps/ai（见 docker-compose.yml: ai.build.context = ../../apps/ai）
-# 假设：入口为 app/main.py 中的 app；依赖在 requirements.txt
-# apps/ai 已存在并可构建，但解析/生成仍为桩，尚未接入 NestJS 生产链路。
+# Python AI microservice — FastAPI
+# Build context = apps/ai (see docker-compose.yml: ai.build.context = ../../apps/ai)
+# Assumes the entry point is app in app/main.py and dependencies are in requirements.txt
+# apps/ai exists and builds, but parsing/generation are still stubs not yet wired into the NestJS production path.
 
 FROM python:3.12-slim AS runtime
 WORKDIR /app
 ENV PYTHONUNBUFFERED=1 PIP_NO_CACHE_DIR=1
 
-# 文档解析常用系统依赖（图像/PDF 处理）
+# Common system dependencies for document parsing (image/PDF processing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
         build-essential libgl1 libglib2.0-0 \
  && rm -rf /var/lib/apt/lists/*
@@ -17,5 +17,5 @@ RUN pip install -r requirements.txt
 
 COPY . .
 EXPOSE 8000
-# 2G 机器：单 worker，避免内存翻倍；并发靠 BullMQ 串行投递
+# 2 GB host: a single worker to avoid doubling memory; BullMQ delivers jobs serially for concurrency
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

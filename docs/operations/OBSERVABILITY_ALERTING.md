@@ -1,144 +1,145 @@
-# 可观测性、监控与告警
+# Observability, Monitoring, and Alerting
 
-> **本文内容：** 说明当前可用的健康检查和日志，定义目标 SLI/SLO、告警阈值、日志/指标规范，以及 API、nginx、Supabase、资源和部署故障的排障步骤。  
-> **作用：** 让团队能主动发现故障、快速判断故障层、保护用户数据，并用一致证据完成响应和复盘。  
-> **何时更新：** 服务拓扑、endpoint、日志/指标平台、SLO、告警阈值、值班/升级路径、第三方依赖、部署或事故模式变化时；每次 P1/P2 事故后复核。
+> **About this document**
+> - **Contents**: Describes the health checks and logs available today, defines target SLIs/SLOs, alert thresholds, and logging/metrics conventions, and gives troubleshooting steps for API, nginx, Supabase, resource, and deployment failures.
+> - **Purpose**: Lets the team detect failures proactively, identify the failing layer quickly, protect user data, and complete response and retrospectives with consistent evidence.
+> - **When to update**: When the service topology, endpoints, logging/metrics platform, SLOs, alert thresholds, on-call/escalation path, third-party dependencies, deployment, or incident patterns change; review after every P1/P2 incident.
 
-## 1. 当前状态
+## 1. Current state
 
-当前已有信号：
+Signals available today:
 
-- `GET /api/health`：生产 0043 真实探测 Supabase、校验 HMAC 配置并执行 Redis PING；Supabase/Redis 任一失败 readiness 都是 503。`GET /api/health/ai` 检查 worker、队列和内部依赖，不以变量存在冒充 readiness；
-- FastAPI `GET /health`：实际检查 OpenRouter 配置、LibreOffice、临时磁盘和内部认证；production fake 明确失败。最近应用候选在真实门禁失败后已回退，Materials AI/Luna flag 当前保持关闭；health 本身不逐次调用真实模型；
-- deploy workflow 同时验证本机与公网 `/api/health` 的 JSON `status/service/deps.supabase/deps.redis`，并检查公网 Web root；失败会回退上一 Web/API release；
-- API 用 NestJS/console 写容器 stdout/stderr，可由 `docker compose --env-file .deploy.env logs` 查看；
-- nginx access/error log、systemd、Docker 与主机资源命令；
-- GitHub Actions deploy 运行结果；
-- 当前生产稳定 release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` 已在最近候选回滚后独立核对 API/Web、Supabase/Redis/AI health 和匿名鉴权，Materials AI/Luna flag 均为 false；此前 workflow `31463661987` 的假绿证明 Actions success 不能替代这些独立信号；
-- Supabase 控制台可提供平台侧 Auth/数据库/Storage 日志与指标，具体可用项取决于项目配置。
-- Courses 举报达到配置阈值时 API 输出单行 JSON `event=course_report_threshold`；speech 配额/估算成本持久在 `learning_speech_usage`，429 使用稳定 `SPEECH_QUOTA_EXCEEDED`；这些当前仍需日志/SQL 人工查看，不是完整告警链。
-- 0015 应用已输出脱敏单行 JSON：`learning_session_snapshot`、`learning_attempt_committed`、`learning_attempt_revision_conflict`、`learning_audio_pending`、`learning_audio_storage_hit/missing`、`learning_audio_generated/cache_recovered/generation_failed/worker_failed`，包含 duration、revision、cache key、queue wait、attempt、bytes/error code 等有限字段；claim/数据库故障会短暂退避，尚未接入集中采集/告警。
-- 翻译前测输出脱敏 `learning_spelling_translation_assessed` 事件，只含 provider/model、duration、correct 和 prompt/completion token 计量；规范化完全匹配记录 `nalanda-normalized-exact/normalized-exact-v1` 与零 token，真实 OpenRouter 调用单独统计。0027 后应分别监控 `quota_counted=true` 的实际 provider 请求、分钟/滚动 24 小时 429 和 `retryAfterSeconds`，不能把 exact/replay/仅领取租约计入用量。HTTP 200 缺失合法 boolean 时另输出不含内容的 `learning_spelling_translation_provider_retry`。这些事件都不得写 API key、用户输入、课程翻译、完整 prompt 或供应商响应。
-- 0037 STT 输出 `learning_translation_voice_transcribed`，只含 provider/model/language、音频秒数、provider/API duration 与 usage/cost 数字；不得写 base64/WAV、transcript、word、课程翻译、用户 ID 或 key。数据库以 `learning_speech_usage.kind=translation_stt` 提供分钟/本地日/月预算事实；Web 另应统计录音启动/权限拒绝、空结果、迟到 transcript 丢弃和回填后实际提交率，但不能采集识别文本。
-- 生产 0039 输出 `rate_limited`、`rate_limit_degraded`、`rate_limit_audit_failed`、`redis_error`、`point_abuse_scan_completed/failed`；只含 route group/rule、HMAC actor、可选内部 user UUID、retry 秒数或聚合计数，不含原始 IP/email/正文。协同 signal 和 API abuse bucket 持久在 PostgreSQL，首版明确只有结构化日志，不接 webhook/pager。
-- 0041–0043 以 DB events/provider usage 提供 queue age、stage duration、lease retries、parse/visual recovery、schema repair、DeepSeek/MiMo duration/token/cost/ZDR、Notes save、grading 和 temp cleanup 信号；有界 provider 重试会把成功前每次 HTTP/空内容/截断/坏 JSON/schema 失败与最终成功分别作为脱敏 usage event 返回并计入预算，最终成功 duration 包含总等待。日志和发布 smoke 只能写 job/attempt UUID、文件类型/大小、范围计数和稳定 worker/provider purpose/error code，不写 signed URL、文件名之外正文、prompt、答案或 raw response。
-- 0046–0051 候选把 API→worker 改为 202 快速接收与持久 callback，并增加 pipeline、真实 upstream、删除清理和布局 revision 信号；0056–0057 退役 Ox 并把 Luna 上游固定为 Azure。需要分别观测 `AI_WORKER_TIMEOUT`/不可达、callback 失败、checkpoint/resume、usage spool replay、event UUID、Luna native mode、真实 upstream/endpoint（Azure）、provider routing violation、ZDR capability decision、deleting age/cleanup attempts、graph layout conflict/250-node layout 与整卷 grading。2026-08-12 的 301.896 秒 Undici 响应头 timeout 样本不是 worker OOM/宕机；该分类必须保留。
+- `GET /api/health`: production 0043 really probes Supabase, validates the HMAC configuration, and runs a Redis PING; if either Supabase or Redis fails, readiness is 503. `GET /api/health/ai` checks the worker, queue, and internal dependencies, never passing off "the variable exists" as readiness;
+- FastAPI `GET /health`: actually checks the OpenRouter configuration, LibreOffice, temporary disk, and internal authentication; a production fake fails explicitly. The latest app candidate rolled back after real gates failed, and the Materials AI/Luna flags currently stay off; health itself does not call real models each time;
+- The deploy workflow verifies the JSON `status/service/deps.supabase/deps.redis` of both the local and public `/api/health`, and checks the public Web root; on failure it rolls back to the previous Web/API release;
+- The API writes to container stdout/stderr via NestJS/console, viewable with `docker compose --env-file .deploy.env logs`;
+- nginx access/error logs, systemd, Docker, and host resource commands;
+- GitHub Actions deploy run results;
+- The current production stable release `3c095a55ced21cee11a1b3131dd2889ec1f70733-31574116130-1` had its API/Web, Supabase/Redis/AI health, and anonymous authentication independently checked after the latest candidate rolled back, with the Materials AI/Luna flags both false; the earlier false green of workflow `31463661987` proves that an Actions success cannot replace these independent signals;
+- The Supabase dashboard provides platform-side Auth/database/Storage logs and metrics, with availability depending on the project configuration.
+- When Courses reports reach the configured threshold, the API emits a single-line JSON `event=course_report_threshold`; speech quotas/estimated costs persist in `learning_speech_usage`, and 429s use the stable `SPEECH_QUOTA_EXCEEDED`; these still need manual log/SQL inspection and are not a full alerting chain.
+- The 0015 app emits redacted single-line JSON: `learning_session_snapshot`, `learning_attempt_committed`, `learning_attempt_revision_conflict`, `learning_audio_pending`, `learning_audio_storage_hit/missing`, `learning_audio_generated/cache_recovered/generation_failed/worker_failed`, with limited fields such as duration, revision, cache key, queue wait, attempt, and bytes/error code; claim/database failures back off briefly, and none of this is wired into centralized collection/alerting yet.
+- The translation pre-test emits a redacted `learning_spelling_translation_assessed` event containing only provider/model, duration, correct, and prompt/completion token metering; normalized exact matches record `nalanda-normalized-exact/normalized-exact-v1` with zero tokens, and real OpenRouter calls are counted separately. After 0027, monitor separately the actual provider requests with `quota_counted=true`, the per-minute/rolling 24-hour 429s, and `retryAfterSeconds`, and never count exact matches/replays/lease-only claims as usage. When an HTTP 200 lacks a valid boolean, a content-free `learning_spelling_translation_provider_retry` is also emitted. None of these events may contain the API key, user input, course translations, the full prompt, or provider responses.
+- 0037 STT emits `learning_translation_voice_transcribed`, containing only provider/model/language, audio seconds, provider/API duration, and usage/cost numbers; it must not contain base64/WAV, transcripts, words, course translations, user IDs, or keys. The database provides per-minute/local-day/monthly budget facts via `learning_speech_usage.kind=translation_stt`; the Web app should also count recording starts/permission denials, empty results, discarded late transcripts, and the actual submission rate after fill-in, but must never collect the recognized text.
+- Production 0039 emits `rate_limited`, `rate_limit_degraded`, `rate_limit_audit_failed`, `redis_error`, and `point_abuse_scan_completed/failed`; they contain only the route group/rule, HMAC actor, an optional internal user UUID, retry seconds, or aggregate counts, never raw IPs/emails/content. Coordination signals and API abuse buckets persist in PostgreSQL, and the first version explicitly only has structured logs, with no webhook/pager.
+- 0041–0043 provide queue age, stage duration, lease retries, parse/visual recovery, schema repair, DeepSeek/MiMo duration/token/cost/ZDR, Notes save, grading, and temp cleanup signals through DB events/provider usage; bounded provider retries return each HTTP/empty/truncated/bad JSON/schema failure before success and the final success as separate redacted usage events counted against the budget, and the final success's duration includes the total wait. Logs and release smoke tests may only contain job/attempt UUIDs, file type/size, range counts, and stable worker/provider purpose/error codes, never signed URLs, content beyond file names, prompts, answers, or raw responses.
+- The 0046–0051 candidate switches API→worker to fast 202 acceptance and durable callbacks, and adds pipeline, real upstream, delete cleanup, and layout revision signals; 0056–0057 retire Ox and fix the Luna upstream to Azure. Monitor separately: `AI_WORKER_TIMEOUT`/unreachable, callback failures, checkpoint/resume, usage spool replay, event UUIDs, Luna native mode, the real upstream/endpoint (Azure), provider routing violations, ZDR capability decisions, deleting age/cleanup attempts, graph layout conflicts/250-node layouts, and whole-paper grading. The 301.896-second Undici response-header timeout sample from 2026-08-12 was not a worker OOM/crash; that classification must be kept.
 
-当前缺失：
+Currently missing:
 
-- 外部持续探测、SLO 仪表盘、集中日志、结构化 request log、trace、metrics endpoint；
-- error tracking、pager/值班表、告警路由和告警演练；
-- `/api/health` 尚不检查 Storage、注册写入、完整 RLS、Redis 内存/AOF 磁盘状态或 AI 连通性；生产 0039 只增加真实 Redis PING；
-- Web 前端异常和浏览器直连 Supabase 失败没有服务端集中信号；
-- 日常备份新鲜度、RLS/数据完整性、TLS 到期、成本、AI 质量和支付对账告警；迁移前加密恢复点已有 CI 门禁，但没有持续告警。
-- Courses route/阶段/恢复成功率、浏览器 outbox 深度、陈旧 active session、复习日程积压、课程 points/徽章异常、举报队列以及 Azure/OpenRouter latency/error/cost 尚无集中指标；结构化事件只是原始信号，`/api/health` 也不探测 learning schema、音频队列/Storage 或任一供应商。
+- External continuous probes, SLO dashboards, centralized logging, structured request logs, traces, a metrics endpoint;
+- Error tracking, a pager/on-call schedule, alert routing, and alert drills;
+- `/api/health` does not yet check Storage, sign-up writes, full RLS, Redis memory/AOF disk state, or AI connectivity; production 0039 only added a real Redis PING;
+- Web frontend exceptions and failures of direct browser-to-Supabase calls have no centralized server-side signal;
+- Alerts for daily backup freshness, RLS/data integrity, TLS expiry, cost, AI quality, and payment reconciliation; pre-migration encrypted recovery points have a CI gate but no continuous alert.
+- There are no centralized metrics yet for Courses route/stage/resume success rates, browser outbox depth, stale active sessions, review schedule backlog, course points/badge anomalies, the report queue, or Azure/OpenRouter latency/error/cost; structured events are only raw signals, and `/api/health` does not probe the learning schema, the audio queue/Storage, or any provider.
 
-所以“deploy health ok”已证明 API→Supabase JWKS/PostgREST 基本连通，但仍不证明 Storage、浏览器直连、注册/登录写路径或核心业务全部健康。
+So "deploy health ok" proves basic API→Supabase JWKS/PostgREST connectivity, but still does not prove Storage, direct browser access, the sign-up/sign-in write paths, or all core business is healthy.
 
-## 2. 服务与信号地图
+## 2. Service and signal map
 
-| 层 | 当前运行 | 可用信号 | 主要盲区 |
+| Layer | Running now | Available signals | Main blind spots |
 |---|---|---|---|
-| DNS/TLS/nginx | 是 | 外部 curl、nginx logs、证书工具 | 无持续 probe/到期告警 |
-| Web 静态站 | 是 | nginx status/access、浏览器人工检查 | 无 RUM/JS error/performance |
-| NestJS API | 是 | `/api/health`、container logs | 无 latency/status metrics/request ID |
-| Supabase Auth | 是 | API health 的 JWKS 探针、平台日志、注册错误 | 登录由浏览器直连；health 不执行真实登录 |
-| Supabase Postgres/PostgREST | 是 | API health 的 profiles 空查询、平台指标/日志 | 无应用级业务 query/error dashboard |
-| Supabase Storage | 是 | 平台日志、业务人工检查 | 无对象完整性/孤儿/容量告警 |
-| FastAPI Materials AI | 生产 0041–0043、worker 与 flag 已启用 | 真实依赖 `/health`、stage callback、provider usage、uvicorn log | 无持续真实质量/成本仪表盘；不得记录正文 |
-| Courses API | 功能迁移已启用至 0038，生产总 history 到 0043 | 稳定 API error code、DB facts、attempt/snapshot duration JSON event | 无集中 route/阶段/outbox/恢复/考试/熟练度/拼写归一化或标点容错分支指标；health 不查 learning schema |
-| Azure Speech | 生产已启用（Japan East），持久队列已开放 | provider error code、speech usage reservation、queue wait/generate/storage-hit JSON event、熔断 flag、发布前真实 gate | 无持续 latency/可用率/队列/账单对账告警；录音不得进日志 |
-| OpenRouter 翻译前测 / Fish Audio STT | 两者功能迁移已启用至 0038，生产总 history 到 0043 | structured 判分与 STT duration/usage JSON event、数据库租约/独立配额、发布真实 gates | 无持续准确率/延迟/额度/价格对账；答案、录音和 transcript 不得进日志 |
-| Course Market | 生产已启用（免费） | publication/report/action 表、阈值 JSON log | 无审核工作台、pager 或举报 SLA |
-| Redis 请求保护/BullMQ | 请求保护由生产 0039 启用；BullMQ 由生产 0041 启用 | PING readiness、`rate_*`/`redis_error`、BullMQ execution/reconcile、真实 CI Redis 测试 | 无集中 memory/AOF/eviction/queue depth 告警；Redis 不是 points/job/额度事实库 |
-| Stripe/支付 | 未实现 | 无 | 上线前必须补 webhook/对账告警 |
-| 备份 | 迁移前加密恢复点 | Actions artifact/manifest | 无每日备份、Storage bytes、年龄/可恢复性告警 |
+| DNS/TLS/nginx | Yes | External curl, nginx logs, certificate tools | No continuous probe/expiry alerts |
+| Web static site | Yes | nginx status/access, manual browser checks | No RUM/JS errors/performance |
+| NestJS API | Yes | `/api/health`, container logs | No latency/status metrics/request IDs |
+| Supabase Auth | Yes | API health's JWKS probe, platform logs, sign-up errors | Sign-in goes directly from the browser; health doesn't perform a real sign-in |
+| Supabase Postgres/PostgREST | Yes | API health's empty profiles query, platform metrics/logs | No application-level business query/error dashboard |
+| Supabase Storage | Yes | Platform logs, manual business checks | No object integrity/orphan/capacity alerts |
+| FastAPI Materials AI | Production 0041–0043, worker and flag enabled | Real-dependency `/health`, stage callbacks, provider usage, uvicorn logs | No continuous real quality/cost dashboard; content must never be logged |
+| Courses API | Feature migrations enabled up to 0038, overall production history at 0043 | Stable API error codes, DB facts, attempt/snapshot duration JSON events | No centralized route/stage/outbox/resume/exam/mastery/spelling normalization or punctuation tolerance branch metrics; health doesn't check the learning schema |
+| Azure Speech | Enabled in production (Japan East), durable queue open | Provider error codes, speech usage reservations, queue wait/generate/storage-hit JSON events, circuit flag, pre-release real gate | No continuous latency/availability/queue/billing reconciliation alerts; recordings must never enter logs |
+| OpenRouter translation pre-test / Fish Audio STT | Both feature migrations enabled up to 0038, overall production history at 0043 | Structured grading and STT duration/usage JSON events, database leases/separate quotas, real release gates | No continuous accuracy/latency/credit/price reconciliation; answers, recordings, and transcripts must never enter logs |
+| Course Market | Enabled in production (free) | publication/report/action tables, threshold JSON logs | No moderation workbench, pager, or report SLA |
+| Redis request protection/BullMQ | Request protection enabled by production 0039; BullMQ by production 0041 | PING readiness, `rate_*`/`redis_error`, BullMQ execution/reconcile, real CI Redis tests | No centralized memory/AOF/eviction/queue depth alerts; Redis is not the points/job/allowance store of record |
+| Stripe/payments | Not implemented | None | Webhook/reconciliation alerts must be added before launch |
+| Backups | Pre-migration encrypted recovery points | Actions artifacts/manifest | No daily backups, Storage bytes, age/recoverability alerts |
 
-## 3. 目标 SLI/SLO（待批准）
+## 3. Target SLIs/SLOs (pending approval)
 
-以下是启动监控工作的**建议基线**，不是当前 SLA。产品和工程 owner 必须根据真实流量、支持能力和成本确认。
+The following are a **suggested baseline** for starting monitoring work, not a current SLA. Product and engineering owners must confirm them based on real traffic, support capacity, and cost.
 
-| 用户能力 | SLI | 建议目标/窗口 |
+| User capability | SLI | Suggested target/window |
 |---|---|---|
-| 站点可访问 | 外部 HTTPS 请求成功率 | 99.9% / 30 天 |
-| API 可用 | `/api/health` 外部 2xx | 99.9% / 30 天 |
-| API 响应 | API p95 latency | < 500 ms / 5 分钟（health < 300 ms） |
-| 注册 | 有效注册请求成功率 | ≥ 99% / 1 小时；排除明确用户输入错误 |
-| 登录/鉴权 | Supabase 登录 + `/api/me` 合成路径成功率 | ≥ 99% / 15 分钟 |
-| 数据读写 | 隔离 smoke 账号 PostgREST 读写成功率 | ≥ 99.5% / 15 分钟 |
-| 私有资料 | upload + signed URL + download 合成成功率 | ≥ 99% / 1 小时，使用小型无敏感 fixture |
-| 备份 | 最近一次已验证恢复点年龄 | 数据库 < 24 小时；目标 PITR 指标按 RPO |
-| 数据保护 | 跨用户 RLS 拒绝率 | 测试应 100% 拒绝；任何成功为 P1 |
-| Courses 持久化 | 创建/答题/恢复成功率（排除合法 4xx） | ≥99% / 15 分钟；相同意图必须恢复同一 active session，不同单元/模式不得串线 |
-| 发音合成 | Azure worker 成功率/生成延迟、Storage/browser cache hit | ≥98% / 1 小时；ready 缓存播放 p95<300 ms，队列等待按 3.1 秒限流可解释；失败可降级，不计文本课程不可用 |
-| 弱网答题 | provisional→服务器确认时延、outbox 年龄/冲突率 | 即时反馈 p95<一帧；在线确认 p95<1 秒；最旧 outbox >5 分钟或冲突率异常需调查 |
-| 朗读评分 | 有效 WAV provider 成功率 | ≥97% / 1 小时；供应商失败不写错误次数 |
-| 翻译语义前测 | 有效请求 provider 成功率、结构化输出率、用户重试率 | provider 成功率 ≥97% / 1 小时、schema 有效率 100%；p95 <3 秒为观测目标；供应商失败不得写错误次数 |
-| 复习日程 | 到期 pending 项进入/完成成功率 | ≥99%；不允许误建 `study_tasks` 或 +5 |
-| 请求保护 | rate-limit decision latency、429/503、Redis availability/memory | Redis PING ≥99.9%；合法流量 429 误判需接近 0；noeviction/AOF 配置漂移为发布阻断 |
-| Points 完整性 | ledger/Profile projection、cap/审核 transition | projection 差异必须为 0；同 business key 只有一项首次 decision；协同 signal 只改变待审队列 |
-| Materials AI 生成 | 成功率、queue wait/stage/provider/总时延、引用/schema、稳定 validation category、成本 | 合法任务成功率 ≥95%；最旧 queued <5 分钟；schema/source 100%；单次预算硬门不得突破；日志不得含 reviewer/source/answer 原文 |
-| Materials AI 恢复/图谱/Luna/Ox | accept/callback、checkpoint/usage、delete cleanup、pipeline/upstream、graph/layout/Q&A schema/source、ZDR catalog decision | accept p95<2秒；callback backlog<1分钟；期限内恢复不重复 provider/费用；deleting p95<30秒且残留为0；Luna 开启时 upstream 100% OpenAI/PDF native 100%，Ox 开启时 upstream 100% Stealth/输入 100% 图片；无对应 ZDR endpoint 时子 flag 100% 保持 false 且 reason 稳定；usage UUID重复副作用为0；graph schema/source-order/citation 100% |
-| 在线考试 | draft revision、deadline submit、grading queue/额度 | 已确认保存 p95<1秒；过期最终必提交；相同 operation UUID 副作用为 0 |
+| Site reachable | External HTTPS request success rate | 99.9% / 30 days |
+| API available | External 2xx on `/api/health` | 99.9% / 30 days |
+| API responsiveness | API p95 latency | < 500 ms / 5 minutes (health < 300 ms) |
+| Sign-up | Success rate of valid sign-up requests | ≥ 99% / 1 hour; excluding clear user input errors |
+| Sign-in/auth | Success rate of the synthetic Supabase sign-in + `/api/me` path | ≥ 99% / 15 minutes |
+| Data reads/writes | PostgREST read/write success rate for an isolated smoke account | ≥ 99.5% / 15 minutes |
+| Private materials | Synthetic upload + signed URL + download success rate | ≥ 99% / 1 hour, using a small non-sensitive fixture |
+| Backups | Age of the latest verified recovery point | Database < 24 hours; target PITR metrics per RPO |
+| Data protection | Cross-user RLS denial rate | Tests should deny 100%; any success is P1 |
+| Courses persistence | Create/answer/resume success rate (excluding legitimate 4xx) | ≥99% / 15 minutes; the same intent must resume the same active session, and different units/modes must never cross over |
+| Pronunciation synthesis | Azure worker success rate/generation latency, Storage/browser cache hit | ≥98% / 1 hour; ready cache playback p95<300 ms, queue wait explainable by the 3.1-second rate limit; failures may degrade and don't count as text courses being unavailable |
+| Weak-network answering | Provisional→server-confirmed latency, outbox age/conflict rate | Instant feedback p95<one frame; online confirmation p95<1 second; oldest outbox >5 minutes or an abnormal conflict rate needs investigation |
+| Read-aloud scoring | Provider success rate for valid WAVs | ≥97% / 1 hour; provider failures never write error counts |
+| Translation semantic pre-test | Provider success rate, structured output rate, user retry rate for valid requests | Provider success ≥97% / 1 hour, schema validity 100%; p95 <3 seconds as an observation target; provider failures must never write error counts |
+| Review schedules | Success rate of due pending items being entered/completed | ≥99%; never mistakenly create `study_tasks` or +5 |
+| Request protection | Rate-limit decision latency, 429/503, Redis availability/memory | Redis PING ≥99.9%; false 429s on legitimate traffic close to 0; noeviction/AOF configuration drift blocks releases |
+| Points integrity | ledger/Profile projection, cap/moderation transitions | Projection difference must be 0; only one first decision per business key; coordination signals only change the pending-review queue |
+| Materials AI generation | Success rate, queue wait/stage/provider/total latency, citations/schema, stable validation category, cost | Legitimate job success ≥95%; oldest queued <5 minutes; schema/source 100%; per-run budget hard gates never exceeded; logs never contain reviewer/source/answer text |
+| Materials AI recovery/graph/Luna/Ox | accept/callback, checkpoint/usage, delete cleanup, pipeline/upstream, graph/layout/Q&A schema/source, ZDR catalog decision | accept p95<2 seconds; callback backlog<1 minute; recovery within the window repeats no provider calls/costs; deleting p95<30 seconds with zero residue; with Luna on, upstream 100% OpenAI/PDF native 100%, with Ox on, upstream 100% Stealth/input 100% images; with no matching ZDR endpoint, sub-flags stay false 100% with a stable reason; zero duplicate side effects per usage UUID; graph schema/source order/citations 100% |
+| Online exams | Draft revision, deadline submit, grading queue/allowance | Confirmed saves p95<1 second; expired attempts are always submitted eventually; zero side effects for the same operation UUID |
 
-避免合成监控污染真实指标：使用专用账号/课程/文件前缀，测试后清理，并防止触发积分、通知和社区公开内容。生产合成写测试在具备幂等清理前不得自动开启。
+Keep synthetic monitoring from polluting real metrics: use dedicated accounts/courses/file prefixes, clean up after tests, and prevent triggering points, notifications, and public community content. Synthetic write tests in production must not be turned on automatically until idempotent cleanup exists.
 
-## 4. 告警分级与建议阈值
+## 4. Alert severity and suggested thresholds
 
-| 级别 | 条件（建议初始值） | 响应目标 | 示例 |
+| Level | Condition (suggested initial values) | Response target | Examples |
 |---|---|---|---|
-| P1 | 全站/API 外部连续 3 次失败；疑似跨用户数据访问；数据破坏；支付重复扣款（未来） | 5 分钟确认，立即处置 | nginx/API 宕机、RLS 绕过、生产密钥泄露 |
-| P2 | API 5xx > 5% 持续 10 分钟；注册/登录失败率 > 10%；磁盘 > 90%；备份超过 2×RPO | 30 分钟确认 | Supabase 部分故障、容器重启循环、备份中断 |
-| P3 | p95 超阈值 30 分钟；磁盘 > 80%；TLS < 21 天；错误趋势异常 | 1 个工作日处理 | 性能退化、证书或容量预警 |
-| 信息 | deploy 成功/失败、密钥轮换、恢复演练结果 | 记录/按失败升级 | 发布审计 |
+| P1 | Site/API fails 3 times in a row externally; suspected cross-user data access; data corruption; duplicate payment charges (future) | Acknowledge within 5 minutes, act immediately | nginx/API down, RLS bypass, production secret leak |
+| P2 | API 5xx > 5% for 10 minutes; sign-up/sign-in failure rate > 10%; disk > 90%; backup older than 2×RPO | Acknowledge within 30 minutes | Partial Supabase outage, container restart loop, backups interrupted |
+| P3 | p95 over threshold for 30 minutes; disk > 80%; TLS < 21 days; abnormal error trends | Handle within 1 business day | Performance degradation, certificate or capacity warnings |
+| Info | Deploy success/failure, secret rotation, recovery drill results | Record/escalate on failure | Release auditing |
 
-建议告警规则：
+Suggested alert rules:
 
-- 外部站点 `/` 与 `/api/health` 每分钟探测，失败从两个网络位置复核；
-- API container restart count 增加或 10 分钟内重启 ≥ 3 次：P2；
-- nginx 5xx > 2% 持续 10 分钟：P2，>20% 持续 5 分钟：P1；
-- `deps.redis=unavailable` 连续 3 次、Redis 重启循环、AOF 写失败或 `noeviction` 漂移：P2；因此造成注册/写入 503 >5 分钟按用户影响升级。内存 ≥80% P3、≥90% P2，不允许临时切成 eviction；
-- `rate_limit_degraded` 在正常运行出现、合法账号 429 比例异常、单 HMAC actor 的拒绝里程碑突增：P2/P3 调查；不得在告警中反解或记录原始 IP/email；
-- 主机可用内存 < 100 MiB 持续 10 分钟：P2；磁盘 > 80% P3，> 90% P2；
-- TLS 剩余 < 21 天 P3，< 7 天 P2，< 48 小时 P1；
-- Supabase 数据库容量/连接/CPU 达平台警戒阈值：P2；阈值需按实际套餐配置；
-- 最近数据库备份/恢复点 > 24 小时：P2；季度恢复演练逾期：P3；
-- CI deploy 失败：P2；发布后外部 probe 失败：P1/P2 视影响；
-- 任意安全回归测试发现 RLS 越权、service-role 泄露或高权限 RPC 可由普通用户执行：P1。
-- Courses progress/badge/points 可由客户端写、匿名 PostgREST 读到分享/市场私有表、已撤销 token 仍可克隆或 publication 内容可改：P1；
-- Azure 估算月预算 ≥80%：P3，≥95%：P2 并评估熔断，超预算/持续 429：P2；provider 5xx/timeout >10% 持续 10 分钟：P2 并打开语音 circuit，文本学习保持；
-- OpenRouter provider 5xx/timeout/invalid-structure 合计 >10% 持续 10 分钟或 token/请求量异常超过 2 倍基线：P2，关闭 `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED`，普通/限时拼写保持；语义错误率突然偏离固定 eval baseline：P2/P3，先停 feature 而不是放宽模型判定。429 若来自产品用户配额按信息/滥用调查，若来自供应商账户额度按 P2；
-- Fish Audio STT timeout/5xx/invalid/空 transcript >10% 持续 10 分钟、p95 >8 秒或月预算 ≥80%：P2/P3；先关闭依赖该能力的翻译语音入口并保留键盘输入，不得绕过 owner/revision 校验、改为浏览器直连或把识别文本自动提交。真实用户 CER/关键含义保留率低于评测基线时暂停入口并复核模型/语言提示。
-- Materials AI 最旧 queued >5 分钟、lease 连续三次恢复、worker restart ≥3/10min、temp orphan 超过配置 resume TTL、单并发槽已释放但 FastAPI 仍有多个 active job、临时磁盘低于 512MiB、RSS/swap/cgroup OOM、provider/ZDR/schema/injection false-positive 异常：P2；同一真实门禁在有界重试后仍持续 `OPENROUTER_RATE_LIMIT` 也按 P2 保持 feature 关闭。跨用户/正文日志/ZDR 绕过或 quota/结果重复为 P1。先关闭 `FEATURE_MATERIAL_AI`，既有 Notes/考试保持只读，不通过放宽 ZDR、fallback、资源上限或直接改 job/quota 恢复。
-- 回调模式中，accept >30 秒、callback 连续失败、checkpoint stage 倒退、usage spool >5 分钟、同 event UUID 多条成本事实或 Resume 再次调用已完成 provider 阶段均按 P2；deleting >5 分钟、cleanup 重试增长、purge 后目录/checkpoint/spool 残留也为 P2。OpenRouter catalog 无对应 ZDR endpoint 时 Luna/Ox flag 被打开属于 P1；Luna 实际 upstream 非 OpenAI、Ox 实际 upstream 非 Stealth、发生自动 fallback/转换、Ox 接受非图片、路由违规结果被保存，或重复扣额度/跨用户布局/Q&A 同样为 P1。先关闭对应子开关，不通过放宽路由恢复。
-- AI 月成本 ≥80% US$20 为 P3、≥95% P2；单次生成 >US$0.50 或评分 >US$0.05 必须由硬门阻断并释放用户 reservation。token/cost 账单差异和 unknown request ID 触发调查。
-- `learning_audio_assets` 最旧 pending 超过 15 分钟、processing lease 过期持续 5 分钟、generation failure >10% 或 ready metadata 对象 miss >1%：P2；minute/month quota 暂停按预算阈值分级，不通过提高并发绕过；
-- `learning_attempt_revision_conflict` 突增、同 session outbox 最旧项 >5 分钟或 replay 比例异常升高：P2/P3；先查网络/API/多设备，不手工推进 cursor；
-- 同一课程完成指纹出现多条正向 +20、复习 schedule 产生 task +5、badge 重复 PK/事实不一致：P1/P2 按经济影响；
-- Profile points/level 与 ledger projection 任一差异、同 business key 多项 claim、cap 数量越界或 suppress 产生超出历史实得金额的负分：P1；pending 协同 signal 数量/年龄突增为人工审核信息，不能自动处罚；
-- Course 举报达到 `COURSE_REPORT_ALERT_THRESHOLD`：信息/审核队列；24 小时无人处理升级 P3。数量本身不自动下架。
+- Probe the external site `/` and `/api/health` every minute, re-checking failures from two network locations;
+- API container restart count increasing, or ≥ 3 restarts within 10 minutes: P2;
+- nginx 5xx > 2% for 10 minutes: P2; >20% for 5 minutes: P1;
+- `deps.redis=unavailable` 3 times in a row, a Redis restart loop, AOF write failures, or `noeviction` drift: P2; escalate by user impact when this causes sign-up/write 503s for >5 minutes. Memory ≥80% P3, ≥90% P2, and never temporarily switch to eviction;
+- `rate_limit_degraded` appearing during normal operation, an abnormal 429 ratio for legitimate accounts, or a sudden rise in rejection milestones for a single HMAC actor: P2/P3 investigation; never reverse or record raw IPs/emails in alerts;
+- Host available memory < 100 MiB for 10 minutes: P2; disk > 80% P3, > 90% P2;
+- TLS remaining < 21 days P3, < 7 days P2, < 48 hours P1;
+- Supabase database capacity/connections/CPU reaching platform warning thresholds: P2; thresholds must be configured per the actual plan;
+- Latest database backup/recovery point > 24 hours: P2; quarterly recovery drill overdue: P3;
+- CI deploy failure: P2; external probe failing after a release: P1/P2 depending on impact;
+- Any security regression test finding RLS overreach, a service-role leak, or a high-privilege RPC executable by ordinary users: P1.
+- Courses progress/badges/points writable by clients, anonymous PostgREST reading share/market private tables, revoked tokens still able to clone, or publication content being modifiable: P1;
+- Azure estimated monthly budget ≥80%: P3, ≥95%: P2 and consider tripping the circuit; over budget/sustained 429: P2; provider 5xx/timeout >10% for 10 minutes: P2 and open the speech circuit, keeping text learning;
+- OpenRouter provider 5xx/timeout/invalid-structure combined >10% for 10 minutes, or token/request volume more than 2× baseline: P2, turn off `FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED` and keep ordinary/timed spelling; a sudden deviation of the semantic error rate from the fixed eval baseline: P2/P3, stop the feature first rather than loosening the model's judgement. 429s from the product's user quota are handled as info/abuse investigations, and 429s from the provider account credit as P2;
+- Fish Audio STT timeout/5xx/invalid/empty transcript >10% for 10 minutes, p95 >8 seconds, or the monthly budget ≥80%: P2/P3; first turn off the translation voice entry that depends on it and keep keyboard input, never bypassing owner/revision checks, switching to direct browser calls, or auto-submitting recognized text. When real users' CER/key-meaning retention falls below the evaluation baseline, pause the entry and review the model/language hint.
+- Materials AI oldest queued >5 minutes, a lease recovered three times in a row, worker restarts ≥3/10min, temp orphans older than the configured resume TTL, the single concurrency slot released while FastAPI still has several active jobs, temporary disk below 512 MiB, RSS/swap/cgroup OOM, or provider/ZDR/schema/injection false-positive anomalies: P2; the same real gate still showing persistent `OPENROUTER_RATE_LIMIT` after bounded retries is also P2 and keeps the feature off. Cross-user access/content in logs/ZDR bypass or duplicate quota/results is P1. Turn off `FEATURE_MATERIAL_AI` first, keeping existing Notes/exams read-only, and never recover by loosening ZDR, fallback, resource limits, or editing jobs/quota directly.
+- In callback mode, accept >30 seconds, consecutive callback failures, checkpoint stage regressions, usage spool >5 minutes, multiple cost facts for the same event UUID, or Resume calling an already completed provider stage again are all P2; deleting >5 minutes, growing cleanup retries, or directory/checkpoint/spool residue after purge are also P2. Turning on the Luna/Ox flag while the OpenRouter catalog has no matching ZDR endpoint is P1; Luna's actual upstream not being OpenAI, Ox's actual upstream not being Stealth, automatic fallback/conversion occurring, Ox accepting non-images, routing-violation results being saved, or duplicate allowance charges/cross-user layouts/Q&A are likewise P1. Turn off the corresponding sub-switch first, never recovering by loosening routing.
+- AI monthly cost ≥80% of US$20 is P3, ≥95% P2; a single generation >US$0.50 or grading >US$0.05 must be blocked by the hard gate with the user's reservation released. Token/cost billing differences and unknown request IDs trigger an investigation.
+- `learning_audio_assets` oldest pending over 15 minutes, processing leases expired for 5 minutes, generation failure >10%, or ready-metadata object misses >1%: P2; minute/month quota pauses are graded by budget thresholds, never bypassed by raising concurrency;
+- A sudden rise in `learning_attempt_revision_conflict`, the oldest outbox item in a session >5 minutes, or an abnormally rising replay ratio: P2/P3; check the network/API/multiple devices first, never advance the cursor by hand;
+- Multiple positive +20 entries for the same course completion fingerprint, a review schedule producing task +5, or duplicate badge PKs/inconsistent facts: P1/P2 by economic impact;
+- Any difference between Profile points/level and the ledger projection, multiple claims for the same business key, cap counts out of bounds, or suppress producing negative points beyond the historically received amount: P1; a sudden rise in the number/age of pending coordination signals is information for manual review and never an automatic penalty;
+- A course report reaching `COURSE_REPORT_ALERT_THRESHOLD`: info/moderation queue; escalate to P3 if unhandled for 24 hours. The count alone never delists.
 
-所有阈值先观察两周基线再调优，保留变更记录。告警必须指向本页具体 runbook，且需要定期发送测试告警验证路由。
+Observe a two-week baseline before tuning any threshold, and keep a change record. Alerts must point to a specific runbook on this page, and test alerts must be sent regularly to verify routing.
 
-## 5. 当前可执行检查
+## 5. Checks you can run now
 
-### 5.1 外部检查
+### 5.1 External checks
 
 ```bash
 curl -fsS --max-time 10 https://nalanda.online/api/health
 curl -fsSI --max-time 10 https://nalanda.online/
 ```
 
-API health 中 `deps.supabase=ok` 表示 JWKS 与 PostgREST 空查询在超时内成功；0039 应用的 `deps.redis=ok` 表示 HMAC 配置有效且真实 PING 成功；`ai=configured` 仍只表示变量非空。不能把该 endpoint 当作 Storage、RLS、登录、Redis AOF/容量或 AI 完整 readiness。
+In API health, `deps.supabase=ok` means JWKS and an empty PostgREST query succeeded within the timeout; with the 0039 app, `deps.redis=ok` means the HMAC configuration is valid and a real PING succeeded; `ai=configured` still only means the variables are non-empty. This endpoint must not be treated as complete readiness for Storage, RLS, sign-in, Redis AOF/capacity, or AI.
 
-TLS 检查：
+TLS check:
 
 ```bash
 echo | openssl s_client -servername nalanda.online -connect nalanda.online:443 2>/dev/null \
   | openssl x509 -noout -subject -issuer -dates
 ```
 
-### 5.2 服务器检查
+### 5.2 Server checks
 
 ```bash
 cd /opt/nalanda
@@ -152,7 +153,7 @@ df -h
 free -m
 ```
 
-nginx：
+nginx:
 
 ```bash
 nginx -t
@@ -160,131 +161,131 @@ systemctl status nginx --no-pager
 tail -n 200 /var/log/nginx/error.log
 ```
 
-这些命令可能需要服务器管理员权限。不要把 `.env`、完整 request header、JWT 或密钥输出到协作频道/工单。
+These commands may need server administrator privileges. Never paste `.env`, full request headers, JWTs, or secrets into collaboration channels/tickets.
 
-### 5.3 快速分层判断
+### 5.3 Quick layer diagnosis
 
-| 现象 | 最可能层 | 下一步 |
+| Symptom | Most likely layer | Next step |
 |---|---|---|
-| 外部 `/` 和 `/api/health` 都失败；服务器不可 SSH | 主机/网络/DNS | 主机供应商、DNS、端口和资源状态 |
-| 外部失败；本机 `127.0.0.1:8411` 正常 | nginx/TLS/DNS | `nginx -t`、error log、证书、server_name/反代 |
-| 外部和本机 API 都失败 | container/API | compose ps/logs、restart count、内存、镜像/`.env` |
-| health 仅 `deps.redis=unavailable`；私有 GET 仍可用而注册/写入 503 | Redis/password/HMAC/AOF/网络 | Redis health/log/volume/内存、API `REDIS_URL` 与 `.redis.env`；不得切为 fail-open 写入 |
-| API health 200，但注册失败 | Supabase Auth、service-role、DNS | API logs、变量是否为同一项目、Supabase Auth 日志 |
-| API health 200，但登录/业务查询失败 | 浏览器→Supabase、JWT、RLS、迁移 | Supabase logs、项目 URL、JWKS、RLS/表结构、前端 console |
-| AI `/health` 为 `tempDisk=pressure`，随后 API 502 | 根盘低水位 + compose AI healthy 依赖 | 先独立恢复当前 `.deploy.env` API；核对 `df`、`docker system df`、incoming 和当前 image，再按下方资源 runbook 做定向清理 |
-| 只上传/预览失败 | Storage policy/对象/签名 URL | bucket、路径首段、对象 policy、过期时间、浏览器错误 |
-| 发布后静态页面旧、API 新 | artifact/nginx cache/上传 | `/opt/nalanda/web` mtime、workflow artifact、浏览器 cache |
-| Courses 统一 disabled/404 | flag/circuit 配置漂移或 release 回退 | 先查 production history、当前 image 与服务器 `.env`；不要开放客户端 RPC/表写 |
-| 课程可学但无发音/评分 | Azure flag/key/region/circuit/预算 | 按 error code 和 speech usage 判断；保持浏览器朗读降级 |
-| 翻译前测统一失败/很慢 | OpenRouter flag/key/model/timeout/额度或结构化输出 | 按稳定 error code 与脱敏 duration/token event 分层；供应商失败不记错，可先关闭翻译前测，不能把 key 下发浏览器或改为客户端自判 |
-| AI job 在约 300 秒统一失败并报 unreachable | 旧 API→worker 长 HTTP 的 Undici headers timeout | 核对错误 cause/duration、worker restart/OOM 和 stage；候选应返回 202 并由 callback 推进，timeout 映射为 `AI_WORKER_TIMEOUT`。不要盲目重跑导致 provider 重复费用 |
-| AI job 显示 Resume | provider/worker/callback 的可恢复失败 | 核对 `retryable/resumeUntil/checkpointStage/resumeCount` 与本地 spool age；期限内只调用 Resume 同一 job，过期后稳定失败并清理，不新建重复 job 绕过 quota |
-| 刷新后会话丢失/重复 | active unique/session RPC/API | 查同 user/course active 行、state queue/cursor、API 5xx；禁止前端造 progress |
-| 课程进度或 +20 异常 | progress/growth/fingerprint | 先确认生产迁移版本；0033+ 对账两个 `*_exam_passed_at`、两类 exam 的第一轮分数/`examPassed`/轮末确认/completed，确认 review 只改变 attempts/三组日期而不写 learned；再核对 `learned_at` check constraint、point business_key 与 source，必要时暂停 Courses 奖励写入 |
-| Course Market 课程消失 | publication status/审核 | 查 moderation actions 和管理员配置；不要仅凭举报数恢复/下架 |
+| External `/` and `/api/health` both fail; the server can't be reached over SSH | Host/network/DNS | Host provider, DNS, ports, and resource status |
+| External fails; local `127.0.0.1:8411` is fine | nginx/TLS/DNS | `nginx -t`, error log, certificate, server_name/reverse proxy |
+| Both external and local API fail | Container/API | compose ps/logs, restart count, memory, image/`.env` |
+| Only health shows `deps.redis=unavailable`; private GETs still work while sign-up/writes return 503 | Redis/password/HMAC/AOF/network | Redis health/log/volume/memory, the API `REDIS_URL` and `.redis.env`; never switch writes to fail-open |
+| API health 200, but sign-up fails | Supabase Auth, service-role, DNS | API logs, whether the variables point at the same project, Supabase Auth logs |
+| API health 200, but sign-in/business queries fail | Browser→Supabase, JWT, RLS, migrations | Supabase logs, project URL, JWKS, RLS/table structure, frontend console |
+| AI `/health` shows `tempDisk=pressure`, then the API returns 502 | Low root disk watermark + the compose AI-healthy dependency | First recover the API independently with the current `.deploy.env`; check `df`, `docker system df`, incoming, and the current image, then do targeted cleanup per the resource runbook below |
+| Only upload/preview fails | Storage policy/object/signed URL | Bucket, first path segment, object policy, expiry, browser errors |
+| Old static pages but a new API after release | Artifact/nginx cache/upload | `/opt/nalanda/web` mtime, workflow artifact, browser cache |
+| Courses uniformly disabled/404 | Flag/circuit configuration drift or a release rollback | First check the production history, the current image, and the server `.env`; never open client RPC/table writes |
+| Courses work but no pronunciation/scoring | Azure flag/key/region/circuit/budget | Judge by error code and speech usage; keep the browser speech degradation |
+| The translation pre-test fails uniformly/is slow | OpenRouter flag/key/model/timeout/credit or structured output | Layer by the stable error code and redacted duration/token events; provider failures don't count as errors, and you can turn off the translation pre-test first, but never ship the key to the browser or switch to client-side grading |
+| AI jobs fail uniformly at about 300 seconds as unreachable | The old API→worker long HTTP hitting the Undici headers timeout | Check the error cause/duration, worker restarts/OOM, and stage; the candidate should return 202 and progress through callbacks, mapping timeouts to `AI_WORKER_TIMEOUT`. Don't blindly rerun and pay providers twice |
+| An AI job shows Resume | A recoverable provider/worker/callback failure | Check `retryable/resumeUntil/checkpointStage/resumeCount` and the local spool age; within the window only call Resume on the same job, and after expiry it fails stably and cleans up; never create a duplicate job to bypass quota |
+| Sessions lost/duplicated after refresh | Active unique/session RPC/API | Query active rows for the same user/course, the state queue/cursor, API 5xx; never fabricate progress in the frontend |
+| Course progress or +20 anomalies | progress/growth/fingerprint | First confirm the production migration version; from 0033 on, reconcile both `*_exam_passed_at`, both exam types' first-round score/`examPassed`/end-of-round confirmation/completed, and confirm reviews only change attempts/the three date groups without writing learned; then check the `learned_at` check constraint and the point business_key and source, pausing Courses reward writes if needed |
+| A Course Market course disappeared | Publication status/moderation | Check moderation actions and the administrator configuration; never restore/delist based on report counts alone |
 
-## 6. 事故 runbook
+## 6. Incident runbooks
 
-### 6.1 API 不可用
+### 6.1 API unavailable
 
-1. 从外部复现并记录 UTC 时间/状态码，不发送真实用户 token。
-2. 在服务器检查 compose 状态、最近日志、资源和本地 health。
-3. 若容器停止，先保存日志和退出原因，再执行 `docker compose --env-file .deploy.env up -d`；不要无限重启掩盖 OOM/配置错误或绕过 Git SHA image。
-4. 若最近刚部署，核对 workflow、镜像 build 和环境文件；当前没有可靠上一镜像，谨慎声明“回滚”。
-5. 恢复后从外部验证 health、登录和本次影响路径，持续观察。
+1. Reproduce from outside and record the UTC time/status code, without sending a real user token.
+2. On the server, check compose status, recent logs, resources, and local health.
+3. If the container stopped, save the logs and exit reason first, then run `docker compose --env-file .deploy.env up -d`; don't restart endlessly to hide OOM/configuration errors or bypass the Git SHA image.
+4. If a deployment just happened, check the workflow, image build, and environment files; there is currently no reliable previous image, so be careful about claiming a "rollback".
+5. After recovery, verify health, sign-in, and the affected path from outside, and keep watching.
 
-### 6.2 注册/鉴权大面积失败
+### 6.2 Widespread sign-up/authentication failures
 
-1. 区分注册 endpoint、浏览器 Supabase 登录和 `/api/me` 三段。
-2. 检查 Supabase 项目状态、Auth 日志与 JWKS 可达性。
-3. 核对 Web 的 `VITE_*` 与 API `SUPABASE_URL` 是否指向同一项目。
-4. 检查最近 signing key/service-role/anon key 轮换，按[密钥轮换](./SECRET_ROTATION.md)验证双端更新。
-5. 不要通过关闭 RLS、使用 service-role 进浏览器或跳过 JWT 验签来恢复服务。
+1. Separate the three segments: the sign-up endpoint, browser Supabase sign-in, and `/api/me`.
+2. Check the Supabase project status, Auth logs, and JWKS reachability.
+3. Check that the Web `VITE_*` and the API `SUPABASE_URL` point at the same project.
+4. Check recent signing key/service-role/anon key rotations and verify both sides were updated per [secret rotation](./SECRET_ROTATION.md).
+5. Never restore service by turning off RLS, shipping service-role to the browser, or skipping JWT verification.
 
-### 6.3 数据异常/疑似越权
+### 6.3 Data anomalies/suspected unauthorized access
 
-1. 立即按 P1 处理，限制相关写入口，保留 Supabase/应用/部署日志。
-2. 确定表、用户、时间窗和是否涉及 service-role/RPC；不要在日志中传播个人数据。
-3. 验证 migrations、RLS、grants 与函数 EXECUTE 是否漂移。
-4. 若已造成破坏，按[备份与恢复](./BACKUP_RECOVERY.md)先恢复到隔离项目评估。
-5. 轮换可能泄露的秘密并完成通知/合规评估。
+1. Treat it as P1 immediately, restrict the related write entry points, and keep Supabase/application/deployment logs.
+2. Determine the table, users, time window, and whether service-role/RPCs are involved; never spread personal data in logs.
+3. Verify whether migrations, RLS, grants, and function EXECUTE have drifted.
+4. If damage has occurred, first restore into an isolated project to assess, per [backup and recovery](./BACKUP_RECOVERY.md).
+5. Rotate possibly leaked secrets and complete the notification/compliance assessment.
 
-### 6.4 主机资源紧张
+### 6.4 Host resource pressure
 
-1. `docker stats --no-stream`、`free -m`、`df -h` 定位内存/磁盘。
-2. 检查日志、`/opt/nalanda/incoming`、`docker system df` 和 Docker layers 占用；保留事故证据后再清理。发布前门禁会清理同 SHA 半成品、超过 24 小时的 abandoned incoming，以及没有任何容器引用且不属于当前 `.deploy.env` 的 Nalanda image，并要求至少 6 GiB 可用空间；不得扩大成全服务器无差别删除。
-3. 不要删除 `/opt/nalanda/.env`、有效 Web artifact、未知数据库备份或证书。
-4. 若 AI 因磁盘水位 unhealthy 且 Compose 依赖阻止 API 恢复，先保存状态和日志，再用当前已审计配置执行 `docker compose --env-file .deploy.env up -d --no-deps api`，验证本机与公网 health/auth；这只恢复 API，不代表 AI 已恢复。释放空间后必须另验 AI `/health` 的 `tempDisk=ok`。
-5. 生产 0043 有 API、128 MiB Redis 容器/持久 volume，以及 640MiB/896MiB swap 上限、0.75 CPU、128 pids 的单并发 AI 容器。先核对当前 release/compose；触发 kernel OOM 或影响邻站时关闭 Materials AI flag，保留既有 Notes/考试只读路径。
+1. Locate memory/disk with `docker stats --no-stream`, `free -m`, and `df -h`.
+2. Check usage by logs, `/opt/nalanda/incoming`, `docker system df`, and Docker layers; preserve incident evidence before cleaning. The pre-release gate cleans same-SHA partial uploads, abandoned incoming older than 24 hours, and Nalanda images that no container references and that are not in the current `.deploy.env`, and requires at least 6 GiB free; never broaden this into indiscriminate deletion across the server.
+3. Never delete `/opt/nalanda/.env`, valid Web artifacts, unknown database backups, or certificates.
+4. If AI is unhealthy because of the disk watermark and the Compose dependency prevents the API from recovering, save the state and logs first, then run `docker compose --env-file .deploy.env up -d --no-deps api` with the current audited configuration and verify local and public health/auth; this only recovers the API and does not mean AI is recovered. After freeing space, separately verify AI `/health` shows `tempDisk=ok`.
+5. Production 0043 has the API, a 128 MiB Redis container/persistent volume, and a single-concurrency AI container with 640 MiB/896 MiB swap limits, 0.75 CPU, and 128 pids. Check the current release/compose first; when kernel OOM occurs or neighboring sites are affected, turn off the Materials AI flag and keep the existing Notes/exam read-only paths.
 
-### 6.7 Materials AI / 在线考试
+### 6.7 Materials AI / online exams
 
-1. 先检查 `/api/health` 的 Supabase/Redis 与 `/api/health/ai`，再看 `generation_jobs` 的 queued/stage/lease/attempt/error 和 BullMQ/reconciler；Postgres job 才是事实，不手工在 Redis 补状态。
-2. provider 问题按 purpose/model/request ID/duration/token/cost/ZDR 分层；不得读取或复制文件正文、prompt、答案、signed URL。ZDR unavailable、坏 schema 或安全 uncertain 均保持失败关闭并释放 reservation。
-   对 `OPENROUTER_RATE_LIMIT` 先核对有界尝试数、退避配置、供应商 `Retry-After` 和同模型 provider failover；禁止增加跨模型 fallback、换模型或去掉 ZDR/deny/require-parameters 来让门禁变绿。若相同固定样本在有界重试后仍失败，保持 feature 关闭，待供应商窗口恢复后重跑真实 gate。
-   对 `AI_EXAM_VALIDATION_FAILED` 只检查 `initialGate/finalGate`、结构 code、语义 category 和预期/实际题数/总分；禁止为排障记录 reviewer issue、题目、答案、课件或 provider body。薄 fixture 的 `ANSWERABILITY`/grounding 失败应先修正无个人数据固定样本并重新走门禁，不等于 worker outage；用户 reservation 仍应释放。若初次或 repair 后仅剩 `SOURCE_REFERENCE`，核对输出引用是否落在 DocumentIR block allowlist、locator 是否来自服务端以及 question ID 是否稳定；allowlist 只有一个 block 时可规范到唯一来源并必须继续语义复核，多个 block 不得猜测。不得关闭引用校验或跳过 repair 后的第二次语义复核。
-3. 磁盘/Office 问题检查容器 RSS/swap、cgroup OOM、`/tmp/nalanda-material-ai` orphan 和水位；关闭 flag 后只清理确认超过一小时且不属于 active job 的目录。
-4. 考试问题按 attempt/revision/operation UUID/deadline 对账；Redis 延迟任务丢失时下一次 API 请求必须强制到期提交。评分额度用完保留 `submitted_ungraded`，不能伪造 completed。
-5. 修复后使用无个人数据 fixture 验证一个完整生成、Notes、客观/主观评分、删除与临时目录清理；真实 provider smoke 与 fake Playwright 分开记录。
-6. 候选回调/恢复事故按 transport→accept→callback→DB checkpoint→local checkpoint/usage spool 五段排查。先确认 provider usage event UUID 是否已持久化，再决定是否重新执行某阶段；只有 checkpoint 明确缺失时才允许重做 provider。恢复成功后必须对账 provider request ID、唯一 event UUID、同一 job ID、quota consumed 一次及 terminal cleanup。
+1. First check the Supabase/Redis status in `/api/health` and `/api/health/ai`, then look at `generation_jobs` queued/stage/lease/attempt/error and BullMQ/the reconciler; the Postgres job is the fact, and never patch state by hand in Redis.
+2. Layer provider problems by purpose/model/request ID/duration/token/cost/ZDR; never read or copy file content, prompts, answers, or signed URLs. ZDR unavailable, bad schemas, or safety uncertain all keep failing closed and release the reservation.
+   For `OPENROUTER_RATE_LIMIT`, first check the bounded attempt count, backoff configuration, the provider's `Retry-After`, and same-model provider failover; never add cross-model fallback, switch models, or remove ZDR/deny/require-parameters to make the gate green. If the same fixed sample still fails after bounded retries, keep the feature off and rerun the real gate after the provider window recovers.
+   For `AI_EXAM_VALIDATION_FAILED`, only inspect `initialGate/finalGate`, the structural code, semantic category, and expected/actual question counts/total marks; never log reviewer issues, questions, answers, courseware, or provider bodies for troubleshooting. `ANSWERABILITY`/grounding failures on a thin fixture should be fixed by correcting the fixed sample with no personal data and rerunning the gate, and do not equal a worker outage; the user reservation should still be released. If only `SOURCE_REFERENCE` remains after the initial pass or the repair, check whether the output citations fall within the DocumentIR block allowlist, whether the locators come from the server, and whether question IDs are stable; when the allowlist has a single block, it may be normalized to that single source and must still pass the semantic review, and with several blocks it must not be guessed. Never turn off citation validation or skip the second semantic review after repair.
+3. For disk/Office problems, check container RSS/swap, cgroup OOM, orphans under `/tmp/nalanda-material-ai`, and the watermark; after turning off the flag, only clean directories confirmed to be older than an hour and not belonging to an active job.
+4. Reconcile exam problems by attempt/revision/operation UUID/deadline; when Redis loses a delayed task, the next API request must force the expiry submission. When the grading allowance is used up, keep `submitted_ungraded` and never fake completed.
+5. After the fix, use a fixture with no personal data to verify one full generation, Notes, objective/subjective grading, deletion, and temporary directory cleanup; record the real provider smoke and the fake Playwright separately.
+6. Troubleshoot candidate callback/recovery incidents across five segments: transport → accept → callback → DB checkpoint → local checkpoint/usage spool. First confirm whether the provider usage event UUID has been persisted before deciding whether to rerun a stage; only redo a provider call when the checkpoint is clearly missing. After a successful recovery, reconcile the provider request ID, the unique event UUID, the same job ID, quota consumed exactly once, and terminal cleanup.
 
 ### 6.5 Courses / Azure / Course Market
 
-1. 先按总开关→分享/市场/音频预热/语音子开关缩小影响面；优先关闭 `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` 停止新预热，必要时再开 speech circuit。关闭语音不会阻断文本学习，关闭市场不会删除私有课程。
-2. 使用 request 时间、稳定 `code`、脱敏 user ID hash、course/session ID 定位；不得记录 token、词表正文、翻译、WAV、音素原始响应或 Azure key。
-3. Azure 异常先比较 queue wait、quota reservation、provider duration、Storage hit/miss。确认 provider/预算问题后打开 `AZURE_SPEECH_CIRCUIT_OPEN=true` 并重启 API；验证浏览器朗读降级和 attempt/wrong_count 未因供应商失败增加。不要把 Storage 网络错误当对象 miss 触发重复生成。
-4. 成长异常先关闭 Courses 总开关或相关 release，查询同一 `learning-course-completed:<user>:<fingerprint>` 的 entries/state；不得删除账本或手改 Profile 投影。
-5. 举报只触发人工核查。紧急隐藏必须由配置管理员走 API，填写原因并确认 moderation action；恢复同样留痕。
-6. answer 同步异常按 `sessionId + revision + attemptId` 对账 append-only fact/response snapshot；重复 UUID 不应增加 wrong_count，409 后客户端只能用最新 snapshot 重放仍匹配题目。不得直接改 session state。
-7. 修复后依次验证 owner、会话 snapshot、outbox 重放、音频 manifest/Storage hit、日程、points 幂等、撤销分享和市场克隆；记录 flags 变更、影响窗口和补偿决定。
+1. Narrow the impact first via the master switch → sharing/market/audio prewarm/speech sub-switches; prefer turning off `FEATURE_LEARNING_AUDIO_PREWARM_ENABLED` to stop new prewarming, and open the speech circuit if needed. Turning off speech doesn't block text learning, and turning off the market doesn't delete private courses.
+2. Locate with the request time, the stable `code`, a redacted user ID hash, and course/session IDs; never log tokens, word lists, translations, WAVs, raw phoneme responses, or the Azure key.
+3. For Azure anomalies, first compare queue wait, quota reservations, provider duration, and Storage hit/miss. Once a provider/budget problem is confirmed, set `AZURE_SPEECH_CIRCUIT_OPEN=true` and restart the API; verify the browser speech degradation and that attempt/wrong_count did not increase because of provider failures. Don't treat Storage network errors as object misses that trigger duplicate generation.
+4. For growth anomalies, first turn off the Courses master switch or the related release, and query the entries/state for the same `learning-course-completed:<user>:<fingerprint>`; never delete the ledger or hand-edit the Profile projection.
+5. Reports only trigger manual review. Emergency hiding must be done by a configured administrator through the API with a reason and a confirmed moderation action; restoring is recorded the same way.
+6. Reconcile answer sync anomalies by `sessionId + revision + attemptId` against the append-only facts/response snapshots; a duplicate UUID should not increase wrong_count, and after a 409 the client may only replay still-matching questions with the latest snapshot. Never edit the session state directly.
+7. After the fix, verify in order: owner, session snapshot, outbox replay, audio manifest/Storage hit, schedules, points idempotency, share revocation, and market cloning; record flag changes, the impact window, and compensation decisions.
 
-### 6.6 Redis、限流与 Points 审核
+### 6.6 Redis, rate limiting, and points moderation
 
-1. 先区分 nginx 429、Nest 429、`RATE_LIMIT_UNAVAILABLE` 和 `/api/health` Redis 503；保存 route group/rule/时间桶，不收集原始邮箱、IP 或正文。
-2. 检查 Redis container health、PING、AOF error、内存和 `noeviction`。密码/HMAC 不得出现在命令输出；凭据不一致按[密钥轮换](./SECRET_ROTATION.md)处理。
-3. Redis 故障时保持写/注册/成本路径 fail-closed；只允许代码已分类的私有纯读取 fail-open。不能临时关闭 interceptor、扩大 trust proxy 或把 service-role 放到客户端。
-4. points 异常按 business key 对账 claim → state → entries → Profile projection；禁止改 Profile、claim 或历史 entry。需要处置时只走管理 API，reason/case reference 必填。
-5. 协同 scanner 失败只影响新信号，不应冻结用户或冲正。恢复锁/数据库后重跑；pending signal 由人工 review，阈值命中不是违规结论。
-6. 恢复后验证标准 429 headers、相同用户并发窗口、private read 降级、scanner 单锁、ledger projection，并记录误限流和受影响窗口。
+1. First distinguish nginx 429, Nest 429, `RATE_LIMIT_UNAVAILABLE`, and the `/api/health` Redis 503; keep the route group/rule/time bucket, and never collect raw emails, IPs, or content.
+2. Check Redis container health, PING, AOF errors, memory, and `noeviction`. Passwords/HMAC must never appear in command output; handle credential mismatches per [secret rotation](./SECRET_ROTATION.md).
+3. During a Redis outage, keep write/sign-up/cost paths failing closed; only the private pure reads the code already classifies may fail open. Never temporarily turn off the interceptor, widen trust proxy, or put service-role in the client.
+4. Reconcile points anomalies per business key: claim → state → entries → Profile projection; never edit the Profile, claims, or historical entries. When action is needed, only use the admin API, with the reason/case reference required.
+5. A coordination scanner failure only affects new signals and should never freeze users or reverse rewards. Rerun after the lock/database recovers; pending signals are reviewed manually, and a threshold hit is not a violation finding.
+6. After recovery, verify the standard 429 headers, concurrent windows for the same user, private read degradation, the scanner's single lock, and the ledger projection, and record false limiting and the affected window.
 
-## 7. 日志规范（目标）
+## 7. Logging conventions (target)
 
-API/AI 后续应输出单行结构化 JSON：
+The API/AI should emit single-line structured JSON:
 
-| 字段 | 说明 |
+| Field | Description |
 |---|---|
-| `timestamp`, `level`, `service`, `environment`, `version` | 基本上下文 |
-| `request_id`, `trace_id` | 跨 nginx/API/AI 关联；由入口生成/透传 |
-| `method`, `route_template`, `status_code`, `duration_ms` | HTTP 指标来源，route 使用模板避免高基数 |
-| `user_id_hash` | 必要时用不可逆/按环境盐化标识，不记录邮箱 |
-| `error_code`, `exception_type` | 稳定错误分类，不直接记录输入正文 |
+| `timestamp`, `level`, `service`, `environment`, `version` | Basic context |
+| `request_id`, `trace_id` | Correlation across nginx/API/AI; generated/propagated at the entry point |
+| `method`, `route_template`, `status_code`, `duration_ms` | Source of HTTP metrics; routes use templates to avoid high cardinality |
+| `user_id_hash` | When needed, an irreversible/per-environment salted identifier; never the email |
+| `error_code`, `exception_type` | Stable error classification, never the input content directly |
 | `dependency`, `dependency_status`, `retry_count` | Supabase/AI/Redis/Stripe |
-| `route_group`, `rule`, `actor_hmac`, `retry_after_seconds` | 限流聚合；actor 只能是独立 secret 生成的 HMAC，禁止原始 IP/email |
+| `route_group`, `rule`, `actor_hmac`, `retry_after_seconds` | Rate-limit aggregation; the actor may only be an HMAC generated with a separate secret, never a raw IP/email |
 
-禁止记录：password、Authorization/cookie、Supabase access/refresh token、service-role/JWT/OpenRouter/internal token、数据库连接串、签名 URL、完整课件/prompt/模型原始响应/答案/笔记/反馈正文、支付卡数据。对 email、文件名、IP 和 user agent 设定用途、采样与保留期。
+Never log: passwords, Authorization/cookies, Supabase access/refresh tokens, service-role/JWT/OpenRouter/internal tokens, database connection strings, signed URLs, full courseware/prompts/raw model responses/answers/notes/feedback content, or payment card data. Define the purpose, sampling, and retention period for emails, file names, IPs, and user agents.
 
-Courses 另禁止记录：分享明文 token/token hash、完整词表/翻译、用户 WAV、Azure 原始识别 payload。可记录 route template、稳定 error code、哈希用户、course/session UUID、stage、字节/时长、provider latency、聚合 score 和估算 micro-USD；音素内容只有用户请求内返回和受限学习事实需要时才保存。
+Courses additionally forbids logging: plaintext share tokens/token hashes, full word lists/translations, user WAVs, and raw Azure recognition payloads. It may log route templates, stable error codes, hashed users, course/session UUIDs, stage, bytes/duration, provider latency, aggregate scores, and estimated micro-USD; phoneme content is only kept where it is returned within the user's request and where restricted learning facts need it.
 
-## 8. 目标仪表盘
+## 8. Target dashboards
 
-最低应有：
+At minimum:
 
-1. **用户入口**：站点/API availability、latency、HTTP status、地域探测、TLS/DNS。
-2. **API**：RPS、p50/p95/p99、5xx、route/error code、restarts、CPU/memory。
-3. **Supabase**：Auth 成败、PostgREST 错误/延迟、DB 连接/CPU/storage、慢查询、Storage 错误/容量。
-4. **业务**：注册/活跃用户、资料上传成功率、任务完成、社区写入；只用聚合数据。
-5. **Courses**：创建/保存、snapshot p50/p95、attempt commit p50/p95、revision conflict/replay、浏览器 outbox 年龄、候补轮次、复习/熟练/错误、+20 指纹与徽章；避免 term 高基数标签。
-6. **Speech/Market**：queue depth/oldest wait/lease retry、Azure generation p95、Storage/browser cache hit、ready-object miss、429/熔断、字符/估算/实际账单差异、评分 p95；publication/clone/report/action 与处理年龄。
-7. **数据保护**：备份年龄/大小/校验、恢复演练、RLS 安全测试、异常函数权限。
-8. **请求保护/Points**：Redis health/memory/AOF、decision latency、429/503/degraded、审计桶、pending signal 年龄、cap claim 与 ledger/Profile projection 差异。
-9. **发布**：Git SHA、deploy 时间、失败、变更前后错误率。
-10. **AI**：队列深度/等待、202 accept、callback backlog、任务成功/重试/超时分类、checkpoint stage/age、resume expiry、usage spool/replay、唯一 event UUID、token/费用、模型/提示词版本、exam/graph/Q&A schema/引用与质量评测。
-11. **支付（启用后）**：webhook 延迟/失败/重放、订单与 Stripe 对账差异、退款、账本不平。
+1. **User entry**: site/API availability, latency, HTTP status, regional probes, TLS/DNS.
+2. **API**: RPS, p50/p95/p99, 5xx, route/error code, restarts, CPU/memory.
+3. **Supabase**: Auth success/failure, PostgREST errors/latency, DB connections/CPU/storage, slow queries, Storage errors/capacity.
+4. **Business**: sign-ups/active users, material upload success rate, task completion, community writes; aggregate data only.
+5. **Courses**: create/save, snapshot p50/p95, attempt commit p50/p95, revision conflicts/replays, browser outbox age, retry rounds, review/mastery/errors, +20 fingerprints and badges; avoid high-cardinality term labels.
+6. **Speech/Market**: queue depth/oldest wait/lease retries, Azure generation p95, Storage/browser cache hit, ready-object misses, 429/circuit, characters/estimated vs. actual billing differences, scoring p95; publications/clones/reports/actions and their handling age.
+7. **Data protection**: backup age/size/verification, recovery drills, RLS security tests, abnormal function permissions.
+8. **Request protection/points**: Redis health/memory/AOF, decision latency, 429/503/degraded, audit buckets, pending signal age, cap claims, and ledger/Profile projection differences.
+9. **Releases**: Git SHA, deploy time, failures, error rate before and after changes.
+10. **AI**: queue depth/wait, 202 accept, callback backlog, job success/retry/timeout classification, checkpoint stage/age, resume expiry, usage spool/replay, unique event UUIDs, tokens/cost, model/prompt version, exam/graph/Q&A schema/citations, and quality evaluation.
+11. **Payments (once enabled)**: webhook latency/failures/replays, order vs. Stripe reconciliation differences, refunds, unbalanced ledgers.
 
-## 9. 值班与升级路径
+## 9. On-call and escalation path
 
-当前仓库没有指定 owner 或 pager。上线持续告警前必须在团队系统中填写：
+The repository currently names no owner or pager. Before turning on continuous alerting, fill in the following in the team's system:
 
 ```text
 Primary engineering on-call:
@@ -297,15 +298,15 @@ Status page / incident channel:
 Supplier support contacts:
 ```
 
-P1 必须指定 incident commander、固定更新节奏并保留时间线；P2 要有 owner 和截止时间；P3 进入可追踪 backlog。恢复后 2 个工作日内完成 P1/P2 复盘，动作必须有 owner/期限/验证方式。
+A P1 must have an incident commander, a fixed update cadence, and a kept timeline; a P2 needs an owner and a deadline; a P3 goes into a trackable backlog. Complete P1/P2 retrospectives within 2 business days of recovery, with every action having an owner/deadline/verification method.
 
-## 10. 上线门禁
+## 10. Launch gates
 
-- 外部探测和至少一个通知渠道已验证；
-- API 结构化日志/错误追踪不泄密；
-- 关键告警有 runbook、owner、去重和恢复通知；
-- staging 人工触发过测试告警；
-- `/api/health` 拆分 liveness/readiness，readiness 真正检查必要依赖且有超时；
-- 备份年龄与恢复演练已告警；
-- 新 AI/支付/审核模块的质量、成本、队列、账本告警在生产流量前完成。
-- Courses 私有 beta 前至少有 route/error、DB 容量、成长幂等和复习积压信号；真实 Azure 前有成本/429/provider 告警与一键 circuit；分享/市场前有举报阈值路由和管理员动作审计。
+- External probes and at least one notification channel are verified;
+- API structured logs/error tracking leak no secrets;
+- Key alerts have runbooks, owners, deduplication, and recovery notifications;
+- Test alerts have been triggered manually in staging;
+- `/api/health` is split into liveness/readiness, and readiness really checks the required dependencies with timeouts;
+- Backup age and recovery drills are alerted on;
+- Quality, cost, queue, and ledger alerts for new AI/payment/moderation modules are complete before production traffic.
+- Before the Courses private beta, there are at least route/error, DB capacity, growth idempotency, and review backlog signals; before real Azure, cost/429/provider alerts and a one-click circuit; before sharing/market, report threshold routing and admin action auditing.

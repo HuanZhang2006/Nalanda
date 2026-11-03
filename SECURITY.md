@@ -1,141 +1,142 @@
-# Nalanda 安全策略
+# Nalanda Security Policy
 
-> **本文内容：**说明 Nalanda 的漏洞报告方式、当前安全边界、已知风险、开发与发布安全基线，以及安全事件响应要求。  
-> **作用：**为研究者、贡献者和运维人员提供唯一的安全协作入口，避免把密钥、漏洞细节或用户数据暴露在公开渠道。  
-> **何时更新：**认证/授权、RLS、上传、AI、支付、部署拓扑或第三方处理者变化时；发现或修复高风险问题时；至少每季度复核一次。  
-> **状态基线：**2026-08-22。生产数据库已受保护应用到 0053；0052–0053 已完成时间列 Stage B，authenticated 不再能 UPDATE `posts.updated_at` 或 `study_tasks.done_at`。同一 run 的最新应用候选因真实 Materials AI PPTX gate 两次失败而自动恢复稳定 release，不能据数据库版本声称候选 UI 或供应商能力已上线。字段收口、points 上限/审核/协同信号和 Redis 限流仍有效。本文明确区分代码、数据库、应用与供应商上线状态。
+> **About this document**
+> - **Contents**: Describes how to report vulnerabilities to Nalanda, the current security boundaries, known risks, the development and release security baseline, and security incident response requirements.
+> - **Purpose**: Gives researchers, contributors, and operators a single entry point for security collaboration, so secrets, vulnerability details, or user data are never exposed in public channels.
+> - **When to update**: When authentication/authorization, RLS, uploads, AI, payments, the deployment topology, or third-party processors change; when a high-risk issue is found or fixed; and at least once a quarter.
+> - **Status baseline**: 2026-08-22. The production database has a protected application up to 0053; 0052–0053 completed the timestamp-column Stage B, so authenticated users can no longer UPDATE `posts.updated_at` or `study_tasks.done_at`. In the same run, the latest app candidate automatically restored the stable release after the real Materials AI PPTX gate failed twice, so the database version cannot be used to claim the candidate UI or provider capabilities are live. Field lockdowns, points caps/moderation/coordination signals, and Redis rate limiting remain in effect. This document clearly separates code, database, app, and provider launch status.
 
-> **Unreleased 应用变更：**0046–0055 数据库已应用；0056–0057 候选退役 Ox Alpha 并把 Luna 完成约束改为 GPT-6 Luna + Azure usage。对应应用包含 service-role-only checkpoint/usage/知识问答/任务清理/图谱布局、Luna 原文件路径和 24 小时恢复 TTL。Luna 只有实时 catalog 与实际 provider gate 均合规后才打开，否则稳定禁用且不放宽 ZDR。
+> **Unreleased app changes:** the 0046–0055 database changes are applied; the 0056–0057 candidate retires Ox Alpha and changes Luna's completion constraint to GPT-6 Luna + Azure usage. The corresponding app includes service-role-only checkpoint/usage/knowledge Q&A/job cleanup/graph layout, the Luna native-file path, and a 24-hour recovery TTL. Luna is only turned on when both the live catalog and the actual provider gate are compliant; otherwise it stays disabled and ZDR is never relaxed.
 
-## 1. 支持范围
+## 1. Supported scope
 
-当前仅维护 `main` 分支的最新提交以及生产站点 `nalanda.online` 对应版本。原型目录 `app/` 仅作为设计基线，不接受其作为生产安全边界。历史提交、个人 fork、本地修改版和未部署的 `infra/hybrid-2g` 脚手架不在支持范围内，但其中可复现到当前代码的问题仍欢迎报告。
+Only the latest commit on `main` and the version behind the production site `nalanda.online` are maintained. The prototype directory `app/` is only a design baseline and is not accepted as a production security boundary. Historical commits, personal forks, locally modified versions, and the undeployed `infra/hybrid-2g` scaffolding are out of scope, but issues in them that reproduce against the current code are still welcome.
 
-## 2. 私密报告漏洞
+## 2. Report vulnerabilities privately
 
-请优先使用仓库的 [GitHub Private Vulnerability Reporting](https://github.com/1590703336/Nalanda/security/advisories/new)。如果该入口不可用，请通过仓库所有者提供的私密联系方式报告，**不要创建公开 Issue、PR 或社区帖子**。
+Please use the repository's [GitHub Private Vulnerability Reporting](https://github.com/1590703336/Nalanda/security/advisories/new) first. If that is unavailable, report through a private contact method provided by the repository owner — **do not open a public issue, PR, or community post**.
 
-报告至少包含：
+A report should include at least:
 
-- 受影响的提交、URL、表、Storage bucket 或接口；
-- 前置权限、复现步骤、预期与实际结果；
-- 影响判断（越权读取/写入、账户接管、密钥泄露、资金或 AI 配额损失等）；
-- 最小化的验证证据；请删除真实用户 PII、访问令牌和密钥；
-- 如已知，提供缓解建议，但不要在生产环境扩大验证范围。
+- The affected commit, URL, table, Storage bucket, or endpoint;
+- Required privileges, reproduction steps, and expected vs. actual results;
+- An impact assessment (unauthorized read/write, account takeover, secret leakage, loss of money or AI quota, and so on);
+- Minimal verification evidence, with real user PII, access tokens, and secrets removed;
+- Mitigation suggestions if known — but do not widen the scope of verification on production.
 
-维护者目标是在 3 个工作日内确认收到、7 个工作日内给出初步分级。修复时间取决于严重度和第三方依赖。未经双方约定，请勿在修复发布前披露细节。
+Maintainers aim to acknowledge receipt within 3 business days and give an initial triage within 7 business days. Fix times depend on severity and third-party dependencies. Unless both sides agree, please do not disclose details before the fix is released.
 
-### 安全研究边界
+### Security research boundaries
 
-允许对自己拥有的测试账户和数据进行善意、低影响验证。禁止：访问或修改他人数据、持久化控制、拒绝服务、批量注册/垃圾内容、社工、扫描第三方基础设施、下载真实用户文件、触发真实支付或让第三方承担显著费用。若验证可能越过这些边界，应先取得书面许可。
+Good-faith, low-impact verification against test accounts and data you own is allowed. Forbidden: accessing or modifying other people's data, persistent control, denial of service, mass registration/spam, social engineering, scanning third-party infrastructure, downloading real user files, triggering real payments, or causing third parties significant cost. If verification might cross these boundaries, get written permission first.
 
-## 3. 当前安全边界（已实现）
+## 3. Current security boundaries (implemented)
 
-| 区域 | 当前事实 | 不应作出的假设 |
+| Area | Current facts | Assumptions not to make |
 |---|---|---|
-| 认证 | Supabase Auth；NestJS 使用 JWKS，旧项目可回退 HS256；两条路径均校验签名、issuer 与 authenticated audience | 并非全部业务都经过 NestJS |
-| 注册 | `/api/auth/register` 使用 service-role 创建已确认用户；生产 0039 叠加 nginx + Redis HMAC IP/email 限流与审计 | 仍不提供验证码或邮件所有权验证 |
-| 业务数据 | 多数 Web 业务通过 `supabase-js` 直连 PostgREST/Storage | 前端校验不是安全边界，必须依赖 RLS/约束 |
-| 私有资料 | `courses`、`materials` 和 `materials` bucket 按 `auth.uid()` 隔离 | 文件元数据删除不保证对象删除事务化 |
-| 社区 | 帖子/评论对已认证用户公共可读；生产 0039 把帖子写面限制为内容列并用 trigger 维护 owner/快照/计数/时间；社区媒体 bucket 当前为 public | 公共媒体 URL 不具有撤回、鉴权或防爬保证 |
-| Feedback / Schedule | 生产 0039 使 Feedback 仅 owner 新增/读取，并对 goal/task 的 course/material/goal owner 及 `done_at` 做 trigger 校验 | 完整账号删除/Storage 编排仍不存在 |
-| Profile / points | 0008 用列级授权保护经济/等级/streak；生产 0039 增加冻结日窗口、永久 claim、审核冲正与只标记协同检测 | 不等于 credits/VIP/支付商业账本或自动内容质量判断 |
-| Courses API | NestJS bearer + owner 校验，写入经 service-role 专用事务 RPC；客户端只读私有行，传播公开读取经 API 脱敏；生产总 history 已到 0043 | service-role、feature flag 或 API 缺陷仍可绕过 RLS；provisional UI/倒计时不能作为成长事实 |
-| Redis 请求保护 | 生产 0039 为 private/password/AOF/noeviction，Lua 窗口键只用 user UUID 或 HMAC IP/email；Redis 不存 points 事实 | PING 不证明 AOF/容量，HMAC 轮换会重置 actor 窗口，Redis 不能替代 PostgreSQL 审计 |
-| 分享/课程市场 | token 只存 SHA-256，publication 快照不可变，免费克隆独立且不能再传播，举报/管理员动作留事实 | 持链接者即可预览；当前只有最小治理，无申诉/通用审核台；Course Market 不代表 Note Market 已真实 |
-| Azure Speech | key 仅 API；reference 从 owner word/session 推导；WAV≤2 MB/8秒且格式校验；录音不存储；生产 Japan East 基础 gate 与 0015–0016 队列/重复词/裁剪评分 gate 已通过 | PR/Playwright 自动测试仍为 fake；一次发布 gate 不是持续可用率证明，TTS cache 不是用户录音 |
-| OpenRouter 翻译前测 | API 从 owner session/word 推导参考翻译；同 UUID/revision 租约与幂等；用户答案只存 hash；新表/RPC service-role-only；生产真实 gate 已通过 | fake/单次真实 smoke 都不是持续语义质量证明，模型输出不能直接改成长事实 |
-| API 其它能力 | health、register、me；旧业务多数直连 Supabase | Courses AI 文件导入、支付、钱包和通用管理后台安全控制尚不存在 |
-| Materials AI | 生产 0041–0043 为 owner-only Nest API、service-role 事务、Postgres durable job、BullMQ UUID 投递和内网 token FastAPI；OpenRouter 固定 ZDR 模型与 strict schema | 注入分类、ZDR、结构化输出或单次真实门禁都不能提供数学上的绝对安全保证 |
-| Luna 原文件（候选） | inline base64、不使用 Files API；PDF native parser；固定 GPT-6 Luna + Azure-only/no fallback；响应 upstream 与 usage ledger 双重验证；独立 flag/格式 allowlist | 模型“支持 file”不等于每种 Office/文本格式已通过真实门禁；不能自动转换或降级 |
-| 支付 | 未实现 Stripe、订单、账本、退款和分成 | `profiles.credits`/`vip_until` 不是可信钱包或订阅系统 |
+| Authentication | Supabase Auth; NestJS uses JWKS, with an HS256 fallback for older projects; both paths check signature, issuer, and the authenticated audience | Not every business path goes through NestJS |
+| Sign-up | `/api/auth/register` uses service-role to create confirmed users; production 0039 adds nginx + Redis HMAC IP/email rate limiting and auditing | Still no CAPTCHA or email ownership verification |
+| Business data | Most Web business logic talks to PostgREST/Storage directly through `supabase-js` | Frontend validation is not a security boundary; RLS/constraints must be relied on |
+| Private materials | `courses`, `materials`, and the `materials` bucket are isolated by `auth.uid()` | Deleting file metadata does not guarantee transactional object deletion |
+| Community | Posts/comments are publicly readable by authenticated users; production 0039 limits post writes to content columns and maintains owner/snapshot/counters/time with triggers; the community media bucket is currently public | Public media URLs offer no revocation, authorization, or anti-scraping guarantees |
+| Feedback / Schedule | Production 0039 makes Feedback owner insert/read only and validates goal/task course/material/goal ownership and `done_at` with triggers | Full account deletion/Storage orchestration still does not exist |
+| Profile / points | 0008 protects economy/level/streak with column grants; production 0039 adds frozen daily windows, permanent claims, moderation reversals, and flag-only coordination detection | This is not a credits/VIP/payment commercial ledger or automatic content-quality judgement |
+| Courses API | NestJS bearer + owner checks, writes through dedicated service-role transaction RPCs; clients only read private rows, and public distribution reads are redacted by the API; the overall production history is at 0043 | Service-role, feature flag, or API bugs can still bypass RLS; provisional UI/countdowns are not growth facts |
+| Redis request protection | Production 0039 runs private/password/AOF/noeviction, and Lua window keys only use user UUIDs or HMAC IP/email; Redis stores no points facts | PING does not prove AOF/capacity, HMAC rotation resets actor windows, and Redis cannot replace PostgreSQL auditing |
+| Sharing/course market | Tokens are stored only as SHA-256, publication snapshots are immutable, free clones are independent and cannot be redistributed, and reports/admin actions are recorded as facts | Anyone with the link can preview; there is only minimal governance, with no appeals/general moderation console; Course Market does not mean Note Market is real |
+| Azure Speech | The key stays in the API; the reference is derived from the owner's word/session; WAV ≤ 2 MB/8 seconds with format validation; recordings are not stored; the production Japan East base gate and the 0015–0016 queue/repeated-word/trimmed-scoring gate have passed | PR/Playwright automation is still fake; a one-off release gate is not proof of ongoing availability, and the TTS cache is not user recordings |
+| OpenRouter translation pre-test | The API derives reference translations from the owner's session/word; leases and idempotency by UUID/revision; user answers are stored only as hashes; new tables/RPCs are service-role-only; the real production gate has passed | Neither fakes nor a single real smoke prove ongoing semantic quality, and model output cannot directly become a growth fact |
+| Other API capabilities | health, register, me; most older business logic talks to Supabase directly | Security controls for Courses AI file import, payments, wallets, and a general admin back office do not exist yet |
+| Materials AI | Production 0041–0043: an owner-only Nest API, service-role transactions, durable Postgres jobs, BullMQ UUID delivery, and an internal-token FastAPI; OpenRouter with fixed ZDR models and strict schemas | Injection classification, ZDR, structured output, or a single real gate cannot provide an absolute mathematical safety guarantee |
+| Luna native files (candidate) | Inline base64, no Files API; PDF native parser; fixed GPT-6 Luna + Azure-only/no fallback; response upstream and usage ledger double-checked; separate flag/format allowlist | A model "supporting files" does not mean every Office/text format passed real gates; no automatic conversion or downgrade |
+| Payments | Stripe, orders, ledgers, refunds, and revenue share are not implemented | `profiles.credits`/`vip_until` are not a trustworthy wallet or subscription system |
 
-## 4. 已修复控制与开放风险
+## 4. Fixed controls and open risks
 
-- 候选代码已移除 API 对长时间 worker response headers 的依赖：202 接收后只允许持有内部 token 的 worker 回调。provider usage 先写 0600/0700 本地 spool，再幂等写账本；已验证断点可能在 TTL 内包含私有 DocumentIR/产物，禁止备份、日志输出或跨 job 复用。
-- 知识节点提问只由 API 从 owner 的 Note 读取 graph/DocumentIR；浏览器不能提交模型、key、source blocks 或回调地址。问题、focus、文件文本与图片一律是不可信数据，确定性信号和两次安全审查继续失败关闭。
-- DocumentIR 首轮审查只可把局限在解析器已声明 failure 范围的 `uncertain` 送入隔离视觉恢复；已解析文本/focus 的确定性信号、未知位置或 `malicious` 立即拒绝。视觉内容拼回后必须再次严格审查，最终 `uncertain/malicious` 绝不进入图谱或试卷生成。该规则避免把“尚未读取”误当成“已确认恶意”，但不把不可见内容提前标为安全。
-- 候选 Delete/Cancel 先在数据库原子结算额度并进入 `deleting`，再由带内部 token 的 worker cancel/purge 清 HTTPX、Office 进程组、checkpoint、usage spool 和 0700 目录；usage 未持久落账或清理未确认时不得硬删/从 UI 隐藏。
+- Candidate code removes the API's dependence on long worker response headers: after the 202 acceptance, only workers holding the internal token may call back. Provider usage is written to a 0600/0700 local spool first, then idempotently to the ledger; validated checkpoints may contain private DocumentIR/artifacts within the TTL and must never be backed up, logged, or reused across jobs.
+- Knowledge-node questions are read only by the API from the owner's Note graph/DocumentIR; the browser cannot submit models, keys, source blocks, or callback URLs. Questions, focus, file text, and images are all untrusted data, and deterministic signals and the two safety reviews keep failing closed.
+- In DocumentIR's first review, only `uncertain` results confined to regions the parser declared as failures may be sent to isolated visual recovery; deterministic signals in parsed text/focus, unknown locations, or `malicious` are rejected immediately. Visual content must be strictly reviewed again after being stitched back, and a final `uncertain/malicious` never enters graph or test-paper generation. This rule avoids treating "not yet read" as "confirmed malicious", without marking invisible content safe in advance.
+- Candidate Delete/Cancel first settles the allowance atomically in the database and enters `deleting`, then the internal-token worker cancel/purge cleans up HTTPX, the Office process group, checkpoints, the usage spool, and the 0700 directory; a job must not be hard-deleted or hidden from the UI before its usage is durably recorded and cleanup is confirmed.
 
-仓库的 0008 migration 已关闭最初三项 P0：
+The repository's 0008 migration closed the original three P0s:
 
-1. authenticated 只能更新 Profile 的 `username/university/major/year/language/timezone`，且 timezone 必须合法；`credits/points/level/level_name/vip_until/streak/streak_date` 由列级授权和防御触发器保护。
-2. `_add_points` 已对客户端和 service-role 撤权；`_notify`、`_set_point_event` 及 trigger helpers 已撤销客户端 EXECUTE，并固定 `search_path`。
-3. 点赞、评论、原创/转发和任务奖励写入 append-only `point_entries`，以持久业务键和 `point_event_states` 串行化；取消/删除冲正，重做只恢复同一净额。客户端不能写账本/状态表。
+1. Authenticated users can only update Profile's `username/university/major/year/language/timezone`, and timezone must be valid; `credits/points/level/level_name/vip_until/streak/streak_date` are protected by column grants and a defensive trigger.
+2. `_add_points` is revoked from clients and service-role; `_notify`, `_set_point_event`, and the trigger helpers have client EXECUTE revoked and a pinned `search_path`.
+3. Like, comment, original post/repost, and task rewards are written to the append-only `point_entries`, serialized with durable business keys and `point_event_states`; un-completion/deletion is reversed, and redoing only restores the same net amount. Clients cannot write the ledger/state tables.
 
-这些控制由双用户 RLS 回归和 0007→最新历史升级覆盖。0011–0038 已按受保护流程进入生产：Courses 服务端工作流撤销客户端 EXECUTE，禁止客户端写内容/progress/badges/points，限制公开传播面；answer attempt 绑定 owner/session/revision 和 UUID 幂等键，持久音频队列、翻译评判与 STT 配额表不向客户端开放，新增 RPC 仅 service-role 可执行。发布事实见[数据库发布记录](docs/operations/DATABASE_RELEASE_ROLLBACK.md)。
+These controls are covered by two-user RLS regressions and the 0007→latest history upgrade. 0011–0038 entered production through the protected process: Courses server workflows revoke client EXECUTE, forbid clients from writing content/progress/badges/points, and limit the public distribution surface; answer attempts are bound to owner/session/revision with UUID idempotency keys, the durable audio queue, translation judgement, and STT quota tables are not exposed to clients, and new RPCs are executable only by service-role. Release facts are in the [database release records](docs/operations/DATABASE_RELEASE_ROLLBACK.md).
 
-仍开放的高优先级风险：
+Open high-priority risks:
 
-1. 注册接口持有 service-role 并直接确认邮箱；生产 0039 已增加来源/邮箱限流和滥用审计，但仍缺验证码、邮箱所有权证明和更完整反自动化。
-2. NestJS 已按 `CORS_ALLOWED_ORIGINS`/`PUBLIC_ORIGIN` 返回跨域许可；仍需在每次新增正式域名、preview 域名或 cookie 鉴权前复核 allowlist 与凭据策略。
-3. 帖子、Feedback、Schedule 和 points 的 0039–0040 修复已完成受保护第一阶段发布与真实 RLS/权限验证。2026-08-22 go/no-go 确认兼容期超过 24 小时且受支持 Web 不再提交两个时间列；最终撤权已由 0052–0053 生产应用并由 0053 失败关闭验证，原预留 0044–0045 没有补插历史。
-4. 社区媒体为公开 bucket；删除帖子不会自动证明附件已删除，上传类型、大小、恶意文件和孤儿对象治理不完整。
-5. 迁移前 points 缓存无法证明来源；`legacy_opening=11` 已由 0009 append-only reversal 归零。生产 0039 只承认存在首条正向业务 transition 的 grandfather 奖励；0008 回填占位造成的历史负账以单独 append-only 补偿归零，不能改写旧分录。协同阈值只按交互结构标记、不会自动处罚，也没有语义垃圾判断、完整审核后台或申诉；points 仍不是商业货币或抗作弊信誉凭证。
-6. `credits`/`vip_until` 已锁为服务端字段，却仍无订单、credit/VIP 账本或 Stripe 事实链，不能启用真实商业权益。
-7. 仓库曾存在本地环境文件；任何密钥一旦被提交、进入日志或共享终端输出，都必须按泄露处理，删除文件不能替代轮换。
-8. NestJS 使用 service-role 访问 Courses。生产 0039 的通用 request limit 在 Redis 故障时对注册、写入、公开 Courses 和成本路径 fail-closed、私有纯读取 fail-open；路由分类、trust proxy、HMAC 日志和合法流量误限流必须持续观察，不能通过关闭 interceptor 恢复。
-9. 课程分享是 bearer-link 模型，持链接者可读取当前词表；作者必须能撤销/轮换。市场 v1 的管理员来自环境 UUID 列表，尚无通用 RBAC/申诉；变更必须审计。
-10. Azure 录音虽然不持久化，但会在请求内转发第三方；供应商条款、区域、DPA/留存与真实成本告警必须在 production flag 前确认。供应商失败不得累计用户错误。
-11. OpenRouter 翻译前测会在用户显式开启后转发当前英文、参考翻译与用户键入译文；仍须完成并持续复核其留存/训练/跨境/子处理者条款。模型误判是教学风险；供应商失败或非法结构化输出不得累计错误，语义基线失败应关闭最窄 flag。
-12. Materials AI 会将解析后的完整文件内容送 DeepSeek，并把失败页/区域图像送 MiMo；只有用户逐账号接受版本化第三方处理说明后才能创建任务。`malicious/uncertain` 注入必须拒绝，主题/文件/答案均作为不可信数据隔离；不能把模型分类当唯一防线或通过 fallback 路由绕过 ZDR。
-13. FastAPI 每任务 0700 临时目录和 `finally`/orphan 清理只处理过程文件；`ai_material_parse_cache` 与生成 Notes 是经告知的持久私有数据。Storage 对象删除是 best effort，失败必须告警/重试，不能只依赖数据库级联声明完全删除。
-14. Luna 会把用户选择的原文件直接发给 OpenRouter/Azure 托管的 GPT-6 Luna；不运行本地文本提取并不减少第三方看到完整文件的隐私影响。必须保持逐账号同意、ZDR/deny collection、Azure-only 与 no tools/Web；不支持格式保持禁用。
-15. Courses 翻译判定只发送最小词义上下文（英文词、参考译文、学习者答案，无账号标识）给免费 Nemotron；免费 endpoint 可能记录提示词，因此请求不声明 deny collection，需独立隐私与质量复核。
+1. The sign-up endpoint holds service-role and confirms emails directly; production 0039 added source/email rate limits and abuse auditing, but CAPTCHA, email ownership proof, and fuller anti-automation are still missing.
+2. NestJS returns CORS permissions based on `CORS_ALLOWED_ORIGINS`/`PUBLIC_ORIGIN`; the allowlist and credential policy must still be reviewed whenever a production domain or preview domain is added, or before cookie-based authentication.
+3. The 0039–0040 fixes for posts, Feedback, Schedule, and points completed the protected phase-one release and real RLS/permission verification. The 2026-08-22 go/no-go confirmed that the compatibility period exceeded 24 hours and the supported Web app no longer submits the two timestamp columns; the final revocation was applied to production by 0052–0053 and verified fail-closed by 0053, and the originally reserved 0044–0045 were not back-filled into the history.
+4. Community media is a public bucket; deleting a post does not automatically prove the attachment is deleted, and governance of upload types, sizes, malicious files, and orphan objects is incomplete.
+5. The pre-migration points cache cannot prove its origin; `legacy_opening=11` was zeroed by 0009's append-only reversal. Production 0039 only acknowledges grandfathered rewards whose first business transition is positive; historical negative balances caused by 0008's back-filled placeholders are zeroed with separate append-only compensations, and old entries cannot be rewritten. Coordination thresholds only flag by interaction structure and never penalize automatically, and there is no semantic spam judgement, full moderation back office, or appeals; points are still not a commercial currency or an anti-cheat reputation credential.
+6. `credits`/`vip_until` are locked as server fields but still have no orders, credit/VIP ledgers, or a Stripe chain of record, so real commercial entitlements cannot be enabled.
+7. Local environment files once existed in the repository; any secret that was ever committed, logged, or shared in terminal output must be treated as leaked, and deleting the file is no substitute for rotation.
+8. NestJS uses service-role to access Courses. Production 0039's general request limit fails closed for sign-up, writes, public Courses, and cost paths when Redis fails, and fails open for private pure reads; route classification, trust proxy, HMAC logging, and false limiting of legitimate traffic must be watched continuously and cannot be "fixed" by turning off the interceptor.
+9. Course sharing is a bearer-link model: anyone with the link can read the current word list; authors must be able to revoke/rotate. Market v1 administrators come from an environment UUID list, with no general RBAC/appeals yet; changes must be audited.
+10. Azure recordings are not persisted but are forwarded to a third party within the request; provider terms, region, DPA/retention, and real cost alerts must be confirmed before the production flag. Provider failures must not accumulate user errors.
+11. The OpenRouter translation pre-test, after the user explicitly turns it on, forwards the current English term, reference translations, and the user's typed translation; its retention/training/cross-border/sub-processor terms still need to be completed and reviewed continuously. Model misjudgement is an educational risk; provider failures or invalid structured output must not accumulate errors, and a failed semantic baseline should turn off the narrowest flag.
+12. Materials AI sends the parsed full file content to DeepSeek and failed page/region images to MiMo; jobs can only be created after each account accepts the versioned third-party processing notice. `malicious/uncertain` injection must be rejected, and topics/files/answers are isolated as untrusted data; model classification cannot be the only defense, and fallback routing must never bypass ZDR.
+13. FastAPI's per-job 0700 temporary directory and `finally`/orphan cleanup only handle process files; `ai_material_parse_cache` and generated Notes are disclosed, durable private data. Storage object deletion is best effort, and failures must alert/retry rather than relying on a database cascade to claim complete deletion.
+14. Luna sends the user's selected native file directly to GPT-6 Luna hosted by OpenRouter/Azure; not running local text extraction does not reduce the privacy impact of a third party seeing the full file. Per-account consent, ZDR/deny collection, Azure-only, and no tools/Web must be kept; unsupported formats stay disabled.
+15. Courses translation judging only sends minimal word-meaning context (the English term, reference translations, and the learner's answer, with no account identifiers) to the free Nemotron; the free endpoint may log prompts, so requests do not declare deny collection, and separate privacy and quality reviews are needed.
 
-## 5. 数据与密钥分级
+## 5. Data and secret classification
 
-| 级别 | 示例 | 基线要求 |
+| Level | Examples | Baseline requirements |
 |---|---|---|
-| Public | 已发布社区内容、公开文档、前端 anon key | 可公开，但仍需完整性、审核与速率限制 |
-| Internal | 架构、非敏感日志、聚合指标 | 仅团队/受控系统访问 |
-| Confidential | 邮箱、学校/专业、私有课件/词表、学习 attempt/progress/复习、朗读评分、笔记、反馈、IP/设备信息 | 最小权限、传输/静态加密、留存和删除规则 |
-| Restricted | service-role、JWT secret、Redis password、RateLimit HMAC、Azure/OpenRouter/Stripe/Anthropic secret、Webhook secret、分享明文 token、备份、支付/身份数据 | 仅服务端密钥库/一次性响应；禁止浏览器 bundle、仓库、聊天、截图和普通日志 |
+| Public | Published community content, public docs, the frontend anon key | May be public, but still needs integrity, moderation, and rate limiting |
+| Internal | Architecture, non-sensitive logs, aggregate metrics | Team/controlled systems only |
+| Confidential | Email, school/major, private courseware/word lists, learning attempts/progress/reviews, read-aloud scores, notes, feedback, IP/device information | Least privilege, encryption in transit/at rest, retention and deletion rules |
+| Restricted | service-role, JWT secret, Redis password, RateLimit HMAC, Azure/OpenRouter/Stripe/Anthropic secrets, webhook secrets, plaintext share tokens, backups, payment/identity data | Server-side secret store/one-time responses only; never in browser bundles, the repository, chat, screenshots, or ordinary logs |
 
-`VITE_*` 会进入浏览器产物，只允许 Supabase URL/anon key。service-role、JWT、Azure、OpenRouter、Stripe、Anthropic 和 webhook secrets 永远不得使用 `VITE_*`。
+`VITE_*` variables end up in the browser bundle and may only hold the Supabase URL/anon key. service-role, JWT, Azure, OpenRouter, Stripe, Anthropic, and webhook secrets must never use `VITE_*`.
 
-## 6. 开发安全基线
+## 6. Development security baseline
 
-- 所有表默认启用 RLS；分别验证 `SELECT/INSERT/UPDATE/DELETE`，并用两个真实权限测试用户做跨用户负向测试。
-- 用户可编辑字段与服务端字段分开：通过列级授权、受限 RPC 或后端 DTO 更新，不允许 profile 整行写入。
-- `SECURITY DEFINER` 必须固定 `search_path` 并撤销默认执行权。客户端入口绑定 `auth.uid()`；service-role-only 入口的 user ID 只能由 API 从已验证 JWT 派生并做 owner 校验，不能从请求体信任。
-- 所有金额、余额、points 和权益变更采用不可变账本、唯一业务事件键和冲正记录；禁止直接改余额作为正常流程。
-- 服务端接口做结构校验、对象归属校验、速率限制和审计；错误不得返回密钥、上游正文、SQL 或堆栈。
-- Redis 仅存可过期保护状态；user UUID/IP/email actor 先按独立 secret HMAC，原值不写 Redis/Postgres/应用日志。成本/写入路径不可因 Redis 故障静默 fail-open；points 决策只在 PostgreSQL。
-- 上传同时校验扩展名、MIME、magic bytes、大小和页数；对象名由服务端生成；目标阶段增加恶意文件扫描与隔离区。
-- HTML/Markdown/AI 输出渲染必须净化；社区正文、文件名和模型文本一律视为不可信输入，防 XSS、公式/URL 注入和提示词注入。
-- AI 服务只接收完成授权的资料，服务间鉴权，不记录原始课件或完整 prompt；供应商训练/留存条款须经过审批。
-- Materials AI worker 只允许 project signed Storage host，禁止工具/Web，固定 provider/model/schema。DocumentIR 路径限制 Office zip expansion/页数/字符/图像/资源；Luna/Ox 路径只校验并发送允许的原始字节，禁止调用提取器、OCR、转换器或 Files API，并验证实际 upstream。Ox 的 allowlist 还必须与图片集合取交集。FastAPI 422 也不得回显 signed URL/token/payload。
-- 语义翻译评判的 reference 只能从当前 owner session/word 推导；答案正文仅内存转发，数据库/日志只留 hash 与非正文计量；provider 输出必须过结构校验并经权威事务转换，不能直接信任。
-- Speech reference 只能由当前 owner 的 word/session 得到；限制 WAV magic/codec/采样率/声道/位深/大小/时长，录音仅内存转发且不得进入 DB、Storage、日志或备份。
-- 公开分享/市场只返回脱敏、转义快照；token 只存哈希；撤销/克隆在同一事务重查 active。举报数量不得自动下架，管理员处置必须写审计事实。
-- 日志使用请求/事件 ID，不记录 Authorization、cookie、密码、签名 URL、密钥、完整文档、支付方法或用户删除导出包。
-- 新依赖需核对维护状态和许可证；商业使用 ExamPass-Assistant 代码前必须取得商业许可，否则仅可参考方法并干净重写。
+- Every table enables RLS by default; verify `SELECT/INSERT/UPDATE/DELETE` separately, with cross-user negative tests using two real-permission test users.
+- Separate user-editable fields from server fields: update them through column grants, restricted RPCs, or backend DTOs, and never allow whole-row profile writes.
+- `SECURITY DEFINER` must pin `search_path` and revoke default execute. Client entry points bind `auth.uid()`; for service-role-only entry points, the user ID can only be derived by the API from a verified JWT with an owner check, never trusted from the request body.
+- Every change to amounts, balances, points, and entitlements uses an immutable ledger, unique business event keys, and reversal records; directly editing balances is forbidden as a normal flow.
+- Server endpoints do structural validation, object ownership checks, rate limiting, and auditing; errors must not return secrets, upstream bodies, SQL, or stack traces.
+- Redis only stores expiring protection state; user UUID/IP/email actors are HMACed with a separate secret first, and raw values are never written to Redis/Postgres/application logs. Cost/write paths must not silently fail open when Redis fails; points decisions live only in PostgreSQL.
+- Uploads check extension, MIME, magic bytes, size, and page count; object names are generated by the server; the target phase adds malicious-file scanning and a quarantine area.
+- HTML/Markdown/AI output rendering must be sanitized; community bodies, file names, and model text are all untrusted input, defended against XSS, formula/URL injection, and prompt injection.
+- The AI service only receives authorized materials, uses service-to-service authentication, and does not log raw courseware or full prompts; provider training/retention terms must be approved.
+- The Materials AI worker only allows the project's signed Storage host, forbids tools/Web, and fixes provider/model/schema. The DocumentIR path limits Office zip expansion/pages/characters/images/resources; the Luna/Ox paths only validate and send allowed raw bytes, forbid calling extractors, OCR, converters, or the Files API, and verify the actual upstream. Ox's allowlist must also be intersected with the image set. FastAPI 422s must not echo signed URLs/tokens/payloads either.
+- The reference for semantic translation judgement can only be derived from the current owner's session/word; the answer text is only forwarded in memory, and the database/logs only keep the hash and non-text metering; provider output must pass structural validation and be converted by an authoritative transaction, never trusted directly.
+- The Speech reference can only come from the current owner's word/session; limit WAV magic/codec/sample rate/channels/bit depth/size/duration, and recordings are only forwarded in memory and must never enter the DB, Storage, logs, or backups.
+- Public shares/market only return redacted, escaped snapshots; tokens are stored only as hashes; revocation/cloning recheck active in the same transaction. Report counts must not automatically delist, and admin actions must write audit facts.
+- Logs use request/event IDs and never record Authorization, cookies, passwords, signed URLs, secrets, full documents, payment methods, or user deletion export packages.
+- New dependencies need their maintenance status and license checked; commercial use of ExamPass-Assistant code requires a commercial license, otherwise only its methods may be referenced with a clean rewrite.
 
-## 7. 合并与发布安全门禁
+## 7. Merge and release security gates
 
-涉及认证、RLS、`SECURITY DEFINER`、Storage、用户删除、AI 调用、credits、VIP、Stripe 或后台权限的 PR，至少需要：
+PRs touching authentication, RLS, `SECURITY DEFINER`, Storage, user deletion, AI calls, credits, VIP, Stripe, or admin permissions need at least:
 
-1. 第二位审阅者批准，并在 PR 中说明威胁、回滚和数据迁移影响；
-2. 类型检查、单元/集成、RLS 双用户和相关 E2E 全部通过；
-3. 数据库变更使用前向迁移，包含可执行验证和回滚/补偿步骤；
-4. 新环境变量进入环境变量矩阵，并说明密级、所有者和轮换方式；
-5. 新日志、指标和告警不含 PII/secret；
-6. 生产变更先在隔离环境验证，支付使用 Stripe test mode；
-7. 高风险已知问题关闭后，才能启用相应功能 flag。
+1. Approval from a second reviewer, with the threat, rollback, and data migration impact explained in the PR;
+2. Typecheck, unit/integration, two-user RLS, and relevant E2E all passing;
+3. Forward migrations for database changes, with runnable verification and rollback/compensation steps;
+4. New environment variables added to the environment variable matrix with their secrecy level, owner, and rotation method;
+5. New logs, metrics, and alerts free of PII/secrets;
+6. Production changes verified in an isolated environment first, with payments using Stripe test mode;
+7. The corresponding feature flag enabled only after known high-risk issues are closed.
 
-当前 workflow 执行 Python ruff/pytest、AI Docker、BullMQ/Redis、Materials AI RLS 与 fake-provider Playwright。生产迁移仍先只读 plan，再受保护 apply/加密恢复点/远端验证；0046–0051 还必须真实验证 Luna 的 OpenAI upstream、PDF native parser、原始字节、逐格式能力、注入拒绝、取消残留和费用审计，且先保持子开关关闭。这些单次门禁不替代持续质量、供应商条款、监控或人工评审。
+The current workflow runs Python ruff/pytest, AI Docker, BullMQ/Redis, Materials AI RLS, and fake-provider Playwright. Production migrations still start with a read-only plan, then a protected apply/encrypted recovery point/remote verification; 0046–0051 must also truly verify Luna's OpenAI upstream, PDF native parser, raw bytes, per-format capability, injection rejection, cancellation residue, and cost auditing, with the sub-switch kept off first. These one-off gates do not replace continuous quality, provider terms, monitoring, or human review.
 
-## 8. 安全事件响应
+## 8. Security incident response
 
-发现疑似事件时：先指定事件负责人和严重度；保全最小必要审计证据；隔离入口/关闭功能 flag；轮换疑似密钥并撤销会话；评估数据、资金与第三方影响；执行修复与验证；按适用法律、合同和隐私政策决定通知；最后形成无敏感信息的复盘和防复发事项。
+When an incident is suspected: first assign an incident owner and severity; preserve the minimum necessary audit evidence; isolate the entry point/turn off the feature flag; rotate suspected secrets and revoke sessions; assess data, money, and third-party impact; fix and verify; decide on notifications per applicable law, contracts, and the privacy policy; and finally write a retrospective free of sensitive information, with prevention items.
 
-资金类事件还需暂停提现与高风险订单、对账 Stripe Webhook 和内部账本，使用冲正而非删除记录。数据删除请求与事件证据冲突时，由隐私/安全负责人限定保存范围和期限。
+Money-related incidents also require pausing payouts and high-risk orders, reconciling Stripe webhooks with the internal ledger, and using reversals rather than deleting records. When a data deletion request conflicts with incident evidence, the privacy/security owner limits the scope and duration of what is kept.
 
-## 9. 相关文档
+## 9. Related documents
 
-- [贡献指南](CONTRIBUTING.md)
-- [隐私与数据删除](docs/governance/PRIVACY_AND_DATA_DELETION.md)
-- [内容审核](docs/governance/CONTENT_MODERATION.md)
-- [统一经济与支付规则](docs/product/POINTS_CREDITS_VIP_PAYMENTS.md)
-- [AI 评测与成本治理](docs/ai/EVALUATION_AND_COST.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Privacy and data deletion](docs/governance/PRIVACY_AND_DATA_DELETION.md)
+- [Content moderation](docs/governance/CONTENT_MODERATION.md)
+- [Unified economy and payment rules](docs/product/POINTS_CREDITS_VIP_PAYMENTS.md)
+- [AI evaluation and cost governance](docs/ai/EVALUATION_AND_COST.md)

@@ -18,14 +18,14 @@ export function validateCourseInput(raw: unknown): LearningCourseInput {
   const body = raw as Partial<LearningCourseInput>;
   const fieldErrors: Record<string, string> = {};
   if (!body || typeof body !== "object") throw new BadRequestException({ code: "INVALID_COURSE", message: "Invalid course payload" });
-  if (!body.id || !UUID.test(body.id)) fieldErrors.id = "课程 ID 无效";
-  if (!body.title?.trim() || body.title.trim().length > 80) fieldErrors.title = "课程名称需为 1–80 个字符";
-  if (body.category !== "english_vocabulary") fieldErrors.category = "首版只支持英语单词学习";
-  if (body.locale !== "en-US") fieldErrors.locale = "首版只支持 en-US";
-  if (typeof body.hasUnits !== "boolean") fieldErrors.hasUnits = "单元模式无效";
+  if (!body.id || !UUID.test(body.id)) fieldErrors.id = "The course ID is invalid.";
+  if (!body.title?.trim() || body.title.trim().length > 80) fieldErrors.title = "The course name must be 1–80 characters.";
+  if (body.category !== "english_vocabulary") fieldErrors.category = "Only English vocabulary courses are supported in this version.";
+  if (body.locale !== "en-US") fieldErrors.locale = "Only en-US is supported in this version.";
+  if (typeof body.hasUnits !== "boolean") fieldErrors.hasUnits = "The unit mode is invalid.";
   if (!Array.isArray(body.units) || body.units.length < 1 || body.units.length > 100) {
-    fieldErrors.units = "课程需包含 1–100 个单元";
-    throw new BadRequestException({ code: "INVALID_COURSE", message: "课程内容校验失败", fieldErrors });
+    fieldErrors.units = "A course must contain 1–100 units.";
+    throw new BadRequestException({ code: "INVALID_COURSE", message: "The course content is invalid.", fieldErrors });
   }
   const seenCourse = new Set<string>();
   const seenUnitIds = new Set<string>();
@@ -34,15 +34,15 @@ export function validateCourseInput(raw: unknown): LearningCourseInput {
   const units = body.units.map((rawUnit, ui): VocabularyUnitInput => {
     const unit = rawUnit as VocabularyUnitInput;
     if (!unit || typeof unit !== "object") {
-      fieldErrors[`units.${ui}`] = "单元格式无效";
+      fieldErrors[`units.${ui}`] = "The unit format is invalid.";
       return { id: "", name: "", isSystem: false, words: [] };
     }
-    if (!unit.id || !UUID.test(unit.id) || seenUnitIds.has(unit.id)) fieldErrors[`units.${ui}.id`] = "单元 ID 无效或重复";
+    if (!unit.id || !UUID.test(unit.id) || seenUnitIds.has(unit.id)) fieldErrors[`units.${ui}.id`] = "The unit ID is invalid or duplicated.";
     seenUnitIds.add(String(unit.id));
-    if (typeof unit.name !== "string" || !unit.name.trim() || unit.name.trim().length > 80) fieldErrors[`units.${ui}.name`] = "单元名称需为 1–80 个字符";
-    if (typeof unit.isSystem !== "boolean") fieldErrors[`units.${ui}.isSystem`] = "单元类型无效";
+    if (typeof unit.name !== "string" || !unit.name.trim() || unit.name.trim().length > 80) fieldErrors[`units.${ui}.name`] = "Unit names must be 1–80 characters.";
+    if (typeof unit.isSystem !== "boolean") fieldErrors[`units.${ui}.isSystem`] = "The unit type is invalid.";
     if (!Array.isArray(unit.words) || unit.words.length < 1) {
-      fieldErrors[`units.${ui}.words`] = "单元至少需要一个词";
+      fieldErrors[`units.${ui}.words`] = "A unit needs at least one word.";
       return { id: String(unit.id || ""), name: String(unit.name || "").trim(), isSystem: Boolean(unit.isSystem), words: [] };
     }
     const seenUnit = new Set<string>();
@@ -50,40 +50,47 @@ export function validateCourseInput(raw: unknown): LearningCourseInput {
       const word = rawWord as VocabularyWordInput;
       total += 1;
       if (!word || typeof word !== "object") {
-        fieldErrors[`units.${ui}.words.${wi}`] = "单词格式无效";
+        fieldErrors[`units.${ui}.words.${wi}`] = "The word format is invalid.";
         return { id: "", term: "", translations: [] };
       }
       const term = typeof word.term === "string" ? word.term.trim().replace(/\s+/g, " ") : "";
       const key = normalizeTerm(term);
-      if (!word.id || !UUID.test(word.id) || seenWordIds.has(word.id)) fieldErrors[`units.${ui}.words.${wi}.id`] = "单词 ID 无效或重复";
+      if (!word.id || !UUID.test(word.id) || seenWordIds.has(word.id)) fieldErrors[`units.${ui}.words.${wi}.id`] = "The word ID is invalid or duplicated.";
       seenWordIds.add(String(word.id));
       if (!key || key.length > 120 || !/[a-z]/i.test(key) || !ENGLISH.test(term)) {
-        fieldErrors[`units.${ui}.words.${wi}.term`] = "英文词或短语格式无效";
+        fieldErrors[`units.${ui}.words.${wi}.term`] = "The English word or phrase is invalid.";
       }
-      if (seenUnit.has(key)) fieldErrors[`units.${ui}.words.${wi}.term`] = "同一单元内不能重复";
+      if (seenUnit.has(key)) fieldErrors[`units.${ui}.words.${wi}.term`] = "Terms cannot repeat within a unit.";
       seenUnit.add(key); seenCourse.add(key);
       if (!Array.isArray(word.translations) || word.translations.length < 1 || word.translations.length > 10
           || word.translations.some((value) => typeof value !== "string" || !value.trim() || value.trim().length > 120)
           || new Set(word.translations.map((value) => String(value).trim().toLowerCase())).size !== word.translations.length) {
-        fieldErrors[`units.${ui}.words.${wi}.translations`] = "翻译需包含 1–10 个非空项";
+        fieldErrors[`units.${ui}.words.${wi}.translations`] = "Translations must contain 1–10 non-empty items.";
       }
-      if (word.ipa != null && (typeof word.ipa !== "string" || word.ipa.trim().length > 120)) fieldErrors[`units.${ui}.words.${wi}.ipa`] = "音标不能超过 120 个字符";
+      if (word.ipa != null && (typeof word.ipa !== "string" || word.ipa.trim().length > 120)) fieldErrors[`units.${ui}.words.${wi}.ipa`] = "IPA cannot exceed 120 characters.";
       return { id: String(word.id || ""), term,
         translations: Array.isArray(word.translations) ? word.translations.map((value) => String(value).trim()) : [],
         ipa: typeof word.ipa === "string" ? word.ipa.trim() || null : null };
     });
     return { id: String(unit.id || ""), name: String(unit.name || "").trim(), isSystem: Boolean(unit.isSystem), words };
   });
-  if (!body.hasUnits && (units.length !== 1 || !units[0]?.isSystem)) fieldErrors.units = "无单元课程必须使用一个隐藏默认单元";
-  if (total > 2000 || seenCourse.size < 4) fieldErrors.words = "课程需包含 4–2000 个不同词或短语";
-  if (Object.keys(fieldErrors).length) throw new BadRequestException({ code: "INVALID_COURSE", message: "课程内容校验失败", fieldErrors });
+  if (!body.hasUnits && (units.length !== 1 || !units[0]?.isSystem)) fieldErrors.units = "A course without units must use a single hidden default unit.";
+  if (total > 2000 || seenCourse.size < 4) fieldErrors.words = "A course must contain 4–2,000 distinct words or phrases.";
+  if (Object.keys(fieldErrors).length) throw new BadRequestException({ code: "INVALID_COURSE", message: "The course content is invalid.", fieldErrors });
   return {
     id: body.id!, title: body.title!.trim(), category: "english_vocabulary",
     hasUnits: body.hasUnits!, locale: "en-US", units,
   };
 }
 
-export function cloneSnapshot(snapshot: any, title?: string): LearningCourseInput {
+const COPY_SUFFIX = " (copy)";
+
+// Leaves room for the suffix so a clone of an 80-character title still validates.
+function copyTitle(title: string) {
+  return `${title.trim().slice(0, 80 - COPY_SUFFIX.length).trimEnd()}${COPY_SUFFIX}`;
+}
+
+export function cloneSnapshot(snapshot: any, baseTitle?: string): LearningCourseInput {
   const units: VocabularyUnitInput[] = (snapshot.units || []).map((unit: any) => ({
     id: randomUUID(),
     name: String(unit.name || "Unit"),
@@ -96,7 +103,7 @@ export function cloneSnapshot(snapshot: any, title?: string): LearningCourseInpu
     })),
   }));
   return validateCourseInput({
-    id: randomUUID(), title: title || `${snapshot.title || "英语单词课程"}（副本）`,
+    id: randomUUID(), title: copyTitle(baseTitle || snapshot.title || "English vocabulary course"),
     category: "english_vocabulary", hasUnits: Boolean(snapshot.hasUnits), locale: "en-US", units,
   });
 }

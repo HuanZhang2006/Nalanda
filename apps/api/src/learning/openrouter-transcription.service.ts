@@ -106,30 +106,30 @@ export class OpenRouterTranscriptionService {
       if (error instanceof Error && error.name === "TimeoutError") {
         throw new GatewayTimeoutException({
           code: "TRANSLATION_STT_PROVIDER_TIMEOUT",
-          message: "语音识别服务连接超时",
+          message: "Voice recognition timed out.",
         });
       }
       throw new BadGatewayException({
         code: "TRANSLATION_STT_PROVIDER_ERROR",
-        message: "语音识别服务暂不可用",
+        message: "Voice recognition is temporarily unavailable.",
       });
     }
     if (response.status === 429) {
       throw new HttpException({
         code: "TRANSLATION_STT_PROVIDER_RATE_LIMIT",
-        message: "语音识别服务繁忙，请稍后重试",
+        message: "The voice-input service is busy. Please try again shortly.",
       }, 503);
     }
     if (response.status === 402) {
       throw new ServiceUnavailableException({
         code: "TRANSLATION_STT_PROVIDER_CREDIT_REQUIRED",
-        message: "语音识别供应商额度不可用",
+        message: "The voice-recognition provider has no available credit.",
       });
     }
     if (!response.ok) {
       throw new BadGatewayException({
         code: "TRANSLATION_STT_PROVIDER_ERROR",
-        message: "语音识别服务暂不可用",
+        message: "Voice recognition is temporarily unavailable.",
       });
     }
     const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
@@ -139,7 +139,7 @@ export class OpenRouterTranscriptionService {
     if (!text || text.length > 500) {
       throw new BadGatewayException({
         code: "TRANSLATION_STT_PROVIDER_INVALID",
-        message: "语音识别服务返回了无效结果",
+        message: "Voice recognition returned an invalid result.",
       });
     }
     const usage = payload?.usage && typeof payload.usage === "object"
@@ -164,13 +164,13 @@ export class OpenRouterTranscriptionService {
     const wordId = assertUuid(wordIdInput, "wordId");
     const expectedRevision = Number(expectedRevisionInput);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 0) {
-      throw new BadRequestException({ code: "INVALID_REVISION", message: "会话版本无效" });
+      throw new BadRequestException({ code: "INVALID_REVISION", message: "The learning-session version is invalid." });
     }
     if (!file?.buffer) {
-      throw new BadRequestException({ code: "AUDIO_REQUIRED", message: "请上传录音" });
+      throw new BadRequestException({ code: "AUDIO_REQUIRED", message: "Add a recording first." });
     }
     if (file.size > 2 * 1024 * 1024) {
-      throw new BadRequestException({ code: "AUDIO_TOO_LARGE", message: "录音不能超过 2 MB" });
+      throw new BadRequestException({ code: "AUDIO_TOO_LARGE", message: "The recording cannot exceed 2 MB." });
     }
     const { durationSeconds } = validateAssessmentWav(file.buffer);
     const config = this.configuration();
@@ -187,7 +187,7 @@ export class OpenRouterTranscriptionService {
     if (reservation.conflict) {
       throw new HttpException({
         code: "SESSION_REVISION_CONFLICT",
-        message: "学习进度已在其它位置更新",
+        message: "Learning progress was updated elsewhere.",
         currentRevision: Number(reservation.current_revision),
       }, 409);
     }

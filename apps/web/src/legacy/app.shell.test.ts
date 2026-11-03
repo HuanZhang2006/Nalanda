@@ -2,13 +2,13 @@ import { describe, expect, it, vi } from "vitest";
 import { act } from "react";
 import { click, createSupabaseMock, flush } from "../test/supabase-mock";
 
-describe("legacy 应用壳", () => {
-  it("挂载壳、打开 9 个模块、导航/退出，并在卸载时清理", async () => {
+describe("legacy app shell", () => {
+  it("mounts the shell, opens 9 modules, navigates/signs out, and cleans up on unmount", async () => {
     vi.resetModules();
     const learningDetail = { id: "11111111-1111-4111-8111-111111111111", title: "Deep linked course",
       category: "english_vocabulary", hasUnits: false, locale: "en-US", unitCount: 1, wordCount: 4,
       learnedCount: 0, progressPercent: 0, activeSessionId: null, canRepublish: true, originAuthorName: null,
-      updatedAt: new Date().toISOString(), units: [{ id: "22222222-2222-4222-8222-222222222222", name: "默认单元",
+      updatedAt: new Date().toISOString(), units: [{ id: "22222222-2222-4222-8222-222222222222", name: "Default unit",
         position: 0, isSystem: true, words: [] }] };
     vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) => Promise.resolve(new Response(
       String(input).includes(`/learning-courses/${learningDetail.id}`) ? JSON.stringify(learningDetail) : "[]",
@@ -39,10 +39,10 @@ describe("legacy 应用壳", () => {
       ["notes", "My Notes"],
       ["materials", "Materials"],
       ["courses", "Learning courses"],
-      ["schedule", "学习计划"],
+      ["schedule", "Study plan"],
       ["market", "Note Market"],
-      ["community", "学习社区"],
-      ["profile", "徽章"],
+      ["community", "Learning community"],
+      ["profile", "Badges"],
       ["feedback", "Feedback"],
     ] as const;
 
@@ -77,7 +77,7 @@ describe("legacy 应用壳", () => {
     expect(root.innerHTML).toBe("");
     expect(removeListener).toHaveBeenCalledWith("resize", resizeListener);
 
-    // 退出后再次登录会重新挂载 resize，不能只在模块 import 时注册一次。
+    // Signing in again after sign-out re-registers resize; it must not be registered only once at module import.
     const secondRoot = document.createElement("div");
     document.body.appendChild(secondRoot);
     const secondCleanup = mountNalanda(secondRoot, {
@@ -88,7 +88,7 @@ describe("legacy 应用壳", () => {
     await flush(12);
     expect(addListener.mock.calls.filter(([type]) => type === "resize")).toHaveLength(2);
     expect(secondRoot.textContent).toContain("Good morning, bob");
-    // 上一账号的 mock generation timer 不能在新账号中跳转或显示成功。
+    // The previous account's mock generation timer must not navigate or show success in the new account.
     vi.advanceTimersByTime(1_000);
     await flush(4);
     expect(secondRoot.textContent).toContain("Good morning, bob");
@@ -96,5 +96,31 @@ describe("legacy 应用壳", () => {
     secondCleanup();
     expect(removeListener.mock.calls.filter(([type]) => type === "resize")).toHaveLength(2);
     vi.unstubAllGlobals();
+  });
+
+  it("switches the shell and the current page between English and Chinese", async () => {
+    vi.resetModules();
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(new Response("[]", { status: 200, headers: { "Content-Type": "application/json" } }))));
+    const { mountNalanda } = await import("./app");
+    const { getLocale } = await import("../i18n");
+    const root = document.createElement("div");
+    document.body.appendChild(root);
+    const cleanup = mountNalanda(root, { user: { id: "u1", email: "alice@example.edu" }, supabase: createSupabaseMock(), onSignOut: vi.fn() });
+    await flush(16);
+    await act(async () => { click(root.querySelector('#nav [data-go="community"]')); await flush(20); });
+    expect(root.textContent).toContain("Learning community");
+    expect(root.querySelector("#localeBtn")?.textContent).toBe("中文");
+
+    await act(async () => { click(root.querySelector("#localeBtn")); await flush(20); });
+    expect(getLocale()).toBe("zh");
+    expect(root.querySelector('#nav [data-go="community"]')?.textContent).toContain("社区");
+    expect(root.textContent).toContain("学习社区");
+    expect(root.querySelector("#localeBtn")?.textContent).toBe("EN");
+    expect((root.querySelector("#globalSearch") as HTMLInputElement).placeholder).toContain("搜索");
+
+    await act(async () => { click(root.querySelector("#localeBtn")); await flush(20); });
+    expect(getLocale()).toBe("en");
+    expect(root.textContent).toContain("Learning community");
+    cleanup();
   });
 });

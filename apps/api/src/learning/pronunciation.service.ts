@@ -20,7 +20,7 @@ function providerTimeoutSignal() {
 
 export function validateAssessmentWav(bytes: Buffer) {
   if (bytes.length < 44 || bytes.toString("ascii", 0, 4) !== "RIFF" || bytes.toString("ascii", 8, 12) !== "WAVE") {
-    throw new BadRequestException({ code: "INVALID_AUDIO", message: "录音必须是 WAV 文件" });
+    throw new BadRequestException({ code: "INVALID_AUDIO", message: "The recording must be a WAV file." });
   }
   let offset = 12;
   let format: { codec: number; channels: number; sampleRate: number; bits: number } | null = null;
@@ -38,10 +38,10 @@ export function validateAssessmentWav(bytes: Buffer) {
     offset = start + size + (size % 2);
   }
   if (!format || format.codec !== 1 || format.channels !== 1 || format.sampleRate !== 16_000 || format.bits !== 16 || !dataSize) {
-    throw new BadRequestException({ code: "INVALID_AUDIO_FORMAT", message: "录音必须是 16 kHz、16-bit、单声道 PCM WAV" });
+    throw new BadRequestException({ code: "INVALID_AUDIO_FORMAT", message: "Use a 16 kHz, 16-bit, mono PCM WAV recording." });
   }
   if (dataSize / 32_000 > 8.05) {
-    throw new BadRequestException({ code: "AUDIO_TOO_LONG", message: "录音不能超过 8 秒" });
+    throw new BadRequestException({ code: "AUDIO_TOO_LONG", message: "The recording cannot exceed 8 seconds." });
   }
   return { durationSeconds: dataSize / 32_000 };
 }
@@ -57,7 +57,7 @@ export class PronunciationService {
   private config() {
     const key = process.env.AZURE_SPEECH_KEY;
     const region = process.env.AZURE_SPEECH_REGION;
-    if (!key || !region) throw new ServiceUnavailableException({ code: "PRONUNCIATION_UNAVAILABLE", message: "发音服务暂不可用" });
+    if (!key || !region) throw new ServiceUnavailableException({ code: "PRONUNCIATION_UNAVAILABLE", message: "Pronunciation services are temporarily unavailable." });
     return { key, region };
   }
 
@@ -85,8 +85,8 @@ export class PronunciationService {
 
   async assess(userId: string, sessionId: string, wordId: string, file?: Express.Multer.File): Promise<PronunciationAssessment> {
     this.flags.pronunciation();
-    if (!file?.buffer) throw new BadRequestException({ code: "AUDIO_REQUIRED", message: "请上传录音" });
-    if (file.size > 2 * 1024 * 1024) throw new BadRequestException({ code: "AUDIO_TOO_LARGE", message: "录音不能超过 2 MB" });
+    if (!file?.buffer) throw new BadRequestException({ code: "AUDIO_REQUIRED", message: "Add a recording first." });
+    if (file.size > 2 * 1024 * 1024) throw new BadRequestException({ code: "AUDIO_TOO_LARGE", message: "The recording cannot exceed 2 MB." });
     validateAssessmentWav(file.buffer);
     const word = await this.learning.ownedWordInSession(userId, sessionId, wordId);
     if (process.env.AZURE_SPEECH_FAKE === "true") {
@@ -110,9 +110,9 @@ export class PronunciationService {
       "Pronunciation-Assessment": pronunciation,
       Accept: "application/json",
     }, body: file.buffer as unknown as BodyInit }).catch(() => null);
-    if (!response) throw new BadGatewayException({ code: "SPEECH_PROVIDER_TIMEOUT", message: "朗读评分服务连接超时" });
+    if (!response) throw new BadGatewayException({ code: "SPEECH_PROVIDER_TIMEOUT", message: "The speech service timed out." });
     const payload = await response.json().catch(() => null) as any;
-    if (!response.ok || !payload) throw new BadGatewayException({ code: "SPEECH_PROVIDER_ERROR", message: "朗读评分服务暂不可用" });
+    if (!response.ok || !payload) throw new BadGatewayException({ code: "SPEECH_PROVIDER_ERROR", message: "The speech service is temporarily unavailable." });
     const best = payload.NBest?.[0];
     // Microsoft documents scores below `PronunciationAssessment`, while the
     // live REST response in some regions also returns the same fields directly
@@ -121,7 +121,7 @@ export class PronunciationService {
     const accuracy = num(assessment?.AccuracyScore);
     const pronunciationScore = num(assessment?.PronScore);
     if (accuracy == null || pronunciationScore == null) {
-      throw new BadGatewayException({ code: "SPEECH_PROVIDER_INVALID", message: "朗读评分结果无效" });
+      throw new BadGatewayException({ code: "SPEECH_PROVIDER_INVALID", message: "The pronunciation result was invalid." });
     }
     const phonemes: PronunciationPhoneme[] = (best.Words || []).flatMap((entry: any) => {
       const direct = Array.isArray(entry.Phonemes) ? entry.Phonemes : [];

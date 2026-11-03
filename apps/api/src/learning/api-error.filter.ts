@@ -58,7 +58,7 @@ export class ApiErrorFilter implements ExceptionFilter {
     const message = upstreamFailure ? "Service temporarily unavailable"
       : typeof source.message === "string" ? source.message
       : typeof nested.message === "string" ? nested.message
-      : status >= 500 ? "服务暂时不可用" : error instanceof Error ? error.message : "请求失败";
+      : status >= 500 ? "The service is temporarily unavailable." : error instanceof Error ? error.message : "Request failed.";
     const fieldErrors = source.fieldErrors || nested.fieldErrors;
     const currentRevision = source.currentRevision ?? nested.currentRevision;
     const retryAfterSeconds = upstreamFailure ? 2 : source.retryAfterSeconds ?? nested.retryAfterSeconds;

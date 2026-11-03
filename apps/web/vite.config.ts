@@ -11,7 +11,7 @@ export default defineConfig({
     restoreMocks: true,
   },
   server: {
-    // 本地开发：把 /api 转给本机 NestJS
+    // Local development: proxy /api to the local NestJS server
     proxy: { "/api": "http://localhost:3000" },
   },
 });
