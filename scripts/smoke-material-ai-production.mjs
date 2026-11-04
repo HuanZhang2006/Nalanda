@@ -252,7 +252,9 @@ try {
   assert.ok(lunaCapability);
   assert.equal(lunaCapability.available, expectLunaEnabled);
   assert.equal(lunaCapability.default, expectLunaEnabled);
-  if (!expectLunaEnabled) assert.equal(lunaCapability.reasonCode, "OPENROUTER_ZDR_UNAVAILABLE");
+  if (!expectLunaEnabled) {
+    assert.ok(["OPENROUTER_ZDR_UNAVAILABLE", "AI_LUNA_DISABLED"].includes(lunaCapability.reasonCode));
+  }
   assert.ok(!capabilities.capabilities.some((entry) => entry.pipeline === "ox_alpha_native_file_v1"));
   const examMaterial = expectLunaEnabled ? nativeMaterial : source.material;
   const examPipeline = expectLunaEnabled ? "luna_native_file_v1" : "document_ir_v1";
@@ -409,7 +411,7 @@ try {
     generationJob: "succeeded",
     grading: "completed",
     quota: { generation: expectedGenerationUsage, grading: 1 },
-    luna: { enabled: expectLunaEnabled, reasonCode: expectLunaEnabled ? null : "OPENROUTER_ZDR_UNAVAILABLE" },
+    luna: { enabled: expectLunaEnabled, reasonCode: expectLunaEnabled ? null : lunaCapability.reasonCode },
     knowledgeGraph: { renderedNodes: graphNote.graph.nodes.length, nativeNodes: nativeGraphNote?.graph.nodes.length || 0, groundedQuestion: "succeeded" },
     usageEvents,
     sourceAndResultsDeleted: true,

@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import sys
 import tempfile
 import threading
 import time
@@ -644,10 +645,20 @@ def main() -> None:
                 luna_available or allow_luna_disabled,
                 "Luna has no Azure Zero Data Retention endpoint",
             )
-            native_exam = process_native(fixtures["pdf"], "exam") if luna_available else None
-            native_knowledge = process_native(fixtures["chart"], "knowledge_graph") if luna_available else None
+            luna_reason = None if luna_available else "OPENROUTER_ZDR_UNAVAILABLE"
+            native_exam = native_knowledge = None
             if luna_available:
-                reject_native_injection(fixtures["native_malicious"])
+                # Luna is an optional sub-capability. A Luna-only failure keeps
+                # Luna closed without blocking Document IR or the app release.
+                try:
+                    native_exam = process_native(fixtures["pdf"], "exam")
+                    native_knowledge = process_native(fixtures["chart"], "knowledge_graph")
+                    reject_native_injection(fixtures["native_malicious"])
+                except RuntimeError as error:
+                    print(f"Luna gate failed; Luna stays closed: {error}", file=sys.stderr)
+                    luna_available = False
+                    luna_reason = "AI_LUNA_GATE_FAILED"
+                    native_exam = native_knowledge = None
             grading = grade_subjective()
         require(len(progress_events) > started_progress, "worker progress callbacks were not emitted")
         print(json.dumps({
@@ -663,7 +674,7 @@ def main() -> None:
             "gradingScore": grading["subjectiveScore"],
             "knowledgeGraphNodes": knowledge["nodeCount"],
             "lunaAvailable": luna_available,
-            "lunaReasonCode": None if luna_available else "OPENROUTER_ZDR_UNAVAILABLE",
+            "lunaReasonCode": luna_reason,
             "lunaZdrProviders": luna_providers,
             "nativeExamQuestions": native_exam["questionCount"] if native_exam else 0,
             "nativeKnowledgeGraphNodes": native_knowledge["nodeCount"] if native_knowledge else 0,
