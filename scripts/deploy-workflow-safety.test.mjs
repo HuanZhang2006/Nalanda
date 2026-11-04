@@ -102,3 +102,25 @@ test("failed activation cleans its candidate and restores the previous API witho
   assert.match(script, /Previous API container could not be restarted/);
   assert.match(workflow, /Remove isolated incoming directory after an unsuccessful release[\s\S]*if: failure\(\)/);
 });
+
+test("a failed Luna-only gate keeps Luna closed without blocking the release", async () => {
+  const workflow = await readFile(workflowPath, "utf8");
+  const start = workflow.indexOf('read -r luna_enabled luna_reason <<< "$provider_gate_facts"');
+  const end = workflow.indexOf('echo "Materials AI provider gate:', start);
+  assert.ok(start >= 0 && end > start, "Luna activation decision must be present");
+  const decision = workflow.slice(start, end).replace(/^ {10}/gm, "");
+  const run = (facts) => spawnSync("bash", ["-c", [
+    "set -euo pipefail",
+    'rollback_application() { echo "rollback: $1"; }',
+    `provider_gate_facts=${JSON.stringify(facts)}`,
+    decision,
+  ].join("\n")], { encoding: "utf8" });
+
+  for (const facts of ["true none", "false OPENROUTER_ZDR_UNAVAILABLE", "false AI_LUNA_GATE_FAILED"]) {
+    const result = run(facts);
+    assert.equal(result.status, 0, `${facts} must not roll back: ${result.stdout}${result.stderr}`);
+  }
+  const unreviewed = run("false OPENROUTER_BAD_REQUEST");
+  assert.equal(unreviewed.status, 1);
+  assert.match(unreviewed.stdout, /rollback: Luna provider gate failed for an unreviewed reason/);
+});

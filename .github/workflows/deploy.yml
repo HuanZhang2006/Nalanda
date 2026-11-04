@@ -1206,9 +1206,15 @@ jobs:
             exit 1
           }
           read -r luna_enabled luna_reason <<< "$provider_gate_facts"
-          if [[ "$luna_enabled" == "false" && "$luna_reason" != "OPENROUTER_ZDR_UNAVAILABLE" ]]; then
+          # Luna is an optional sub-capability: a missing Azure ZDR endpoint or
+          # a failed Luna-only gate keeps Luna closed without blocking the
+          # Document IR release. Any other closed reason is unreviewed.
+          if [[ "$luna_enabled" == "false" && "$luna_reason" != "OPENROUTER_ZDR_UNAVAILABLE" && "$luna_reason" != "AI_LUNA_GATE_FAILED" ]]; then
             rollback_application "Luna provider gate failed for an unreviewed reason" || true
             exit 1
+          fi
+          if [[ "$luna_reason" == "AI_LUNA_GATE_FAILED" ]]; then
+            echo "::warning::Luna provider gate failed; Luna stays closed and Document IR continues."
           fi
           if [[ "$luna_enabled" != "true" && "$luna_enabled" != "false" ]]; then
             rollback_application "Luna provider gate returned an invalid activation decision" || true
@@ -1287,7 +1293,7 @@ jobs:
 
           # All private gates passed. Document IR may activate independently;
           # Luna remains closed if the live ZDR catalog has no Azure endpoint
-          # for GPT-6 Luna. No alternate provider or silent pipeline fallback
+          # for GPT-6 Luna or its own gate failed. No alternate provider or silent pipeline fallback
           # is permitted. The retired Ox Alpha keys are stripped, not written.
           enabled_env="$(mktemp "$root/.env.material-ai-enabled.XXXXXX")"
           awk '!/^(FEATURE_MATERIAL_AI|FEATURE_MATERIAL_AI_LUNA|FEATURE_MATERIAL_AI_OX_ALPHA|MATERIAL_AI_LUNA_DISABLED_REASON_CODE|MATERIAL_AI_OX_ALPHA_DISABLED_REASON_CODE)=/' "$root/.env" > "$enabled_env"

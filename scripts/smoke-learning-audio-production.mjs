@@ -22,8 +22,10 @@ assert.equal(azureRegion, "japaneast", "production Azure Speech region must be j
 assert.notEqual(process.env.AZURE_SPEECH_FAKE, "true", "production smoke refuses the fake provider");
 assert.equal(process.env.FEATURE_LEARNING_AUDIO_PREWARM_ENABLED, "true",
   "FEATURE_LEARNING_AUDIO_PREWARM_ENABLED must be true for the release gate");
-assert.equal(process.env.FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED, "true",
-  "FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED must be true for the release gate");
+// Translation-first spelling depends on optional OpenRouter models. The
+// release keeps it closed when its own provider gate fails, so verify it only
+// when it is enabled for this release.
+const translationEnabled = process.env.FEATURE_SPELLING_TRANSLATION_ASSESSMENT_ENABLED === "true";
 assert.notEqual(process.env.OPENROUTER_FAKE, "true",
   "production smoke refuses the fake OpenRouter provider");
 
@@ -419,11 +421,9 @@ try {
   }
   const firstBytes = await getAudio(firstUser, firstManifest.assets[0]);
   const assessment = await assess(firstUser, first.session, first.course.units[0].words[0].id);
-  const translationAssessment = await assessSpellingTranslation(
-    firstUser,
-    first.course,
-    first.unitId,
-  );
+  const translationAssessment = translationEnabled
+    ? await assessSpellingTranslation(firstUser, first.course, first.unitId)
+    : { skipped: "FEATURE_DISABLED" };
 
   const secondUser = await createUser("b");
   const second = await createCourseAndSession(secondUser, "B");

@@ -9,6 +9,7 @@ test("Materials AI production smoke uses public auth, exam grading, knowledge gr
   assert.match(source, /FEATURE_MATERIAL_AI_LUNA/);
   assert.doesNotMatch(source, /MATERIAL_AI_EXPECT_OX_ALPHA_ENABLED|stealth\/ox-alpha/);
   assert.match(source, /OPENROUTER_ZDR_UNAVAILABLE/);
+  assert.match(source, /"AI_LUNA_DISABLED"/);
   assert.match(source, /MATERIAL_AI_FAKE_PROVIDER.*"true"/);
   assert.match(source, /ai-capabilities/);
   assert.match(source, /pipeline: "luna_native_file_v1"/);
